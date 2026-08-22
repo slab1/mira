@@ -1,0 +1,7 @@
+{
+  "name": "@mira/server",
+  "version": "0.1.0",
+  "description": "Mira agent engine - SessionPrompt.loop, Tool Registry, Event Bus",
+  "main": "src/index.ts",
+  "scripts": {"dev": "bun --watch src/index.ts", "build": "tsc", "test": "bun test"}
+}

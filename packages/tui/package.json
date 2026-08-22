@@ -1,0 +1,6 @@
+{
+  "name": "@mira/tui",
+  "version": "0.1.0",
+  "description": "Mira TUI - SolidJS + @opentui/solid",
+  "scripts": {"dev": "vite", "build": "tsc && vite build"}
+}

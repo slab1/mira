@@ -1,0 +1,6 @@
+{
+  "name": "@mira/shared",
+  "version": "0.1.0",
+  "description": "Shared types, Zod schemas, AGENTS.md",
+  "main": "src/index.ts"
+}

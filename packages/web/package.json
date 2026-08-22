@@ -1,0 +1,6 @@
+{
+  "name": "@mira/web",
+  "version": "0.1.0",
+  "description": "Mira Web - Vite + SolidJS",
+  "scripts": {"dev": "vite", "build": "vite build"}
+}
