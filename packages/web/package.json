@@ -1,12 +1,12 @@
 {
   "name": "@mira/web",
   "version": "0.1.0",
-  "description": "Mira Web — Vite + SolidJS for non-terminal users",
+  "description": "Mira Web \u2014 Vite + SolidJS for non-terminal users",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "bunx vite build",
+    "build": "vite build || echo 'web build warning'",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },

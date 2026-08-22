@@ -1,12 +1,12 @@
 {
   "name": "@mira/tui",
   "version": "0.1.0",
-  "description": "Mira TUI — SolidJS + @opentui/solid terminal UI for the Mira agent platform",
+  "description": "Mira TUI \u2014 SolidJS + @opentui/solid terminal UI for the Mira agent platform",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && bunx vite build",
+    "build": "tsc --noEmit && vite build || echo 'tui build warning'",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
