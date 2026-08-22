@@ -1,9 +1,11 @@
 {
-  "name": "aether",
+  "name": "mira",
   "version": "0.1.0",
   "description": "AI agent platform better than all - OpenCode openness + Claude reasoning + Cursor polish",
   "private": true,
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
@@ -12,6 +14,7 @@
   },
   "devDependencies": {
     "turbo": "latest",
-    "typescript": "^5.0.0"
-  }
+    "typescript": "5.9.3"
+  },
+  "packageManager": "bun@1.2.0"
 }
