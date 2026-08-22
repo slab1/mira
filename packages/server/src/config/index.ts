@@ -43,7 +43,7 @@ export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
       const file = Bun.file(`${cwd}/${name}`)
       if (await file.exists()) {
         const raw = await file.json()
-        cached = { ...DEFAULT_CONFIG, ...raw }
+        cached = { ...DEFAULT_CONFIG, ...raw } as MiraConfig
         return cached
       }
     } catch {}
