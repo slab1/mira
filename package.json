@@ -1,0 +1,17 @@
+{
+  "name": "aether",
+  "version": "0.1.0",
+  "description": "AI agent platform better than all - OpenCode openness + Claude reasoning + Cursor polish",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "eval": "turbo run eval"
+  },
+  "devDependencies": {
+    "turbo": "latest",
+    "typescript": "^5.0.0"
+  }
+}
