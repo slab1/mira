@@ -1,0 +1,138 @@
+/**
+ * Mira Server — Shared Types
+ * Based on OpenCode architecture: sessions, messages, parts, todos + BusEvent
+ */
+
+// ── Session & Message ──────────────────────────────────────────────
+export type SessionID = string
+export type MessageID = string
+export type PartID = string
+
+export type Role = "user" | "assistant" | "system"
+
+export interface Session {
+  id: SessionID
+  title: string
+  model: string          // e.g. "openrouter/anthropic/claude-sonnet-4"
+  provider: string
+  createdAt: number
+  updatedAt: number
+  parentID?: SessionID   // for forked sessions
+}
+
+export interface Message {
+  id: MessageID
+  sessionID: SessionID
+  role: Role
+  createdAt: number
+}
+
+export type PartType = "text" | "tool-call" | "tool-result" | "reasoning" | "file"
+
+export interface Part {
+  id: PartID
+  messageID: MessageID
+  sessionID: SessionID
+  type: PartType
+  text?: string
+  tool?: string          // tool name for tool-call/result
+  toolCallID?: string
+  args?: unknown
+  result?: unknown
+  isError?: boolean
+  createdAt: number
+}
+
+// ── Todo ───────────────────────────────────────────────────────────
+export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled"
+export type TodoPriority = "high" | "medium" | "low"
+
+export interface Todo {
+  id: string
+  sessionID: SessionID
+  content: string
+  status: TodoStatus
+  priority: TodoPriority
+  createdAt: number
+}
+
+// ── Tool ───────────────────────────────────────────────────────────
+export interface ToolCall {
+  id: string
+  name: string
+  args: unknown
+}
+
+export interface ToolResult {
+  toolCallID: string
+  name: string
+  result: unknown
+  isError?: boolean
+}
+
+// ── Model ──────────────────────────────────────────────────────────
+export interface ModelRef {
+  provider: string   // "openrouter" | "anthropic" | "openai" | ...
+  modelID: string    // "anthropic/claude-sonnet-4" | "gpt-4o"
+}
+
+export interface StreamChunk {
+  type: "text-delta" | "tool-call" | "tool-result" | "finish" | "error"
+  text?: string
+  toolCall?: ToolCall
+  finishReason?: "stop" | "tool-calls" | "length" | "error"
+  usage?: { inputTokens: number; outputTokens: number }
+}
+
+// ── BusEvent (Event-driven, no polling) ────────────────────────────
+export type BusEventType =
+  | "session.created" | "session.updated" | "session.deleted"
+  | "message.created" | "message.updated"
+  | "part.created" | "part.updated"
+  | "todo.updated"
+  | "permission.ask" | "permission.reply"
+  | "server.heartbeat" | "server.error"
+
+export interface BusEvent<T = unknown> {
+  type: BusEventType
+  sessionID?: SessionID
+  payload: T
+  timestamp: number
+}
+
+// ── Permission ─────────────────────────────────────────────────────
+export type PermissionAction = "allow" | "deny" | "ask"
+
+export interface PermissionRequest {
+  sessionID: SessionID
+  tool: string
+  args: unknown
+  pattern?: string      // matched permission pattern e.g. "bash:rm *"
+}
+
+// ── Config ─────────────────────────────────────────────────────────
+export interface MiraConfig {
+  model: string
+  smallModel?: string
+  permission: Record<string, PermissionAction | Record<string, PermissionAction>>
+  mcp: Record<string, MCPServerConfig>
+  provider: Record<string, ProviderConfig>
+}
+
+export interface MCPServerConfig {
+  type: "local" | "remote"
+  command?: string[]
+  url?: string
+  enabled: boolean
+  env?: Record<string, string>
+}
+
+export interface ProviderConfig {
+  npm?: string
+  name: string
+  options: {
+    baseURL: string
+    apiKey: string
+  }
+  models: Record<string, { name: string; limit: { context: number; output: number } }>
+}

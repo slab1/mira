@@ -1,7 +1,32 @@
 {
   "name": "@mira/server",
   "version": "0.1.0",
-  "description": "Mira agent engine - SessionPrompt.loop, Tool Registry, Event Bus",
+  "description": "Mira agent engine - SessionPrompt.loop, Tool Registry, Event Bus, Model Gateway",
+  "type": "module",
   "main": "src/index.ts",
-  "scripts": {"dev": "bun --watch src/index.ts", "build": "tsc", "test": "bun test"}
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "build": "tsc --noEmit && bun build src/index.ts --outdir dist --target bun",
+    "test": "bun test",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "bun src/storage/migrate.ts"
+  },
+  "dependencies": {
+    "ai": "^5.0.0",
+    "@ai-sdk/openai": "^2.0.0",
+    "@ai-sdk/anthropic": "^2.0.0",
+    "@ai-sdk/google": "^2.0.0",
+    "drizzle-orm": "^0.44.0",
+    "zod": "^4.0.0",
+    "hono": "^4.7.0",
+    "@hono/zod-validator": "^0.7.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "drizzle-kit": "^0.31.0",
+    "bun-types": "latest",
+    "@types/ws": "^8.5.0",
+    "@types/bun": "latest"
+  }
 }

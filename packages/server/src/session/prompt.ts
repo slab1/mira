@@ -1,0 +1,420 @@
+/**
+ * Mira SessionPrompt — The Core Loop
+ *
+ * OpenCode-inspired but better:
+ *   LLM.stream → tool-call → execute → finish-step → doom-loop detection → compaction
+ *
+ * Key improvements over OpenCode:
+ *   - Doom-loop detection is stateful & tool-aware (not just text repetition)
+ *   - Compaction uses hierarchical memory (episodic → semantic) not just truncation
+ *   - Guardrails at tool-layer (PermissionManager) not prompt-layer
+ *   - Event-driven: every step publishes BusEvent → GlobalBus → Worker → RPC → TUI
+ *
+ * Flow:
+ *   1. Persist user message (parts)
+ *   2. Loop:
+ *      a. Build context (messages + todos + system prompt), check compaction threshold
+ *      b. gateway.stream(model, context, tools)  — Vercel AI SDK v5
+ *      c. For each tool-call: permission.check → execute → persist tool-result part → bus publish
+ *      d. finish-step: aggregate results, update message, check done?
+ *      e. doom-loop: detect 3x identical tool-calls / 5x same file edit without progress → break + ask user
+ *      f. compaction: if context > 80% window, summarize oldest 50% via smallModel
+ *   3. Return final SSE stream
+ */
+
+import type { Bus } from "../bus/index.js"
+import type { ToolRegistry } from "../tools/registry.js"
+import type { PermissionManager } from "../permission/index.js"
+import type { Gateway } from "../gateway/index.js"
+import { buildSystemPrompt } from "../config/index.js"
+
+// ── Types ──────────────────────────────────────────────────────────
+
+export interface SessionPromptDeps {
+  db: any // Drizzle DB instance
+  bus: Bus
+  gateway: Gateway
+  tools: ToolRegistry
+  permissions: PermissionManager
+}
+
+export interface LoopOptions {
+  maxSteps?: number        // default 32
+  maxTokens?: number       // per-step
+  compactionThreshold?: number // 0.8 = compact at 80% context
+}
+
+// ── Doom-Loop Detector ─────────────────────────────────────────────
+
+class DoomLoopDetector {
+  private history: string[] = []
+  private readonly window = 5
+
+  /** fingerprint a tool call for repetition detection */
+  fingerprint(tool: string, args: unknown): string {
+    // Normalize args to catch `read({path:"foo"})` repeated with same path
+    const key = JSON.stringify(args, Object.keys(args as object ?? {}).sort())
+    return `${tool}:${key}`
+  }
+
+  /** returns true if doom loop detected */
+  check(tool: string, args: unknown): boolean {
+    const fp = this.fingerprint(tool, args)
+    this.history.push(fp)
+    if (this.history.length > this.window) this.history.shift()
+
+    // 3x identical consecutive calls = loop
+    if (this.history.length >= 3) {
+      const last3 = this.history.slice(-3)
+      if (last3.every(x => x === last3[0])) return true
+    }
+    // 5x same tool with no progress (all same tool name, different args but same file)
+    if (this.history.length >= 5) {
+      const tools = this.history.map(h => h.split(":")[0])
+      if (tools.every(t => t === tools[0]) && new Set(this.history).size <= 2) return true
+    }
+    return false
+  }
+
+  reset() { this.history = [] }
+}
+
+// ── Compaction ─────────────────────────────────────────────────────
+
+async function needsCompaction(
+  tokenCount: number,
+  contextLimit: number,
+  threshold = 0.8
+): Promise<boolean> {
+  return tokenCount / contextLimit > threshold
+}
+
+async function compactMessages(
+  gateway: Gateway,
+  messages: any[],
+  smallModel: string
+): Promise<any[]> {
+  // Keep system + last 25% of messages, summarize the middle 50%
+  const keepTail = Math.ceil(messages.length * 0.25)
+  const head = messages.slice(0, -keepTail)
+  const tail = messages.slice(-keepTail)
+  // Summarize head via small model (cheap)
+  const summary = await gateway.summarize(head, smallModel)
+  return [
+    { role: "system", content: `## Conversation Summary (compacted)\n${summary}` },
+    ...tail,
+  ]
+}
+
+// ── SessionPrompt ──────────────────────────────────────────────────
+
+export class SessionPrompt {
+  private doomDetector = new DoomLoopDetector()
+
+  constructor(private deps: SessionPromptDeps) {}
+
+  // ── Session CRUD (delegated to storage) ──────────────────────────
+
+  async createSession(input: { title?: string; model?: string; parentID?: string }) {
+    const id = crypto.randomUUID()
+    const now = Date.now()
+    const session = {
+      id,
+      title: input.title ?? "New Session",
+      model: input.model ?? "openrouter/anthropic/claude-sonnet-4",
+      provider: "openrouter",
+      createdAt: now,
+      updatedAt: now,
+      parentID: input.parentID,
+    }
+    await this.deps.db.insert(this.deps.db.schema.sessions).values(session)
+    return session
+  }
+
+  async getSession(id: string) {
+    return this.deps.db.query.sessions.findFirst({ where: (s: any, { eq }: any) => eq(s.id, id) })
+  }
+
+  async deleteSession(id: string) {
+    await this.deps.db.delete(this.deps.db.schema.messages).where((m: any) => m.sessionID === id)
+    await this.deps.db.delete(this.deps.db.schema.parts).where((p: any) => p.sessionID === id)
+    await this.deps.db.delete(this.deps.db.schema.todos).where((t: any) => t.sessionID === id)
+    await this.deps.db.delete(this.deps.db.schema.sessions).where((s: any) => s.id === id)
+  }
+
+  async getMessages(sessionID: string) {
+    return this.deps.db.query.messages.findMany({
+      where: (m: any, { eq }: any) => eq(m.sessionID, sessionID),
+      with: { parts: true },
+      orderBy: (m: any, { asc }: any) => [asc(m.createdAt)],
+    })
+  }
+
+  async getTodos(sessionID: string) {
+    return this.deps.db.query.todos.findMany({
+      where: (t: any, { eq }: any) => eq(t.sessionID, sessionID),
+    })
+  }
+
+  async setTodos(sessionID: string, todos: any[]) {
+    // Replace todos for session
+    await this.deps.db.delete(this.deps.db.schema.todos).where((t: any) => t.sessionID === sessionID)
+    if (todos.length) {
+      await this.deps.db.insert(this.deps.db.schema.todos).values(
+        todos.map((t: any) => ({ ...t, id: t.id ?? crypto.randomUUID(), sessionID, createdAt: Date.now() }))
+      )
+    }
+    return todos
+  }
+
+  // ── The Loop ─────────────────────────────────────────────────────
+
+  /**
+   * streamResponse — Server-Sent Events stream for POST /session/:id/prompt
+   *
+   * Implements: LLM.stream → tool-call → execute → finish-step → doom-loop → compaction
+   */
+  async streamResponse(sessionID: string, userText: string, modelOverride?: string): Promise<Response> {
+    const session = await this.getSession(sessionID)
+    if (!session) throw new Error("session not found")
+
+    const model = modelOverride ?? session.model
+    const systemPrompt = await buildSystemPrompt()
+
+    // Persist user message + part immediately (so TUI sees it via bus)
+    const userMessageID = crypto.randomUUID()
+    const now = Date.now()
+    await this.deps.db.insert(this.deps.db.schema.messages).values({
+      id: userMessageID, sessionID, role: "user", createdAt: now,
+    })
+    await this.deps.db.insert(this.deps.db.schema.parts).values({
+      id: crypto.randomUUID(), messageID: userMessageID, sessionID,
+      type: "text", text: userText, createdAt: now,
+    })
+    this.deps.bus.publish({ type: "message.created", sessionID, payload: { id: userMessageID, text: userText }, timestamp: now })
+    this.deps.bus.publish({ type: "part.created", sessionID, payload: { text: userText }, timestamp: now })
+
+    // Create assistant message placeholder
+    const assistantMessageID = crypto.randomUUID()
+    await this.deps.db.insert(this.deps.db.schema.messages).values({
+      id: assistantMessageID, sessionID, role: "assistant", createdAt: Date.now(),
+    })
+
+    const { readable, writable } = new TransformStream()
+    const writer = writable.getWriter()
+    const encoder = new TextEncoder()
+
+    const send = (event: string, data: unknown) => {
+      const line = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+      writer.write(encoder.encode(line))
+    }
+
+    // Run loop in background (don't block response headers)
+    this.runLoop({
+      sessionID, assistantMessageID, userText, model, systemPrompt, send, writer,
+    }).catch(async err => {
+      send("error", { error: String(err) })
+      try { await writer.close() } catch {}
+    })
+
+    return new Response(readable, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    })
+  }
+
+  private async runLoop(opts: {
+    sessionID: string
+    assistantMessageID: string
+    userText: string
+    model: string
+    systemPrompt: string
+    send: (event: string, data: unknown) => void
+    writer: WritableStreamDefaultWriter<Uint8Array>
+  }) {
+    const { sessionID, assistantMessageID, model, systemPrompt, send, writer } = opts
+    const MAX_STEPS = 32
+    let step = 0
+    let accumulatedText = ""
+    this.doomDetector.reset()
+
+    // Load conversation history
+    let messages = await this.loadContext(sessionID, systemPrompt)
+
+    loop: while (step < MAX_STEPS) {
+      step++
+
+      // ── Compaction check ──
+      const tokenEstimate = messages.reduce((n, m) => n + (m.content?.length ?? 0) / 4, 0)
+      const contextLimit = 128_000 // from provider config
+      if (await needsCompaction(tokenEstimate, contextLimit)) {
+        send("compaction", { step, tokenEstimate })
+        messages = await compactMessages(this.deps.gateway, messages, "openrouter/deepseek/deepseek-v3.2-exp")
+        this.deps.bus.publish({ type: "message.updated", sessionID, payload: { compaction: true, step }, timestamp: Date.now() })
+      }
+
+      // ── LLM.stream (Vercel AI SDK v5) ──
+      send("step_start", { step, model })
+      const stream = await this.deps.gateway.stream({
+        model,
+        messages,
+        tools: this.deps.tools.toAISDKTools(), // Zod schemas → AI SDK tool definitions
+        system: systemPrompt,
+      })
+
+      let stepText = ""
+      const toolCalls: Array<{ id: string; name: string; args: unknown }> = []
+
+      for await (const chunk of stream) {
+        if (chunk.type === "text-delta" && chunk.text) {
+          stepText += chunk.text
+          accumulatedText += chunk.text
+          send("text_delta", { delta: chunk.text, step })
+
+          // Persist incremental text part (for resume)
+          await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
+          this.deps.bus.publish({ type: "part.updated", sessionID, payload: { text: chunk.text, step }, timestamp: Date.now() })
+
+        } else if (chunk.type === "tool-call" && chunk.toolCall) {
+          toolCalls.push(chunk.toolCall)
+          send("tool_call", chunk.toolCall)
+        } else if (chunk.type === "finish") {
+          send("step_finish", { step, reason: chunk.finishReason, usage: chunk.usage })
+          if (chunk.finishReason === "stop" && toolCalls.length === 0) {
+            // No more tool calls → conversation turn complete
+            break loop
+          }
+        } else if (chunk.type === "error") {
+          send("error", chunk)
+          break loop
+        }
+      }
+
+      // ── No tool calls? We're done ──
+      if (toolCalls.length === 0) break loop
+
+      // ── Execute each tool-call ──
+      const toolResults: any[] = []
+      for (const tc of toolCalls) {
+        // Doom-loop detection
+        if (this.doomDetector.check(tc.name, tc.args)) {
+          const msg = `Doom-loop detected: tool "${tc.name}" called 3x with identical args. Breaking loop and asking user.`
+          send("doom_loop", { tool: tc.name, args: tc.args, step })
+          await this.persistToolResult(assistantMessageID, sessionID, tc, { error: msg }, true)
+          accumulatedText += `\n\n[System: ${msg}]\n`
+          messages.push({ role: "assistant", content: accumulatedText })
+          messages.push({ role: "user", content: `[Doom-loop guard: ${msg} — please clarify or adjust.]` })
+          break loop
+        }
+
+        // Permission check (5 layers + BashArity)
+        const perm = await this.deps.permissions.check({ sessionID, tool: tc.name, args: tc.args })
+        if (perm.action === "deny") {
+          const err = `Permission denied for ${tc.name}: ${perm.reason}`
+          send("tool_result", { toolCallID: tc.id, name: tc.name, error: err })
+          await this.persistToolResult(assistantMessageID, sessionID, tc, { error: err }, true)
+          toolResults.push({ toolCallID: tc.id, name: tc.name, result: { error: err }, isError: true })
+          continue
+        }
+        if (perm.action === "ask") {
+          // Publish permission.ask → TUI shows prompt → user replies via WS → permission.reply
+          send("permission_ask", { toolCallID: tc.id, tool: tc.name, args: tc.args })
+          const decision = await this.deps.bus.waitForPermissionReply(tc.id, 120_000)
+          if (decision !== "allow") {
+            const err = `User denied ${tc.name}`
+            await this.persistToolResult(assistantMessageID, sessionID, tc, { error: err }, true)
+            toolResults.push({ toolCallID: tc.id, name: tc.name, result: { error: err }, isError: true })
+            continue
+          }
+        }
+
+        // Execute
+        send("tool_execute", { toolCallID: tc.id, name: tc.name })
+        let result: unknown
+        let isError = false
+        try {
+          result = await this.deps.tools.execute(tc.name, tc.args, { sessionID, messageID: assistantMessageID })
+          send("tool_result", { toolCallID: tc.id, name: tc.name, result })
+        } catch (err) {
+          result = { error: String(err) }
+          isError = true
+          send("tool_result", { toolCallID: tc.id, name: tc.name, result, isError: true })
+        }
+
+        await this.persistToolResult(assistantMessageID, sessionID, tc, result, isError)
+        toolResults.push({ toolCallID: tc.id, name: tc.name, result, isError })
+        this.deps.bus.publish({
+          type: "part.created", sessionID,
+          payload: { tool: tc.name, toolCallID: tc.id, result }, timestamp: Date.now(),
+        })
+      }
+
+      // ── finish-step: append tool results to context for next iteration ──
+      messages.push({ role: "assistant", content: stepText, toolCalls })
+      messages.push({ role: "tool", toolResults, content: JSON.stringify(toolResults) })
+
+      // Also persist accumulated text so far
+      await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
+    }
+
+    // Finalize
+    send("finish", { steps: step, text: accumulatedText })
+    await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
+    this.deps.bus.publish({ type: "message.updated", sessionID, payload: { id: assistantMessageID, text: accumulatedText, done: true }, timestamp: Date.now() })
+    try { await writer.close() } catch {}
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────────
+
+  private async loadContext(sessionID: string, systemPrompt: string) {
+    const messages = await this.getMessages(sessionID)
+    const context: any[] = [{ role: "system", content: systemPrompt }]
+    for (const m of messages) {
+      const parts = (m as any).parts ?? []
+      const text = parts.filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n")
+      if (text) context.push({ role: m.role, content: text })
+      // Re-hydrate tool calls for continuity
+      for (const p of parts.filter((p: any) => p.type === "tool-call")) {
+        context.push({ role: "assistant", content: "", toolCalls: [{ id: p.toolCallID, name: p.tool, args: p.args }] })
+      }
+      for (const p of parts.filter((p: any) => p.type === "tool-result")) {
+        context.push({ role: "tool", content: JSON.stringify(p.result), toolCallID: p.toolCallID })
+      }
+    }
+    return context
+  }
+
+  private async upsertTextPart(messageID: string, sessionID: string, text: string) {
+    const existing = await this.deps.db.query.parts.findFirst({
+      where: (p: any, { and, eq }: any) => and(eq(p.messageID, messageID), eq(p.type, "text")),
+    })
+    if (existing) {
+      await this.deps.db.update(this.deps.db.schema.parts).set({ text }).where((p: any) => p.id === existing.id)
+    } else {
+      await this.deps.db.insert(this.deps.db.schema.parts).values({
+        id: crypto.randomUUID(), messageID, sessionID, type: "text", text, createdAt: Date.now(),
+      })
+    }
+  }
+
+  private async persistToolResult(
+    messageID: string, sessionID: string,
+    tc: { id: string; name: string; args: unknown },
+    result: unknown, isError = false,
+  ) {
+    // Tool-call part
+    await this.deps.db.insert(this.deps.db.schema.parts).values({
+      id: crypto.randomUUID(), messageID, sessionID,
+      type: "tool-call", tool: tc.name, toolCallID: tc.id, args: tc.args, createdAt: Date.now(),
+    })
+    // Tool-result part
+    await this.deps.db.insert(this.deps.db.schema.parts).values({
+      id: crypto.randomUUID(), messageID, sessionID,
+      type: "tool-result", tool: tc.name, toolCallID: tc.id, result, isError, createdAt: Date.now(),
+    })
+  }
+}

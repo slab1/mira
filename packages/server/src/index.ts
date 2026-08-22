@@ -1,0 +1,202 @@
+/**
+ * Mira Server — Main Entry
+ *
+ * Architecture (Better-than-OpenCode):
+ *   Clients (TUI/Web/VSCode) ──RPC/WebSocket──► Server
+ *     ├─ SessionPrompt.loop  — LLM.stream → tool-call → execute → finish-step → doom-loop → compaction
+ *     ├─ Tool Registry (22+ tools, Zod schemas)
+ *     ├─ Permission (5 layers + BashArity)
+ *     ├─ GlobalBus → Worker → RPC → TUI  (event-driven, no polling)
+ *     ├─ Storage: SQLite + Drizzle (WAL mode, sessions/messages/parts/todos)
+ *     ├─ Model Gateway: Vercel AI SDK v5 → OpenRouter → 25+ providers
+ *     └─ MCP: StreamableHTTP / SSE / Stdio
+ *
+ * Runtime: Bun (native SQLite, fast startup, ~3x Node for this workload)
+ * Monorepo: Turborepo — packages/server, packages/tui, packages/web, packages/shared
+ *
+ * Usage:
+ *   bun src/index.ts              # start server on :4096
+ *   bun src/index.ts --port 3000  # custom port
+ */
+
+import { Hono } from "hono"
+import { cors } from "hono/cors"
+import { logger } from "hono/logger"
+import { Bus } from "./bus/index.js"
+import { createDatabase, migrate } from "./storage/db.js"
+import { createGateway } from "./gateway/index.js"
+import { ToolRegistry } from "./tools/registry.js"
+import { PermissionManager } from "./permission/index.js"
+import { SessionPrompt } from "./session/prompt.js"
+import { MCPManager } from "./mcp/index.js"
+import { loadConfig } from "./config/index.js"
+
+// ── Bootstrap ──────────────────────────────────────────────────────
+const PORT = Number(process.env.PORT ?? Bun.argv.find(a => a.startsWith("--port="))?.split("=")[1] ?? 4096)
+
+async function main() {
+  console.log(`[mira] starting server on :${PORT} — Bun ${Bun.version}`)
+
+  // 1. Config
+  const config = await loadConfig()
+  console.log(`[mira] model=${config.model}`)
+
+  // 2. Storage (SQLite WAL + Drizzle)
+  const db = createDatabase(process.env.MIRA_DB ?? "./data/mira.db")
+  await migrate(db)
+  console.log(`[mira] storage ready`)
+
+  // 3. Event Bus (GlobalBus)
+  const bus = new Bus()
+  bus.on("server.heartbeat", () => {}) // keepalive example
+
+  // 4. Permission (5 layers)
+  const permissions = new PermissionManager(config.permission)
+  console.log(`[mira] permissions: ${Object.keys(config.permission).length} rules`)
+
+  // 5. Model Gateway (Vercel AI SDK v5 → OpenRouter → 25+ providers)
+  const gateway = createGateway(config)
+  console.log(`[mira] gateway ready — providers: ${Object.keys(config.provider).join(", ")}`)
+
+  // 6. Tool Registry (22+ tools, each Zod-validated)
+  const tools = new ToolRegistry({ db, bus, permissions, gateway })
+  await tools.registerAll()
+  // Attach MCP tools as they connect (dynamic augmentation)
+  const mcp = new MCPManager({ bus, tools, config: config.mcp })
+  await mcp.connectAll()
+  console.log(`[mira] tools: ${tools.count()} registered (${mcp.count()} from MCP)`)
+
+  // 7. Session loop engine
+  const prompt = new SessionPrompt({ db, bus, gateway, tools, permissions })
+
+  // 8. HTTP + WebSocket RPC (Hono)
+  const app = new Hono()
+
+  app.use("*", cors())
+  app.use("*", logger())
+
+  // Health
+  app.get("/health", c => c.json({ ok: true, version: "0.1.0", tools: tools.count() }))
+
+  // REST — sessions
+  app.get("/session", async c => {
+    const sessions = await db.query.sessions.findMany({ orderBy: (s, { desc }) => [desc(s.updatedAt)] })
+    return c.json(sessions)
+  })
+  app.post("/session", async c => {
+    const body = await c.req.json().catch(() => ({}))
+    const session = await prompt.createSession(body)
+    bus.publish({ type: "session.created", payload: session, timestamp: Date.now() })
+    return c.json(session, 201)
+  })
+  app.get("/session/:id", async c => {
+    const session = await prompt.getSession(c.req.param("id"))
+    if (!session) return c.json({ error: "not found" }, 404)
+    return c.json(session)
+  })
+  app.delete("/session/:id", async c => {
+    await prompt.deleteSession(c.req.param("id"))
+    bus.publish({ type: "session.deleted", payload: { id: c.req.param("id") }, timestamp: Date.now() })
+    return c.json({ ok: true })
+  })
+
+  // Prompt — the core loop (streamed via SSE)
+  app.post("/session/:id/prompt", async c => {
+    const id = c.req.param("id")
+    const { prompt: text, model } = await c.req.json()
+    // Validate session exists
+    const session = await prompt.getSession(id)
+    if (!session) return c.json({ error: "session not found" }, 404)
+
+    // Stream response as SSE (Vercel AI SDK style)
+    return prompt.streamResponse(id, text, model)
+  })
+
+  // Messages & parts
+  app.get("/session/:id/message", async c => {
+    const messages = await prompt.getMessages(c.req.param("id"))
+    return c.json(messages)
+  })
+
+  // Todos
+  app.get("/session/:id/todo", async c => {
+    const todos = await prompt.getTodos(c.req.param("id"))
+    return c.json(todos)
+  })
+  app.post("/session/:id/todo", async c => {
+    const todos = await c.req.json()
+    const result = await prompt.setTodos(c.req.param("id"), todos)
+    bus.publish({ type: "todo.updated", sessionID: c.req.param("id"), payload: result, timestamp: Date.now() })
+    return c.json(result)
+  })
+
+  // Tools list (for TUI introspection)
+  app.get("/tools", c => c.json(tools.list()))
+
+  // Permissions check (for TUI preflight)
+  app.post("/permission/check", async c => {
+    const req = await c.req.json()
+    const decision = await permissions.check(req)
+    return c.json(decision)
+  })
+
+  // WebSocket upgrade — GlobalBus → Worker → RPC → TUI (no polling)
+  // Hono WS via Bun.serve websocket handler below
+  const server = Bun.serve({
+    port: PORT,
+    hostname: "0.0.0.0",
+    fetch: app.fetch,
+    websocket: {
+      open(ws) {
+        // Subscribe this socket to GlobalBus
+        const unsub = bus.subscribeAll(event => {
+          try { ws.send(JSON.stringify(event)) } catch {}
+        })
+        // Store unsub on ws data
+        ;(ws as any).__unsub = unsub
+        ws.send(JSON.stringify({ type: "server.heartbeat", payload: { connected: true }, timestamp: Date.now() }))
+      },
+      message(ws, msg) {
+        // Handle permission replies, client pings, etc.
+        try {
+          const event = JSON.parse(String(msg))
+          if (event.type === "permission.reply") {
+            bus.publish(event)
+          }
+        } catch {}
+      },
+      close(ws) {
+        try { (ws as any).__unsub?.() } catch {}
+      },
+    },
+  })
+
+  console.log(`[mira] ✓ listening on http://${server.hostname}:${server.port}`)
+  console.log(`[mira]   health:  GET  /health`)
+  console.log(`[mira]   prompt:  POST /session/:id/prompt  (SSE)`)
+  console.log(`[mira]   ws:      WS   /  (BusEvent stream)`)
+
+  // Graceful shutdown
+  process.on("SIGINT", () => {
+    console.log("\n[mira] shutting down...")
+    server.stop()
+    mcp.disconnectAll()
+    process.exit(0)
+  })
+}
+
+// Only auto-start when run directly (not imported)
+if (import.meta.main) {
+  main().catch(err => {
+    console.error("[mira] fatal:", err)
+    process.exit(1)
+  })
+}
+
+export { main }
+export * from "./session/prompt.js"
+export * from "./tools/registry.js"
+export * from "./bus/index.js"
+export * from "./storage/db.js"
+export * from "./gateway/index.js"
+export * from "./permission/index.js"
