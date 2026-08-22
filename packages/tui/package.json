@@ -1,6 +1,22 @@
 {
   "name": "@mira/tui",
   "version": "0.1.0",
-  "description": "Mira TUI - SolidJS + @opentui/solid",
-  "scripts": {"dev": "vite", "build": "tsc && vite build"}
+  "description": "Mira TUI — SolidJS + @opentui/solid terminal UI for the Mira agent platform",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opentui/solid": "^0.1.0",
+    "solid-js": "^1.9.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "vite": "^6.2.0",
+    "vite-plugin-solid": "^2.11.0"
+  }
 }
