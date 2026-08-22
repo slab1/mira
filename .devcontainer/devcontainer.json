@@ -8,10 +8,9 @@
   },
   "customizations": {
     "vscode": {
-      "extensions": ["oven.bun-vscode", "dbaeumer.vscode-eslint"]
+      "extensions": ["oven.bun-vscode"]
     }
   },
-  "postCreateCommand": "curl -fsSL https://bun.sh/install | bash && echo 'export PATH=\"$HOME/.bun/bin:$PATH\"' >> ~/.bashrc && export PATH=\"$HOME/.bun/bin:$PATH\" && bun --version && bun install",
-  "remoteUser": "codespace",
-  "forwardPorts": [3000, 5173]
+  "postCreateCommand": "curl -fsSL https://bun.sh/install | bash -s \"bun-v1.3.14\" && echo 'export PATH=\"$HOME/.bun/bin:$PATH\"' >> ~/.bashrc",
+  "remoteUser": "codespace"
 }
