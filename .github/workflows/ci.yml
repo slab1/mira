@@ -25,8 +25,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: bun
-          cache-dependency-path: bun.lock
+          cache: npm
+          cache-dependency-path: package-lock.json
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Typecheck
@@ -44,8 +44,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: bun
-          cache-dependency-path: bun.lock
+          cache: npm
+          cache-dependency-path: package-lock.json
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Turborepo remote cache
@@ -69,8 +69,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: bun
-          cache-dependency-path: bun.lock
+          cache: npm
+          cache-dependency-path: package-lock.json
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Turborepo cache
@@ -95,8 +95,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: bun
-          cache-dependency-path: bun.lock
+          cache: npm
+          cache-dependency-path: package-lock.json
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Turborepo cache

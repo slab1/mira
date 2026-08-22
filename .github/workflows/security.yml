@@ -33,9 +33,9 @@ jobs:
       - name: Bun audit
         run: bun audit || bun pm audit || echo "::warning::bun audit found issues or is unavailable"
       - name: OSV scanner
-        uses: google/osv-scanner-action@v2
+        uses: google/osv-scanner-action@v1
         with:
-          scan-args: --recursive --lockfile=bun.lock ./
+          scan-args: --recursive --lockfile=package-lock.json ./
 
   secrets:
     name: secrets scan
