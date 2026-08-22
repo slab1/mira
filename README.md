@@ -1,12 +1,12 @@
-# Aether — AI Agent Platform Better Than All
+# Mira — AI Agent Platform Better Than All
 
 > **OpenCode's openness + Claude's reasoning + Cursor's polish + Windsurf's autonomy + Cline's transparency, minus weaknesses, plus memory/eval/guardrails as first-class.**
 
-Aether is a next-gen AI agent platform that combines the best of all worlds and solves what none have fully solved: **hierarchical hybrid memory, eval-first observability, tool-layer guardrails, and a model gateway that makes you future-proof.**
+Mira is a next-gen AI agent platform that combines the best of all worlds and solves what none have fully solved: **hierarchical hybrid memory, eval-first observability, tool-layer guardrails, and a model gateway that makes you future-proof.**
 
-## Why Aether?
+## Why Mira?
 
-| Feature | OpenCode | Claude Code | Cursor | Windsurf | Cline | **Aether** |
+| Feature | OpenCode | Claude Code | Cursor | Windsurf | Cline | **Mira** |
 |---------|----------|-------------|--------|----------|-------|------------|
 | Provider-agnostic | ✅ 25+ | ❌ Claude-only | ⚠️ Limited | ⚠️ Limited | ✅ BYO-key | ✅ **Gateway + 75+** |
 | LSP Intelligence | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ **LSP + 9-layer edit** |
@@ -61,13 +61,13 @@ Aether is a next-gen AI agent platform that combines the best of all worlds and 
 
 ```bash
 # Install
-curl -fsSL https://aether.ai/install | bash
+curl -fsSL https://mira.ai/install | bash
 
 # Run
-aether
+mira
 
 # With free models
-aether --model deepseek/deepseek-chat --provider openrouter
+mira --model deepseek/deepseek-chat --provider openrouter
 ```
 
 ## Research
