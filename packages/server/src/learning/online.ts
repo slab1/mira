@@ -108,6 +108,14 @@ export class OnlineLearner {
     }
   }
 
+  // ── Privacy safeguards ─────────────────────────────────────────────
+  private redactInsightText(text: string): string {
+    return text
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[REDACTED_EMAIL]")
+      .replace(/\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g, "[REDACTED_PHONE]")
+      .replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*["']?([^\s"']+)["']?/gi, "$1=[REDACTED]")
+  }
+
   /**
    * One learning cycle: search → fetch → extract insights
    * Returns insights (also publishes `learning.online.insights` on the bus
@@ -164,13 +172,22 @@ export class OnlineLearner {
     const insights = this.extractInsights(docs)
     this.log(`online: extracted ${insights.length} insights`)
 
-    // 4. Persist + publish (best-effort)
-    if (this.deps.db) await this.persistInsights(insights).catch(() => {})
+    // 4. Privacy safeguard: redact PII from insights before persistence
+    const redactedInsights = insights.map(i => ({
+      ...i,
+      summary: this.redactInsightText(i.summary),
+      content: this.redactInsightText(i.content),
+    }))
+
+    // 5. Persist + publish (best-effort)
+    if (this.deps.db) await this.persistInsights(redactedInsights).catch(() => {})
     this.deps.bus?.publish({
       type: "server.heartbeat" as any,
-      payload: { kind: "learning.online.insights", count: insights.length, insights: insights.slice(0, 5) },
+      payload: { kind: "learning.online.insights", count: redactedInsights.length, insights: redactedInsights.slice(0, 5) },
       timestamp: Date.now(),
     } as any)
+
+    return redactedInsights
 
     return insights
   }

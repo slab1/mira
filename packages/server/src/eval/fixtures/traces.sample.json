@@ -1,0 +1,14 @@
+{
+  "traces": [
+    {
+      "traceId": "trace_abc123",
+      "name": "session.prompt",
+      "metadata": { "sessionID": "sess_001", "model": "openrouter/anthropic/claude-sonnet-4" },
+      "spans": [
+        { "spanId": "span_001", "name": "llm.stream", "startMs": 1710000000000, "endMs": 1710000001200, "status": "ok", "attributes": { "model": "claude-sonnet-4", "inputTokens": 1200, "outputTokens": 340 } },
+        { "spanId": "span_002", "name": "tool.glob", "startMs": 1710000001300, "endMs": 1710000001350, "status": "ok", "attributes": { "tool": "glob", "pattern": "**/*" } },
+        { "spanId": "span_003", "name": "judge.score", "startMs": 1710000001400, "endMs": 1710000001800, "status": "ok", "attributes": { "score": 0.86, "rubric": "mira-default-v1" } }
+      ]
+    }
+  ]
+}

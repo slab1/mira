@@ -47,6 +47,7 @@ export interface RegistryDeps {
   bus: Bus
   permissions: any
   gateway: any
+  guardrails?: any
 }
 
 // ── Registry ───────────────────────────────────────────────────────
@@ -104,7 +105,36 @@ export class ToolRegistry {
     if (!parsed.success) {
       throw new Error(`Invalid args for ${name}: ${parsed.error.message}`)
     }
-    return tool.execute(parsed.data, ctx)
+
+    // Guardrails pre-check
+    if (this.deps.guardrails) {
+      const check = await this.deps.guardrails.check(name, parsed.data, { sessionID: ctx.sessionID })
+      if (check.decision === "deny") {
+        throw new Error(`Guardrail denied ${name}: ${check.reason ?? "blocked"}`)
+      }
+    }
+
+    let result: unknown
+    let error: unknown = null
+    try {
+      result = await tool.execute(parsed.data, ctx)
+    } catch (e) {
+      error = e
+      throw e
+    } finally {
+      // Guardrails post-execution audit log
+      if (this.deps.guardrails) {
+        await this.deps.guardrails.logResult({
+          sessionID: ctx.sessionID,
+          tool: name,
+          args: parsed.data,
+          decision: error ? "deny" : "allow",
+          result,
+          error,
+        })
+      }
+    }
+    return result
   }
 
   /**

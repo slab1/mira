@@ -1,0 +1,26 @@
+[
+  {
+    "id": "swe-bench-mini-1",
+    "instance_id": "django__django-11019",
+    "problem_statement": "Fix QuerySet.annotate() crash when using F() with joined fields. Expected: annotate should handle F('author__profile__age') without ValueError.",
+    "patch": "diff --git a/django/db/models/query.py b/django/db/models/query.py\n+ fix F() resolution in annotate",
+    "repo": "django/django",
+    "expected": "QuerySet.annotate with F('author__profile__age') resolves correctly"
+  },
+  {
+    "id": "swe-bench-mini-2",
+    "instance_id": "psf__requests-2317",
+    "problem_statement": "Issue: Session.merge_environment_settings() drops proxies when verify is False. Fix proxy merging logic.",
+    "patch": "diff --git a/requests/sessions.py b/requests/sessions.py\n+ preserve proxies when verify=False",
+    "repo": "psf/requests",
+    "expected": "Session.merge_environment_settings preserves proxies regardless of verify"
+  },
+  {
+    "id": "swe-bench-mini-3",
+    "instance_id": "mwaskom__seaborn-3015",
+    "problem_statement": "heatmap() fails with ValueError when mask and annot shapes mismatch. Fix validation to raise clear error.",
+    "patch": "diff --git a/seaborn/matrix.py b/seaborn/matrix.py\n+ validate mask/annot shape before heatmap",
+    "repo": "mwaskom/seaborn",
+    "expected": "heatmap validates mask and annot shapes and raises descriptive error"
+  }
+]

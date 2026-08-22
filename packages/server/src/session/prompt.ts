@@ -27,6 +27,8 @@ import type { ToolRegistry } from "../tools/registry.js"
 import type { PermissionManager } from "../permission/index.js"
 import type { Gateway } from "../gateway/index.js"
 import { buildSystemPrompt } from "../config/index.js"
+import { DoomLoopDetector } from "./doom-loop-detector.js"
+import { needsCompaction, compactMessages, estimateTokens } from "./compaction.js"
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -42,68 +44,6 @@ export interface LoopOptions {
   maxSteps?: number        // default 32
   maxTokens?: number       // per-step
   compactionThreshold?: number // 0.8 = compact at 80% context
-}
-
-// ── Doom-Loop Detector ─────────────────────────────────────────────
-
-class DoomLoopDetector {
-  private history: string[] = []
-  private readonly window = 5
-
-  /** fingerprint a tool call for repetition detection */
-  fingerprint(tool: string, args: unknown): string {
-    // Normalize args to catch `read({path:"foo"})` repeated with same path
-    const key = JSON.stringify(args, Object.keys(args as object ?? {}).sort())
-    return `${tool}:${key}`
-  }
-
-  /** returns true if doom loop detected */
-  check(tool: string, args: unknown): boolean {
-    const fp = this.fingerprint(tool, args)
-    this.history.push(fp)
-    if (this.history.length > this.window) this.history.shift()
-
-    // 3x identical consecutive calls = loop
-    if (this.history.length >= 3) {
-      const last3 = this.history.slice(-3)
-      if (last3.every(x => x === last3[0])) return true
-    }
-    // 5x same tool with no progress (all same tool name, different args but same file)
-    if (this.history.length >= 5) {
-      const tools = this.history.map(h => h.split(":")[0])
-      if (tools.every(t => t === tools[0]) && new Set(this.history).size <= 2) return true
-    }
-    return false
-  }
-
-  reset() { this.history = [] }
-}
-
-// ── Compaction ─────────────────────────────────────────────────────
-
-async function needsCompaction(
-  tokenCount: number,
-  contextLimit: number,
-  threshold = 0.8
-): Promise<boolean> {
-  return tokenCount / contextLimit > threshold
-}
-
-async function compactMessages(
-  gateway: Gateway,
-  messages: any[],
-  smallModel: string
-): Promise<any[]> {
-  // Keep system + last 25% of messages, summarize the middle 50%
-  const keepTail = Math.ceil(messages.length * 0.25)
-  const head = messages.slice(0, -keepTail)
-  const tail = messages.slice(-keepTail)
-  // Summarize head via small model (cheap)
-  const summary = await gateway.summarize(head, smallModel)
-  return [
-    { role: "system", content: `## Conversation Summary (compacted)\n${summary}` },
-    ...tail,
-  ]
 }
 
 // ── SessionPrompt ──────────────────────────────────────────────────
@@ -249,12 +189,13 @@ export class SessionPrompt {
       step++
 
       // ── Compaction check ──
-      const tokenEstimate = messages.reduce((n, m) => n + (m.content?.length ?? 0) / 4, 0)
       const contextLimit = 128_000 // from provider config
-      if (await needsCompaction(tokenEstimate, contextLimit)) {
-        send("compaction", { step, tokenEstimate })
-        messages = await compactMessages(this.deps.gateway, messages, "openrouter/deepseek/deepseek-v3.2-exp")
-        this.deps.bus.publish({ type: "message.updated", sessionID, payload: { compaction: true, step }, timestamp: Date.now() })
+      const { needed, tokenEstimate, ratio } = await needsCompaction(messages, contextLimit, 0.8)
+      if (needed) {
+        send("compaction", { step, tokenEstimate, ratio })
+        const result = await compactMessages(this.deps.gateway, messages, { smallModel: "openrouter/deepseek/deepseek-v3.2-exp", contextLimit, threshold: 0.8 })
+        messages = result.messages
+        this.deps.bus.publish({ type: "message.updated", sessionID, payload: { compaction: true, step, tokenEstimate, reducedTo: result.compactedCount }, timestamp: Date.now() })
       }
 
       // ── LLM.stream (Vercel AI SDK v5) ──
@@ -301,9 +242,10 @@ export class SessionPrompt {
       const toolResults: any[] = []
       for (const tc of toolCalls) {
         // Doom-loop detection
-        if (this.doomDetector.check(tc.name, tc.args)) {
-          const msg = `Doom-loop detected: tool "${tc.name}" called 3x with identical args. Breaking loop and asking user.`
-          send("doom_loop", { tool: tc.name, args: tc.args, step })
+        const loopSignal = this.doomDetector.check({ name: tc.name, args: tc.args })
+        if (loopSignal.detected) {
+          const msg = `Doom-loop detected: ${loopSignal.reason ?? 'repeating tool call'} — tool "${tc.name}". Breaking loop and asking user.`
+          send("doom_loop", { tool: tc.name, args: tc.args, step, reason: loopSignal.reason, pattern: loopSignal.pattern })
           await this.persistToolResult(assistantMessageID, sessionID, tc, { error: msg }, true)
           accumulatedText += `\n\n[System: ${msg}]\n`
           messages.push({ role: "assistant", content: accumulatedText })

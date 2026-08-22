@@ -169,7 +169,7 @@ export function buildAgentsPromptPart(ctx: AgentsContext): string {
 }
 
 export async function buildSystemPrompt(
-  cwd = process.cwd(),
+  cwd = getDefaultCwd(),
   extra: string[] = []
 ): Promise<string> {
   const base = [

@@ -30,6 +30,8 @@ import { PermissionManager } from "./permission/index.js"
 import { SessionPrompt } from "./session/prompt.js"
 import { MCPManager } from "./mcp/index.js"
 import { loadConfig } from "./config/index.js"
+import { createLearningSystem, mountLearningRoutes } from "./learning/index.js"
+import { GuardrailsManager } from "./guardrails/index.js"
 
 // ── Bootstrap ──────────────────────────────────────────────────────
 const PORT = Number(process.env.PORT ?? Bun.argv.find(a => a.startsWith("--port="))?.split("=")[1] ?? 4096)
@@ -54,12 +56,22 @@ async function main() {
   const permissions = new PermissionManager(config.permission)
   console.log(`[mira] permissions: ${Object.keys(config.permission).length} rules`)
 
+  // 4b. Guardrails (tool-layer security)
+  const guardrails = new GuardrailsManager(undefined, config)
+  console.log(`[mira] guardrails: enforce=${guardrails ? "enabled" : "disabled"}`)
+
   // 5. Model Gateway (Vercel AI SDK v5 → OpenRouter → 25+ providers)
   const gateway = createGateway(config)
   console.log(`[mira] gateway ready — providers: ${Object.keys(config.provider).join(", ")}`)
 
+  // 5b. Learning System (online, usage, knowledge, improvement, scheduler)
+  const learning = createLearningSystem({ db, bus, gateway })
+  await learning.knowledge.load()
+  learning.scheduler.start()
+  console.log(`[mira] learning ready — knowledge=${learning.knowledge.size()} scheduler=${learning.scheduler.status().running ? "running" : "idle"}`)
+
   // 6. Tool Registry (22+ tools, each Zod-validated)
-  const tools = new ToolRegistry({ db, bus, permissions, gateway })
+  const tools = new ToolRegistry({ db, bus, permissions, gateway, guardrails })
   await tools.registerAll()
   // Attach MCP tools as they connect (dynamic augmentation)
   const mcp = new MCPManager({ bus, tools, config: config.mcp })
@@ -139,6 +151,9 @@ async function main() {
     const decision = await permissions.check(req)
     return c.json(decision)
   })
+
+  // Learning system routes with privacy safeguards and backward compatibility
+  mountLearningRoutes(app, learning)
 
   // WebSocket upgrade — GlobalBus → Worker → RPC → TUI (no polling)
   // Hono WS via Bun.serve websocket handler below

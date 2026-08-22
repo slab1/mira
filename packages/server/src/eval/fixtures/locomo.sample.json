@@ -1,0 +1,34 @@
+{
+  "conversations": [
+    {
+      "id": "locomo-001",
+      "conversation": "User: I have a dog named Milo, he's a golden retriever. He loves swimming.\nAssistant: Cute! How old is Milo?\nUser: Milo is 3, we got him when he was 8 weeks old. He hates the vacuum though.\n[ ... 25 turns of long conversation about travel, work, family ... ]\nUser: My sister Emma lives in Portland and works as a barista. She visited last week.",
+      "questions": [
+        {
+          "id": "locomo-001-q1",
+          "question": "What is the user's dog's name and breed?",
+          "answer": "Milo, golden retriever",
+          "category": "single-hop"
+        },
+        {
+          "id": "locomo-001-q2",
+          "question": "How old is Milo and what does he hate?",
+          "answer": "3 years old, hates the vacuum",
+          "category": "single-hop"
+        }
+      ]
+    },
+    {
+      "id": "locomo-002",
+      "conversation": "User: I'm planning a trip to Kyoto in April. Want to see cherry blossoms.\nAssistant: Great time to go!\nUser: My colleague Yuki recommended Arashiyama bamboo grove.\n[ ... 30 turns ... ]\nUser: I booked flights for April 5. Budget is $2500.",
+      "questions": [
+        {
+          "id": "locomo-002-q1",
+          "question": "Where is the user traveling and when? What is their budget?",
+          "answer": "Kyoto, April 5, $2500 budget for cherry blossoms, Arashiyama bamboo grove",
+          "category": "multi-hop"
+        }
+      ]
+    }
+  ]
+}

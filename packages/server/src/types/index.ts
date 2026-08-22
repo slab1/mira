@@ -115,6 +115,15 @@ export interface MiraConfig {
   model: string
   smallModel?: string
   permission: Record<string, PermissionAction | Record<string, PermissionAction>>
+  guardrails?: {
+    enforce?: boolean
+    allowedRoots?: string[]
+    blockedPaths?: string[]
+    blockedCommands?: string[]
+    allowedCommands?: string[]
+    maxOutputBytes?: number
+    auditLogPath?: string
+  }
   mcp: Record<string, MCPServerConfig>
   provider: Record<string, ProviderConfig>
 }

@@ -5,6 +5,7 @@
  */
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
+import { applyEditWithFallback } from "./edit-fallback.js"
 
 export const editTool: ToolDef = {
   name: "edit",
@@ -20,29 +21,20 @@ export const editTool: ToolDef = {
   async execute({ path, oldString, newString, replaceAll }, ctx) {
     const cwd = (ctx as any).cwd ?? process.cwd()
     const abs = path.startsWith("/") ? path : `${cwd}/${path}`
-    const file = Bun.file(abs)
-    if (!(await file.exists())) throw new Error(`File not found: ${path}`)
-    const content = await file.text()
-
-    if (!content.includes(oldString)) {
-      // Layered fallback: try trimmed variant (OpenCode pattern)
-      const trimmed = oldString.trim()
-      if (trimmed && content.includes(trimmed)) {
-        const updated = replaceAll ? content.replaceAll(trimmed, newString.trim()) : content.replace(trimmed, newString.trim())
-        await Bun.write(abs, updated)
-        return { ok: true, path, fallback: "trimmed", replaced: 1 }
-      }
-      throw new Error(`oldString not found in ${path}. Read the file first and copy exact content.`)
+    
+    // Use 9-layer fallback engine with verification
+    const result = await applyEditWithFallback(abs, oldString, newString, replaceAll ?? false)
+    
+    // Backward compatible return shape
+    return {
+      ok: result.ok,
+      path,
+      replaced: result.replaced ?? 1,
+      fallback: result.fallback,
+      layer: result.layer,
+      verification: result.verification,
+      notes: result.notes,
     }
-
-    const count = content.split(oldString).length - 1
-    if (count > 1 && !replaceAll) {
-      throw new Error(`Found ${count} matches for oldString in ${path}. Provide more surrounding context to make it unique, or set replaceAll:true.`)
-    }
-
-    const updated = replaceAll ? content.replaceAll(oldString, newString) : content.replace(oldString, newString)
-    await Bun.write(abs, updated)
-    return { ok: true, path, replaced: replaceAll ? count : 1 }
   },
 }
 

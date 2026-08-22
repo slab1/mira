@@ -113,22 +113,102 @@ export class UsageLearner {
       minCount: config.minCount ?? 3,
       windowSize: config.windowSize ?? 100,
     }
+    // Wire usage telemetry via bus subscription for backward compatibility
+    if (this.deps.bus) {
+      this.deps.bus.subscribe("part.created", (event: any) => {
+        const part = event.payload as Part | undefined
+        if (!part) return
+        // Record tool calls / results from bus events with privacy safeguards
+        if (part.type === "tool-call" && part.tool) {
+          this.recordTool({
+            sessionId: part.sessionID,
+            tool: part.tool,
+            args: this.redactSensitive(part.args),
+            startMs: part.createdAt,
+            endMs: Date.now(),
+            error: false,
+            resultSize: 0,
+            tokens: 0,
+            model: "",
+          } as any).catch(() => {})
+        }
+        if (part.type === "tool-result" && part.tool) {
+          this.recordTool({
+            sessionId: part.sessionID,
+            tool: part.tool,
+            args: {},
+            startMs: part.createdAt,
+            endMs: Date.now(),
+            error: !!part.isError,
+            resultSize: this.safeResultSize(part.result),
+            tokens: 0,
+            model: "",
+          } as any).catch(() => {})
+        }
+      })
+      // Record session completion via message.created as proxy
+      this.deps.bus.subscribe("message.created", (event: any) => {
+        // simple heuristic: if message is assistant, we may close session
+        // actual session finish is handled by explicit recordSession call
+      })
+    }
+  }
+
+  // ── Privacy safeguards ─────────────────────────────────────────────
+  private redactSensitive(input: unknown): unknown {
+    if (typeof input === "string") {
+      return input
+        .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[REDACTED_EMAIL]")
+        .replace(/\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g, "[REDACTED_PHONE]")
+        .replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*["']?([^\s"']+)["']?/gi, "$1=[REDACTED]")
+    }
+    if (Array.isArray(input)) return input.map(v => this.redactSensitive(v))
+    if (input && typeof input === "object") {
+      const out: any = {}
+      for (const [k, v] of Object.entries(input)) {
+        const key = k.toLowerCase()
+        if (["password","secret","token","apikey","api_key"].includes(key)) {
+          out[k] = "[REDACTED]"
+        } else {
+          out[k] = this.redactSensitive(v)
+        }
+      }
+      return out
+    }
+    return input
+  }
+
+  private safeResultSize(result: unknown): number {
+    try {
+      return JSON.stringify(result ?? "").length
+    } catch {
+      return 0
+    }
   }
 
   // ── Recording ──────────────────────────────────────────────────────
 
   /** Call per tool-call from SessionPrompt.loop */
   async recordTool(metric: ToolMetric): Promise<void> {
-    this.toolMetrics.push(metric)
+    const redacted = {
+      ...metric,
+      args: this.redactSensitive(metric.args),
+    }
+    this.toolMetrics.push(redacted)
     if (this.toolMetrics.length > this.maxBuffer) this.toolMetrics.shift()
-    if (this.deps.db) await this.persistTool(metric).catch(() => {})
+    if (this.deps.db) await this.persistTool(redacted).catch(() => {})
   }
 
   /** Call on session finish (streamResponse → runLoop finalize) */
   async recordSession(metric: SessionMetric): Promise<void> {
-    this.sessionMetrics.push(metric)
+    const redacted = {
+      ...metric,
+      prompt: this.redactSensitive(metric.prompt),
+      errorMsg: this.redactSensitive(metric.errorMsg),
+    }
+    this.sessionMetrics.push(redacted)
     if (this.sessionMetrics.length > this.maxBuffer) this.sessionMetrics.shift()
-    if (this.deps.db) await this.persistSession(metric).catch(() => {})
+    if (this.deps.db) await this.persistSession(redacted).catch(() => {})
 
     // Auto-analyze after each session if we have enough data
     if (this.sessionMetrics.length >= 5) {

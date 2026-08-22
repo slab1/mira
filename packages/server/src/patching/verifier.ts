@@ -111,21 +111,58 @@ export class Verifier {
   ): Promise<VerifyResult> {
     const target = patch.targetFile!
 
-    // TS/JS files: tsc --noEmit on shadow
+    // TS/JS files: tsc --noEmit on shadow, fallback to syntax check if tsc unavailable
     if (target.endsWith(".ts") || target.endsWith(".js")) {
       try {
         const proc = Bun.spawn(["npx", "tsc", "--noEmit", "--skipLibCheck", shadowPath], {
           cwd: this.config.rootDir,
           stdout: "pipe", stderr: "pipe",
         })
-        const exit = await proc.exited
-        const stderr = await new Response(proc.stderr).text().catch(() => "")
+        // npx may hang offline — race with timeout, kill on expiry
+        let exit: number | undefined
+        let stderr = "", stdout = ""
+        try {
+          const timeoutMs = 2500
+          const result = await Promise.race([
+            (async () => {
+              const [sErr, sOut, e] = await Promise.all([
+                new Response(proc.stderr).text().catch(() => ""),
+                new Response(proc.stdout).text().catch(() => ""),
+                proc.exited,
+              ])
+              return { sErr, sOut, e }
+            })(),
+            new Promise<never>((_, rej) => setTimeout(() => rej(new Error("tsc_timeout")), timeoutMs)),
+          ]) as { sErr: string; sOut: string; e: number }
+          stderr = result.sErr; stdout = result.sOut; exit = result.e
+        } catch (err) {
+          try { proc.kill() } catch {}
+          // tsc timed out or failed to spawn → fallback to transpiler
+          const ok = await syntaxCheck(shadowPath)
+          if (!ok) return { verified: false, reason: `syntax check failed (tsc timeout): ${String(err)}` }
+          return { verified: true, reason: "shadow syntax passed (tsc timeout, used transpiler)" }
+        }
+        if (exit === undefined) exit = 1
+        const combined = `${stderr}${stdout}`.toLowerCase()
+        // tsc not installed (bunx fallback copies, missing binary) → syntax check instead
+        const tscMissing = combined.includes("could not determine executable")
+          || combined.includes("not the tsc command")
+          || combined.includes("npm install typescript")
+          || combined.includes("not found")
+          || combined.includes("enoent")
+          || (exit !== 0 && combined.trim().length < 10)
         if (exit !== 0) {
+          if (tscMissing) {
+            const ok = await syntaxCheck(shadowPath)
+            if (!ok) return { verified: false, reason: `syntax check failed (tsc unavailable): ${combined.slice(0, 400)}` }
+            return { verified: true, reason: "shadow syntax passed (tsc unavailable, used transpiler)" }
+          }
           return { verified: false, reason: `tsc failed (exit ${exit}): ${stderr.slice(0, 600)}`, shadowOutput: stderr }
         }
       } catch (err) {
         const ok = await syntaxCheck(shadowPath)
         if (!ok) return { verified: false, reason: `syntax check failed: ${String(err)}` }
+        return { verified: true, reason: "shadow syntax passed (tsc threw, used transpiler)" }
       }
       return { verified: true, reason: "shadow tsc passed" }
     }

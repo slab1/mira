@@ -1,0 +1,18 @@
+[
+  {
+    "id": "terminal-bench-mini-1",
+    "task_id": "tbench-001",
+    "instruction": "In /tmp/workspace, create a Python script that reads data.csv and outputs the sum of the 'amount' column to result.txt. data.csv has header: id,amount",
+    "expected": "result.txt contains sum of amount column",
+    "environment": "ubuntu:22.04, python3, bash",
+    "solution": "python3 -c \"import csv; print(sum(int(r['amount']) for r in csv.DictReader(open('data.csv'))))\" > result.txt"
+  },
+  {
+    "id": "terminal-bench-mini-2",
+    "task_id": "tbench-002",
+    "instruction": "Find all files under /app containing TODO and write their paths sorted to /tmp/todos.txt. Use ripgrep or grep recursively.",
+    "expected": "/tmp/todos.txt contains sorted list of files with TODO",
+    "environment": "ubuntu:22.04, ripgrep",
+    "solution": "grep -r TODO /app --files-with-matches | sort > /tmp/todos.txt"
+  }
+]
