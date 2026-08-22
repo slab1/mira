@@ -8,10 +8,18 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["node"],
     "baseUrl": ".",
-    "paths": { "@/*": ["src/*"] }
+    "paths": {
+      "@/*": [
+        "src/*"
+      ]
+    }
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }
