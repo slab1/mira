@@ -27,7 +27,7 @@ jobs:
         with:
           node-version: 22
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install
       - name: Turborepo cache
         uses: actions/cache@v4
         with:
@@ -128,7 +128,7 @@ jobs:
         with:
           node-version: 22
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install
       - name: Semantic release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
