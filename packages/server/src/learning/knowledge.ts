@@ -313,7 +313,7 @@ export class KnowledgeBase {
 const EMBED_DIM = 64
 
 export function embedKeyword(text: string): number[] {
-  const vec = new Array(EMB_DIM).fill(0)
+  const vec = new Array(EMBED_DIM).fill(0)
   const tokens = text.toLowerCase().split(/\W+/).filter(t => t.length >= 2)
   for (const tok of tokens) {
     let h = 0

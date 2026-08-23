@@ -178,7 +178,8 @@ export class SymbolIndex {
 
   private async walk(dir: string, pattern: string, results: string[]) {
     try {
-      for await (const entry of Bun.readDir(dir)) {
+      const entries = Bun.readDirSync(dir);
+      for (const entry of entries) {
         const full = `${dir}/${entry}`;
         if (entry === "." || entry === "..") continue;
         const stat = await Bun.file(full).stat().catch(() => null);

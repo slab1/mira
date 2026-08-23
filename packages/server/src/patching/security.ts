@@ -102,7 +102,7 @@ export class SecurityScanner {
   scanText(text: string, _context?: string): SecurityIssue[] {
     const out: SecurityIssue[] = []
     for (const p of INJECTION_PATTERNS) {
-      if (p.re.search && p.re.test(text) || p.re.test(text)) {
+      if (p.re.test(text)) {
         out.push(this.issue("prompt-injection", "critical", p.detail, text.slice(0, 200), "Sanitize user input; add injection guard before LLM context"))
       }
     }

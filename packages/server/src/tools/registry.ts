@@ -84,7 +84,8 @@ export class ToolRegistry {
     ]
     for (const load of modules) {
       const mod = await load()
-      const defs: ToolDef[] = mod.default ?? mod.tools ?? [mod.tool].filter(Boolean)
+      const raw = mod.default ?? mod.tools ?? (mod.tool ? [mod.tool] : [])
+      const defs: ToolDef[] = Array.isArray(raw) ? raw : [raw].filter(Boolean)
       for (const d of defs) if (d) this.register(d)
     }
   }

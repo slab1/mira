@@ -50,7 +50,7 @@ async function main() {
 
   // 3. Event Bus (GlobalBus)
   const bus = new Bus()
-  bus.on("server.heartbeat", () => {}) // keepalive example
+  bus.subscribe("server.heartbeat", () => {}) // keepalive example
 
   // 4. Permission (5 layers)
   const permissions = new PermissionManager(config.permission)
@@ -88,7 +88,8 @@ async function main() {
   app.use("*", logger())
 
   // Health
-  app.get("/health", c => c.json({ ok: true, version: "0.1.0", tools: tools.count() }))
+  app.get("/health", c => c.json({ ok: true, version: "0.1.0", tools: tools.count(), uptime: process.uptime(), memory: process.memoryUsage() }))
+  app.get("/dev/health", c => c.json({ ok: true, version: "0.1.0", tools: tools.count(), busHistory: bus.recent(5).length, learning: learning.scheduler.status(), uptime: process.uptime() }))
 
   // REST — sessions
   app.get("/session", async c => {
