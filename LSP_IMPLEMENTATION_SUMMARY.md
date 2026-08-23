@@ -1,7 +1,9 @@
 # LSP Intelligence Implementation Summary
 
+> **Status:** Superseded by real LSP integration (2026-08). `packages/server/src/lsp/client.ts` speaks LSP 3.17 JSON-RPC to actual servers (gopls auto-detected; `MIRA_LSP_<LANG>_CMD` for others), with this heuristic SymbolIndex retained as fallback. See `src/lsp/client.test.ts` + `gopls.live.test.ts`.
+
 ## Overview
-Implemented symbol-aware LSP capabilities for Mira agent platform at `/tmp/aether`. Integrated Language Server Protocol-like symbol resolution, go-to-definition, references, semantic awareness, hover, diagnostics, and rename into the codebase while preserving existing functionality.
+Implemented symbol-aware LSP capabilities for Mira agent platform. Integrated Language Server Protocol-like symbol resolution, go-to-definition, references, semantic awareness, hover, diagnostics, and rename into the codebase while preserving existing functionality.
 
 ## Files Changed
 

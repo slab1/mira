@@ -57,6 +57,29 @@
 - Event-driven glue (BusEvent → GlobalBus → Worker)
 - Pragmatism (SQLite over Postgres, Drizzle over Prisma)
 
+## Implemented State (2026-08)
+
+The blueprint above is now **built and verified** in this repo:
+
+| Layer | Implementation | Verified by |
+|-------|---------------|-------------|
+| Models & Inference | Gateway: OpenRouter + NVIDIA NIM, OpenAI-compatible wire, prompt caching for Claude, cost tracking per request + per session | Live LLM E2E (gated) |
+| Protocols & Tools | 24 native tools; **real MCP stdio client** (initialize/tools/list/tools/call); **real LSP 3.17 client** (gopls) with heuristic fallback | Mock-server protocol tests + live gopls test |
+| Memory & Knowledge | KnowledgeBase singleton: episodic/semantic/procedural, cosine+tag+graph retrieval, auto-injected into every turn; `memory_search`/`memory_write` tools | Unit tests + live roundtrip |
+| Frameworks | Thin custom loop (`SessionPrompt`): stream → tools → permission → snapshot → doom-loop → compaction → usage learning | E2E server tests |
+| Eval & Observability | 3-tier eval runner gating CI; gateway cost stats at `/dev/health` + UI headers; per-session spend columns | eval pr tier PASS |
+| Guardrails & Safety | Permission 5-layer + BashArity at tool layer; audit log; **file snapshots before every mutation** with undo/rewind REST | Snapshot unit + E2E tests |
+
+Additional shipped systems:
+
+- **Doom-loop detector** — 3x identical / A-B cycle / no-progress edit detection (unit-tested; fixed first-call false positive)
+- **Compaction** — hierarchical summarize via small model (abstractive when key present, extractive fallback otherwise)
+- **HITL** — `question` tool pauses the loop; `question.ask`/`question.reply` over WS; web + TUI renderers
+- **Queueing** — durable SQLite message queue; chained-turn drain after finalize
+- **Subagents** — `task` tool spawns persistent child sessions (`parentID`), personas via agent templates
+- **Self-improvement** — pain-point detector → patcher → shadow verifier → applier; opt-in autopilot opens PRs via `gh`
+- **Security defaults** — loopback bind, optional bearer token, env-var secrets only
+
 ## Design Principles
 
 1. Start thin, earn complexity

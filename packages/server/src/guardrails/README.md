@@ -31,7 +31,7 @@ Add to `mira.json` / `opencode.jsonc`:
 {
   "guardrails": {
     "enforce": false,
-    "allowedRoots": ["/tmp/aether", "/home/user/projects"],
+    "allowedRoots": ["/home/user/projects", "/home/user/projects"],
     "blockedPaths": ["/etc", "/root"],
     "blockedCommands": ["rm -rf /", "mkfs"],
     "auditLogPath": "./data/audit.log"

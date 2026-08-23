@@ -1,6 +1,8 @@
 # Tool-Layer Guardrails Implementation Summary
 
-Implemented security guardrails for tool execution in `/tmp/aether`.
+> **Status:** Shipped and active. Guardrails run in the tool registry on every call (pre-check + audit log). Audit log now writes via `appendFile` with directory creation. See `packages/server/src/guardrails/README.md`.
+
+Implemented security guardrails for tool execution.
 
 ## Files Changed / Created
 
@@ -54,7 +56,7 @@ Implemented security guardrails for tool execution in `/tmp/aether`.
 {
   "guardrails": {
     "enforce": false,
-    "allowedRoots": ["/tmp/aether"],
+    "allowedRoots": ["/home/user/projects"],
     "blockedPaths": ["/etc", "/root"],
     "blockedCommands": ["rm -rf /"],
     "auditLogPath": "./data/audit.log"
