@@ -20,6 +20,7 @@
 import type { Bus } from "../bus/index.js"
 import type { ToolRegistry } from "../tools/registry.js"
 import { z } from "zod"
+import { McpStdioClient } from "./stdio-client.js"
 
 interface MCPServerConfig {
   type: "local" | "remote"
@@ -48,6 +49,7 @@ interface ConnectedServer {
 export class MCPManager {
   private servers = new Map<string, ConnectedServer>()
   private processes = new Map<string, any>() // Bun.Spawn handles for stdio
+  private clients = new Map<string, McpStdioClient>()
 
   constructor(private deps: MCPManagerDeps) {}
 
@@ -85,51 +87,41 @@ export class MCPManager {
 
     const args = (cfg.command?.slice(1) ?? cfg.args ?? [])
     // Expand {env:VAR} in env values
-    const env: Record<string, string> = { ...process.env as any }
+    const env: Record<string, string> = {}
     for (const [k, v] of Object.entries(cfg.env ?? {})) {
       env[k] = v.replace(/\{env:([^}]+)\}/g, (_, varName) => process.env[varName] ?? "")
     }
 
-    // Spawn MCP server (JSON-RPC over stdio)
-    // In production: use @modelcontextprotocol/sdk client
-    // Minimal: spawn and perform initialize + tools/list handshake
-    try {
-      const proc = Bun.spawn([command, ...args], {
-        env,
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: "pipe",
+    // Real MCP handshake over stdio: initialize → initialized → tools/list
+    const client = await McpStdioClient.spawn([command, ...args], { env })
+    this.clients.set(name, client)
+    this.processes.set(name, client.handle)
+
+    const discovered = await client.listTools()
+    const registered: string[] = []
+    for (const t of discovered) {
+      const toolName = `mcp__${name}__${t.name}`
+      this.deps.tools.register({
+        name: toolName,
+        description: t.description ?? `MCP tool ${t.name} from ${name}`,
+        category: "mcp",
+        needsPermission: true,
+        // JSON Schema from the server passes through; remote validates its own args
+        schema: z.object({}).passthrough(),
+        async execute(args) {
+          const result = await client.callTool(t.name, (args as Record<string, unknown>) ?? {})
+          const text = (result.content ?? [])
+            .filter(c => c.type === "text")
+            .map(c => c.text)
+            .join("\n")
+          return { ok: !result.isError, text }
+        },
       })
-      this.processes.set(name, proc)
-
-      // Stub discovery — in prod, do JSON-RPC initialize → tools/list
-      // Here we register a placeholder so the registry count is correct
-      // Real impl:
-      //   const client = new MCPClient({ transport: new StdioTransport(proc) })
-      //   await client.initialize()
-      //   const { tools } = await client.listTools()
-      //   for (const t of tools) registry.register({ name: `mcp__${name}__${t.name}`, ... })
-
-      // Simulate discovery of 1-2 tools per server for demo
-      const stubTools = [`mcp__${name}__tool1`, `mcp__${name}__tool2`].slice(0, 1)
-      for (const toolName of stubTools) {
-        this.deps.tools.register({
-          name: toolName,
-          description: `MCP tool ${toolName} from ${name} (stdio) — live after SDK handshake`,
-          category: "mcp",
-          needsPermission: true,
-          schema: z.object({ input: z.string().optional().describe("Tool input") }).passthrough(),
-          async execute(args) {
-            // Proxy to MCP server via JSON-RPC tools/call
-            return { mcp: name, tool: toolName, args, note: "MCP proxy stub — wire @modelcontextprotocol/sdk for live calls" }
-          },
-        })
-      }
-      this.servers.set(name, { name, config: cfg, tools: stubTools, status: "connected" })
-      console.log(`[mcp] ${name} (stdio) → ${stubTools.length} tools`)
-    } catch (e) {
-      throw new Error(`stdio ${name}: ${String(e)}`)
+      registered.push(toolName)
     }
+
+    this.servers.set(name, { name, config: cfg, tools: registered, status: "connected" })
+    console.log(`[mcp] ${name} (stdio) → ${registered.length} tools`)
   }
 
   // ── Remote transport (StreamableHTTP / SSE) ──────────────────────
@@ -193,6 +185,10 @@ export class MCPManager {
   }
 
   disconnectAll(): void {
+    for (const [, client] of this.clients) {
+      try { client.shutdown() } catch {}
+    }
+    this.clients.clear()
     for (const [name, proc] of this.processes) {
       try { proc.kill() } catch {}
       console.log(`[mcp] ${name} disconnected`)
