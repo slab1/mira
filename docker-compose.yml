@@ -1,0 +1,26 @@
+services:
+  mira:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mira-server:latest
+    container_name: mira
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-4096}:4096"
+    volumes:
+      - ./data:/app/data
+      - ./scripts:/app/scripts:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4096/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
