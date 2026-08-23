@@ -87,6 +87,27 @@ Without keys the gateway serves a stub stream — the whole pipeline (tools, per
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) and [packages/server/README.md](./packages/server/README.md).
 
+## Production Deployment
+
+```bash
+# Build image
+docker build -t ghcr.io/slab1/mira:latest .
+
+# Run with persistent data volume
+docker run -d \
+  --name mira \
+  -p 4096:4096 \
+  -v $(pwd)/data:/app/data \
+  --env-file .env \
+  ghcr.io/slab1/mira:latest
+```
+
+**Required env vars:** `HOST=0.0.0.0`, `MIRA_TOKEN`, `OPENROUTER_API_KEY` or `NVIDIA_API_KEY`.
+
+Health check: `GET http://host:4096/health`
+
+CI/CD: `.github/workflows/cd.yml` builds multi-arch image to GHCR and deploys when `vars.DEPLOY_ENABLED=true`.
+
 ## License
 
 MIT — Open source, provider-agnostic, community-driven.

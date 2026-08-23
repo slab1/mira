@@ -1,0 +1,47 @@
+# Dependencies
+node_modules
+packages/*/node_modules
+dist
+packages/*/dist
+.turbo
+.next
+out
+
+# Git
+.git
+.gitignore
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs
+
+# Docs & tests
+coverage
+test-results
+*.md
+!README.md
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Misc
+data/mira.db
+data/*.db
+data/*.db-wal
+data/*.db-shm
