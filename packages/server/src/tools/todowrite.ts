@@ -5,7 +5,7 @@
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 
-export const todowriteTool: ToolDef = {
+export const todowriteTool = {
   name: "todowrite",
   description: "Manage task todos. Use for plan-first workflow: create todos before coding, update as you progress. Exactly one in_progress at a time.",
   category: "planning",

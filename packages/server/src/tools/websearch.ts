@@ -5,7 +5,7 @@
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 
-export const websearchTool: ToolDef = {
+export const websearchTool = {
   name: "websearch",
   description: "Search the web. Returns titles, URLs, snippets. Use webfetch to read full content of promising results.",
   category: "web",
@@ -34,7 +34,7 @@ export const websearchTool: ToolDef = {
   },
 }
 
-export const webfetchTool: ToolDef = {
+export const webfetchTool = {
   name: "webfetch",
   description: "Fetch a URL and extract main content as markdown. Handles redirects, 30s timeout.",
   category: "web",

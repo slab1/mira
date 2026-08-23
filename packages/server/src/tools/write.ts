@@ -7,7 +7,7 @@ import type { ToolDef } from "./registry.js"
 import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 
-export const writeTool: ToolDef = {
+export const writeTool = {
   name: "write",
   description: "Create or overwrite a file. Creates parent directories if needed. Prefer edit for partial updates.",
   category: "file",

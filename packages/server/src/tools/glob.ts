@@ -5,7 +5,7 @@ import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 import { Glob } from "bun"
 
-export const globTool: ToolDef = {
+export const globTool = {
   name: "glob",
   description: "Find files by glob pattern. Example: **/*.ts, src/**/*.tsx. Returns matching paths.",
   category: "file",
@@ -26,7 +26,7 @@ export const globTool: ToolDef = {
   },
 }
 
-export const grepTool: ToolDef = {
+export const grepTool = {
   name: "grep",
   description: "Search file contents via regex. Returns file:line matches. Use glob first to narrow scope if needed.",
   category: "file",

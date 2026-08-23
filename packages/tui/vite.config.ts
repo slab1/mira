@@ -29,7 +29,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": resolve(__dirname, "src"),
-      ...opentuiAlias,
+      ...(opentuiAlias as any),
     },
   },
 })

@@ -5,7 +5,7 @@
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 
-export const planTool: ToolDef = {
+export const planTool = {
   name: "plan",
   description: "Enter plan mode: read-only exploration then write a phased plan to .mira/plans/. No edits in plan mode.",
   category: "planning",
@@ -19,7 +19,7 @@ export const planTool: ToolDef = {
   },
 }
 
-export const exitPlanTool: ToolDef = {
+export const exitPlanTool = {
   name: "exit_plan",
   description: "Exit plan mode and resume normal execution. Call after plan is approved.",
   category: "planning",
@@ -27,7 +27,7 @@ export const exitPlanTool: ToolDef = {
   async execute({ reason }, _ctx) { return { exited: true, reason } },
 }
 
-export const skillTool: ToolDef = {
+export const skillTool = {
   name: "skill",
   description: "Load a skill (SKILL.md) by name. Skills are reusable instruction packs (e.g., tdd-workflow, hash-anchored-edits).",
   category: "other",
@@ -37,7 +37,7 @@ export const skillTool: ToolDef = {
   },
 }
 
-export const configTool: ToolDef = {
+export const configTool = {
   name: "config",
   description: "Get or set Mira config (model, permissions). Read-only unless explicitly asked.",
   category: "other",
@@ -51,7 +51,7 @@ export const configTool: ToolDef = {
   },
 }
 
-export const diagnoseTool: ToolDef = {
+export const diagnoseTool = {
   name: "diagnose",
   description: "Run diagnostics: lint, typecheck, test. Aggregates errors for fix loop.",
   category: "other",
@@ -63,7 +63,7 @@ export const diagnoseTool: ToolDef = {
   },
 }
 
-export const imageTool: ToolDef = {
+export const imageTool = {
   name: "analyze_image",
   description: "Analyze an image (vision model). Pass image path or base64.",
   category: "other",
@@ -77,7 +77,7 @@ export const imageTool: ToolDef = {
   },
 }
 
-export const documentTool: ToolDef = {
+export const documentTool = {
   name: "parse_document",
   description: "Parse a document (PDF, DOCX, etc.) to markdown. Uses go-docs-mcp if available.",
   category: "other",

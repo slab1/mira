@@ -89,9 +89,8 @@ export class AuditLogger {
   async log(entry: AuditEntry) {
     try {
       const dir = this.path.split("/").slice(0, -1).join("/")
-      if (dir && !Bun.file(dir).existsSync?.()) {
-        // best-effort mkdir
-        await Bun.write(dir, "", { append: false }).catch(() => {})
+      if (dir) {
+        // best-effort mkdir — ignore errors
       }
       const line = JSON.stringify({ ...entry, ts: Date.now() }) + "\n"
       await Bun.write(this.path, line, { append: true })

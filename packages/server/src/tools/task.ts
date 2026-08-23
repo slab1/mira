@@ -6,7 +6,7 @@
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 
-export const taskTool: ToolDef = {
+export const taskTool = {
   name: "task",
   description: "Delegate a task to a subagent (explore, plan, general, etc.). Subagent has isolated context and returns a summary. Use for parallel independent work.",
   category: "execution",

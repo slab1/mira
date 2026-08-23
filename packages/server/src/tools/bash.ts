@@ -6,7 +6,7 @@
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 
-export const bashTool: ToolDef = {
+export const bashTool = {
   name: "bash",
   description: "Execute a bash command. Use for building, testing, git, file ops. Prefer read/grep/glob for file inspection. Timeout 30s default.",
   category: "execution",
@@ -36,7 +36,7 @@ export const bashTool: ToolDef = {
     const err = stderr.length > MAX ? stderr.slice(0, MAX) + `\n…truncated` : stderr
     return { stdout: out, stderr: err, exitCode, command }
   },
-}
+} satisfies ToolDef
 
 export default bashTool
 // Also export as array for registry loader compatibility

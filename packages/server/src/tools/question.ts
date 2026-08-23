@@ -5,7 +5,7 @@
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 
-export const questionTool: ToolDef = {
+export const questionTool = {
   name: "question",
   description: "Ask the user a clarifying question. Use when requirements are ambiguous or you need a decision before proceeding. Pauses execution until user replies.",
   category: "planning",

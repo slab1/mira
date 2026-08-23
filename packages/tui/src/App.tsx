@@ -20,15 +20,10 @@
 import { Show, createEffect, createSignal, onMount, onCleanup } from "solid-js"
 // @opentui/solid — SolidJS renderer for terminal (Box/Text primitives, Yoga layout)
 // Vite preview renders to DOM (#root); native TUI uses renderTui → stdout.
-import { Box, Text } from "@opentui/solid"
+import { render } from "@opentui/solid"
 import { createSessionStore } from "./stores/session"
 import SessionView from "./components/SessionView"
 import PermissionView from "./components/PermissionView"
-
-// Re-export a helper that proves @opentui/solid wiring (used in native `bun src/index.ts` mode)
-// When running as a real terminal TUI (Bun), entry does: `import { render } from "@opentui/solid"; render(() => <App />, { target: process.stdout })`
-// keepBoxRef ensures the import is not tree-shaken away in typecheck.
-const _opentuiWiring = { Box, Text }
 
 export default function App() {
   const store = createSessionStore()

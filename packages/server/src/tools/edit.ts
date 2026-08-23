@@ -7,7 +7,7 @@ import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 import { applyEditWithFallback } from "./edit-fallback.js"
 
-export const editTool: ToolDef = {
+export const editTool = {
   name: "edit",
   description: "Edit a file via exact string replacement. oldString must match exactly (including whitespace). For new files use write. Set replaceAll=true to replace every occurrence.",
   category: "file",
@@ -39,7 +39,7 @@ export const editTool: ToolDef = {
 }
 
 // Companion: apply patch via unified diff (9th fallback layer)
-export const patchTool: ToolDef = {
+export const patchTool = {
   name: "patch",
   description: "Apply a unified diff patch to a file or create new files from patch. Alternative to edit for multi-hunk changes.",
   category: "file",

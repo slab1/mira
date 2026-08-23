@@ -4,7 +4,7 @@
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 
-export const sessionListTool: ToolDef = {
+export const sessionListTool = {
   name: "session_list",
   description: "List recent sessions with titles and last activity.",
   category: "session",
@@ -22,7 +22,7 @@ export const sessionListTool: ToolDef = {
   },
 }
 
-export const sessionForkTool: ToolDef = {
+export const sessionForkTool = {
   name: "session_fork",
   description: "Fork the current session at a previous message (branching exploration).",
   category: "session",

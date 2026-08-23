@@ -6,7 +6,7 @@
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 
-export const memorySearchTool: ToolDef = {
+export const memorySearchTool = {
   name: "memory_search",
   description: "Search past session memory and knowledge graph. Use at session start to recall relevant context.",
   category: "memory",
@@ -24,7 +24,7 @@ export const memorySearchTool: ToolDef = {
   },
 }
 
-export const memoryWriteTool: ToolDef = {
+export const memoryWriteTool = {
   name: "memory_write",
   description: "Persist a finding to hierarchical memory (episodic log + semantic graph). Call at key milestones.",
   category: "memory",

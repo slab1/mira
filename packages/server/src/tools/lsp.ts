@@ -7,7 +7,7 @@ import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 import { symbolIndex } from "../symbols/index.js"
 
-export const lspTool: ToolDef = {
+export const lspTool = {
   name: "lsp",
   description: "LSP operations: hover, definition, references, diagnostics, rename. Use for symbol-aware code intelligence before edits.",
   category: "file",

@@ -5,7 +5,7 @@
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 
-export const readTool: ToolDef = {
+export const readTool = {
   name: "read",
   description: "Read a file from disk. Returns content with line numbers. For images, returns base64. Use glob to discover files first.",
   category: "file",
