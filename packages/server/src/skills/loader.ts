@@ -4,6 +4,7 @@
  */
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
+import { readdirSync } from "node:fs"
 
 export interface Skill {
   name: string
@@ -16,7 +17,7 @@ export async function loadSkills(): Promise<Record<string, Skill>> {
   const dir = join(process.cwd(), "packages/server/data/skills")
   const skills: Record<string, Skill> = {}
   try {
-    const entries = Bun.readDirSync(dir)
+    const entries = readdirSync(dir)
     for (const entry of entries) {
       const skillDir = join(dir, entry)
       const mdPath = join(skillDir, "SKILL.md")

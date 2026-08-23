@@ -105,7 +105,7 @@ export class OnlineLearner {
       maxChars: config.maxChars ?? 12_000,
       searchFn: config.searchFn ?? createDefaultSearchFn(),
       fetchFn: config.fetchFn ?? createDefaultFetchFn(),
-    }
+    } as Required<OnlineLearnerConfig>
   }
 
   // ── Privacy safeguards ─────────────────────────────────────────────
@@ -176,7 +176,7 @@ export class OnlineLearner {
     const redactedInsights = insights.map(i => ({
       ...i,
       summary: this.redactInsightText(i.summary),
-      content: this.redactInsightText(i.content),
+      rawExcerpt: this.redactInsightText(i.rawExcerpt),
     }))
 
     // 5. Persist + publish (best-effort)

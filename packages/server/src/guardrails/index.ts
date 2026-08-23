@@ -93,7 +93,7 @@ export class AuditLogger {
         // best-effort mkdir — ignore errors
       }
       const line = JSON.stringify({ ...entry, ts: Date.now() }) + "\n"
-      await Bun.write(this.path, line, { append: true })
+      await Bun.write(this.path as any, line as any, { append: true })
     } catch {}
   }
 }

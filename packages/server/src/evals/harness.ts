@@ -9,7 +9,7 @@ export interface EvalCase {
 }
 
 export async function runEvals(cases: EvalCase[]) {
-  const results = []
+  const results: { id: string; pass: boolean }[] = []
   for (const c of cases) {
     results.push({ id: c.id, pass: true })
   }
