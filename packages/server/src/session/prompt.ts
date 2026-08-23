@@ -342,7 +342,17 @@ export class SessionPrompt {
             totalTokensOut += Number(u.completionTokens ?? u.outputTokens ?? 0) || 0
           }
           if (chunk.finishReason === "stop" && toolCalls.length === 0) {
-            // No more tool calls → conversation turn complete
+            // Conversation turn complete — drain trailing chunks (e.g. usage-report)
+            // so gateway cost tracking sees them, then exit the loop.
+            for await (const tail of stream) {
+              if ((tail as any).type === "usage-report") {
+                const tu: any = (tail as any).usage
+                if (tu) {
+                  totalTokensIn += Number(tu.inputTokens ?? tu.prompt_tokens ?? 0) || 0
+                  totalTokensOut += Number(tu.outputTokens ?? tu.completion_tokens ?? 0) || 0
+                }
+              }
+            }
             break loop
           }
         } else if (chunk.type === "error") {

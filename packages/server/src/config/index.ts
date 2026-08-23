@@ -29,6 +29,20 @@ const DEFAULT_CONFIG: MiraConfig = {
       },
       models: {},
     },
+    // NVIDIA NIM — OpenAI-compatible. Enabled when NVIDIA_API_KEY is set.
+    ...(process.env.NVIDIA_API_KEY
+      ? {
+          nvidia: {
+            npm: "@ai-sdk/openai-compatible",
+            name: "NVIDIA NIM",
+            options: {
+              baseURL: "https://integrate.api.nvidia.com/v1",
+              apiKey: process.env.NVIDIA_API_KEY,
+            },
+            models: {},
+          },
+        }
+      : {}),
   },
 }
 

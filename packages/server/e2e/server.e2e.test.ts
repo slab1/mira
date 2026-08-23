@@ -101,4 +101,44 @@ describe("Mira server E2E", () => {
     expect(typeof dev.gateway.costUSD).toBe("number")
     expect(dev.learning).toBeDefined()
   })
+
+  // ── Live LLM roundtrip (skips when no key is configured) ──────────
+  const liveKey = process.env.NVIDIA_API_KEY
+  const LIVE_MODEL = "nvidia/meta/llama-3.3-70b-instruct"
+
+  test.skipIf(!liveKey)("LIVE: real LLM streams through the full pipeline", async () => {
+    const created = await fetch(`${BASE}/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "live-llm-test", model: LIVE_MODEL }),
+    })
+    const session = await created.json()
+    expect(session.model).toBe(LIVE_MODEL)
+
+    const res = await fetch(`${BASE}/session/${session.id}/prompt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "Reply with exactly the word: MIRA_E2E_OK" }),
+    })
+    const body = await res.text()
+
+    // No loop errors, real finish
+    expect(body).not.toContain("event: error")
+    expect(body).toContain("event: step_start")
+    expect(body).toContain("event: finish")
+
+    // Real model output arrived via text deltas
+    const deltas = [...body.matchAll(/"delta":"((?:[^"\\]|\\.)*)"/g)].map(m => m[1])
+    const fullText = deltas.join("")
+    console.log("  [live] model output:", JSON.stringify(fullText.slice(0, 120)))
+    expect(fullText.length).toBeGreaterThan(0)
+    expect(fullText).not.toContain("[Mira stub") // must NOT be the stub stream
+
+    // Gateway recorded real token usage
+    await Bun.sleep(500)
+    const dev = await (await fetch(`${BASE}/dev/health`)).json()
+    expect(dev.gateway.requests).toBeGreaterThan(0)
+    expect(dev.gateway.inputTokens).toBeGreaterThan(0)
+    console.log("  [live] gateway stats:", JSON.stringify(dev.gateway.byModel))
+  }, 60_000)
 })

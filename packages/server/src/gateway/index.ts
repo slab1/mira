@@ -41,18 +41,20 @@ export interface Gateway {
   stats(): { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number; byModel: Record<string, { requests: number; inputTokens: number; outputTokens: number; costUSD: number }> }
 }
 
-/** Wrap an async iterable, invoking onUsage when the finish chunk carries usage */
+/** Wrap an async iterable, invoking onUsage when usage info appears (finish chunk or trailing report) */
 async function* trackedStream(iter: AsyncIterable<any>, onUsage: (u: { input: number; output: number }) => void): AsyncIterable<any> {
   for await (const chunk of iter) {
-    if (chunk?.type === "finish") {
-      const u = chunk.usage
-      if (u && typeof u === "object") {
-        const input = Number(u.inputTokens ?? u.prompt_tokens ?? u.promptTokens ?? 0) || 0
-        const output = Number(u.outputTokens ?? u.completion_tokens ?? u.completionTokens ?? 0) || 0
-        if (input || output) {
-          chunk.usage = { inputTokens: input, outputTokens: output }
-          onUsage({ input, output })
-        }
+    const u = chunk?.type === "finish"
+      ? chunk.usage
+      : chunk?.type === "usage-report"
+        ? chunk.usage
+        : null
+    if (u && typeof u === "object") {
+      const input = Number(u.inputTokens ?? u.prompt_tokens ?? u.promptTokens ?? 0) || 0
+      const output = Number(u.outputTokens ?? u.completion_tokens ?? u.completionTokens ?? 0) || 0
+      if (input || output) {
+        if (chunk.type === "finish") chunk.usage = { inputTokens: input, outputTokens: output }
+        onUsage({ input, output })
       }
     }
     yield chunk
@@ -284,9 +286,17 @@ async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID:
         const trimmed = line.trim()
         if (!trimmed.startsWith("data:")) continue
         const data = trimmed.slice(5).trim()
-        if (data === "[DONE]") return
+        if (data === "[DONE]") {
+          // Providers that send usage in a trailing chunk: emit it before closing
+          if (lastUsage) yield { type: "usage-report", usage: lastUsage }
+          return
+        }
         try {
           const json: any = JSON.parse(data)
+          // Usage-only chunks (choices: []) arrive before/without finish — always capture
+          if (json.usage) {
+            lastUsage = { inputTokens: json.usage.prompt_tokens ?? 0, outputTokens: json.usage.completion_tokens ?? 0 }
+          }
           const choice = json.choices?.[0]
           if (!choice) continue
           if (choice.delta?.content) yield { type: "text-delta", text: choice.delta.content }
@@ -296,11 +306,7 @@ async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID:
             }
           }
           if (choice.finish_reason) {
-            const u = json.usage
-            yield { type: "finish", finishReason: choice.finish_reason === "tool_calls" ? "tool-calls" : "stop", ...(u ? { usage: { inputTokens: u.prompt_tokens ?? 0, outputTokens: u.completion_tokens ?? 0 } } : {}) }
-          } else if (json.usage) {
-            // Some providers emit a final chunk with only usage
-            lastUsage = { inputTokens: json.usage.prompt_tokens ?? 0, outputTokens: json.usage.completion_tokens ?? 0 }
+            yield { type: "finish", finishReason: choice.finish_reason === "tool_calls" ? "tool-calls" : "stop", ...(lastUsage ? { usage: lastUsage } : {}) }
           }
         } catch {}
       }

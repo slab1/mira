@@ -214,6 +214,8 @@ async function main() {
   const server = Bun.serve({
     port: PORT,
     hostname: "0.0.0.0",
+    // Long SSE streams (LLM first-token latency can exceed 10s) need a generous idle timeout
+    idleTimeout: 180,
     fetch: app.fetch,
     websocket: {
       open(ws) {
