@@ -1,3 +1,13 @@
+import { useEffect, useState } from "react"
+
 export function SkillSelector() {
-  return <div>Skill selector placeholder</div>
+  const [skills, setSkills] = useState<string[]>([])
+  useEffect(() => {
+    fetch("/skills").then(r => r.json()).then(setSkills)
+  }, [])
+  return (
+    <select>
+      {skills.map(s => <option key={s} value={s}>{s}</option>)}
+    </select>
+  )
 }
