@@ -145,12 +145,25 @@ describe("Mira server E2E", () => {
     const session = await created.json()
     expect(session.model).toBe(LIVE_MODEL)
 
-    const res = await fetch(`${BASE}/session/${session.id}/prompt`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: "Reply with exactly the word: MIRA_E2E_OK" }),
-    })
-    const body = await res.text()
+    // Provider latency from CI sandboxes varies wildly (6s–60s+ first byte).
+    // Retry the prompt up to 3× so one network hiccup doesn't fail the suite.
+    let body = ""
+    let lastErr: unknown = null
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await fetch(`${BASE}/session/${session.id}/prompt`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: "Reply with exactly the word: MIRA_E2E_OK" }),
+        })
+        body = await res.text()
+        if (body.includes("event: finish") && /"delta":"/.test(body)) break
+      } catch (e) {
+        lastErr = e
+      }
+      if (attempt < 3) await Bun.sleep(2000)
+    }
+    expect(body).toBeTruthy()
 
     // No loop errors, real finish
     expect(body).not.toContain("event: error")
@@ -170,5 +183,5 @@ describe("Mira server E2E", () => {
     expect(dev.gateway.requests).toBeGreaterThan(0)
     expect(dev.gateway.inputTokens).toBeGreaterThan(0)
     console.log("  [live] gateway stats:", JSON.stringify(dev.gateway.byModel))
-  }, 60_000)
+  }, 240_000)
 })

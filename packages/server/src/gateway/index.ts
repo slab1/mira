@@ -264,6 +264,8 @@ async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID:
       "X-Title": "Mira",
     },
     body: JSON.stringify(body),
+    // Never let a stalled provider hang the session loop — fail → stub fallback
+    signal: AbortSignal.timeout(120_000),
   })
   if (!res.ok) {
     const err = await res.text()
