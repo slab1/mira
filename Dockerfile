@@ -24,7 +24,7 @@ RUN bun run build || echo "build warning"
 
 # Runner stage
 FROM base AS runner
-RUN addgroup --system --gid 1001 mira && adduser --system --uid 1001 mira
+RUN groupadd -r -g 1001 mira && useradd -r -u 1001 -g mira mira
 WORKDIR /app
 
 # Copy built artifacts
