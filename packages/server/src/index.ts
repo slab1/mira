@@ -43,8 +43,9 @@ async function initOtel() {
   try {
     const { NodeSDK } = await import('@opentelemetry/sdk-node')
     const { OTLPTraceExporter } = await import('@opentelemetry/exporter-trace-otlp-http')
-    const { Resource } = await import('@opentelemetry/resources')
+    const resources = await import('@opentelemetry/resources')
     const { SemanticResourceAttributes } = await import('@opentelemetry/semantic-conventions')
+    const Resource = (resources as any).Resource
     const sdk = new NodeSDK({
       resource: new Resource({ [SemanticResourceAttributes.SERVICE_NAME]: 'mira-server' }),
       traceExporter: new OTLPTraceExporter({ url: `${endpoint.replace(/\/$/, '')}/v1/traces` })
@@ -150,7 +151,7 @@ async function main() {
   app.use("*", async (c, next) => {
     const start = Date.now()
     const requestId = crypto.randomUUID()
-    c.set("requestId", requestId)
+    ;(c as any).set("requestId", requestId)
     await next()
     const duration = Date.now() - start
     const status = c.res.status
