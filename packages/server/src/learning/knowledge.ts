@@ -332,3 +332,12 @@ export function cosine(a: number[], b: number[]): number {
   for (let i = 0; i < n; i++) dot += a[i] * b[i]
   return dot // already normalized
 }
+
+/** Simple helper for prompt injection */
+export async function searchKnowledge(query: string, limit = 3) {
+  // Lazy import to avoid circular deps
+  const { KnowledgeBase } = await import("./knowledge.js")
+  const kb = new KnowledgeBase()
+  await kb.load()
+  return kb.retrieve({ query, limit })
+}

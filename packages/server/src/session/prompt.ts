@@ -29,7 +29,7 @@ import type { Gateway } from "../gateway/index.js"
 import { buildSystemPrompt } from "../config/index.js"
 import { DoomLoopDetector } from "./doom-loop-detector.js"
 import { needsCompaction, compactMessages, estimateTokens } from "./compaction.js"
-// import { searchKnowledge } from "../learning/knowledge.js"
+import { searchKnowledge } from "../learning/knowledge.js"
 import { loadSkills } from "../skills/loader.js"
 import { initLangfuse } from "../telemetry/langfuse.js"
 
@@ -330,16 +330,15 @@ export class SessionPrompt {
       }
     } catch {}
     // Memory retrieval: inject relevant knowledge
-    // const lastUserText = messages.length ? (messages[messages.length - 1].parts?.find((p: any) => p.type === "text")?.text ?? "") : ""
-    // if (lastUserText) {
-    //   try {
-    //     const docs = await searchKnowledge(lastUserText, 3)
-    //     if (docs.length) {
-    //       context.push({ role: "system", content: `Relevant memory:\n${docs.map(d => `- ${d.title}: ${d.content.slice(0, 300)}`).join("\n")}` })
-    //     }
-    //   } catch {}
-    // }
-    // Placeholder memory injection disabled until KnowledgeBase.retrieve is exposed
+    const lastUserText = messages.length ? (messages[messages.length - 1].parts?.find((p: any) => p.type === "text")?.text ?? "") : ""
+    if (lastUserText) {
+      try {
+        const docs = await searchKnowledge(lastUserText, 3)
+        if (docs.length) {
+          context.push({ role: "system", content: `Relevant memory:\n${docs.map(d => `- ${d.title}: ${d.content.slice(0, 300)}`).join("\n")}` })
+        }
+      } catch {}
+    }
     for (const m of messages) {
       const parts = (m as any).parts ?? []
       const text = parts.filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n")
