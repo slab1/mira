@@ -8,7 +8,8 @@
   },
   "customizations": {
     "vscode": {
-      "extensions": ["oven.bun-vscode"]
+      "extensions": ["oven.bun-vscode"],
+      "recommendations": ["vscode-mira"]
     }
   },
   "postCreateCommand": "curl -fsSL https://bun.sh/install | bash -s \"bun-v1.3.14\" && echo 'export PATH=\"$HOME/.bun/bin:$PATH\"' >> ~/.bashrc",

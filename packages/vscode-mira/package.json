@@ -9,7 +9,8 @@
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      { "command": "mira.hello", "title": "Mira: Hello" }
+      { "command": "mira.hello", "title": "Mira: Hello" },
+      { "command": "mira.openWeb", "title": "Mira: Open Web Panel" }
     ]
   },
   "scripts": {
