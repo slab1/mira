@@ -9,6 +9,7 @@
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "noEmit": true,
+    "noEmitOnError": false,
     "skipLibCheck": true,
     "types": ["bun-types"],
   "baseUrl": ".",

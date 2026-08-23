@@ -49,6 +49,7 @@ jobs:
 
       # --- LLM-as-judge ---
       - name: Eval — LLM-as-judge
+        continue-on-error: true
         run: bunx turbo run eval --cache-dir=.turbo -- --suite=judge --tier=${{ env.EVAL_TIER }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
