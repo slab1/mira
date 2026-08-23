@@ -27,14 +27,12 @@ export interface CompactionResult {
 
 /**
  * Estimate token count from messages
- * Rough heuristic: ~4 chars per token
+ * Rough heuristic: ~4 chars per token + 10 overhead per message
  */
 export function estimateTokens(messages: any[]): number {
   return messages.reduce((total, m) => {
     const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '')
-    return total + Math.ceil(content.length / 4)
-    // Add overhead for role/tool metadata
-    return total + 10
+    return total + Math.ceil(content.length / 4) + 10
   }, 0)
 }
 

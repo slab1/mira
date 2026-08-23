@@ -144,9 +144,62 @@ export function createGateway(config: MiraConfig): Gateway {
 
     async summarize(messages, smallModel) {
       const model = smallModel ?? config.smallModel ?? config.model
-      const text = messages.map((m: any) => `${m.role}: ${typeof m.content === "string" ? m.content.slice(0, 500) : JSON.stringify(m.content).slice(0, 500)}`).join("\n")
-      // Stub summary
-      return `[Summary of ${messages.length} messages — first: ${text.slice(0, 300)}…] (via ${model})`
+      const t0 = Date.now()
+      const { baseURL, apiKey, modelID } = resolveModel(model)
+
+      // Transcript bound: cap each message, drop empty ones
+      const MAX_MSG_CHARS = 800
+      const transcript = messages
+        .filter(m => m.role !== "system")
+        .map((m: any) => {
+          const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "")
+          return `${m.role}: ${c.length > MAX_MSG_CHARS ? c.slice(0, MAX_MSG_CHARS) + "…" : c}`
+        })
+        .join("\n\n")
+
+      // ── Live path: real abstractive summary via small model ──
+      if (apiKey) {
+        try {
+          const res = await fetch(`${baseURL.replace(/\/$/, "")}/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}`, "HTTP-Referer": "https://mira.ai", "X-Title": "Mira" },
+            body: JSON.stringify({
+              model: modelID,
+              messages: [
+                { role: "system", content: "You compress agent conversation history. Produce a dense summary preserving: (1) the user's original goal/task, (2) key decisions and their reasons, (3) files touched and outcomes, (4) open questions or pending work. Omit pleasantries and repetition. Output only the summary." },
+                { role: "user", content: transcript.slice(0, 60_000) },
+              ],
+              max_tokens: 600,
+              temperature: 0.2,
+            }),
+            signal: AbortSignal.timeout(45_000),
+          })
+          if (res.ok) {
+            const data: any = await res.json()
+            const content = data.choices?.[0]?.message?.content
+            if (content) {
+              record(modelID, data.usage?.prompt_tokens ?? 0, data.usage?.completion_tokens ?? 0, Date.now() - t0)
+              return content.trim()
+            }
+          }
+        } catch (e) {
+          console.warn("[gateway] live summarize failed, using extractive fallback:", (e as Error).message)
+        }
+      }
+
+      // ── Fallback: extractive summary (deterministic, no API) ──
+      const lines: string[] = []
+      const firstUser = messages.find((m: any) => m.role === "user")
+      if (firstUser) lines.push(`Original task: ${String(typeof firstUser.content === "string" ? firstUser.content : JSON.stringify(firstUser.content)).slice(0, 300)}`)
+      let toolsUsed = 0
+      for (const m of messages) {
+        if (Array.isArray((m as any).toolCalls)) toolsUsed += (m as any).toolCalls.length
+      }
+      if (toolsUsed) lines.push(`Tool calls in this span: ${toolsUsed}`)
+      const lastAssistant = [...messages].reverse().find((m: any) => m.role === "assistant" && typeof m.content === "string" && m.content.trim())
+      if (lastAssistant) lines.push(`Last state: ${lastAssistant.content.slice(0, 300)}`)
+      lines.push(`(${messages.length} messages condensed extractively — set an API key for abstractive summaries)`)
+      return lines.join("\n")
     },
 
     async listModels() {
