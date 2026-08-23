@@ -72,6 +72,22 @@ export class Applier {
     await Bun.write(abs, patched)
     console.log(`[patching:applier] ✓ applied ${patch.id} → ${patch.targetFile} (${patch.painPointId})`)
 
+    // Autopilot (opt-in): open a PR for the verified patch
+    if (process.env.MIRA_AUTOPILOT === "1") {
+      try {
+        const { createPullRequestForPatch } = await import("./autopilot.js")
+        const pr = await createPullRequestForPatch({
+          repoRoot: this.config.rootDir,
+          files: [patch.targetFile],
+          painPointId: patch.painPointId,
+          reason: patch.reason,
+          change: patch.change,
+          patchId: patch.id,
+        })
+        console.log(`[patching:applier] autopilot PR: ${pr.created ? pr.prUrl : pr.reason}`)
+      } catch {}
+    }
+
     // Persist to knowledge base as procedural memory
     if (this.deps.knowledge) {
       await this.deps.knowledge.store({

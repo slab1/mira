@@ -62,30 +62,46 @@ export interface LoopOptions {
 
 export class SessionPrompt {
   private doomDetector = new DoomLoopDetector()
-  /** Per-session message queues — user can type while the agent streams */
-  private queues = new Map<string, string[]>()
+  /** Queues persist in SQLite (message_queue) — survive restarts */
 
   constructor(private deps: SessionPromptDeps) {}
 
   // ── Message queueing (OpenCode-parity UX) ─────────────────────────
 
-  /** Queue a message while a turn is streaming; it runs right after */
+  /** Queue a message while a turn is streaming; it runs right after. Persisted to SQLite. */
   queueMessage(sessionID: string, text: string): { position: number } {
-    const q = this.queues.get(sessionID) ?? []
-    q.push(text)
-    this.queues.set(sessionID, q)
+    this.deps.db.sqlite
+      .prepare(`INSERT INTO message_queue (id, session_id, text, created_at) VALUES (?, ?, ?, ?)`)
+      .run(crypto.randomUUID(), sessionID, text, Date.now())
+    const q = this.getQueue(sessionID)
     this.deps.bus.publish({ type: "session.updated", sessionID, payload: { queued: q.length }, timestamp: Date.now() })
     return { position: q.length }
   }
 
   getQueue(sessionID: string): string[] {
-    return [...(this.queues.get(sessionID) ?? [])]
+    try {
+      return (this.deps.db.sqlite
+        .prepare(`SELECT text FROM message_queue WHERE session_id = ? ORDER BY created_at, rowid`)
+        .all(sessionID) as any[]).map(r => r.text)
+    } catch { return [] }
   }
 
   clearQueue(sessionID: string): number {
-    const n = this.queues.get(sessionID)?.length ?? 0
-    this.queues.delete(sessionID)
+    const n = this.getQueue(sessionID).length
+    try { this.deps.db.sqlite.prepare(`DELETE FROM message_queue WHERE session_id = ?`).run(sessionID) } catch {}
     return n
+  }
+
+  /** Atomically pop the oldest queued message (drain head) */
+  private dequeueFirst(sessionID: string): string | null {
+    try {
+      const row: any = this.deps.db.sqlite
+        .prepare(`SELECT id, text FROM message_queue WHERE session_id = ? ORDER BY created_at, rowid LIMIT 1`)
+        .get(sessionID)
+      if (!row) return null
+      this.deps.db.sqlite.prepare(`DELETE FROM message_queue WHERE id = ?`).run(row.id)
+      return row.text
+    } catch { return null }
   }
 
   // ── Session CRUD (delegated to storage) ──────────────────────────
@@ -490,10 +506,9 @@ export class SessionPrompt {
     try { await writer.close() } catch {}
 
     // ── Drain queued messages: chain next turn automatically ──
-    const queued = this.queues.get(sessionID)
-    if (queued?.length) {
-      const next = queued.shift()!
-      this.deps.bus.publish({ type: "session.updated", sessionID, payload: { dequeued: true, remaining: queued.length }, timestamp: Date.now() })
+    const next = this.dequeueFirst(sessionID)
+    if (next) {
+      this.deps.bus.publish({ type: "session.updated", sessionID, payload: { dequeued: true, remaining: this.getQueue(sessionID).length }, timestamp: Date.now() })
       // Detached chained turn — clients follow via bus events + message reload
       void this.streamResponse(sessionID, next).catch(err => {
         console.error(`[mira] queued turn failed (session ${sessionID}):`, err?.stack ?? err)

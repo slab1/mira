@@ -101,6 +101,14 @@ export async function migrate(db: any) {
     );
     CREATE INDEX IF NOT EXISTS file_snapshots_session_idx ON file_snapshots(session_id);
     CREATE INDEX IF NOT EXISTS file_snapshots_created_idx ON file_snapshots(created_at);
+
+    CREATE TABLE IF NOT EXISTS message_queue (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      text TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS message_queue_session_idx ON message_queue(session_id);
   `)
   // Idempotent column adds (SQLite lacks IF NOT EXISTS for columns)
   const addColumn = (table: string, col: string, type: string) => {
