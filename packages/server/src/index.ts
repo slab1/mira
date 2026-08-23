@@ -147,6 +147,41 @@ async function main() {
     return c.json(messages)
   })
 
+  // Session export — shareable transcript (markdown or JSON)
+  app.get("/session/:id/export", async c => {
+    const id = c.req.param("id")
+    const session = await prompt.getSession(id)
+    if (!session) return c.json({ error: "not found" }, 404)
+    const messages = await prompt.getMessages(id)
+    const format = c.req.query("format") ?? "md"
+
+    if (format === "json") {
+      return c.json({ session, messages, exportedAt: new Date().toISOString(), version: "0.1.0" })
+    }
+
+    const lines: string[] = [
+      `# ${session.title}`,
+      "",
+      `- Model: \`${session.model}\``,
+      `- Exported: ${new Date().toISOString()}`,
+      "",
+    ]
+    for (const m of messages as any[]) {
+      const role = m.role === "user" ? "🙋 User" : m.role === "assistant" ? "🤖 Mira" : m.role
+      lines.push(`## ${role}`)
+      for (const p of (m.parts ?? []) as any[]) {
+        if (p.type === "text" && p.text) lines.push(p.text)
+        else if (p.type === "tool-call") lines.push(`> 🔧 \`${p.tool}\``)
+        else if (p.type === "tool-result") lines.push(p.isError ? `> ⚠️ tool error` : `> ✓ result`)
+      }
+      lines.push("")
+    }
+    return c.text(lines.join("\n"), 200, { "Content-Type": "text/markdown; charset=utf-8" })
+  })
+
+  // MCP discovery — server statuses + tool counts
+  app.get("/mcp", c => c.json(mcp.listServers()))
+
   // Todos
   app.get("/session/:id/todo", async c => {
     const todos = await prompt.getTodos(c.req.param("id"))

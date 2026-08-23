@@ -19,6 +19,7 @@ type AppState = {
   connected: boolean
   error: string | null
   loading: boolean
+  pendingQuestion: { questionID: string; questions: Array<{ question: string; header: string; options: Array<{ label: string; description: string }>; multiple?: boolean }> } | null
 }
 
 function uid() {
@@ -36,6 +37,7 @@ export function createAppStore() {
     connected: false,
     error: null,
     loading: false,
+    pendingQuestion: null,
   })
 
   const [input, setInput] = createSignal("")
@@ -60,6 +62,11 @@ export function createAppStore() {
 
   function handleBusEvent(e: BusEvent) {
     switch (e.type) {
+      case "question.ask": {
+        const q = e.payload as AppState["pendingQuestion"]
+        if (q?.questionID) setState("pendingQuestion", q)
+        break
+      }
       case "session.created": {
         const s = e.payload as Session
         if (s?.id) setState("sessions", (prev) => [s, ...prev.filter((x) => x.id !== s.id)])
@@ -211,6 +218,12 @@ export function createAppStore() {
     setState("streaming", false)
   }
 
+  /** Answer a pending HITL question (question.ask → question.reply over WS) */
+  function answerQuestion(questionID: string, answers: Array<{ header: string; selections: string[] }>) {
+    socket.send({ type: "question.reply", payload: { questionID, answers }, timestamp: Date.now() })
+    setState("pendingQuestion", null)
+  }
+
   return {
     state,
     input,
@@ -225,6 +238,7 @@ export function createAppStore() {
     loadTodos,
     sendPrompt,
     stopStream,
+    answerQuestion,
   }
 }
 

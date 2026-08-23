@@ -4,6 +4,7 @@ import { SessionList } from "./components/SessionList"
 import { ChatView } from "./components/ChatView"
 import { ToolView } from "./components/ToolView"
 import { SkillSelector } from "./components/SkillSelector"
+import { QuestionPrompt } from "./components/QuestionPrompt"
 
 export default function App() {
   const store = createAppStore()
@@ -113,6 +114,7 @@ export default function App() {
           <ChatView store={store} />
           <ToolView store={store} />
         </div>
+        <QuestionPrompt store={store} />
       </div>
     </div>
   )

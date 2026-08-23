@@ -180,6 +180,18 @@ export class MCPManager {
     return [...this.servers.values()]
   }
 
+  /** Discovery view: sanitized (no config secrets) for REST/UI */
+  listServers(): Array<{ name: string; type: string; status: string; toolCount: number; tools: Array<{ name: string; description: string }>; error?: string }> {
+    return [...this.servers.values()].map(s => ({
+      name: s.name,
+      type: s.config.type,
+      status: s.status,
+      toolCount: s.tools.length,
+      tools: s.tools.map((t: any) => ({ name: t.name, description: t.description ?? "" })),
+      ...(s.error ? { error: s.error } : {}),
+    }))
+  }
+
   disconnectAll(): void {
     for (const [name, proc] of this.processes) {
       try { proc.kill() } catch {}
