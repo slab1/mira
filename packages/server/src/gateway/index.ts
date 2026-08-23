@@ -33,6 +33,14 @@ export interface StreamOptions {
 export interface Gateway {
   /** Stream LLM response (async iterable of chunks) — Vercel AI SDK v5 style */
   stream(opts: StreamOptions): Promise<AsyncIterable<any>>
+  /** Non-streaming completion — supports multimodal content parts (vision) */
+  complete(opts: {
+    model: string
+    system?: string
+    /** string OR OpenAI-style content parts (e.g. [{type:"text"},{type:"image_url"...}]) */
+    prompt: unknown
+    maxTokens?: number
+  }): Promise<{ text: string; inputTokens?: number; outputTokens?: number }>
   /** Summarize messages via smallModel (for compaction) */
   summarize(messages: any[], smallModel?: string): Promise<string>
   /** List available models (from OpenRouter /api/models) */
@@ -142,6 +150,34 @@ export function createGateway(config: MiraConfig): Gateway {
       // Stub stream — emits a helpful message so `mira` is usable without keys
       const stub = stubStream(modelID, opts)
       return trackedStream(stub, (usage) => record(modelID, usage.input, usage.output, Date.now() - t0))
+    },
+
+    async complete(opts) {
+      const { baseURL, apiKey, modelID } = resolveModel(opts.model)
+      const t0 = Date.now()
+      if (!apiKey) throw new Error("No provider API key configured for complete()")
+      const res = await fetch(`${baseURL.replace(/\/$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}`, "HTTP-Referer": "https://mira.ai", "X-Title": "Mira" },
+        body: JSON.stringify({
+          model: modelID,
+          messages: [
+            ...(opts.system ? [{ role: "system", content: opts.system }] : []),
+            { role: "user", content: opts.prompt },
+          ],
+          max_tokens: opts.maxTokens ?? 1024,
+        }),
+        signal: AbortSignal.timeout(120_000),
+      })
+      if (!res.ok) throw new Error(`complete() ${res.status}: ${(await res.text()).slice(0, 300)}`)
+      const data: any = await res.json()
+      const text = data.choices?.[0]?.message?.content ?? ""
+      record(modelID, data.usage?.prompt_tokens ?? 0, data.usage?.completion_tokens ?? 0, Date.now() - t0)
+      return {
+        text,
+        inputTokens: data.usage?.prompt_tokens,
+        outputTokens: data.usage?.completion_tokens,
+      }
     },
 
     async summarize(messages, smallModel) {

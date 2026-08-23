@@ -93,28 +93,76 @@ export const diagnoseTool = {
 
 export const imageTool = {
   name: "analyze_image",
-  description: "Analyze an image (vision model). Pass image path or base64.",
+  description: "Analyze an image with a vision model. Pass image path or base64. Describe UI, read text in screenshots, compare designs.",
   category: "other",
   schema: z.object({
     path: z.string().optional().describe("Image file path"),
-    base64: z.string().optional().describe("Base64 image data"),
-    prompt: z.string().optional().describe("What to analyze"),
+    base64: z.string().optional().describe("Base64 image data (no data: prefix)"),
+    prompt: z.string().optional().describe("What to analyze (default: describe the image)"),
   }),
-  async execute({ path, prompt }, _ctx) {
-    return { analyzed: true, path, prompt, note: "Vision stub — requires multimodal model (e.g. claude-sonnet vision, gpt-4o)" }
+  async execute({ path, base64, prompt }, _ctx) {
+    // Load image bytes
+    let data = base64
+    let mime = "image/png"
+    if (!data && path) {
+      const f = Bun.file(path)
+      if (!(await f.exists())) return { ok: false, error: `Image not found: ${path}` }
+      mime = f.type || "image/png"
+      data = Buffer.from(await f.arrayBuffer()).toString("base64")
+    }
+    if (!data) return { ok: false, error: "Provide path or base64" }
+
+    const model = process.env.MIRA_VISION_MODEL ?? "nvidia/meta/llama-3.2-90b-vision-instruct"
+    try {
+      const { createGateway } = await import("../gateway/index.js")
+      const { loadConfig } = await import("../config/index.js")
+      const gw = createGateway(await loadConfig())
+      const out = await gw.complete({
+        model,
+        prompt: [
+          { type: "text", text: prompt ?? "Describe this image in detail. If it contains text, transcribe it." },
+          { type: "image_url", image_url: { url: `data:${mime};base64,${data}` } },
+        ],
+        maxTokens: 1024,
+      })
+      return { ok: true, model, analysis: out.text }
+    } catch (e) {
+      return { ok: false, model, error: String(e), note: "Set MIRA_VISION_MODEL to a vision-capable model your provider serves." }
+    }
   },
 }
 
 export const documentTool = {
   name: "parse_document",
-  description: "Parse a document (PDF, DOCX, etc.) to markdown. Uses go-docs-mcp if available.",
+  description: "Extract text from a document. Native: txt/md/csv/json/html. PDF/DOCX need an MCP doc server (go-docs-mcp).",
   category: "other",
   schema: z.object({
-    path: z.string().describe("Document path"),
-    pages: z.string().optional().describe("Page range, e.g. 1-5"),
+    path: z.string().describe("Document file path"),
+    maxChars: z.number().optional().describe("Max chars returned (default 20000)"),
   }),
-  async execute({ path, pages }, _ctx) {
-    return { path, pages, note: "Document parse stub — wire to go-docs-mcp / pdf-mcp" }
+  async execute({ path, maxChars = 20_000 }, _ctx) {
+    const f = Bun.file(path)
+    if (!(await f.exists())) return { ok: false, error: `Not found: ${path}` }
+    const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase()
+    const raw = await f.text()
+    let text = raw
+    if (ext === "html" || ext === "htm") {
+      text = raw
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+    } else if (ext === "json") {
+      try { text = JSON.stringify(JSON.parse(raw), null, 2) } catch {}
+    } else if (!["txt", "md", "csv", "tsv", "log", "yml", "yaml"].includes(ext)) {
+      return {
+        ok: false,
+        ext,
+        error: `No native parser for .${ext}. Wire an MCP doc server (e.g. go-docs-mcp, pdf-mcp) or use analyze_image for scanned pages.`,
+      }
+    }
+    return { ok: true, ext, chars: Math.min(text.length, maxChars), truncated: text.length > maxChars, content: text.slice(0, maxChars) }
   },
 }
 

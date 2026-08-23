@@ -173,7 +173,7 @@ export const analyzeImageSchema = z.object({
 
 export const parseDocumentSchema = z.object({
   path: z.string().min(1).describe("Document path"),
-  pages: z.string().optional().describe("Page range, e.g. 1-5"),
+  maxChars: z.number().optional().describe("Max chars returned (default 20000)"),
 })
 
 // ── Registry helpers ───────────────────────────────────────────────
