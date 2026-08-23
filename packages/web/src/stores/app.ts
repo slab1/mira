@@ -16,10 +16,12 @@ type AppState = {
   todos: Todo[]
   streaming: boolean
   streamText: string
-  connected: boolean
+   connected: boolean
   error: string | null
   loading: boolean
   pendingQuestion: { questionID: string; questions: Array<{ question: string; header: string; options: Array<{ label: string; description: string }>; multiple?: boolean }> } | null
+  /** messages queued while agent streams — mirrored from server */
+  queued: string[]
 }
 
 function uid() {
@@ -38,6 +40,7 @@ export function createAppStore() {
     error: null,
     loading: false,
     pendingQuestion: null,
+    queued: [],
   })
 
   const [input, setInput] = createSignal("")
@@ -144,6 +147,8 @@ export function createAppStore() {
     try {
       const msgs = await api.getMessages(id)
       setState("messages", msgs)
+      // Reconcile queue with server truth (queued items drain as chained turns)
+      try { setState("queued", await api.getQueue(id)) } catch {}
     } catch (e) {
       // 404 = new session, ignore
       if (!String((e as Error).message).includes("404")) setState("error", (e as Error).message)
@@ -171,8 +176,24 @@ export function createAppStore() {
 
   async function sendPrompt(text?: string) {
     const prompt = (text ?? input()).trim()
-    if (!prompt || !state.currentId || state.streaming) return
+    if (!prompt || !state.currentId) return
     setInput("")
+
+    // Agent busy → queue the message instead of dropping it (OpenCode-parity UX)
+    if (state.streaming) {
+      try {
+        await api.queuePrompt(state.currentId, prompt)
+        setState("queued", (q) => [...q, prompt])
+        setState("messages", (m) => [
+          ...m,
+          { id: `tmp-${uid()}`, sessionId: state.currentId!, role: "user", content: `${prompt}`, createdAt: new Date().toISOString(), queued: true },
+        ])
+      } catch (e) {
+        setState("error", (e as Error).message)
+        setInput(prompt) // restore input on failure
+      }
+      return
+    }
     // optimistic user message
     const userMsg: Message = {
       id: `tmp-${uid()}`,

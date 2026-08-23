@@ -175,6 +175,11 @@ export function ChatView(props: { store: AppStore }) {
 
       {/* composer */}
       <Show when={s().currentId}>
+        <Show when={s().queued.length > 0}>
+          <div style={{ padding: "6px 12px 0", "font-size": "11px", color: "#c4b5fd" }}>
+            ⏳ {s().queued.length} message{s().queued.length === 1 ? "" : "s"} queued — runs after the current turn
+          </div>
+        </Show>
         <form
           onSubmit={handleSubmit}
           style={{
@@ -223,23 +228,41 @@ export function ChatView(props: { store: AppStore }) {
           <Show
             when={!s().streaming}
             fallback={
-              <button
-                type="button"
-                onClick={() => props.store.stopStream()}
-                style={{
-                  padding: "10px 14px",
-                  "border-radius": "10px",
-                  border: "1px solid #44403c",
-                  background: "#1c1917",
-                  color: "#fdba74",
-                  "font-size": "13px",
-                  "font-weight": "600",
-                  cursor: "pointer",
-                  flex: "none",
-                }}
-              >
-                Stop
-              </button>
+              <div style={{ display: "flex", gap: "8px", flex: "none" }}>
+                <button
+                  type="submit"
+                  disabled={!props.store.input().trim()}
+                  title="Queue this message — it runs after the current turn"
+                  style={{
+                    padding: "10px 14px",
+                    "border-radius": "10px",
+                    border: props.store.input().trim() ? "1px solid #7c3aed" : "1px solid #27272a",
+                    background: props.store.input().trim() ? "#2e1065" : "#18181b",
+                    color: props.store.input().trim() ? "#c4b5fd" : "#71717a",
+                    "font-size": "13px",
+                    "font-weight": "600",
+                    cursor: props.store.input().trim() ? "pointer" : "not-allowed",
+                  }}
+                >
+                  Queue ↵
+                </button>
+                <button
+                  type="button"
+                  onClick={() => props.store.stopStream()}
+                  style={{
+                    padding: "10px 14px",
+                    "border-radius": "10px",
+                    border: "1px solid #44403c",
+                    background: "#1c1917",
+                    color: "#fdba74",
+                    "font-size": "13px",
+                    "font-weight": "600",
+                    cursor: "pointer",
+                  }}
+                >
+                  Stop
+                </button>
+              </div>
             }
           >
             <button

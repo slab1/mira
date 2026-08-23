@@ -184,6 +184,17 @@ async function main() {
   // MCP discovery — server statuses + tool counts
   app.get("/mcp", c => c.json(mcp.listServers()))
 
+  // Message queue — type while the agent streams (OpenCode-parity UX)
+  app.post("/session/:id/queue", async c => {
+    const { prompt: text } = await c.req.json()
+    if (!text?.trim()) return c.json({ error: "empty prompt" }, 400)
+    const id = c.req.param("id")
+    if (!(await prompt.getSession(id))) return c.json({ error: "session not found" }, 404)
+    return c.json(prompt.queueMessage(id, String(text).trim()))
+  })
+  app.get("/session/:id/queue", c => c.json(prompt.getQueue(c.req.param("id"))))
+  app.delete("/session/:id/queue", c => c.json({ cleared: prompt.clearQueue(c.req.param("id")) }))
+
   // File snapshots — undo/rewind agent file mutations
   app.get("/session/:id/snapshots", async c => {
     const { listSnapshots } = await import("./storage/snapshots.js")

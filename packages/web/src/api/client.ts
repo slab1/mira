@@ -32,6 +32,8 @@ export type Message = {
   content: string
   parts?: Part[]
   createdAt: string
+  /** optimistic flag — message is queued, not yet processed by the agent */
+  queued?: boolean
 }
 
 export type Part = {
@@ -106,6 +108,13 @@ export const api = {
     req<Todo[]>(`/session/${id}/todo`, { method: "POST", body: JSON.stringify(todos) }),
 
   listTools: () => req<ToolInfo[]>("/tools"),
+
+  /** Queue a message while the agent is streaming (processed after current turn) */
+  queuePrompt: (id: string, prompt: string) =>
+    req<{ position: number }>(`/session/${id}/queue`, { method: "POST", body: JSON.stringify({ prompt }) }),
+  getQueue: (id: string) => req<string[]>(`/session/${id}/queue`),
+  clearQueue: (id: string) => req<{ cleared: number }>(`/session/${id}/queue`, { method: "DELETE" }),
+
   checkPermission: (body: unknown) =>
     req<{ allowed: boolean; reason?: string }>("/permission/check", {
       method: "POST",

@@ -62,8 +62,31 @@ export interface LoopOptions {
 
 export class SessionPrompt {
   private doomDetector = new DoomLoopDetector()
+  /** Per-session message queues — user can type while the agent streams */
+  private queues = new Map<string, string[]>()
 
   constructor(private deps: SessionPromptDeps) {}
+
+  // ── Message queueing (OpenCode-parity UX) ─────────────────────────
+
+  /** Queue a message while a turn is streaming; it runs right after */
+  queueMessage(sessionID: string, text: string): { position: number } {
+    const q = this.queues.get(sessionID) ?? []
+    q.push(text)
+    this.queues.set(sessionID, q)
+    this.deps.bus.publish({ type: "session.updated", sessionID, payload: { queued: q.length }, timestamp: Date.now() })
+    return { position: q.length }
+  }
+
+  getQueue(sessionID: string): string[] {
+    return [...(this.queues.get(sessionID) ?? [])]
+  }
+
+  clearQueue(sessionID: string): number {
+    const n = this.queues.get(sessionID)?.length ?? 0
+    this.queues.delete(sessionID)
+    return n
+  }
 
   // ── Session CRUD (delegated to storage) ──────────────────────────
 
@@ -457,6 +480,17 @@ export class SessionPrompt {
     trace.update({ steps: step })
     trace.end()
     try { await writer.close() } catch {}
+
+    // ── Drain queued messages: chain next turn automatically ──
+    const queued = this.queues.get(sessionID)
+    if (queued?.length) {
+      const next = queued.shift()!
+      this.deps.bus.publish({ type: "session.updated", sessionID, payload: { dequeued: true, remaining: queued.length }, timestamp: Date.now() })
+      // Detached chained turn — clients follow via bus events + message reload
+      void this.streamResponse(sessionID, next).catch(err => {
+        console.error(`[mira] queued turn failed (session ${sessionID}):`, err?.stack ?? err)
+      })
+    }
   }
 
   // ── Helpers ──────────────────────────────────────────────────────
