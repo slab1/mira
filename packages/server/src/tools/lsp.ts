@@ -6,6 +6,35 @@
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 import { symbolIndex } from "../symbols/index.js"
+import { guardEdit } from "../symbols/semantic.js"
+import { resolve } from "node:path"
+import { readFileSync } from "node:fs"
+import { clientForFile, type LSPClient } from "../lsp/client.js"
+
+const LANG_BY_EXT: Record<string, string> = {
+  go: "go", ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
+  py: "python", rs: "rust", md: "markdown", json: "json",
+}
+
+/**
+ * Real LSP path: spawn/connect a language server for the file's language,
+ * push the document, run the operation. Returns null when no server is
+ * available — caller falls back to heuristic symbolIndex.
+ */
+async function withRealLSP<T>(
+  file: string,
+  root: string,
+  op: (client: LSPClient, uri: string) => Promise<T>,
+): Promise<T | null> {
+  const client = await clientForFile(file, root)
+  if (!client?.alive) return null
+  const abs = resolve(root, file)
+  let text = ""
+  try { text = readFileSync(abs, "utf-8") } catch { return null }
+  const uri = `file://${abs}`
+  await client.didOpen(uri, text, LANG_BY_EXT[abs.split(".").pop()?.toLowerCase() ?? ""] ?? "plaintext")
+  return await op(client, uri)
+}
 
 export const lspTool = {
   name: "lsp",
@@ -21,8 +50,31 @@ export const lspTool = {
   }),
   async execute({ operation, file, line, character, symbol, newName }, ctx) {
     const root = (ctx as any)?.cwd ?? process.cwd();
-    // Ensure symbolIndex uses same root
-    // Note: SymbolIndex is singleton with cwd; for simplicity assume files are relative to root
+
+    // ── Real LSP first (gopls etc.); heuristic fallback when unavailable ──
+    const real = await withRealLSP(file, root, async (client, uri) => {
+      const pos = { line: Math.max(0, (line ?? 1) - 1), character: character ?? 0 }
+      switch (operation) {
+        case "hover":
+          return { operation, file, server: client.serverName, hover: await client.hover(uri, pos) }
+        case "definition": {
+          if (line == null || character == null) throw new Error("line and character required for definition")
+          return { operation, file, server: client.serverName, definition: await client.definition(uri, pos) }
+        }
+        case "references": {
+          const pos2 = line != null && character != null ? pos : null
+          if (!pos2 && !symbol) throw new Error("symbol or line/character required for references")
+          // When only a name is given, fall through to heuristics for locating it
+          if (!pos2) throw new Error("SKIP_TO_FALLBACK")
+          return { operation, file, server: client.serverName, references: await client.references(uri, pos2) }
+        }
+      }
+      throw new Error("SKIP_TO_FALLBACK")
+    }).catch(e => e instanceof Error && e.message === "SKIP_TO_FALLBACK" ? undefined : { error: String(e) })
+
+    if (real !== null && real !== undefined && !("error" in real)) return real
+
+    // ── Heuristic fallback (symbolIndex) — original implementation ──
     try {
       switch (operation) {
         case "hover": {

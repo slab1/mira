@@ -280,10 +280,12 @@ async function main() {
   console.log(`[mira]   ws:      WS   /  (BusEvent stream)`)
 
   // Graceful shutdown
-  process.on("SIGINT", () => {
+  process.on("SIGINT", async () => {
     console.log("\n[mira] shutting down...")
     server.stop()
     mcp.disconnectAll()
+    const { shutdownAllServers } = await import("./lsp/client.js")
+    await shutdownAllServers().catch(() => {})
     process.exit(0)
   })
 }
