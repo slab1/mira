@@ -110,6 +110,27 @@ async function main() {
   }
   app.use("*", logger())
 
+  // Landing page — friendly index when opened in a browser
+  app.get("/", c => {
+    return c.html(`<!doctype html>
+<html><head><meta charset="utf-8"><title>Mira</title>
+<style>
+  body{background:#09090b;color:#e4e4e7;font-family:ui-sans-serif,system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+  .card{max-width:560px;padding:32px;border:1px solid #27272a;border-radius:16px;background:#18181b}
+  h1{margin:0 0 8px;font-size:22px}
+  p{color:#a1a1aa;font-size:13px;line-height:1.6}
+  code{background:#27272a;padding:2px 6px;border-radius:6px;font-size:12px;color:#c4b5fd}
+  .live{color:#86efac}
+</style></head>
+<body><div class="card">
+  <h1>Mira <span class="live">● live</span></h1>
+  <p>Agent engine v0.1.0 · ${tools.count()} tools · gateway cost-tracked</p>
+  <p>This is the <b>API</b>. For the chat UI run the web client:</p>
+  <p><code>cd packages/web && bun run dev</code> → forward port <b>3000</b></p>
+  <p>API surface: <code>/health</code> · <code>/dev/health</code> · <code>/session</code> · <code>/session/:id/prompt</code> (SSE) · <code>/tools</code> · <code>/mcp</code> · <code>/skills</code></p>
+</div></body></html>`)
+  })
+
   // Health
   app.get("/health", c => c.json({ ok: true, version: "0.1.0", tools: tools.count(), uptime: process.uptime(), memory: process.memoryUsage() }))
   app.get("/dev/health", c => c.json({ ok: true, version: "0.1.0", tools: tools.count(), busHistory: bus.recent(5).length, learning: learning.scheduler.status(), gateway: gateway.stats(), uptime: process.uptime() }))
