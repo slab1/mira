@@ -17,6 +17,17 @@ export type PendingPermission = {
   sessionID: string
 }
 
+export type PendingQuestion = {
+  questionID: string
+  sessionID?: string
+  questions: Array<{
+    question: string
+    header: string
+    options: Array<{ label: string; description: string }>
+    multiple?: boolean
+  }>
+}
+
 export type StreamEvent = {
   type: string
   data: unknown
@@ -35,6 +46,7 @@ type SessionState = {
   loading: boolean
   error: string | null
   pendingPermission: PendingPermission | null
+  pendingQuestion: PendingQuestion | null
 }
 
 function uid() {
@@ -54,6 +66,7 @@ export function createSessionStore() {
     loading: false,
     error: null,
     pendingPermission: null,
+    pendingQuestion: null,
   })
 
   const [input, setInput] = createSignal("")
@@ -122,6 +135,11 @@ export function createSessionStore() {
           args: p.args ?? {},
           sessionID: e.sessionID ?? p.sessionID ?? state.currentId ?? "",
         })
+        break
+      }
+      case "question.ask": {
+        const q = e.payload as PendingQuestion
+        if (q?.questionID) setState("pendingQuestion", { ...q, sessionID: e.sessionID })
         break
       }
       default:
@@ -339,6 +357,20 @@ export function createSessionStore() {
     replyPermission("deny")
   }
 
+  // ── Question reply (WS → GlobalBus) ───────────────────────────────
+
+  function answerQuestion(answers: Array<{ header: string; selections: string[] }>) {
+    const q = state.pendingQuestion
+    if (!q) return
+    socket.send({
+      type: "question.reply",
+      sessionID: q.sessionID ?? state.currentId ?? undefined,
+      payload: { questionID: q.questionID, answers },
+      timestamp: Date.now(),
+    })
+    setState("pendingQuestion", null)
+  }
+
   return {
     state,
     input,
@@ -355,6 +387,7 @@ export function createSessionStore() {
     stopStream,
     replyPermission,
     dismissPermission,
+    answerQuestion,
   }
 }
 

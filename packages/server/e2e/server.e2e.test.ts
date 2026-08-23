@@ -1,0 +1,104 @@
+/**
+ * Mira E2E — boots the real server, drives the full HTTP/SSE flow.
+ *
+ * Uses the gateway's stub stream (no API key needed) so the entire
+ * pipeline is exercised: REST → SessionPrompt loop → tools → permissions
+ * → bus events → SQLite persistence → export/fork.
+ */
+import { describe, test, beforeAll, afterAll, expect } from "bun:test"
+
+const PORT = 4788
+const BASE = `http://localhost:${PORT}`
+let serverProc: ReturnType<typeof Bun.spawn> | null = null
+
+async function waitForHealth(timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${BASE}/health`)
+      if (res.ok) return await res.json()
+    } catch {}
+    await Bun.sleep(250)
+  }
+  throw new Error("server never became healthy")
+}
+
+beforeAll(async () => {
+  serverProc = Bun.spawn(["bun", "src/index.ts"], {
+    cwd: import.meta.dir + "/..",
+    env: { ...process.env, PORT: String(PORT), MIRA_DB: "/tmp/mira-e2e-test.db" },
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  await waitForHealth()
+})
+
+afterAll(() => {
+  serverProc?.kill()
+})
+
+describe("Mira server E2E", () => {
+  test("health reports registered tools", async () => {
+    const health = await waitForHealth()
+    expect(health.ok).toBe(true)
+    expect(health.tools).toBeGreaterThan(10)
+  })
+
+  test("skills + tools + mcp discovery endpoints", async () => {
+    const skills = await (await fetch(`${BASE}/skills`)).json()
+    expect(Array.isArray(skills)).toBe(true)
+    const toolList = await (await fetch(`${BASE}/tools`)).json()
+    expect(toolList.length).toBeGreaterThan(10)
+    const mcp = await (await fetch(`${BASE}/mcp`)).json()
+    expect(Array.isArray(mcp)).toBe(true)
+  })
+
+  test("session lifecycle: create → prompt(SSE) → messages persisted", async () => {
+    const created = await fetch(`${BASE}/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "e2e-test-session" }),
+    })
+    const session = await created.json()
+    expect(created.status).toBe(201)
+    expect(session.id).toBeDefined()
+
+    // Drive the prompt loop over SSE (stub gateway streams a response)
+    const res = await fetch(`${BASE}/session/${session.id}/prompt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "hello mira" }),
+    })
+    expect(res.headers.get("Content-Type")).toContain("text/event-stream")
+    const body = await res.text()
+    expect(body).toContain("event: finish")
+    expect(body).toContain("event: step_start")
+
+    // Messages were persisted
+    const messages = await (await fetch(`${BASE}/session/${session.id}/message`)).json()
+    expect(messages.length).toBeGreaterThanOrEqual(2) // user + assistant
+
+    // Export as markdown contains the conversation
+    const md = await (await fetch(`${BASE}/session/${session.id}/export`)).text()
+    expect(md).toContain("# e2e-test-session")
+  })
+
+  test("agent personas: create session with researcher template", async () => {
+    const res = await fetch(`${BASE}/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent: "researcher" }),
+    })
+    const session = await res.json()
+    expect(session.agent).toBe("researcher")
+    expect(session.title).toContain("researcher")
+  })
+
+  test("dev/health exposes gateway cost stats", async () => {
+    const dev = await (await fetch(`${BASE}/dev/health`)).json()
+    expect(dev.gateway).toBeDefined()
+    expect(typeof dev.gateway.requests).toBe("number")
+    expect(typeof dev.gateway.costUSD).toBe("number")
+    expect(dev.learning).toBeDefined()
+  })
+})

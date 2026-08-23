@@ -33,6 +33,7 @@ import { searchKnowledge } from "../learning/knowledge.js"
 import { loadSkills } from "../skills/loader.js"
 import { AGENT_TEMPLATES } from "../agents/templates.js"
 import { initLangfuse } from "../telemetry/langfuse.js"
+import { eq } from "drizzle-orm"
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -255,6 +256,7 @@ export class SessionPrompt {
     this.runLoop({
       sessionID, assistantMessageID, userText, model, systemPrompt, send, writer,
     }).catch(async err => {
+      console.error(`[mira] loop error (session ${sessionID}):`, err?.stack ?? err)
       send("error", { error: String(err) })
       try { await writer.close() } catch {}
     })
@@ -491,7 +493,10 @@ export class SessionPrompt {
       where: (p: any, { and, eq }: any) => and(eq(p.messageID, messageID), eq(p.type, "text")),
     })
     if (existing) {
-      await this.deps.db.update(this.deps.db.schema.parts).set({ text }).where((p: any) => p.id === existing.id)
+      // NOTE: update().where() takes an SQL expression, not a callback
+      await this.deps.db.update(this.deps.db.schema.parts)
+        .set({ text })
+        .where(eq(this.deps.db.schema.parts.id, existing.id))
     } else {
       await this.deps.db.insert(this.deps.db.schema.parts).values({
         id: crypto.randomUUID(), messageID, sessionID, type: "text", text, createdAt: Date.now(),

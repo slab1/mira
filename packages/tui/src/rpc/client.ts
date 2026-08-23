@@ -79,6 +79,8 @@ export type BusEventType =
   | "todo.updated"
   | "permission.ask"
   | "permission.reply"
+  | "question.ask"
+  | "question.reply"
   | "server.heartbeat"
   | "server.error"
 

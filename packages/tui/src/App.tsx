@@ -24,6 +24,7 @@ import { render } from "@opentui/solid"
 import { createSessionStore } from "./stores/session"
 import SessionView from "./components/SessionView"
 import PermissionView from "./components/PermissionView"
+import QuestionView from "./components/QuestionView"
 
 export default function App() {
   const store = createSessionStore()
@@ -199,6 +200,16 @@ export default function App() {
               request={store.state.pendingPermission}
               onAllow={() => store.replyPermission("allow")}
               onDeny={() => store.replyPermission("deny")}
+            />
+          </div>
+        </Show>
+
+        {/* ── Question (HITL) overlay ── */}
+        <Show when={store.state.pendingQuestion}>
+          <div style={{ "margin-top": "4px" }}>
+            <QuestionView
+              request={store.state.pendingQuestion}
+              onSubmit={(answers) => store.answerQuestion(answers)}
             />
           </div>
         </Show>
