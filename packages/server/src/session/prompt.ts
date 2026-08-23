@@ -31,6 +31,7 @@ import { DoomLoopDetector } from "./doom-loop-detector.js"
 import { needsCompaction, compactMessages, estimateTokens } from "./compaction.js"
 import { searchKnowledge } from "../learning/knowledge.js"
 import { loadSkills } from "../skills/loader.js"
+import { initLangfuse } from "../telemetry/langfuse.js"
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -183,6 +184,8 @@ export class SessionPrompt {
     let step = 0
     let accumulatedText = ""
     this.doomDetector.reset()
+    const lf = initLangfuse()
+    const trace = lf?.trace?.("session") ?? { update: () => {}, end: () => {} }
 
     // Load conversation history
     let messages = await this.loadContext(sessionID, systemPrompt)
@@ -309,6 +312,8 @@ export class SessionPrompt {
     send("finish", { steps: step, text: accumulatedText })
     await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
     this.deps.bus.publish({ type: "message.updated", sessionID, payload: { id: assistantMessageID, text: accumulatedText, done: true }, timestamp: Date.now() })
+    trace.update({ steps: step })
+    trace.end()
     try { await writer.close() } catch {}
   }
 
