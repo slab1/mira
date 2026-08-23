@@ -24,14 +24,16 @@ export const sessionListTool = {
 
 export const sessionForkTool = {
   name: "session_fork",
-  description: "Fork the current session at a previous message (branching exploration).",
+  description: "Fork the current session at a previous message (branching exploration). Copies history into a new child session.",
   category: "session",
   schema: z.object({
-    messageID: z.string().optional().describe("Message to fork from (default: current)"),
+    messageID: z.string().optional().describe("Message to fork from (default: entire history)"),
     title: z.string().optional().describe("Title for forked session"),
   }),
   async execute({ messageID, title }, ctx) {
-    return { forked: true, messageID, title: title ?? "Forked session", note: "Fork stub — creates new session with copied history up to messageID" }
+    if (!ctx.forkRunner) return { forked: false, error: "No forkRunner wired into ToolRegistry" }
+    const result = await ctx.forkRunner({ sourceSessionID: ctx.sessionID, messageID, title })
+    return { forked: true, ...result }
   },
 }
 

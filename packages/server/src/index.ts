@@ -90,6 +90,8 @@ async function main() {
     agent: opts.agent as keyof typeof AGENT_TEMPLATES | undefined,
     model: opts.model,
   }))
+  // Inject db/bus + fork runner so tools like session_list/session_fork work
+  tools.setDefaultCtx({ db, bus, forkRunner: (opts) => prompt.forkSession(opts) })
 
   // 8. HTTP + WebSocket RPC (Hono)
   const app = new Hono()

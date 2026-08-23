@@ -119,6 +119,50 @@ export class SessionPrompt {
     return todos
   }
 
+  // ── Session forking ───────────────────────────────────────────────
+
+  /**
+   * Fork a session: copy history (messages + parts) up to messageID into a
+   * new child session. Enables branching exploration without losing the original.
+   */
+  async forkSession(opts: { sourceSessionID: string; messageID?: string; title?: string }): Promise<{ sessionID: string; copiedMessages: number }> {
+    const source = await this.getSession(opts.sourceSessionID)
+    if (!source) throw new Error("source session not found")
+    const history = await this.getMessages(opts.sourceSessionID)
+
+    // Slice at the fork point (inclusive of messageID if given)
+    let selected = history as any[]
+    if (opts.messageID) {
+      const idx = selected.findIndex(m => m.id === opts.messageID)
+      if (idx === -1) throw new Error(`message ${opts.messageID} not found in source session`)
+      selected = selected.slice(0, idx + 1)
+    }
+
+    const fork = await this.createSession({
+      title: opts.title ?? `${source.title} (fork)`,
+      model: source.model,
+      parentID: source.id,
+      agent: source.agent ?? undefined,
+    })
+
+    const now = Date.now()
+    for (const m of selected) {
+      const newMessageID = crypto.randomUUID()
+      await this.deps.db.insert(this.deps.db.schema.messages).values({
+        id: newMessageID, sessionID: fork.id, role: m.role, createdAt: m.createdAt ?? now,
+      })
+      for (const p of (m.parts ?? []) as any[]) {
+        const { id: _old, ...rest } = p
+        await this.deps.db.insert(this.deps.db.schema.parts).values({
+          id: crypto.randomUUID(), ...rest, messageID: newMessageID, sessionID: fork.id,
+        })
+      }
+    }
+
+    this.deps.bus.publish({ type: "session.created", payload: { ...fork, forkedFrom: source.id }, timestamp: now })
+    return { sessionID: fork.id, copiedMessages: selected.length }
+  }
+
   // ── Subagent spawning ─────────────────────────────────────────────
 
   /**

@@ -161,7 +161,8 @@ export const configToolSchema = z.object({
 })
 
 export const diagnoseSchema = z.object({
-  checks: z.array(z.enum(["lint", "typecheck", "test", "build"])).optional().describe("Checks to run (default all)"),
+  checks: z.array(z.enum(["typecheck", "test", "build"])).optional().describe("Checks to run (default: typecheck)"),
+  cwd: z.string().optional().describe("Working directory (default: project cwd)"),
 })
 
 export const analyzeImageSchema = z.object({

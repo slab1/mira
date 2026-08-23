@@ -42,6 +42,8 @@ export interface ToolContext {
   db?: any
   /** injected by ToolRegistry — spawns an isolated subagent session */
   subagentRunner?: (opts: { prompt: string; parentID: string; agent?: string; model?: string; title?: string }) => Promise<{ sessionID: string; text: string }>
+  /** injected by ToolRegistry — forks a session at a message boundary */
+  forkRunner?: (opts: { sourceSessionID: string; messageID?: string; title?: string }) => Promise<{ sessionID: string; copiedMessages: number }>
 }
 
 export interface RegistryDeps {
@@ -57,12 +59,18 @@ export interface RegistryDeps {
 export class ToolRegistry {
   private tools = new Map<string, ToolDef>()
   private subagentRunner?: ToolContext["subagentRunner"]
+  private defaultCtx: Partial<ToolContext> = {}
 
   constructor(private deps: RegistryDeps) {}
 
   /** Wire a subagent runner (called at bootstrap after SessionPrompt exists) */
   setSubagentRunner(fn: NonNullable<ToolContext["subagentRunner"]>) {
     this.subagentRunner = fn
+  }
+
+  /** Inject default context (db, bus, runners) available to every tool call */
+  setDefaultCtx(partial: Partial<ToolContext>) {
+    this.defaultCtx = { ...this.defaultCtx, ...partial }
   }
 
   /** Register a single tool */
@@ -108,7 +116,7 @@ export class ToolRegistry {
   async execute(name: string, args: unknown, ctx: ToolContext): Promise<unknown> {
     const tool = this.tools.get(name)
     if (!tool) throw new Error(`Unknown tool: ${name}`)
-    const fullCtx: ToolContext = ctx.subagentRunner ? ctx : { ...ctx, subagentRunner: this.subagentRunner }
+    const fullCtx: ToolContext = { ...this.defaultCtx, ...ctx, subagentRunner: ctx.subagentRunner ?? this.subagentRunner }
 
     // Zod validation — fail fast with structured error (LLM sees it as tool-result isError)
     const parsed = await tool.schema.safeParseAsync(args)

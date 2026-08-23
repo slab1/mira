@@ -53,13 +53,41 @@ export const configTool = {
 
 export const diagnoseTool = {
   name: "diagnose",
-  description: "Run diagnostics: lint, typecheck, test. Aggregates errors for fix loop.",
+  description: "Run diagnostics: typecheck, test, build. Aggregates real errors for fix loops.",
   category: "other",
   schema: z.object({
-    checks: z.array(z.enum(["lint", "typecheck", "test", "build"])).optional().describe("Checks to run (default all)"),
+    checks: z.array(z.enum(["typecheck", "test", "build"])).optional().describe("Checks to run (default: typecheck)"),
+    cwd: z.string().optional().describe("Working directory (default: project cwd)"),
   }),
-  async execute({ checks = ["lint", "typecheck"] }, _ctx) {
-    return { checks, results: checks.map(c => ({ check: c, ok: true, note: "Diagnose stub — wire to real linters" })) }
+  async execute({ checks = ["typecheck"], cwd }, _ctx) {
+    const workdir = cwd ?? process.cwd()
+    const commands: Record<string, string[]> = {
+      typecheck: ["bunx", "tsc", "--noEmit"],
+      test: ["bun", "test"],
+      build: ["bun", "run", "build"],
+    }
+    const results: Array<{ check: string; ok: boolean; output?: string; error?: string }> = []
+    for (const check of checks) {
+      const cmd = commands[check]
+      if (!cmd) { results.push({ check, ok: false, error: "unknown check" }); continue }
+      try {
+        const proc = Bun.spawn(cmd, { cwd: workdir, stdout: "pipe", stderr: "pipe" })
+        const exit = await proc.exited
+        const [out, err] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+        ])
+        const combined = `${err}\n${out}`.trim()
+        results.push({
+          check,
+          ok: exit === 0,
+          output: combined ? combined.slice(0, 4000) : "(no output)",
+        })
+      } catch (e) {
+        results.push({ check, ok: false, error: String(e) })
+      }
+    }
+    return { ok: results.every(r => r.ok), checks, results }
   },
 }
 
