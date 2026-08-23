@@ -128,7 +128,7 @@ export default function App() {
               {store.state.connected ? "● live" : "○ offline"}
             </span>
             <a
-              href="http://localhost:4096/health"
+              href="http://127.0.0.1:4096/health"
               target="_blank"
               rel="noreferrer"
               style={{

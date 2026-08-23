@@ -74,7 +74,7 @@ function baseUrl(): string {
   // dev proxy: relative urls go through Vite proxy to :4096
   // prod: same origin unless VITE_API_URL set
   if (typeof window !== "undefined" && window.location.port === "3000") return ""
-  return "http://localhost:4096"
+  return "http://127.0.0.1:4096"
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {

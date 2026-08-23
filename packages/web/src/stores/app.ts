@@ -105,7 +105,12 @@ export function createAppStore() {
     setState("loading", true)
     setState("error", null)
     try {
-      const sessions = await api.listSessions()
+      let sessions = await api.listSessions()
+      // First-run UX: land straight into a usable chat
+      if (sessions.length === 0 && !state.currentId) {
+        await createSession("New chat")
+        sessions = await api.listSessions()
+      }
       setState("sessions", sessions)
       // auto-select first if none selected
       if (!state.currentId && sessions.length > 0) {

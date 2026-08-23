@@ -125,7 +125,7 @@ function getBaseUrl(): string {
 
   // Vite proxy: relative URLs go through vite proxy when served on :3001 → :4096
   if (typeof window !== "undefined" && window.location.port === "3001") return ""
-  return "http://localhost:4096"
+  return "http://127.0.0.1:4096"
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -262,7 +262,7 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
     const base = getBaseUrl()
     if (!base) {
       const proto = typeof window !== "undefined" && window.location.protocol === "https:" ? "wss:" : "ws:"
-      const host = typeof window !== "undefined" ? window.location.host : "localhost:4096"
+      const host = typeof window !== "undefined" ? window.location.host : "127.0.0.1:4096"
       return `${proto}//${host}/`
     }
     try {
@@ -270,7 +270,7 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
       const proto = u.protocol === "https:" ? "wss:" : "ws:"
       return `${proto}//${u.host}/`
     } catch {
-      return "ws://localhost:4096/"
+      return "ws://127.0.0.1:4096/"
     }
   }
 
