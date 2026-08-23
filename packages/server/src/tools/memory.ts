@@ -5,6 +5,7 @@
  */
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
+import { sharedKnowledge } from "../learning/knowledge.js"
 
 export const memorySearchTool = {
   name: "memory_search",
@@ -16,10 +17,12 @@ export const memorySearchTool = {
     limit: z.number().optional().describe("Max results (default 5)"),
   }),
   async execute({ query, scope = "all", limit = 5 }, _ctx) {
-    // In prod: hybrid retrieval — vector (pgvector) → graph → rerank → assembly
+    const kb = sharedKnowledge()
+    const docs = await kb.retrieve({ query, limit, tier: scope === "all" ? undefined : (scope as "episodic" | "semantic" | "procedural") })
     return {
-      query, scope, results: [],
-      note: "Memory search stub — wire to Postgres+pgvector + Zep/Mem0. Returns episodic/semantic hits with hybrid reranking.",
+      query, scope,
+      results: docs.map(d => ({ title: d.title, content: d.content, tags: d.tags, tier: d.tier, score: d.score })),
+      count: docs.length,
     }
   },
 }
@@ -33,8 +36,17 @@ export const memoryWriteTool = {
     type: z.enum(["episodic", "semantic", "procedural"]).optional().describe("Memory type (default episodic)"),
     tags: z.array(z.string()).optional().describe("Tags for retrieval"),
   }),
-  async execute({ content, type = "episodic", tags }, _ctx) {
-    return { ok: true, type, tags, persisted: content.slice(0, 200) }
+  async execute({ content, type = "episodic", tags }, ctx) {
+    const kb = sharedKnowledge()
+    const entry = await kb.store({
+      tier: type as "episodic" | "semantic" | "procedural",
+      source: "user",
+      title: content.slice(0, 80),
+      content,
+      tags: tags ?? [],
+      metadata: { sessionID: ctx?.sessionID ?? null },
+    })
+    return { ok: true, id: entry.id, type, persisted: content.slice(0, 200) }
   },
 }
 

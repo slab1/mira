@@ -335,6 +335,9 @@ export function cosine(a: number[], b: number[]): number {
 
 /** Singleton for prompt injection — one KB per process, loaded once from SQLite */
 let _sharedKB: KnowledgeBase | undefined
+export function setSharedKnowledge(kb: KnowledgeBase): void {
+  _sharedKB = kb
+}
 export function sharedKnowledge(deps?: KnowledgeBaseDeps): KnowledgeBase {
   if (!_sharedKB) _sharedKB = new KnowledgeBase(deps)
   return _sharedKB

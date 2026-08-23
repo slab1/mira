@@ -44,6 +44,11 @@ export interface SessionPromptDeps {
   permissions: PermissionManager
   /** shared hierarchical memory (injected from learning system) */
   knowledge?: { retrieve(opts: { query: string; limit?: number }): Promise<Array<{ title: string; content: string }>> }
+  /** usage learner (injected from learning system) */
+  usage?: {
+    recordTool(m: { tool: string; durationMs: number; isError: boolean; errorKind?: string; sessionID: string; timestamp: number }): Promise<void>
+    recordSession(m: { sessionID: string; model: string; steps: number; totalTokensIn: number; totalTokensOut: number; latencyMs: number; toolCalls: number; toolErrors: number; doomLoops: number; compactionCount: number; success: boolean; userFeedback?: "up" | "down" | null; createdAt: number }): Promise<void>
+  }
 }
 
 export interface LoopOptions {
@@ -193,6 +198,10 @@ export class SessionPrompt {
     this.doomDetector.reset()
     const lf = initLangfuse()
     const trace = lf?.trace?.("session") ?? { update: (_data?: unknown) => {}, end: () => {} }
+    // usage-learning counters for recordSession at finalize
+    const t0 = Date.now()
+    let toolCallCount = 0, toolErrorCount = 0, doomLoopCount = 0, compactionCount = 0
+    let totalTokensIn = 0, totalTokensOut = 0
 
     // Load conversation history
     let messages = await this.loadContext(sessionID, systemPrompt)
@@ -207,6 +216,7 @@ export class SessionPrompt {
         send("compaction", { step, tokenEstimate, ratio })
         const result = await compactMessages(this.deps.gateway, messages, { smallModel: "openrouter/deepseek/deepseek-v3.2-exp", contextLimit, threshold: 0.8 })
         messages = result.messages
+        compactionCount++
         this.deps.bus.publish({ type: "message.updated", sessionID, payload: { compaction: true, step, tokenEstimate, reducedTo: result.compactedCount }, timestamp: Date.now() })
       }
 
@@ -237,6 +247,11 @@ export class SessionPrompt {
           send("tool_call", chunk.toolCall)
         } else if (chunk.type === "finish") {
           send("step_finish", { step, reason: chunk.finishReason, usage: chunk.usage })
+          const u: any = (chunk as any).usage
+          if (u) {
+            totalTokensIn += Number(u.promptTokens ?? u.inputTokens ?? 0) || 0
+            totalTokensOut += Number(u.completionTokens ?? u.outputTokens ?? 0) || 0
+          }
           if (chunk.finishReason === "stop" && toolCalls.length === 0) {
             // No more tool calls → conversation turn complete
             break loop
@@ -259,6 +274,7 @@ export class SessionPrompt {
           const msg = `Doom-loop detected: ${loopSignal.reason ?? 'repeating tool call'} — tool "${tc.name}". Breaking loop and asking user.`
           send("doom_loop", { tool: tc.name, args: tc.args, step, reason: loopSignal.reason, pattern: loopSignal.pattern })
           await this.persistToolResult(assistantMessageID, sessionID, tc, { error: msg }, true)
+          doomLoopCount++
           accumulatedText += `\n\n[System: ${msg}]\n`
           messages.push({ role: "assistant", content: accumulatedText })
           messages.push({ role: "user", content: `[Doom-loop guard: ${msg} — please clarify or adjust.]` })
@@ -290,6 +306,8 @@ export class SessionPrompt {
         send("tool_execute", { toolCallID: tc.id, name: tc.name })
         let result: unknown
         let isError = false
+        toolCallCount++
+        const tTool = Date.now()
         try {
           result = await this.deps.tools.execute(tc.name, tc.args, { sessionID, messageID: assistantMessageID })
           send("tool_result", { toolCallID: tc.id, name: tc.name, result })
@@ -298,6 +316,13 @@ export class SessionPrompt {
           isError = true
           send("tool_result", { toolCallID: tc.id, name: tc.name, result, isError: true })
         }
+        if (this.deps.usage) {
+          this.deps.usage.recordTool({
+            tool: tc.name, durationMs: Date.now() - tTool, isError,
+            errorKind: isError ? "execution" : undefined, sessionID, timestamp: Date.now(),
+          }).catch(() => {})
+        }
+        if (isError) toolErrorCount++
 
         await this.persistToolResult(assistantMessageID, sessionID, tc, result, isError)
         toolResults.push({ toolCallID: tc.id, name: tc.name, result, isError })
@@ -319,6 +344,17 @@ export class SessionPrompt {
     send("finish", { steps: step, text: accumulatedText })
     await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
     this.deps.bus.publish({ type: "message.updated", sessionID, payload: { id: assistantMessageID, text: accumulatedText, done: true }, timestamp: Date.now() })
+    if (this.deps.usage) {
+      this.deps.usage.recordSession({
+        sessionID, model, steps: step,
+        totalTokensIn, totalTokensOut,
+        latencyMs: Date.now() - t0,
+        toolCalls: toolCallCount, toolErrors: toolErrorCount,
+        doomLoops: doomLoopCount, compactionCount,
+        success: doomLoopCount === 0,
+        userFeedback: null, createdAt: Date.now(),
+      }).catch(() => {})
+    }
     trace.update({ steps: step })
     trace.end()
     try { await writer.close() } catch {}

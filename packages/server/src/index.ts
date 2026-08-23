@@ -31,6 +31,7 @@ import { SessionPrompt } from "./session/prompt.js"
 import { MCPManager } from "./mcp/index.js"
 import { loadConfig } from "./config/index.js"
 import { createLearningSystem, mountLearningRoutes } from "./learning/index.js"
+import { setSharedKnowledge } from "./learning/knowledge.js"
 import { GuardrailsManager } from "./guardrails/index.js"
 
 // ── Bootstrap ──────────────────────────────────────────────────────
@@ -67,6 +68,7 @@ async function main() {
   // 5b. Learning System (online, usage, knowledge, improvement, scheduler)
   const learning = createLearningSystem({ db, bus, gateway })
   await learning.knowledge.load()
+  setSharedKnowledge(learning.knowledge)
   learning.scheduler.start()
   console.log(`[mira] learning ready — knowledge=${learning.knowledge.size()} scheduler=${learning.scheduler.status().running ? "running" : "idle"}`)
 
@@ -79,7 +81,7 @@ async function main() {
   console.log(`[mira] tools: ${tools.count()} registered (${mcp.count()} from MCP)`)
 
   // 7. Session loop engine
-  const prompt = new SessionPrompt({ db, bus, gateway, tools, permissions, knowledge: learning.knowledge })
+  const prompt = new SessionPrompt({ db, bus, gateway, tools, permissions, knowledge: learning.knowledge, usage: learning.usage })
 
   // 8. HTTP + WebSocket RPC (Hono)
   const app = new Hono()
