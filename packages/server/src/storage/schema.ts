@@ -58,6 +58,19 @@ export const todos = sqliteTable("todos", {
   index("todos_session_idx").on(t.sessionID),
 ])
 
+// File snapshots — taken before every mutating tool call, enables /undo
+export const fileSnapshots = sqliteTable("file_snapshots", {
+  id: text("id").primaryKey(),
+  sessionID: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+  messageID: text("message_id"),
+  path: text("path").notNull(),          // absolute path
+  content: text("content"),              // null = file did not exist (revert → delete)
+  createdAt: integer("created_at").notNull(),
+}, (t) => [
+  index("file_snapshots_session_idx").on(t.sessionID),
+  index("file_snapshots_created_idx").on(t.createdAt),
+])
+
 // ── Relations (for db.query.*.findMany with: { parts: true }) ──────
 
 export const sessionsRelations = relations(sessions, ({ many }) => ({
@@ -79,4 +92,4 @@ export const todosRelations = relations(todos, ({ one }) => ({
   session: one(sessions, { fields: [todos.sessionID], references: [sessions.id] }),
 }))
 
-export const schema = { sessions, messages, parts, todos, sessionsRelations, messagesRelations, partsRelations, todosRelations }
+export const schema = { sessions, messages, parts, todos, fileSnapshots, sessionsRelations, messagesRelations, partsRelations, todosRelations }

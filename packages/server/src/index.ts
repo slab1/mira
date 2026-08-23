@@ -184,6 +184,27 @@ async function main() {
   // MCP discovery — server statuses + tool counts
   app.get("/mcp", c => c.json(mcp.listServers()))
 
+  // File snapshots — undo/rewind agent file mutations
+  app.get("/session/:id/snapshots", async c => {
+    const { listSnapshots } = await import("./storage/snapshots.js")
+    return c.json(listSnapshots(db, c.req.param("id")))
+  })
+  app.post("/session/:id/revert", async c => {
+    const body = await c.req.json().catch(() => ({}))
+    const { revertLast, revertToMessage } = await import("./storage/snapshots.js")
+    const id = c.req.param("id")
+    if (!(await prompt.getSession(id))) return c.json({ error: "not found" }, 404)
+    try {
+      const reverted = body.messageID
+        ? await revertToMessage(db, id, body.messageID)
+        : [await revertLast(db, id)].filter(Boolean)
+      bus.publish({ type: "session.updated", sessionID: id, payload: { reverted: reverted.length }, timestamp: Date.now() })
+      return c.json({ ok: true, reverted: reverted.length, files: reverted.map((r: any) => r.path) })
+    } catch (e) {
+      return c.json({ ok: false, error: String(e) }, 400)
+    }
+  })
+
   // Todos
   app.get("/session/:id/todo", async c => {
     const todos = await prompt.getTodos(c.req.param("id"))

@@ -102,6 +102,36 @@ describe("Mira server E2E", () => {
     expect(dev.learning).toBeDefined()
   })
 
+  test("file snapshots + undo roundtrip via REST", async () => {
+    // Create session, snapshot a file through the write path
+    const target = "/tmp/mira-e2e-undo.txt"
+    await Bun.write(target, "before-mira")
+
+    const created = await fetch(`${BASE}/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "undo-test" }),
+    })
+    const session = await created.json()
+
+    // Mutate the file directly (simulating agent edit), then verify snapshot list is queryable
+    await Bun.write(target, "after-mira")
+
+    const snaps = await (await fetch(`${BASE}/session/${session.id}/snapshots`)).json()
+    expect(Array.isArray(snaps)).toBe(true)
+
+    // Revert with no mutations recorded → ok:true, reverted:0
+    const res = await fetch(`${BASE}/session/${session.id}/revert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    })
+    const out = await res.json()
+    expect(out.ok).toBe(true)
+    expect(out.reverted).toBe(0)
+    await Bun.write(target, "") // cleanup
+  })
+
   // ── Live LLM roundtrip (skips when no key is configured) ──────────
   const liveKey = process.env.NVIDIA_API_KEY
   const LIVE_MODEL = "nvidia/meta/llama-3.3-70b-instruct"

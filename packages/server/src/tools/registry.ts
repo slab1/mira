@@ -134,6 +134,22 @@ export class ToolRegistry {
 
     let result: unknown
     let error: unknown = null
+    // Snapshot target files BEFORE mutation (edit/write/patch) — enables /undo
+    const MUTATING = new Set(["edit", "write", "patch"])
+    if (MUTATING.has(name)) {
+      try {
+        const { resolve } = await import("node:path")
+        const { snapshotFile } = await import("../storage/snapshots.js")
+        const p = (parsed.data as any)?.path ?? (parsed.data as any)?.file
+        if (typeof p === "string" && p) {
+          snapshotFile(this.deps.db, {
+            sessionID: ctx.sessionID,
+            messageID: ctx.messageID,
+            path: resolve((ctx as any).cwd ?? process.cwd(), p),
+          })
+        }
+      } catch {}
+    }
     try {
       result = await tool.execute(parsed.data, fullCtx)
     } catch (e) {

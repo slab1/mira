@@ -90,6 +90,17 @@ export async function migrate(db: any) {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS todos_session_idx ON todos(session_id);
+
+    CREATE TABLE IF NOT EXISTS file_snapshots (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      message_id TEXT,
+      path TEXT NOT NULL,
+      content TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS file_snapshots_session_idx ON file_snapshots(session_id);
+    CREATE INDEX IF NOT EXISTS file_snapshots_created_idx ON file_snapshots(created_at);
   `)
   // console.log("[storage] migrated")
 }
