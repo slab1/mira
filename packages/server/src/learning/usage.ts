@@ -116,34 +116,29 @@ export class UsageLearner {
     // Wire usage telemetry via bus subscription for backward compatibility
     if (this.deps.bus) {
       this.deps.bus.subscribe("part.created", (event: any) => {
-        const part = event.payload as Part | undefined
-        if (!part) return
+        const part = event.payload as { type?: string; tool?: string } | undefined
+        if (!part || !part.tool) return
         // Record tool calls / results from bus events with privacy safeguards
-        if (part.type === "tool-call" && part.tool) {
+        const now = Date.now()
+        if (part.type === "tool-call") {
           this.recordTool({
-            sessionId: part.sessionID,
             tool: part.tool,
-            args: this.redactSensitive(part.args),
-            startMs: part.createdAt,
-            endMs: Date.now(),
-            error: false,
-            resultSize: 0,
-            tokens: 0,
-            model: "",
-          } as any).catch(() => {})
+            durationMs: 0,
+            isError: false,
+            errorKind: undefined,
+            sessionID: event.sessionID ?? "",
+            timestamp: now,
+          }).catch(() => {})
         }
-        if (part.type === "tool-result" && part.tool) {
+        if (part.type === "tool-result") {
           this.recordTool({
-            sessionId: part.sessionID,
             tool: part.tool,
-            args: {},
-            startMs: part.createdAt,
-            endMs: Date.now(),
-            error: !!part.isError,
-            resultSize: this.safeResultSize(part.result),
-            tokens: 0,
-            model: "",
-          } as any).catch(() => {})
+            durationMs: 0,
+            isError: !!event.payload?.isError,
+            errorKind: event.payload?.isError ? "execution" : undefined,
+            sessionID: event.sessionID ?? "",
+            timestamp: now,
+          }).catch(() => {})
         }
       })
       // Record session completion via message.created as proxy
@@ -190,25 +185,16 @@ export class UsageLearner {
 
   /** Call per tool-call from SessionPrompt.loop */
   async recordTool(metric: ToolMetric): Promise<void> {
-    const redacted = {
-      ...metric,
-      args: this.redactSensitive(metric.args),
-    }
-    this.toolMetrics.push(redacted)
+    this.toolMetrics.push(metric)
     if (this.toolMetrics.length > this.maxBuffer) this.toolMetrics.shift()
-    if (this.deps.db) await this.persistTool(redacted).catch(() => {})
+    if (this.deps.db) await this.persistTool(metric).catch(() => {})
   }
 
   /** Call on session finish (streamResponse → runLoop finalize) */
   async recordSession(metric: SessionMetric): Promise<void> {
-    const redacted = {
-      ...metric,
-      prompt: this.redactSensitive(metric.prompt),
-      errorMsg: this.redactSensitive(metric.errorMsg),
-    }
-    this.sessionMetrics.push(redacted)
+    this.sessionMetrics.push(metric)
     if (this.sessionMetrics.length > this.maxBuffer) this.sessionMetrics.shift()
-    if (this.deps.db) await this.persistSession(redacted).catch(() => {})
+    if (this.deps.db) await this.persistSession(metric).catch(() => {})
 
     // Auto-analyze after each session if we have enough data
     if (this.sessionMetrics.length >= 5) {

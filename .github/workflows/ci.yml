@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: bun install
       - name: Typecheck
-        run: echo "typecheck skipped - non-blocking"
+        run: bunx turbo run typecheck --cache-dir=.turbo
 
   build:
     name: build

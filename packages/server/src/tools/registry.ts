@@ -30,8 +30,8 @@ export interface ToolDef<T extends z.ZodTypeAny = z.ZodTypeAny> {
   category: "file" | "execution" | "planning" | "web" | "memory" | "session" | "mcp" | "other"
   /** if true, tool requires permission check (most do) */
   needsPermission?: boolean
-  /** execute with session context */
-  execute: (args: z.infer<T>, ctx: ToolContext) => Promise<unknown>
+  /** execute with session context — args validated by schema in Registry.execute before call */
+  execute: (args: any, ctx: ToolContext) => Promise<unknown>
 }
 
 export interface ToolContext {
@@ -83,7 +83,7 @@ export class ToolRegistry {
       () => import("./other.js"),
     ]
     for (const load of modules) {
-      const mod = await load()
+      const mod: any = await load()
       const raw = mod.default ?? mod.tools ?? (mod.tool ? [mod.tool] : [])
       const defs: ToolDef[] = Array.isArray(raw) ? raw : [raw].filter(Boolean)
       for (const d of defs) if (d) this.register(d)

@@ -88,12 +88,11 @@ export class AuditLogger {
   }
   async log(entry: AuditEntry) {
     try {
+      const { appendFile, mkdir } = await import("node:fs/promises")
       const dir = this.path.split("/").slice(0, -1).join("/")
-      if (dir) {
-        // best-effort mkdir — ignore errors
-      }
+      if (dir) await mkdir(dir, { recursive: true }).catch(() => {})
       const line = JSON.stringify({ ...entry, ts: Date.now() }) + "\n"
-      await Bun.write(this.path as any, line as any, { append: true })
+      await appendFile(this.path, line, "utf-8")
     } catch {}
   }
 }

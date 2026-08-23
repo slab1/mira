@@ -185,7 +185,7 @@ export class SessionPrompt {
     let accumulatedText = ""
     this.doomDetector.reset()
     const lf = initLangfuse()
-    const trace = lf?.trace?.("session") ?? { update: () => {}, end: () => {} }
+    const trace = lf?.trace?.("session") ?? { update: (_data?: unknown) => {}, end: () => {} }
 
     // Load conversation history
     let messages = await this.loadContext(sessionID, systemPrompt)

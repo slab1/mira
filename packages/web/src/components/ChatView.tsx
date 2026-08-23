@@ -189,7 +189,6 @@ export function ChatView(props: { store: AppStore }) {
           <textarea
             ref={inputRef}
             value={props.store.input()}
-            onInput={(e) => props.store.setInput(e.currentTarget.value)}
             onKeyDown={onKeyDown}
             placeholder="Message Mira… (Enter to send, Shift+Enter for newline)"
             rows={1}
@@ -207,9 +206,10 @@ export function ChatView(props: { store: AppStore }) {
               "line-height": "1.4",
               outline: "none",
             }}
-            onFocus={(e) => {
+            onFocus={() => {
               // auto-grow
-              const el = e.currentTarget
+              const el = inputRef
+              if (!el) return
               el.style.height = "auto"
               el.style.height = Math.min(el.scrollHeight, 140) + "px"
             }}

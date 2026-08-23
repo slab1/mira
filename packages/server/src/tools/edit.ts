@@ -53,7 +53,7 @@ export const patchTool = {
     await Bun.write(tmp, patch)
     const proc = Bun.spawn(["patch", "-p1", "--forward"], {
       cwd: cwd ?? process.cwd(),
-      stdin: await Bun.file(tmp).arrayBuffer(),
+      stdin: Bun.file(tmp) as any,
       stdout: "pipe",
       stderr: "pipe",
     })

@@ -61,7 +61,7 @@ export function ToolView(props: { store: AppStore }) {
             </span>
             <Show when={s().currentId}>
               <button
-                onClick={() => s().currentId && props.store.loadTodos(s().currentId)}
+                onClick={() => { const id = s().currentId; if (id) props.store.loadTodos(id) }}
                 style={{
                   background: "transparent",
                   border: "1px solid #27272a",
