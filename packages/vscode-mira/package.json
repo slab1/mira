@@ -1,0 +1,24 @@
+{
+  "name": "vscode-mira",
+  "displayName": "Mira",
+  "description": "VS Code extension for Mira agent workspace",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.99.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "mira.hello", "title": "Mira: Hello" }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.99.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.8.0"
+  }
+}
