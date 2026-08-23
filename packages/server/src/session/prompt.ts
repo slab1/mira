@@ -30,6 +30,7 @@ import { buildSystemPrompt } from "../config/index.js"
 import { DoomLoopDetector } from "./doom-loop-detector.js"
 import { needsCompaction, compactMessages, estimateTokens } from "./compaction.js"
 import { searchKnowledge } from "../learning/knowledge.js"
+import { loadSkills } from "../skills/loader.js"
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -316,6 +317,13 @@ export class SessionPrompt {
   private async loadContext(sessionID: string, systemPrompt: string) {
     const messages = await this.getMessages(sessionID)
     const context: any[] = [{ role: "system", content: systemPrompt }]
+    // Skills injection
+    try {
+      const skills = await loadSkills()
+      if (Object.keys(skills).length) {
+        context.push({ role: "system", content: `Active skills:\n${Object.values(skills).map(s => `- ${s.name}: ${s.description.slice(0,200)}`).join("\n")}` })
+      }
+    } catch {}
     // Memory retrieval: inject relevant knowledge
     const lastUserText = messages.length ? (messages[messages.length - 1].parts?.find((p: any) => p.type === "text")?.text ?? "") : ""
     if (lastUserText) {
