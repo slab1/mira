@@ -12,6 +12,6 @@
       "recommendations": ["vscode-mira"]
     }
   },
-  "postCreateCommand": "curl -fsSL https://bun.sh/install | bash -s \"bun-v1.3.14\" && echo 'export PATH=\"$HOME/.bun/bin:$PATH\"' >> ~/.bashrc && mkdir -p $HOME/.npm-global && npm config set prefix $HOME/.npm-global && echo 'export PATH=\"$HOME/.npm-global/bin:$PATH\"' >> ~/.bashrc && npm install -g opencode-ai@1.18.16 && opencode --version || echo 'opencode install check failed'",
+  "postCreateCommand": "export PATH=\"$HOME/.bun/bin:$PATH\" && curl -fsSL https://bun.sh/install | bash -s \"bun-v1.3.14\" && echo 'export PATH=\"$HOME/.bun/bin:$PATH\"' >> ~/.bashrc && mkdir -p $HOME/.npm-global && npm config set prefix $HOME/.npm-global && export PATH=\"$HOME/.npm-global/bin:$PATH\" && echo 'export PATH=\"$HOME/.npm-global/bin:$PATH\"' >> ~/.bashrc && npm install -g opencode-ai@1.18.16 && opencode --version || echo 'opencode install check failed'",
   "remoteUser": "codespace"
 }
