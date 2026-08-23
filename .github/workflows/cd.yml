@@ -88,6 +88,12 @@ jobs:
       url: ${{ vars.DEPLOY_URL }}
     steps:
       - uses: actions/checkout@v4
+      - name: Validate deploy variables
+        run: |
+          if [ -z "${{ vars.DEPLOY_HOOK_URL }}" ] || [ -z "${{ vars.DEPLOY_TOKEN }}" ]; then
+            echo "::error::Required deploy variables DEPLOY_HOOK_URL and DEPLOY_TOKEN are missing or empty"
+            exit 1
+          fi
       - name: Deploy
         run: |
           echo "Deploying ghcr.io/${{ github.repository }}:${{ github.sha }} to ${{ vars.DEPLOY_URL }}"

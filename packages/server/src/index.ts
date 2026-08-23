@@ -21,7 +21,6 @@
 
 import { Hono } from "hono"
 import { cors } from "hono/cors"
-import { logger } from "hono/logger"
 import { Bus } from "./bus/index.js"
 import { createDatabase, migrate } from "./storage/db.js"
 import { createGateway } from "./gateway/index.js"
@@ -38,7 +37,27 @@ import { GuardrailsManager } from "./guardrails/index.js"
 // ── Bootstrap ──────────────────────────────────────────────────────
 const PORT = Number(process.env.PORT ?? Bun.argv.find(a => a.startsWith("--port="))?.split("=")[1] ?? 4096)
 
+async function initOtel() {
+  const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT
+  if (!endpoint) return
+  try {
+    const { NodeSDK } = await import('@opentelemetry/sdk-node')
+    const { OTLPTraceExporter } = await import('@opentelemetry/exporter-trace-otlp-http')
+    const { Resource } = await import('@opentelemetry/resources')
+    const { SemanticResourceAttributes } = await import('@opentelemetry/semantic-conventions')
+    const sdk = new NodeSDK({
+      resource: new Resource({ [SemanticResourceAttributes.SERVICE_NAME]: 'mira-server' }),
+      traceExporter: new OTLPTraceExporter({ url: `${endpoint.replace(/\/$/, '')}/v1/traces` })
+    })
+    await sdk.start()
+    console.log('[mira] OTel initialized')
+  } catch (e) {
+    console.warn('[mira] OTel init failed', e)
+  }
+}
+
 async function main() {
+  await initOtel()
   console.log(`[mira] starting server on :${PORT} — Bun ${Bun.version}`)
 
   // 1. Config
@@ -96,7 +115,27 @@ async function main() {
   // 8. HTTP + WebSocket RPC (Hono)
   const app = new Hono()
 
+  // Metrics collector
+  const metrics = {
+    httpRequestsTotal: new Map<string, number>(),
+    httpRequestDurationSecondsSum: 0,
+    httpRequestDurationSecondsCount: 0,
+    activeSessions: 0,
+  }
+
   app.use("*", cors())
+  // OpenTelemetry tracer middleware
+  app.use("*", async (c, next) => {
+    const { trace } = await import('@opentelemetry/api')
+    const tracer = trace.getTracer('mira-server')
+    const span = tracer.startSpan('http.request', { attributes: { 'http.method': c.req.method, 'http.route': c.req.path } })
+    try {
+      await next()
+      span.setAttribute('http.status_code', c.res.status)
+    } finally {
+      span.end()
+    }
+  })
   // Security: optional bearer-token gate (set MIRA_TOKEN to enable)
   if (process.env.MIRA_TOKEN) {
     const required = process.env.MIRA_TOKEN
@@ -108,7 +147,73 @@ async function main() {
       await next()
     })
   }
-  app.use("*", logger())
+  app.use("*", async (c, next) => {
+    const start = Date.now()
+    const requestId = crypto.randomUUID()
+    c.set("requestId", requestId)
+    await next()
+    const duration = Date.now() - start
+    const status = c.res.status
+    const log = {
+      timestamp: new Date().toISOString(),
+      level: "info",
+      method: c.req.method,
+      path: c.req.path,
+      status,
+      duration_ms: duration,
+      request_id: requestId,
+    }
+    console.log(JSON.stringify(log))
+  })
+
+  // Rate limiting — token bucket per IP, 100 req/min, skip health
+  const rateLimitBuckets = new Map<string, { tokens: number; last: number }>()
+  app.use("*", async (c, next) => {
+    const path = new URL(c.req.url).pathname
+    if (path === "/health" || path === "/dev/health") return await next()
+    const ip = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("cf-connecting-ip") ?? c.req.header("x-real-ip") ?? "unknown"
+    const now = Date.now()
+    const windowMs = 60_000
+    const capacity = 100
+    let bucket = rateLimitBuckets.get(ip)
+    if (!bucket) {
+      bucket = { tokens: capacity, last: now }
+      rateLimitBuckets.set(ip, bucket)
+    }
+    const elapsed = now - bucket.last
+    if (elapsed > 0) {
+      const refill = (elapsed / windowMs) * capacity
+      bucket.tokens = Math.min(capacity, bucket.tokens + refill)
+      bucket.last = now
+    }
+    if (bucket.tokens >= 1) {
+      bucket.tokens -= 1
+      await next()
+    } else {
+      return c.json({ error: "Too Many Requests" }, 429)
+    }
+  })
+
+  // Metrics middleware
+  app.use('*', async (c, next) => {
+    const start = Date.now()
+    await next()
+    const durationSec = (Date.now() - start) / 1000
+    const method = c.req.method
+    const path = c.req.path
+    const status = c.res.status
+    const key = `${method} ${path} ${status}`
+    metrics.httpRequestsTotal.set(key, (metrics.httpRequestsTotal.get(key) ?? 0) + 1)
+    metrics.httpRequestDurationSecondsSum += durationSec
+    metrics.httpRequestDurationSecondsCount += 1
+    // Track active sessions in-memory
+    if (method === 'POST' && path === '/session' && status === 201) {
+      metrics.activeSessions += 1
+    }
+    if (method === 'DELETE' && path.startsWith('/session/') && status === 200) {
+      metrics.activeSessions = Math.max(0, metrics.activeSessions - 1)
+    }
+  })
 
   // Landing page — friendly index when opened in a browser
   app.get("/", c => {
@@ -134,6 +239,34 @@ async function main() {
   // Health
   app.get("/health", c => c.json({ ok: true, version: "0.1.0", tools: tools.count(), uptime: process.uptime(), memory: process.memoryUsage() }))
   app.get("/dev/health", c => c.json({ ok: true, version: "0.1.0", tools: tools.count(), busHistory: bus.recent(5).length, learning: learning.scheduler.status(), gateway: gateway.stats(), uptime: process.uptime() }))
+  // Metrics
+  app.get("/metrics", async c => {
+    const gatewayStats = gateway.stats()
+    const cost = gatewayStats.costUSD
+    const activeSessions = metrics.activeSessions
+
+    let out = ''
+    out += '# HELP http_requests_total Total HTTP requests\n'
+    out += '# TYPE http_requests_total counter\n'
+    for (const [key, val] of metrics.httpRequestsTotal) {
+      const parts = key.split(' ')
+      const method = parts[0]
+      const status = parts[parts.length - 1]
+      const route = parts.slice(1, -1).join(' ')
+      out += `http_requests_total{method="${method}",route="${route}",status="${status}"} ${val}\n`
+    }
+    out += '# HELP http_request_duration_seconds HTTP request duration seconds\n'
+    out += '# TYPE http_request_duration_seconds summary\n'
+    out += `http_request_duration_seconds_sum ${metrics.httpRequestDurationSecondsSum}\n`
+    out += `http_request_duration_seconds_count ${metrics.httpRequestDurationSecondsCount}\n`
+    out += '# HELP active_sessions Number of active sessions\n'
+    out += '# TYPE active_sessions gauge\n'
+    out += `active_sessions ${activeSessions}\n`
+    out += '# HELP gateway_cost_total Total gateway cost USD\n'
+    out += '# TYPE gateway_cost_total counter\n'
+    out += `gateway_cost_total ${cost}\n`
+    return c.text(out, 200, { 'Content-Type': 'text/plain; version=0.0.4' })
+  })
   // Skills
   app.get("/skills", async c => {
     const { loadSkills } = await import("./skills/loader.js")

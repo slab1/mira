@@ -34,6 +34,7 @@ import { loadSkills } from "../skills/loader.js"
 import { AGENT_TEMPLATES } from "../agents/templates.js"
 import { initLangfuse } from "../telemetry/langfuse.js"
 import { eq } from "drizzle-orm"
+import { trace as otelTrace } from "@opentelemetry/api"
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -320,6 +321,8 @@ export class SessionPrompt {
     writer: WritableStreamDefaultWriter<Uint8Array>
   }) {
     const { sessionID, assistantMessageID, model, systemPrompt, send, writer } = opts
+    const tracer = otelTrace.getTracer('mira-server')
+    const span = tracer.startSpan('session.prompt.loop', { attributes: { session_id: sessionID, prompt_id: assistantMessageID } })
     const MAX_STEPS = 32
     let step = 0
     let accumulatedText = ""
@@ -514,6 +517,7 @@ export class SessionPrompt {
         console.error(`[mira] queued turn failed (session ${sessionID}):`, err?.stack ?? err)
       })
     }
+    span.end()
   }
 
   // ── Helpers ──────────────────────────────────────────────────────
