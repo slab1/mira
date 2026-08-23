@@ -90,6 +90,12 @@ async function main() {
   // Health
   app.get("/health", c => c.json({ ok: true, version: "0.1.0", tools: tools.count(), uptime: process.uptime(), memory: process.memoryUsage() }))
   app.get("/dev/health", c => c.json({ ok: true, version: "0.1.0", tools: tools.count(), busHistory: bus.recent(5).length, learning: learning.scheduler.status(), uptime: process.uptime() }))
+  // Skills
+  app.get("/skills", async c => {
+    const { loadSkills } = await import("./skills/loader.js")
+    const skills = await loadSkills()
+    return c.json(Object.keys(skills))
+  })
 
   // REST — sessions
   app.get("/session", async c => {
