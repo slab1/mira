@@ -146,6 +146,11 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const rpc = {
   health: () => req<{ ok: boolean; version: string; tools: number }>("/health"),
+  devHealth: () =>
+    req<{
+      ok: boolean
+      gateway: { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number }
+    }>("/dev/health"),
 
   listSessions: () => req<Session[]>("/session"),
   createSession: (body: Partial<Pick<Session, "title" | "model" | "parentID">> = {}) =>

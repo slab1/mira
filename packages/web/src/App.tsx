@@ -78,6 +78,24 @@ export default function App() {
           </div>
 
           <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
+            <Show when={store.state.cost}>
+              {(c) => (
+                <span
+                  title={`Gateway: ${c().requests} requests · ${c().inputTokens.toLocaleString()} in / ${c().outputTokens.toLocaleString()} out · avg ${c().avgLatencyMs}ms`}
+                  style={{
+                    "font-size": "11px",
+                    color: "#93c5fd",
+                    background: "#172554",
+                    border: "1px solid #1e3a8a",
+                    padding: "3px 8px",
+                    "border-radius": "999px",
+                    "font-family": "ui-monospace, monospace",
+                  }}
+                >
+                  ${c().costUSD.toFixed(4)}
+                </span>
+              )}
+            </Show>
             <SkillSelector onSelect={(skill) => { if (skill) store.createSession(`${skill} session`) }} />
             <span
               title="Mira server health"

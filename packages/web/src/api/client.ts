@@ -109,6 +109,14 @@ export const api = {
 
   listTools: () => req<ToolInfo[]>("/tools"),
 
+  /** Gateway cost/latency stats for the process */
+  devHealth: () =>
+    req<{
+      ok: boolean
+      tools: number
+      gateway: { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number }
+    }>("/dev/health"),
+
   /** Queue a message while the agent is streaming (processed after current turn) */
   queuePrompt: (id: string, prompt: string) =>
     req<{ position: number }>(`/session/${id}/queue`, { method: "POST", body: JSON.stringify({ prompt }) }),

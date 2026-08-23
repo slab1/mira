@@ -22,6 +22,8 @@ type AppState = {
   pendingQuestion: { questionID: string; questions: Array<{ question: string; header: string; options: Array<{ label: string; description: string }>; multiple?: boolean }> } | null
   /** messages queued while agent streams — mirrored from server */
   queued: string[]
+  /** gateway spend for this server process */
+  cost: { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number } | null
 }
 
 function uid() {
@@ -41,6 +43,7 @@ export function createAppStore() {
     loading: false,
     pendingQuestion: null,
     queued: [],
+    cost: null,
   })
 
   const [input, setInput] = createSignal("")
@@ -155,6 +158,17 @@ export function createAppStore() {
     }
   }
 
+  /** Refresh live spend from the gateway (called on mount, after turns, + interval) */
+  async function loadCost() {
+    try {
+      const dev = await api.devHealth()
+      if (dev.gateway) setState("cost", dev.gateway)
+    } catch {}
+  }
+  loadCost()
+  const costIv = setInterval(loadCost, 15_000)
+  onCleanup(() => clearInterval(costIv))
+
   async function loadTodos(id: string) {
     try {
       const todos = await api.getTodos(id)
@@ -229,8 +243,9 @@ export function createAppStore() {
       if ((e as Error).name !== "AbortError") setState("error", (e as Error).message)
     } finally {
       setState({ streaming: false, streamText: "" })
-      // final sync from server to get tool parts / persisted state
+      // final sync from server to get tool parts / persisted state + fresh spend
       if (state.currentId) await loadMessages(state.currentId)
+      void loadCost()
     }
   }
 

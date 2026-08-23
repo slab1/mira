@@ -29,16 +29,17 @@ import QuestionView from "./components/QuestionView"
 export default function App() {
   const store = createSessionStore()
   const [health, setHealth] = createSignal<{ ok: boolean; version: string; tools: number } | null>(null)
+  const [cost, setCost] = createSignal<{ requests: number; inputTokens: number; outputTokens: number; costUSD: number } | null>(null)
 
   onMount(() => {
     store.loadSessions()
-    // health check
-    import("./rpc/client").then(({ rpc }) =>
-      rpc
-        .health()
-        .then(setHealth)
-        .catch(() => {}),
-    )
+    // health + spend
+    import("./rpc/client").then(({ rpc }) => {
+      rpc.health().then(setHealth).catch(() => {})
+      const loadCost = () => rpc.devHealth().then(d => setCost(d.gateway)).catch(() => {})
+      loadCost()
+      setInterval(loadCost, 15_000)
+    })
   })
 
   // Keyboard shortcuts: a = allow, d = deny when permission pending
@@ -136,6 +137,24 @@ export default function App() {
         </div>
 
         <div style={{ display: "flex", "align-items": "center", gap: "10px", "font-size": "11px" }}>
+          <Show when={cost()}>
+            {(c) => (
+              <span
+                title={`Gateway: ${c().requests} requests · ${c().inputTokens} in / ${c().outputTokens} out`}
+                style={{
+                  padding: "3px 8px",
+                  "border-radius": "999px",
+                  background: "rgba(59,130,246,0.15)",
+                  border: "1px solid rgba(59,130,246,0.25)",
+                  color: "#93c5fd",
+                  "font-family": "ui-monospace, monospace",
+                  "font-weight": "600",
+                }}
+              >
+                ${c().costUSD.toFixed(4)}
+              </span>
+            )}
+          </Show>
           <Show when={health()}>
             {(h) => (
               <span style={{ opacity: "0.7" }}>
