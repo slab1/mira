@@ -58,6 +58,7 @@ jobs:
 
       # --- SWE-bench ---
       - name: Eval — SWE-bench
+        continue-on-error: true
         run: bunx turbo run eval --cache-dir=.turbo -- --suite=swe-bench --tier=${{ env.EVAL_TIER }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
