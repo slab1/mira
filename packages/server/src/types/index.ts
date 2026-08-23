@@ -91,6 +91,7 @@ export type BusEventType =
   | "part.created" | "part.updated"
   | "todo.updated"
   | "permission.ask" | "permission.reply"
+  | "question.ask" | "question.reply"
   | "server.heartbeat" | "server.error"
 
 export interface BusEvent<T = unknown> {

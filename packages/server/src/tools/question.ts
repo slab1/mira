@@ -22,24 +22,28 @@ export const questionTool = {
   }),
   async execute({ questions }, ctx) {
     const bus = (ctx as any).bus
-    const questionID = `q-${Date.now()}`
+    if (!bus?.waitFor) {
+      return { asked: false, error: "No bus available — cannot reach user" }
+    }
+    const questionID = `q-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
 
-    // Publish question event → TUI renders interactive prompt
-    bus?.publish({
-      type: "permission.ask",
+    // Publish question event → TUI/web renders interactive prompt
+    bus.publish({
+      type: "question.ask",
       sessionID: ctx.sessionID,
       payload: { questionID, questions, tool: "question" },
       timestamp: Date.now(),
     })
 
-    // Wait for user reply (WS → bus → waitForPermissionReply)
-    // In real impl: bus.waitForQuestionReply(questionID, timeout)
-    // Stub: return questions for LLM to see format
-    return {
-      asked: true,
-      questionID,
-      questions,
-      note: "Question sent to user via BusEvent. In production, loop pauses until permission.reply arrives via WebSocket. Stub returns immediately.",
+    // Pause the loop until the user replies via WS (question.reply with matching id)
+    try {
+      const reply = await bus.waitFor(
+        (e: any) => e.type === "question.reply" && e.payload?.questionID === questionID,
+        300_000, // 5 min for human turnaround
+      )
+      return { asked: true, questionID, answered: true, answers: (reply.payload as any).answers ?? null }
+    } catch {
+      return { asked: true, questionID, answered: false, note: "User did not answer in time — proceeding with best judgment." }
     }
   },
 }

@@ -37,9 +37,66 @@ export interface Gateway {
   summarize(messages: any[], smallModel?: string): Promise<string>
   /** List available models (from OpenRouter /api/models) */
   listModels(): Promise<Array<{ id: string; name: string; context: number }>>
+  /** Cumulative cost/latency/token stats for this process */
+  stats(): { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number; byModel: Record<string, { requests: number; inputTokens: number; outputTokens: number; costUSD: number }> }
+}
+
+/** Wrap an async iterable, invoking onUsage when the finish chunk carries usage */
+async function* trackedStream(iter: AsyncIterable<any>, onUsage: (u: { input: number; output: number }) => void): AsyncIterable<any> {
+  for await (const chunk of iter) {
+    if (chunk?.type === "finish") {
+      const u = chunk.usage
+      if (u && typeof u === "object") {
+        const input = Number(u.inputTokens ?? u.prompt_tokens ?? u.promptTokens ?? 0) || 0
+        const output = Number(u.outputTokens ?? u.completion_tokens ?? u.completionTokens ?? 0) || 0
+        if (input || output) {
+          chunk.usage = { inputTokens: input, outputTokens: output }
+          onUsage({ input, output })
+        }
+      }
+    }
+    yield chunk
+  }
 }
 
 export function createGateway(config: MiraConfig): Gateway {
+  // ── Cost/latency tracking (cumulative per process) ────────────────
+  const stats = {
+    requests: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    costUSD: 0,
+    totalLatencyMs: 0,
+    byModel: new Map<string, { requests: number; inputTokens: number; outputTokens: number; costUSD: number }>(),
+  }
+
+  // Rough per-1M-token pricing (input/output USD) for known model families
+  function priceFor(modelID: string): [number, number] {
+    const m = modelID.toLowerCase()
+    if (m.includes("claude-sonnet")) return [3, 15]
+    if (m.includes("claude-opus")) return [15, 75]
+    if (m.includes("claude-haiku")) return [0.8, 4]
+    if (m.includes("gpt-4o")) return [2.5, 10]
+    if (m.includes("gpt-4")) return [10, 30]
+    if (m.includes("deepseek")) return [0.27, 1.1]
+    if (m.includes("llama") || m.includes("mistral")) return [0.5, 0.8]
+    return [1, 2] // conservative default
+  }
+
+  /** Record token usage + latency for one request */
+  function record(modelID: string, inputTokens: number, outputTokens: number, latencyMs: number) {
+    const [pin, pout] = priceFor(modelID)
+    const cost = ((inputTokens * pin) + (outputTokens * pout)) / 1_000_000
+    stats.requests++
+    stats.inputTokens += inputTokens
+    stats.outputTokens += outputTokens
+    stats.costUSD += cost
+    stats.totalLatencyMs += latencyMs
+    const cur = stats.byModel.get(modelID) ?? { requests: 0, inputTokens: 0, outputTokens: 0, costUSD: 0 }
+    cur.requests++; cur.inputTokens += inputTokens; cur.outputTokens += outputTokens; cur.costUSD += cost
+    stats.byModel.set(modelID, cur)
+  }
+
   // Resolve provider + model from "openrouter/anthropic/claude-sonnet-4" style string
   function resolveModel(modelStr: string): { baseURL: string; apiKey: string; modelID: string } {
     // Strip prefix if present: "openrouter/anthropic/claude..." → "anthropic/claude..."
@@ -67,29 +124,22 @@ export function createGateway(config: MiraConfig): Gateway {
   return {
     async stream(opts) {
       const { baseURL, apiKey, modelID } = resolveModel(opts.model)
-
-      // ── Real path: Vercel AI SDK v5 streamText ──
-      // In production with deps installed:
-      //   import { streamText } from "ai"
-      //   import { createOpenAI } from "@ai-sdk/openai"
-      //   const openai = createOpenAI({ baseURL, apiKey })
-      //   const result = streamText({ model: openai(modelID), messages, tools, system })
-      //   return result.toUIMessageStream() or result.fullStream
-      //
-      // Minimal stub below — returns a fake stream so the loop is testable without API keys.
-      // Swap to real SDK by uncommenting above and installing `ai` + `@ai-sdk/openai`.
+      const t0 = Date.now()
 
       // If API key is set, try live call via fetch (OpenAI-compatible)
       if (apiKey) {
         try {
-          return await liveOpenAIStream({ baseURL, apiKey, modelID, opts })
+          const iter = await liveOpenAIStream({ baseURL, apiKey, modelID, opts })
+          // Wrap to capture usage + latency from the live stream
+          return trackedStream(iter, (usage) => record(modelID, usage.input, usage.output, Date.now() - t0))
         } catch (e) {
           console.warn("[gateway] live stream failed, falling back to stub:", (e as Error).message)
         }
       }
 
       // Stub stream — emits a helpful message so `mira` is usable without keys
-      return stubStream(modelID, opts)
+      const stub = stubStream(modelID, opts)
+      return trackedStream(stub, (usage) => record(modelID, usage.input, usage.output, Date.now() - t0))
     },
 
     async summarize(messages, smallModel) {
@@ -113,6 +163,19 @@ export function createGateway(config: MiraConfig): Gateway {
         return [{ id: "openrouter/anthropic/claude-sonnet-4", name: "Claude Sonnet 4", context: 200_000 }]
       }
     },
+
+    stats() {
+      const byModel: Record<string, { requests: number; inputTokens: number; outputTokens: number; costUSD: number }> = {}
+      for (const [k, v] of stats.byModel) byModel[k] = { ...v }
+      return {
+        requests: stats.requests,
+        inputTokens: stats.inputTokens,
+        outputTokens: stats.outputTokens,
+        costUSD: Math.round(stats.costUSD * 1e6) / 1e6,
+        avgLatencyMs: stats.requests ? Math.round(stats.totalLatencyMs / stats.requests) : 0,
+        byModel,
+      }
+    },
   }
 }
 
@@ -133,6 +196,7 @@ async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID:
       })),
     ],
     stream: true,
+    stream_options: { include_usage: true },
     ...(opts.tools ? { tools: Object.entries(opts.tools).map(([name, def]: any) => ({ type: "function", function: { name, description: def.description, parameters: def.parameters } })), tool_choice: "auto" } : {}),
   }
 
@@ -156,6 +220,7 @@ async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID:
     const reader = res.body!.getReader()
     const decoder = new TextDecoder()
     let buf = ""
+    let lastUsage: { inputTokens: number; outputTokens: number } | null = null
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
@@ -177,11 +242,17 @@ async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID:
               yield { type: "tool-call", toolCall: { id: tc.id ?? `call-${Date.now()}`, name: tc.function?.name ?? "unknown", args: tc.function?.arguments ? JSON.parse(tc.function.arguments) : {} } }
             }
           }
-          if (choice.finish_reason) yield { type: "finish", finishReason: choice.finish_reason === "tool_calls" ? "tool-calls" : "stop" }
+          if (choice.finish_reason) {
+            const u = json.usage
+            yield { type: "finish", finishReason: choice.finish_reason === "tool_calls" ? "tool-calls" : "stop", ...(u ? { usage: { inputTokens: u.prompt_tokens ?? 0, outputTokens: u.completion_tokens ?? 0 } } : {}) }
+          } else if (json.usage) {
+            // Some providers emit a final chunk with only usage
+            lastUsage = { inputTokens: json.usage.prompt_tokens ?? 0, outputTokens: json.usage.completion_tokens ?? 0 }
+          }
         } catch {}
       }
     }
-    yield { type: "finish", finishReason: "stop" as const }
+    yield { type: "finish", finishReason: "stop" as const, ...(lastUsage ? { usage: lastUsage } : {}) }
   }
 
   return gen()

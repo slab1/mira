@@ -14,22 +14,69 @@ export const websearchTool = {
     count: z.number().optional().describe("Number of results (default 5, max 10)"),
   }),
   async execute({ query, count = 5 }, _ctx) {
-    // In production: call Firecrawl / Tavily / Brave API
-    // Minimal stub: use fetch to a search API if configured
-    const apiKey = process.env.FIRECRAWL_API_KEY
-    if (apiKey) {
-      const res = await fetch("https://api.firecrawl.dev/v1/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ query, limit: count }),
-      })
-      if (res.ok) return res.json()
+    const count_ = Math.min(count, 10)
+    // 1. Firecrawl (best quality)
+    const firecrawlKey = process.env.FIRECRAWL_API_KEY
+    if (firecrawlKey) {
+      try {
+        const res = await fetch("https://api.firecrawl.dev/v1/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${firecrawlKey}` },
+          body: JSON.stringify({ query, limit: count_ }),
+          signal: AbortSignal.timeout(20_000),
+        })
+        if (res.ok) {
+          const data: any = await res.json()
+          const results = (data.data ?? data.results ?? []).map((r: any) => ({
+            title: r.title ?? r.metadata?.title ?? r.url, url: r.url, snippet: r.description ?? r.metadata?.description ?? "",
+          }))
+          if (results.length) return { query, provider: "firecrawl", results }
+        }
+      } catch {}
     }
-    // Fallback: DuckDuckGo via fetch (no key) — placeholder
+    // 2. Tavily
+    const tavilyKey = process.env.TAVILY_API_KEY
+    if (tavilyKey) {
+      try {
+        const res = await fetch("https://api.tavily.com/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ api_key: tavilyKey, query, max_results: count_ }),
+          signal: AbortSignal.timeout(20_000),
+        })
+        if (res.ok) {
+          const data: any = await res.json()
+          const results = (data.results ?? []).map((r: any) => ({ title: r.title, url: r.url, snippet: r.content ?? "" }))
+          if (results.length) return { query, provider: "tavily", results }
+        }
+      } catch {}
+    }
+    // 3. Keyless fallback: DuckDuckGo HTML endpoint
+    try {
+      const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+        headers: { "User-Agent": "Mira/0.1 (+https://mira.ai)" },
+        signal: AbortSignal.timeout(15_000),
+      })
+      if (res.ok) {
+        const html = await res.text()
+        const results: Array<{ title: string; url: string; snippet: string }> = []
+        const re = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g
+        let m: RegExpExecArray | null
+        while ((m = re.exec(html)) && results.length < count_) {
+          const strip = (s: string) => s.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&#x27;/g, "'").replace(/&quot;/g, '"').trim()
+          let url = m[1]
+          const uddg = url.match(/uddg=([^&]+)/)
+          if (uddg) url = decodeURIComponent(uddg[1])
+          results.push({ title: strip(m[2]), url, snippet: strip(m[3]) })
+        }
+        if (results.length) return { query, provider: "duckduckgo", results }
+      }
+    } catch {}
+    // 4. All providers failed — say so honestly
     return {
       query,
-      results: [{ title: "(websearch stub — configure FIRECRAWL_API_KEY for real results)", url: "https://example.com", snippet: "Set FIRECRAWL_API_KEY in env." }],
-      note: "Configure FIRECRAWL_API_KEY or TAVILY_API_KEY for live search.",
+      results: [],
+      note: "No search provider available. Set FIRECRAWL_API_KEY or TAVILY_API_KEY for live results; DuckDuckGo fallback may be rate-limited.",
     }
   },
 }
