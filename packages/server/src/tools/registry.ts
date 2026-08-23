@@ -40,6 +40,8 @@ export interface ToolContext {
   cwd?: string
   bus?: Bus
   db?: any
+  /** injected by ToolRegistry — spawns an isolated subagent session */
+  subagentRunner?: (opts: { prompt: string; parentID: string; agent?: string; model?: string; title?: string }) => Promise<{ sessionID: string; text: string }>
 }
 
 export interface RegistryDeps {
@@ -54,8 +56,14 @@ export interface RegistryDeps {
 
 export class ToolRegistry {
   private tools = new Map<string, ToolDef>()
+  private subagentRunner?: ToolContext["subagentRunner"]
 
   constructor(private deps: RegistryDeps) {}
+
+  /** Wire a subagent runner (called at bootstrap after SessionPrompt exists) */
+  setSubagentRunner(fn: NonNullable<ToolContext["subagentRunner"]>) {
+    this.subagentRunner = fn
+  }
 
   /** Register a single tool */
   register<T extends z.ZodTypeAny>(def: ToolDef<T>) {
@@ -100,6 +108,7 @@ export class ToolRegistry {
   async execute(name: string, args: unknown, ctx: ToolContext): Promise<unknown> {
     const tool = this.tools.get(name)
     if (!tool) throw new Error(`Unknown tool: ${name}`)
+    const fullCtx: ToolContext = ctx.subagentRunner ? ctx : { ...ctx, subagentRunner: this.subagentRunner }
 
     // Zod validation — fail fast with structured error (LLM sees it as tool-result isError)
     const parsed = await tool.schema.safeParseAsync(args)
@@ -118,7 +127,7 @@ export class ToolRegistry {
     let result: unknown
     let error: unknown = null
     try {
-      result = await tool.execute(parsed.data, ctx)
+      result = await tool.execute(parsed.data, fullCtx)
     } catch (e) {
       error = e
       throw e

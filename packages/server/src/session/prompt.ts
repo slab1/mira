@@ -119,6 +119,49 @@ export class SessionPrompt {
     return todos
   }
 
+  // ── Subagent spawning ─────────────────────────────────────────────
+
+  /**
+   * Run an isolated subagent session (used by the `task` tool).
+   * Unlike ephemeral subagents elsewhere, Mira persists each subagent as a
+   * real child session (parentID set) so users can inspect its full transcript.
+   */
+  async runSubagent(opts: {
+    prompt: string
+    parentID: string
+    agent?: keyof typeof AGENT_TEMPLATES
+    model?: string
+    title?: string
+  }): Promise<{ sessionID: string; text: string }> {
+    const s = await this.createSession({
+      title: opts.title ?? `↳ ${opts.prompt.slice(0, 48)}`,
+      parentID: opts.parentID,
+      agent: opts.agent,
+      model: opts.model,
+    })
+    let text = ""
+    // No-op sink: collect only the final text (no SSE transport needed)
+    const send = (_event: string, data: unknown) => {
+      const d = data as { text?: string }
+      if (d?.text !== undefined) text = d.text
+    }
+    const noopWriter = { write: () => {}, close: async () => {} } as unknown as WritableStreamDefaultWriter<Uint8Array>
+    try {
+      await this.runLoop({
+        sessionID: s.id,
+        assistantMessageID: crypto.randomUUID(),
+        userText: opts.prompt,
+        model: opts.model ?? s.model,
+        systemPrompt: await buildSystemPrompt(),
+        send,
+        writer: noopWriter,
+      })
+    } catch (err) {
+      text = `[subagent error] ${String(err)}`
+    }
+    return { sessionID: s.id, text }
+  }
+
   // ── The Loop ─────────────────────────────────────────────────────
 
   /**

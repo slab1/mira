@@ -17,8 +17,6 @@ export const taskTool = {
     background: z.boolean().optional().describe("Run in background (return immediately)"),
   }),
   async execute({ description, prompt, subagent_type = "general", background }, ctx) {
-    // In production: spawn actual subagent via SessionPrompt with isolated session
-    // Minimal: simulate delegation + publish bus event
     const taskID = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     const bus = (ctx as any).bus
 
@@ -29,24 +27,51 @@ export const taskTool = {
       timestamp: Date.now(),
     })
 
-    if (background) {
-      // Fire-and-forget: return task handle immediately
-      // Worker polls/waits via BusEvent (no polling — event-driven)
-      setImmediate(async () => {
-        // Simulate work
-        bus?.publish({ type: "message.updated", sessionID: ctx.sessionID, payload: { taskID, status: "completed" }, timestamp: Date.now() })
-      })
-      return { taskID, status: "background", description, message: "Task running in background — check BusEvents for completion." }
+    const runner = ctx.subagentRunner
+    if (!runner) {
+      return { taskID, status: "error", error: "No subagentRunner wired into ToolRegistry" }
     }
 
-    // Foreground: in real impl, await subagent session completion
-    // Stub: return synthetic result (real impl would call SessionPrompt.loop recursively)
+    // Map subagent types onto Mira agent templates where they align
+    const agent = subagent_type === "explore" || subagent_type === "research"
+      ? "researcher" as const
+      : subagent_type === "plan" ? undefined : undefined
+
+    if (background) {
+      // Fire-and-forget: run real subagent, publish completion with summary
+      setImmediate(() => {
+        runner({ prompt: `[${description}] ${prompt}`, parentID: ctx.sessionID, agent })
+          .then(({ sessionID, text }) => {
+            bus?.publish({
+              type: "message.updated", sessionID: ctx.sessionID,
+              payload: { taskID, status: "completed", childSessionID: sessionID, summary: text.slice(0, 500) },
+              timestamp: Date.now(),
+            })
+          })
+          .catch((err) => {
+            bus?.publish({
+              type: "message.updated", sessionID: ctx.sessionID,
+              payload: { taskID, status: "failed", error: String(err) },
+              timestamp: Date.now(),
+            })
+          })
+      })
+      return { taskID, status: "background", description, message: "Subagent running in background — completion arrives via BusEvent." }
+    }
+
+    // Foreground: await real isolated subagent session
+    const { sessionID: childSessionID, text } = await runner({
+      prompt: `[${description}] ${prompt}`,
+      parentID: ctx.sessionID,
+      agent,
+    })
     return {
       taskID,
       status: "completed",
       description,
       subagent_type,
-      result: `[Subagent ${subagent_type} completed: ${description}] — wire to real agent loop for production. Prompt was: ${prompt.slice(0, 200)}…`,
+      childSessionID,
+      result: text,
     }
   },
 }

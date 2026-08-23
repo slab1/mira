@@ -28,6 +28,7 @@ import { createGateway } from "./gateway/index.js"
 import { ToolRegistry } from "./tools/registry.js"
 import { PermissionManager } from "./permission/index.js"
 import { SessionPrompt } from "./session/prompt.js"
+import { AGENT_TEMPLATES } from "./agents/templates.js"
 import { MCPManager } from "./mcp/index.js"
 import { loadConfig } from "./config/index.js"
 import { createLearningSystem, mountLearningRoutes } from "./learning/index.js"
@@ -82,6 +83,13 @@ async function main() {
 
   // 7. Session loop engine
   const prompt = new SessionPrompt({ db, bus, gateway, tools, permissions, knowledge: learning.knowledge, usage: learning.usage })
+  // Subagent spawning for the `task` tool
+  tools.setSubagentRunner((opts) => prompt.runSubagent({
+    prompt: opts.prompt,
+    parentID: opts.parentID,
+    agent: opts.agent as keyof typeof AGENT_TEMPLATES | undefined,
+    model: opts.model,
+  }))
 
   // 8. HTTP + WebSocket RPC (Hono)
   const app = new Hono()
