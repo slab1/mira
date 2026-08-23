@@ -9,6 +9,7 @@
     "build": "tsc --noEmit || echo 'typecheck warning' && bun build src/index.ts --outdir dist --target bun || echo 'build warning'",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "eval": "bun src/eval/index.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun src/storage/migrate.ts"
   },
