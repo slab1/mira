@@ -78,6 +78,23 @@ export default function App() {
           </div>
 
           <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
+            <Show when={store.state.currentId}>
+              <button
+                onClick={() => void store.undoLastMutation()}
+                title="Undo the agent's last file change (snapshot restore)"
+                style={{
+                  "font-size": "11px",
+                  color: "#fdba74",
+                  background: "#422006",
+                  border: "1px solid #78350f",
+                  padding: "3px 8px",
+                  "border-radius": "999px",
+                  cursor: "pointer",
+                }}
+              >
+                ↩ undo
+              </button>
+            </Show>
             <Show when={store.state.cost}>
               {(c) => (
                 <span

@@ -137,6 +137,18 @@ export default function App() {
         </div>
 
         <div style={{ display: "flex", "align-items": "center", gap: "10px", "font-size": "11px" }}>
+          <Show when={store.state.queued.length > 0}>
+            <span style={{ color: "#c4b5fd", "font-weight": "600" }}>⏳ {store.state.queued.length} queued</span>
+          </Show>
+          <Show when={store.state.currentId}>
+            <span
+              onClick={() => void store.undoLast()}
+              title="Undo last file mutation"
+              style={{ cursor: "pointer", color: "#fdba74", "font-weight": "600" }}
+            >
+              ↩ undo
+            </span>
+          </Show>
           <Show when={cost()}>
             {(c) => (
               <span

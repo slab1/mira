@@ -173,6 +173,13 @@ export const rpc = {
    *   event: text_delta / tool_call / tool_result / permission_ask / step_finish / finish / error
    *   data: { ... }
    */
+  /** Queue a message while the agent streams (runs as chained turn) */
+  queuePrompt: (id: string, prompt: string) =>
+    req<{ position: number }>(`/session/${id}/queue`, { method: "POST", body: JSON.stringify({ prompt }) }),
+  getQueue: (id: string) => req<string[]>(`/session/${id}/queue`),
+  revertSession: (id: string) =>
+    req<{ ok: boolean; reverted: number }>(`/session/${id}/revert`, { method: "POST", body: "{}" }),
+
   streamPrompt: async (
     id: string,
     prompt: string,

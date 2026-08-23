@@ -123,6 +123,13 @@ export const api = {
   getQueue: (id: string) => req<string[]>(`/session/${id}/queue`),
   clearQueue: (id: string) => req<{ cleared: number }>(`/session/${id}/queue`, { method: "DELETE" }),
 
+  /** File snapshot undo — revert last mutation or rewind to a message */
+  revertSession: (id: string, messageID?: string) =>
+    req<{ ok: boolean; reverted: number; files: string[] }>(`/session/${id}/revert`, {
+      method: "POST",
+      body: JSON.stringify(messageID ? { messageID } : {}),
+    }),
+
   checkPermission: (body: unknown) =>
     req<{ allowed: boolean; reason?: string }>("/permission/check", {
       method: "POST",

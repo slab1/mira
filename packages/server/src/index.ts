@@ -97,6 +97,17 @@ async function main() {
   const app = new Hono()
 
   app.use("*", cors())
+  // Security: optional bearer-token gate (set MIRA_TOKEN to enable)
+  if (process.env.MIRA_TOKEN) {
+    const required = process.env.MIRA_TOKEN
+    app.use("*", async (c, next) => {
+      const auth = c.req.header("Authorization") ?? ""
+      const token = auth.startsWith("Bearer ") ? auth.slice(7) : c.req.query("token")
+      // WebSocket upgrade: token via query param
+      if (token !== required) return c.json({ error: "unauthorized" }, 401)
+      await next()
+    })
+  }
   app.use("*", logger())
 
   // Health
@@ -245,7 +256,8 @@ async function main() {
   // Hono WS via Bun.serve websocket handler below
   const server = Bun.serve({
     port: PORT,
-    hostname: "0.0.0.0",
+    // Security: loopback by default — remote access requires HOST env override
+    hostname: process.env.HOST ?? "127.0.0.1",
     // Long SSE streams (LLM first-token latency can exceed 10s) need a generous idle timeout
     idleTimeout: 180,
     fetch: app.fetch,

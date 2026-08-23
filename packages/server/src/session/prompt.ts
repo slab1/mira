@@ -479,6 +479,14 @@ export class SessionPrompt {
     }
     trace.update({ steps: step })
     trace.end()
+    // Persist per-session spend (tokens observed from provider usage chunks)
+    if (totalTokensIn || totalTokensOut) {
+      try {
+        this.deps.db.sqlite
+          .prepare(`UPDATE sessions SET tokens_in = COALESCE(tokens_in, 0) + ?, tokens_out = COALESCE(tokens_out, 0) + ? WHERE id = ?`)
+          .run(totalTokensIn, totalTokensOut, sessionID)
+      } catch {}
+    }
     try { await writer.close() } catch {}
 
     // ── Drain queued messages: chain next turn automatically ──

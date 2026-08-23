@@ -102,6 +102,13 @@ export async function migrate(db: any) {
     CREATE INDEX IF NOT EXISTS file_snapshots_session_idx ON file_snapshots(session_id);
     CREATE INDEX IF NOT EXISTS file_snapshots_created_idx ON file_snapshots(created_at);
   `)
+  // Idempotent column adds (SQLite lacks IF NOT EXISTS for columns)
+  const addColumn = (table: string, col: string, type: string) => {
+    try { sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type};`) } catch {}
+  }
+  addColumn("sessions", "tokens_in", "INTEGER")
+  addColumn("sessions", "tokens_out", "INTEGER")
+  addColumn("sessions", "cost_usd", "REAL")
   // console.log("[storage] migrated")
 }
 

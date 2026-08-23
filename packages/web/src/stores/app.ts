@@ -260,6 +260,20 @@ export function createAppStore() {
     setState("pendingQuestion", null)
   }
 
+  /** Undo the agent's most recent file mutation (snapshot restore) */
+  async function undoLastMutation() {
+    const id = state.currentId
+    if (!id) return
+    try {
+      const out = await api.revertSession(id)
+      if (out.ok && out.reverted > 0) await loadMessages(id)
+      else if (!out.ok) setState("error", "nothing to undo")
+      return out
+    } catch (e) {
+      setState("error", (e as Error).message)
+    }
+  }
+
   return {
     state,
     input,
@@ -275,6 +289,7 @@ export function createAppStore() {
     sendPrompt,
     stopStream,
     answerQuestion,
+    undoLastMutation,
   }
 }
 

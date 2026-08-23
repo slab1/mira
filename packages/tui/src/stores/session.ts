@@ -47,6 +47,7 @@ type SessionState = {
   error: string | null
   pendingPermission: PendingPermission | null
   pendingQuestion: PendingQuestion | null
+  queued: string[]
 }
 
 function uid() {
@@ -67,6 +68,7 @@ export function createSessionStore() {
     error: null,
     pendingPermission: null,
     pendingQuestion: null,
+    queued: [],
   })
 
   const [input, setInput] = createSignal("")
@@ -196,8 +198,22 @@ export function createSessionStore() {
     try {
       const msgs = await rpc.getMessages(id)
       setState("messages", msgs)
+      // Reconcile queue with server truth
+      try { setState("queued", await rpc.getQueue(id)) } catch {}
     } catch (e) {
       if (!String((e as Error).message).includes("404")) setState("error", (e as Error).message)
+    }
+  }
+
+  /** Undo the agent's most recent file mutation */
+  async function undoLast() {
+    if (!state.currentId) return
+    try {
+      const out = await rpc.revertSession(state.currentId)
+      await loadMessages(state.currentId)
+      return out
+    } catch (e) {
+      setState("error", (e as Error).message)
     }
   }
 
@@ -216,8 +232,19 @@ export function createSessionStore() {
 
   async function sendPrompt(text?: string, model?: string) {
     const prompt = (text ?? input()).trim()
-    if (!prompt || !state.currentId || state.streaming) return
+    if (!prompt || !state.currentId) return
     setInput("")
+    // Agent busy → queue for chained-turn processing (OpenCode-parity UX)
+    if (state.streaming) {
+      try {
+        await rpc.queuePrompt(state.currentId, prompt)
+        setState("queued", (q) => [...q, prompt])
+      } catch (e) {
+        setState("error", (e as Error).message)
+        setInput(prompt)
+      }
+      return
+    }
     const userMsg: Message = {
       id: `tmp-${uid()}`,
       sessionID: state.currentId,
@@ -388,6 +415,7 @@ export function createSessionStore() {
     replyPermission,
     dismissPermission,
     answerQuestion,
+    undoLast,
   }
 }
 

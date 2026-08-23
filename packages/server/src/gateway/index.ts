@@ -240,10 +240,20 @@ async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID:
   const { baseURL, apiKey, modelID, opts } = ctx
 
   // Build OpenAI-compatible request
+  const isClaude = /claude|anthropic/i.test(modelID)
+  const systemMsg = opts.system
+    ? {
+        role: "system",
+        // Prompt caching: OpenRouter forwards cache_control to Anthropic —
+        // stable system prefix (AGENTS.md + skills) then caches across turns (~90% cheaper reads)
+        ...(isClaude ? { content: [{ type: "text", text: opts.system, cache_control: { type: "ephemeral" } }] } : { content: opts.system }),
+      }
+    : null
+
   const body: any = {
     model: modelID,
     messages: [
-      ...(opts.system ? [{ role: "system", content: opts.system }] : []),
+      ...(systemMsg ? [systemMsg] : []),
       ...opts.messages.map(m => ({
         role: m.role === "tool" ? "tool" : m.role,
         content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
