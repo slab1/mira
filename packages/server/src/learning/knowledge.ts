@@ -333,11 +333,14 @@ export function cosine(a: number[], b: number[]): number {
   return dot // already normalized
 }
 
+/** Singleton for prompt injection — one KB per process, loaded once from SQLite */
+let _sharedKB: KnowledgeBase | undefined
+export function sharedKnowledge(deps?: KnowledgeBaseDeps): KnowledgeBase {
+  if (!_sharedKB) _sharedKB = new KnowledgeBase(deps)
+  return _sharedKB
+}
+
 /** Simple helper for prompt injection */
 export async function searchKnowledge(query: string, limit = 3) {
-  // Lazy import to avoid circular deps
-  const { KnowledgeBase } = await import("./knowledge.js")
-  const kb = new KnowledgeBase()
-  await kb.load()
-  return kb.retrieve({ query, limit })
+  return sharedKnowledge().retrieve({ query, limit })
 }

@@ -3,6 +3,7 @@ import { createAppStore } from "./stores/app"
 import { SessionList } from "./components/SessionList"
 import { ChatView } from "./components/ChatView"
 import { ToolView } from "./components/ToolView"
+import { SkillSelector } from "./components/SkillSelector"
 
 export default function App() {
   const store = createAppStore()
@@ -76,6 +77,7 @@ export default function App() {
           </div>
 
           <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
+            <SkillSelector onSelect={(skill) => { if (skill) store.createSession(`${skill} session`) }} />
             <span
               title="Mira server health"
               style={{

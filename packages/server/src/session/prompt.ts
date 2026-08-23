@@ -31,6 +31,7 @@ import { DoomLoopDetector } from "./doom-loop-detector.js"
 import { needsCompaction, compactMessages, estimateTokens } from "./compaction.js"
 import { searchKnowledge } from "../learning/knowledge.js"
 import { loadSkills } from "../skills/loader.js"
+import { AGENT_TEMPLATES } from "../agents/templates.js"
 import { initLangfuse } from "../telemetry/langfuse.js"
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -41,6 +42,8 @@ export interface SessionPromptDeps {
   gateway: Gateway
   tools: ToolRegistry
   permissions: PermissionManager
+  /** shared hierarchical memory (injected from learning system) */
+  knowledge?: { retrieve(opts: { query: string; limit?: number }): Promise<Array<{ title: string; content: string }>> }
 }
 
 export interface LoopOptions {
@@ -58,17 +61,18 @@ export class SessionPrompt {
 
   // ── Session CRUD (delegated to storage) ──────────────────────────
 
-  async createSession(input: { title?: string; model?: string; parentID?: string }) {
+  async createSession(input: { title?: string; model?: string; parentID?: string; agent?: keyof typeof AGENT_TEMPLATES }) {
     const id = crypto.randomUUID()
     const now = Date.now()
     const session = {
       id,
-      title: input.title ?? "New Session",
+      title: input.title ?? (input.agent ? `${input.agent} session` : "New Session"),
       model: input.model ?? "openrouter/anthropic/claude-sonnet-4",
       provider: "openrouter",
       createdAt: now,
       updatedAt: now,
       parentID: input.parentID,
+      agent: (input.agent && AGENT_TEMPLATES[input.agent] ? input.agent : null) as string | null,
     }
     await this.deps.db.insert(this.deps.db.schema.sessions).values(session)
     return session
@@ -122,7 +126,10 @@ export class SessionPrompt {
     if (!session) throw new Error("session not found")
 
     const model = modelOverride ?? session.model
-    const systemPrompt = await buildSystemPrompt()
+    const basePrompt = await buildSystemPrompt()
+    // Agent persona (researcher/coder/reviewer) prepended when set on the session
+    const persona = session.agent ? (AGENT_TEMPLATES as Record<string, { system: string }>)[session.agent]?.system : undefined
+    const systemPrompt = persona ? `${persona}\n\n${basePrompt}` : basePrompt
 
     // Persist user message + part immediately (so TUI sees it via bus)
     const userMessageID = crypto.randomUUID()
@@ -329,11 +336,13 @@ export class SessionPrompt {
         context.push({ role: "system", content: `Active skills:\n${Object.values(skills).map(s => `- ${s.name}: ${s.description.slice(0,200)}`).join("\n")}` })
       }
     } catch {}
-    // Memory retrieval: inject relevant knowledge
+    // Memory retrieval: inject relevant knowledge (shared KB if injected, else standalone helper)
     const lastUserText = messages.length ? (messages[messages.length - 1].parts?.find((p: any) => p.type === "text")?.text ?? "") : ""
     if (lastUserText) {
       try {
-        const docs = await searchKnowledge(lastUserText, 3)
+        const docs = this.deps.knowledge
+          ? await this.deps.knowledge.retrieve({ query: lastUserText, limit: 3 })
+          : await searchKnowledge(lastUserText, 3)
         if (docs.length) {
           context.push({ role: "system", content: `Relevant memory:\n${docs.map(d => `- ${d.title}: ${d.content.slice(0, 300)}`).join("\n")}` })
         }

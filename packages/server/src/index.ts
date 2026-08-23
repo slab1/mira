@@ -79,7 +79,7 @@ async function main() {
   console.log(`[mira] tools: ${tools.count()} registered (${mcp.count()} from MCP)`)
 
   // 7. Session loop engine
-  const prompt = new SessionPrompt({ db, bus, gateway, tools, permissions })
+  const prompt = new SessionPrompt({ db, bus, gateway, tools, permissions, knowledge: learning.knowledge })
 
   // 8. HTTP + WebSocket RPC (Hono)
   const app = new Hono()

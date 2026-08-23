@@ -62,11 +62,12 @@ export class DoomLoopDetector {
     this.history.push(fp)
     if (this.history.length > this.window) this.history.shift()
 
-    // 1. Identical consecutive calls
-    const lastN = Math.min(this.maxIdentical, this.history.length)
-    const recent = this.history.slice(-lastN)
-    if (recent.length === lastN && recent.every(h => h === recent[0])) {
-      return { detected: true, reason: `Identical tool call repeated ${lastN}x`, tool: call.name, pattern: recent }
+    // 1. Identical consecutive calls (require FULL window of maxIdentical)
+    if (this.history.length >= this.maxIdentical) {
+      const recent = this.history.slice(-this.maxIdentical)
+      if (recent.every(h => h === recent[0])) {
+        return { detected: true, reason: `Identical tool call repeated ${this.maxIdentical}x`, tool: call.name, pattern: [...recent] }
+      }
     }
 
     // 2. Repeating sequence pattern
