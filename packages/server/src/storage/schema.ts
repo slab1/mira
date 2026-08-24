@@ -89,6 +89,23 @@ export const jobs = sqliteTable("jobs", {
   index("jobs_status_idx").on(t.status),
 ])
 
+// Structured cross-agent findings — typed team memory (server-native capability)
+export const findings = sqliteTable("findings", {
+  id: text("id").primaryKey(),
+  sessionID: text("session_id"),
+  source: text("source", { enum: ["agent", "tool", "user"] }).notNull().default("agent"),
+  severity: text("severity", { enum: ["info", "minor", "major", "critical"] }).notNull().default("info"),
+  title: text("title").notNull(),
+  evidence: text("evidence"),
+  status: text("status", { enum: ["open", "resolved"] }).notNull().default("open"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  resolvedAt: integer("resolved_at"),
+}, (t) => [
+  index("findings_status_idx").on(t.status),
+  index("findings_session_idx").on(t.sessionID),
+])
+
 // ── Relations (for db.query.*.findMany with: { parts: true }) ──────
 
 export const sessionsRelations = relations(sessions, ({ many }) => ({
@@ -115,4 +132,8 @@ export const jobsRelations = relations(jobs, ({ one }) => ({
   childSession: one(sessions, { fields: [jobs.childSessionID], references: [sessions.id] }),
 }))
 
-export const schema = { sessions, messages, parts, todos, fileSnapshots, jobs, sessionsRelations, messagesRelations, partsRelations, todosRelations, jobsRelations }
+export const findingsRelations = relations(findings, ({ one }) => ({
+  session: one(sessions, { fields: [findings.sessionID], references: [sessions.id] }),
+}))
+
+export const schema = { sessions, messages, parts, todos, fileSnapshots, jobs, findings, sessionsRelations, messagesRelations, partsRelations, todosRelations, jobsRelations, findingsRelations }

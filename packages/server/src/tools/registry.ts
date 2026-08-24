@@ -19,6 +19,7 @@
 
 import { z } from "zod"
 import type { Bus } from "../bus/index.js"
+import type { MiraDB } from "../storage/db.js"
 
 // ── Tool Definition ────────────────────────────────────────────────
 
@@ -39,7 +40,7 @@ export interface ToolContext {
   messageID: string
   cwd?: string
   bus?: Bus
-  db?: any
+  db?: MiraDB
   /** injected by ToolRegistry — spawns an isolated subagent session */
   subagentRunner?: (opts: { prompt: string; parentID: string; agent?: string; model?: string; title?: string }) => Promise<{ sessionID: string; text: string }>
   /** injected by ToolRegistry — forks a session at a message boundary */
@@ -47,7 +48,7 @@ export interface ToolContext {
 }
 
 export interface RegistryDeps {
-  db: any
+  db: MiraDB
   bus: Bus
   permissions: any
   gateway: any
@@ -92,6 +93,7 @@ export class ToolRegistry {
       () => import("./webfetch.js"),
       () => import("./todowrite.js"),
       () => import("./task.js"),
+      () => import("./findings.js"),
       () => import("./question.js"),
       () => import("./lsp.js"),
       () => import("./memory.js"),

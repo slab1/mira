@@ -30,6 +30,8 @@ import { buildSystemPrompt, getLoopLimits } from "../config/index.js"
 import { DoomLoopDetector } from "./doom-loop-detector.js"
 import { needsCompaction, compactMessages, estimateTokens } from "./compaction.js"
 import { searchKnowledge } from "../learning/knowledge.js"
+import { openFindingsForContext } from "../tools/findings.js"
+import type { MiraDB } from "../storage/db.js"
 import { loadSkills } from "../skills/loader.js"
 import { AGENT_TEMPLATES } from "../agents/templates.js"
 import { initLangfuse } from "../telemetry/langfuse.js"
@@ -39,7 +41,7 @@ import { trace as otelTrace } from "@opentelemetry/api"
 // ── Types ──────────────────────────────────────────────────────────
 
 export interface SessionPromptDeps {
-  db: any // Drizzle DB instance
+  db: MiraDB
   bus: Bus
   gateway: Gateway
   tools: ToolRegistry
@@ -563,6 +565,11 @@ export class SessionPrompt {
         const lines = (todos as any[]).map(t => `- [${t.status}] ${t.content}`)
         context.push({ role: "system", content: `Current todo list — keep exactly ONE item "in_progress" and update the list before starting new work:\n${lines.join("\n")}` })
       }
+    } catch {}
+    // Structured findings: surface open team memory so loops avoid repeating solved problems
+    try {
+      const fctx = await openFindingsForContext(this.deps.db)
+      if (fctx) context.push({ role: "system", content: fctx })
     } catch {}
     // Memory retrieval: inject relevant knowledge (shared KB if injected, else standalone helper)
     const lastUserText = messages.length ? (messages[messages.length - 1].parts?.find((p: any) => p.type === "text")?.text ?? "") : ""

@@ -87,8 +87,8 @@ export const taskTool = {
   }),
   async execute({ description, prompt, subagent_type = "general", background }, ctx): Promise<TaskResponse> {
     const taskID = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-    const bus = (ctx as any).bus
-    const db = (ctx as any).db ?? (ctx as any).deps?.db
+    const bus = ctx.bus
+    const db = ctx.db
 
     bus?.publish({
       type: "message.created",
