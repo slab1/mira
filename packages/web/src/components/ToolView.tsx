@@ -2,198 +2,306 @@ import { For, Show, createSignal, createResource } from "solid-js"
 import type { AppStore } from "../stores/app"
 import { api, type ToolInfo } from "../api/client"
 
+type Tab = "todos" | "tools" | "events"
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: "todos", label: "Todos" },
+  { id: "tools", label: "Tools" },
+  { id: "events", label: "Events" },
+]
+
 export function ToolView(props: { store: AppStore }) {
   const s = () => props.store.state
   const [tools] = createResource(() => api.listTools().catch(() => [] as ToolInfo[]))
-  const [tab, setTab] = createSignal<"todos" | "tools" | "events">("todos")
+  const [tab, setTab] = createSignal<Tab>("todos")
+  const [collapsed, setCollapsed] = createSignal(false)
 
-  // local event log from BusEvent stream (last 50)
-  const [events, setEvents] = createSignal<{ type: string; at: string }[]>([])
-
-  // tap into store socket event stream lightly — poll connected status
-  // Real events come via store's bus handler; we mirror a tiny log here
-  // by subscribing directly if needed — for minimal version just show placeholder
-  // Instead, expose a simple effect: when sessions change, push an event entry
-  // (kept minimal; full bus log would subscribe to createSocket again)
+  const doneCount = () => s().todos.filter((t) => t.status === "completed").length
+  const progress = () => (s().todos.length === 0 ? 0 : Math.round((doneCount() / s().todos.length) * 100))
 
   return (
     <aside
       style={{
-        width: "300px",
+        width: collapsed() ? "44px" : "320px",
         "flex-shrink": "0",
         display: "flex",
         "flex-direction": "column",
-        "border-left": "1px solid #27272a",
-        background: "#09090b",
+        "border-left": "1px solid var(--border)",
+        background: "var(--bg-app)",
         height: "100%",
         overflow: "hidden",
+        transition: "width var(--dur-med) var(--ease)",
       }}
+      aria-label="Inspector"
     >
-      <div style={{ display: "flex", gap: "4px", padding: "10px", "border-bottom": "1px solid #27272a" }}>
-        <For each={["todos", "tools", "events"] as const}>
-          {(t) => (
-            <button
-              onClick={() => setTab(t)}
+      <Show
+        when={!collapsed()}
+        fallback={
+          <button
+            type="button"
+            class="btn btn-ghost"
+            onClick={() => setCollapsed(false)}
+            title="Expand inspector"
+            aria-expanded="false"
+            aria-controls="inspector-panel"
+            style={{
+              flex: "1",
+              display: "flex",
+              "flex-direction": "column",
+              "align-items": "center",
+              gap: "10px",
+              padding: "12px 0",
+              "border-radius": "0",
+            }}
+          >
+            <span style={{ "font-size": "13px", color: "var(--fg-muted)" }}>«</span>
+            <span
               style={{
-                flex: "1",
-                padding: "6px 8px",
-                "border-radius": "8px",
-                border: "1px solid " + (tab() === t ? "#3f3f46" : "#27272a"),
-                background: tab() === t ? "#18181b" : "transparent",
-                color: tab() === t ? "#fafafa" : "#a1a1aa",
-                "font-size": "12px",
-                "font-weight": tab() === t ? "600" : "400",
-                cursor: "pointer",
-                "text-transform": "capitalize",
+                "writing-mode": "vertical-rl",
+                transform: "rotate(180deg)",
+                "font-size": "var(--fs-2xs)",
+                "letter-spacing": "0.08em",
+                color: "var(--fg-subtle)",
               }}
             >
-              {t}
-            </button>
-          )}
-        </For>
-      </div>
-
-      <div style={{ flex: "1", overflow: "auto", padding: "12px" }}>
-        <Show when={tab() === "todos"}>
-          <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center", "margin-bottom": "10px" }}>
-            <span style={{ "font-size": "12px", "font-weight": "700", color: "#d4d4d8", "letter-spacing": "0.04em", "text-transform": "uppercase" }}>
-              Todos
+              Inspector
             </span>
-            <Show when={s().currentId}>
-              <button
-                onClick={() => { const id = s().currentId; if (id) props.store.loadTodos(id) }}
-                style={{
-                  background: "transparent",
-                  border: "1px solid #27272a",
-                  color: "#a1a1aa",
-                  "font-size": "11px",
-                  padding: "3px 8px",
-                  "border-radius": "999px",
-                  cursor: "pointer",
-                }}
-              >
-                ↻
-              </button>
-            </Show>
+          </button>
+        }
+      >
+        <div style={{ display: "flex", "align-items": "center", gap: "8px", padding: "10px 10px 0" }}>
+          <div class="seg" role="tablist" aria-label="Inspector panels" style={{ flex: "1" }}>
+            <For each={TABS}>
+              {(t) => (
+                <button
+                  type="button"
+                  role="tab"
+                  id={`tab-${t.id}`}
+                  aria-selected={tab() === t.id ? "true" : "false"}
+                  aria-controls="inspector-panel"
+                  class="seg-tab"
+                  onClick={() => setTab(t.id)}
+                >
+                  {t.label}
+                </button>
+              )}
+            </For>
           </div>
+          <button
+            type="button"
+            class="btn btn-ghost"
+            onClick={() => setCollapsed(true)}
+            title="Collapse inspector"
+            aria-expanded="true"
+            aria-controls="inspector-panel"
+            style={{ width: "26px", height: "28px", padding: "0", "border-radius": "var(--r-sm)", flex: "none" }}
+          >
+            »
+          </button>
+        </div>
 
-          <Show when={s().currentId} fallback={<div style={{ color: "#52525b", "font-size": "13px" }}>Select a session.</div>}>
+        <div id="inspector-panel" role="tabpanel" aria-labelledby={`tab-${tab()}`} class="scroll" style={{ flex: "1", padding: "var(--sp-3)" }}>
+          {/* ── Todos ─────────────────────────────────────────────── */}
+          <Show when={tab() === "todos"}>
+            <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center", "margin-bottom": "10px", gap: "8px" }}>
+              <span style={{ "font-size": "var(--fs-xs)", "font-weight": "700", color: "var(--fg-muted)", "letter-spacing": "0.05em", "text-transform": "uppercase" }}>
+                Todos
+              </span>
+              <Show when={s().todos.length > 0}>
+                <span style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-subtle)", "font-family": "var(--font-mono)" }} role="status">
+                  {doneCount()}/{s().todos.length}
+                </span>
+              </Show>
+              <Show when={s().currentId}>
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  onClick={() => { const id = s().currentId; if (id) props.store.loadTodos(id) }}
+                  title="Refresh todos"
+                  style={{ padding: "2px 7px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-full)" }}
+                >
+                  ↻
+                </button>
+              </Show>
+            </div>
+            <Show when={s().todos.length > 0}>
+              <div class="progress-track" style={{ "margin-bottom": "12px" }} aria-hidden="true">
+                <div class="progress-fill" style={{ width: `${progress()}%` }} />
+              </div>
+            </Show>
+
             <Show
-              when={s().todos.length > 0}
-              fallback={<div style={{ color: "#71717a", "font-size": "13px" }}>No todos yet.</div>}
+              when={s().currentId}
+              fallback={
+                <div style={{ color: "var(--fg-faint)", "font-size": "var(--fs-sm)", padding: "4px 0" }}>
+                  Select a session to see its todos.
+                </div>
+              }
             >
-              <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
-                <For each={s().todos}>
-                  {(t) => (
-                    <div
-                      style={{
-                        padding: "9px 10px",
-                        "border-radius": "10px",
-                        border: "1px solid #27272a",
-                        background: t.status === "completed" ? "#0f1a12" : t.status === "in_progress" ? "#1a160f" : "#111113",
-                        display: "flex",
-                        gap: "8px",
-                        "align-items": "flex-start",
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: "18px",
-                          height: "18px",
-                          "border-radius": "50%",
-                          border: "1px solid #3f3f46",
-                          background:
-                            t.status === "completed"
-                              ? "#22c55e"
-                              : t.status === "in_progress"
-                                ? "#eab308"
-                                : t.status === "cancelled"
-                                  ? "#52525b"
-                                  : "transparent",
-                          display: "grid",
-                          "place-items": "center",
-                          "font-size": "10px",
-                          color: "white",
-                          flex: "none",
-                          "margin-top": "1px",
-                        }}
-                      >
-                        {t.status === "completed" ? "✓" : t.status === "in_progress" ? "◷" : t.status === "cancelled" ? "×" : "○"}
-                      </span>
-                      <div style={{ flex: "1", "min-width": "0" }}>
+              <Show
+                when={s().todos.length > 0}
+                fallback={
+                  <div
+                    style={{
+                      padding: "14px",
+                      border: "1px dashed var(--border-strong)",
+                      "border-radius": "var(--r-md)",
+                      color: "var(--fg-faint)",
+                      "font-size": "var(--fs-xs)",
+                      "text-align": "center",
+                    }}
+                  >
+                    No todos yet — the agent creates them for multi-step tasks.
+                  </div>
+                }
+              >
+                <div style={{ display: "flex", "flex-direction": "column", gap: "6px" }}>
+                  <For each={s().todos}>
+                    {(t) => {
+                      const done = t.status === "completed"
+                      const wip = t.status === "in_progress"
+                      const cancelled = t.status === "cancelled"
+                      return (
                         <div
+                          class="card"
                           style={{
-                            "font-size": "13px",
-                            color: t.status === "completed" ? "#86efac" : "#d4d4d8",
-                            "text-decoration": t.status === "completed" ? "line-through" : "none",
-                            "text-decoration-color": "#22c55e",
+                            padding: "9px 11px",
+                            display: "flex",
+                            gap: "9px",
+                            "align-items": "flex-start",
+                            ...(wip ? { "border-color": "var(--warn-border)" } : {}),
                           }}
                         >
-                          {t.content}
+                          <span
+                            aria-hidden="true"
+                            style={{
+                              width: "18px",
+                              height: "18px",
+                              "border-radius": "50%",
+                              border: `1px solid ${done ? "var(--ok-border)" : wip ? "var(--warn-border)" : "var(--border-strong)"}`,
+                              background: done ? "var(--ok-soft)" : wip ? "var(--warn-soft)" : "transparent",
+                              color: done ? "var(--ok)" : wip ? "var(--warn)" : "var(--fg-faint)",
+                              display: "grid",
+                              "place-items": "center",
+                              "font-size": "10px",
+                              flex: "none",
+                              "margin-top": "1px",
+                            }}
+                          >
+                            {done ? "✓" : wip ? "◷" : cancelled ? "×" : "○"}
+                          </span>
+                          <div style={{ flex: "1", "min-width": "0" }}>
+                            <div
+                              style={{
+                                "font-size": "var(--fs-sm)",
+                                color: done || cancelled ? "var(--fg-subtle)" : "var(--fg)",
+                                "text-decoration": done || cancelled ? "line-through" : "none",
+                                "line-height": "1.45",
+                              }}
+                            >
+                              {t.content}
+                            </div>
+                            <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "margin-top": "2px" }}>
+                              {t.status}
+                              {t.priority ? ` · ${t.priority}` : ""}
+                            </div>
+                          </div>
                         </div>
-                        <div style={{ "font-size": "11px", color: "#71717a" }}>
-                          {t.status} {t.priority ? `· ${t.priority}` : ""}
+                      )
+                    }}
+                  </For>
+                </div>
+              </Show>
+            </Show>
+          </Show>
+
+          {/* ── Tools ─────────────────────────────────────────────── */}
+          <Show when={tab() === "tools"}>
+            <div style={{ "font-size": "var(--fs-xs)", "font-weight": "700", color: "var(--fg-muted)", "letter-spacing": "0.05em", "text-transform": "uppercase", "margin-bottom": "10px" }}>
+              Tools · {tools.loading ? "…" : (tools()?.length ?? 0)}
+            </div>
+            <Show
+              when={!tools.loading}
+              fallback={
+                <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }} aria-label="Loading tools">
+                  {[0, 1, 2].map(() => (
+                    <div class="skeleton" style={{ height: "48px", "border-radius": "var(--r-md)" }} />
+                  ))}
+                </div>
+              }
+            >
+              <Show
+                when={(tools()?.length ?? 0) > 0}
+                fallback={
+                  <div
+                    style={{
+                      padding: "14px",
+                      border: "1px dashed var(--border-strong)",
+                      "border-radius": "var(--r-md)",
+                      color: "var(--fg-faint)",
+                      "font-size": "var(--fs-xs)",
+                      "text-align": "center",
+                      "line-height": "1.5",
+                    }}
+                  >
+                    No tools reported. Is the Mira server running on :4096?
+                  </div>
+                }
+              >
+                <div style={{ display: "flex", "flex-direction": "column", gap: "6px" }}>
+                  <For each={tools() ?? []}>
+                    {(tool) => (
+                      <div class="card" style={{ padding: "9px 11px" }}>
+                        <div style={{ "font-size": "12px", "font-weight": "600", color: "var(--fg)", "font-family": "var(--font-mono)" }}>
+                          {tool.name}
+                        </div>
+                        <div class="clamp-2" style={{ "font-size": "var(--fs-xs)", color: "var(--fg-subtle)", "margin-top": "3px", "line-height": "1.45" }}>
+                          {tool.description || "No description"}
                         </div>
                       </div>
-                    </div>
-                  )}
-                </For>
-              </div>
+                    )}
+                  </For>
+                </div>
+              </Show>
             </Show>
           </Show>
-        </Show>
 
-        <Show when={tab() === "tools"}>
-          <div style={{ "font-size": "12px", "font-weight": "700", color: "#d4d4d8", "letter-spacing": "0.04em", "text-transform": "uppercase", "margin-bottom": "10px" }}>
-            Tools · {tools()?.length ?? "…"}
-          </div>
-          <Show
-            when={tools() && tools()!.length > 0}
-            fallback={
-              <div style={{ color: "#71717a", "font-size": "13px" }}>
-                <Show when={tools.loading} fallback="No tools. Start server on :4096.">
-                  Loading tools…
-                </Show>
-              </div>
-            }
-          >
-            <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
-              <For each={tools()!}>
-                {(tool) => (
-                  <div style={{ padding: "9px 10px", "border-radius": "10px", border: "1px solid #27272a", background: "#111113" }}>
-                    <div style={{ "font-size": "12.5px", "font-weight": "600", color: "#fafafa", "font-family": "ui-monospace, SFMono-Regular, monospace" }}>
-                      {tool.name}
-                    </div>
-                    <div style={{ "font-size": "12px", color: "#a1a1aa", "margin-top": "3px", "line-height": "1.4" }}>
-                      {tool.description || "No description"}
-                    </div>
-                  </div>
-                )}
-              </For>
+          {/* ── Events ────────────────────────────────────────────── */}
+          <Show when={tab() === "events"}>
+            <div style={{ "font-size": "var(--fs-xs)", "font-weight": "700", color: "var(--fg-muted)", "letter-spacing": "0.05em", "text-transform": "uppercase", "margin-bottom": "10px" }}>
+              Connection
             </div>
-          </Show>
-        </Show>
-
-        <Show when={tab() === "events"}>
-          <div style={{ "font-size": "12px", "font-weight": "700", color: "#d4d4d8", "letter-spacing": "0.04em", "text-transform": "uppercase", "margin-bottom": "10px" }}>
-            Bus Events
-          </div>
-          <div style={{ "font-size": "12px", color: "#71717a" }}>
-            WebSocket:{" "}
-            <span style={{ color: s().connected ? "#22c55e" : "#ef4444", "font-weight": "600" }}>
-              {s().connected ? "connected" : "disconnected"}
-            </span>
-            <div style={{ "margin-top": "8px", color: "#52525b", "font-size": "11px" }}>
-              Live BusEvent stream from server (session.created, todo.updated, …) — no polling.
+            <div class="card" style={{ padding: "10px 12px", display: "flex", "align-items": "center", gap: "8px" }}>
+              <span
+                class={`dot ${s().connected ? "dot-pulse" : ""}`}
+                style={{ background: s().connected ? "var(--ok)" : "var(--danger)", width: "7px", height: "7px" }}
+              />
+              <span style={{ "font-size": "var(--fs-sm)", color: s().connected ? "var(--fg)" : "var(--fg-muted)", "font-weight": "600" }}>
+                {s().connected ? "Live event socket connected" : "Event socket offline — retrying"}
+              </span>
+            </div>
+            <div style={{ "margin-top": "10px", color: "var(--fg-faint)", "font-size": "var(--fs-2xs)", "line-height": "1.55" }}>
+              Updates arrive over the server's event bus — sessions, todos, and questions refresh automatically, no
+              polling.
             </div>
             <Show when={s().streaming}>
-              <div style={{ "margin-top": "10px", padding: "8px", background: "#18181b", border: "1px solid #27272a", "border-radius": "8px", color: "#a1a1aa" }}>
-                Streaming prompt for <code style={{ color: "#fafafa" }}>{s().currentId?.slice(0, 8)}</code>…
+              <div
+                class="card"
+                style={{
+                  "margin-top": "10px",
+                  padding: "9px 11px",
+                  background: "var(--warn-soft)",
+                  "border-color": "var(--warn-border)",
+                  color: "var(--warn)",
+                  "font-size": "var(--fs-xs)",
+                }}
+              >
+                ◷ Streaming turn for <code style={{ "font-family": "var(--font-mono)", color: "var(--fg)" }}>{s().currentId?.slice(0, 8)}</code>…
               </div>
             </Show>
-          </div>
-        </Show>
-      </div>
+          </Show>
+        </div>
+      </Show>
     </aside>
   )
 }

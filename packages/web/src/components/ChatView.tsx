@@ -1,47 +1,94 @@
-import { For, Show, onMount, createEffect } from "solid-js"
+import { For, Show, createSignal, createEffect, onMount } from "solid-js"
 import type { AppStore } from "../stores/app"
-import type { Message } from "../api/client"
+import type { Message, Part } from "../api/client"
 
-function RoleBadge(props: { role: Message["role"] }) {
-  const map: Record<string, { label: string; bg: string; fg: string }> = {
-    user: { label: "You", bg: "#27272a", fg: "#fafafa" },
-    assistant: { label: "Mira", bg: "linear-gradient(135deg,#7c3aed,#ec4899)", fg: "#fff" },
-    system: { label: "System", bg: "#1e293b", fg: "#94a3b8" },
-    tool: { label: "Tool", bg: "#422006", fg: "#fdba74" },
+const EXAMPLE_PROMPTS = [
+  "Explain this repo's architecture",
+  "Write tests for the utils module",
+  "Find and fix TODO comments",
+]
+
+const contentOf = (m: Message) => m.content || (m.parts?.map((p) => p.text || "").join("\n") ?? "")
+
+/** Inline tool-call chip with expandable input/output detail. */
+function ToolChip(props: { part: Part }) {
+  const [open, setOpen] = createSignal(false)
+  const isCall = () => props.part.type === "tool_call"
+  const detail = () => {
+    const src = isCall() ? props.part.input : props.part.output
+    if (src === undefined) return ""
+    try {
+      return JSON.stringify(src, null, 2)
+    } catch {
+      return String(src)
+    }
   }
-  const v = map[props.role] ?? map.assistant
+
   return (
-    <span
-      style={{
-        "font-size": "11px",
-        "font-weight": "700",
-        padding: "2px 7px",
-        "border-radius": "999px",
-        background: v.bg,
-        color: v.fg,
-        flex: "none",
-      }}
-    >
-      {v.label}
-    </span>
+    <div>
+      <button
+        type="button"
+        class="chip"
+        aria-expanded={open() ? "true" : "false"}
+        onClick={() => setOpen(!open())}
+        title={isCall() ? "Show tool input" : "Show tool output"}
+      >
+        <span style={{ color: isCall() ? "var(--warn)" : "var(--ok)", "font-size": "10px", flex: "none" }}>
+          {isCall() ? "◷" : "✓"}
+        </span>
+        <span class="chip-name">{props.part.tool ?? props.part.type}</span>
+        <span class="chip-chevron">▶</span>
+      </button>
+      <Show when={open() && detail()}>
+        <pre class="chip-detail">{detail()}</pre>
+      </Show>
+    </div>
   )
 }
 
 export function ChatView(props: { store: AppStore }) {
   const s = () => props.store.state
-  let endRef: HTMLDivElement | undefined
+  let scrollRef: HTMLDivElement | undefined
   let inputRef: HTMLTextAreaElement | undefined
 
-  const scrollToEnd = () => endRef?.scrollIntoView({ behavior: "smooth" })
+  // pinned = stick to bottom; unpins the moment the user scrolls up to read,
+  // and a "jump to latest" pill appears instead of yanking them down.
+  const [pinned, setPinned] = createSignal(true)
 
+  const scrollToBottom = (smooth: boolean) => {
+    const el = scrollRef
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" })
+  }
+
+  // new message → smooth glide (if pinned)
   createEffect(() => {
-    // react to message count / streaming text
-    s().messages.length
-    s().streamText
-    scrollToEnd()
+    void s().messages.length
+    if (pinned()) queueMicrotask(() => scrollToBottom(true))
+  })
+  // streaming deltas → instant catch-up (smooth every token is nauseating)
+  createEffect(() => {
+    void s().streamText
+    if (pinned()) queueMicrotask(() => scrollToBottom(false))
   })
 
+  const onScroll = () => {
+    const el = scrollRef
+    if (!el) return
+    setPinned(el.scrollHeight - el.scrollTop - el.clientHeight < 80)
+  }
+
   onMount(() => inputRef?.focus())
+
+  const lastMsg = () => s().messages[s().messages.length - 1]
+  const typingDots = () => {
+    const lm = lastMsg()
+    return s().streaming && (!lm || (lm.role === "assistant" && !lm.content))
+  }
+  const showCaret = () => {
+    const lm = lastMsg()
+    return s().streaming && !!lm && lm.role === "assistant" && !!lm.content
+  }
 
   const handleSubmit = (e: Event) => {
     e.preventDefault()
@@ -56,234 +103,423 @@ export function ChatView(props: { store: AppStore }) {
     }
   }
 
+  const autoGrow = () => {
+    const el = inputRef
+    if (!el) return
+    el.style.height = "auto"
+    el.style.height = Math.min(el.scrollHeight, 160) + "px"
+  }
+
+  const useExample = (text: string) => {
+    props.store.setInput(text)
+    queueMicrotask(() => {
+      inputRef?.focus()
+      autoGrow()
+    })
+  }
+
+  const timeOf = (m: Message) => new Date(m.createdAt).toLocaleTimeString()
+
   return (
     <section
       style={{
         flex: "1",
         display: "flex",
         "flex-direction": "column",
-        background: "#0a0a0b",
+        background: "var(--bg-canvas)",
         "min-width": "0",
         height: "100%",
         overflow: "hidden",
       }}
     >
-      {/* messages */}
-      <div style={{ flex: "1", overflow: "auto", padding: "20px", display: "flex", "flex-direction": "column", gap: "14px" }}>
-        <Show
-          when={s().currentId}
-          fallback={
-            <div
-              style={{
-                flex: "1",
-                display: "grid",
-                "place-items": "center",
-                color: "#71717a",
-                "text-align": "center",
-                padding: "24px",
-              }}
-            >
-              <div>
-                <div style={{ "font-size": "28px", "margin-bottom": "8px" }}>✦</div>
-                <div style={{ "font-weight": "600", color: "#d4d4d8", "font-size": "14px" }}>Welcome to Mira</div>
-                <div style={{ "font-size": "13px", "margin-top": "6px", "max-width": "36ch" }}>
-                  Better than all — OpenCode openness + Claude reasoning + Cursor polish + memory/evals/guardrails.
-                  Create a session to start.
-                </div>
-              </div>
-            </div>
-          }
-        >
-          <Show
-            when={s().messages.length > 0}
-            fallback={
-              <div style={{ color: "#71717a", "font-size": "13px", padding: "12px 0" }}>
-                No messages yet. Say hello to Mira →
-              </div>
-            }
+      {/* messages — relative wrapper hosts the jump pill over the scroller */}
+      <div style={{ flex: "1", position: "relative", "min-height": "0" }}>
+        <div class="scroll" ref={scrollRef} onScroll={onScroll} style={{ position: "absolute", inset: "0" }}>
+          <div
+            style={{
+              "max-width": "calc(68ch + 48px)",
+              margin: "0 auto",
+              padding: "var(--sp-5) var(--sp-6)",
+              display: "flex",
+              "flex-direction": "column",
+              gap: "var(--sp-4)",
+              "min-height": "100%",
+            }}
           >
-            <For each={s().messages}>
-              {(m) => (
+            <Show
+              when={s().currentId}
+              fallback={
+                /* no session selected — designed welcome + exit */
                 <div
                   style={{
-                    display: "flex",
-                    gap: "10px",
-                    "align-items": "flex-start",
-                    background: m.role === "user" ? "#18181b" : m.role === "assistant" ? "#111113" : "transparent",
-                    border: "1px solid #27272a",
-                    "border-radius": "14px",
-                    padding: "12px 14px",
+                    flex: "1",
+                    display: "grid",
+                    "place-items": "center",
+                    "text-align": "center",
+                    padding: "var(--sp-6)",
                   }}
                 >
-                  <RoleBadge role={m.role} />
-                  <div style={{ flex: "1", "min-width": "0" }}>
-                    <pre
+                  <div style={{ display: "flex", "flex-direction": "column", "align-items": "center", gap: "12px" }}>
+                    <div
                       style={{
-                        "white-space": "pre-wrap",
-                        "word-break": "break-word",
-                        "font-family": "ui-sans-system, system-ui, sans-serif",
-                        "font-size": "13.5px",
-                        "line-height": "1.6",
-                        color: "#e4e4e7",
-                        margin: "0",
+                        width: "46px",
+                        height: "46px",
+                        "border-radius": "var(--r-md)",
+                        background: "var(--grad-brand)",
+                        display: "grid",
+                        "place-items": "center",
+                        color: "var(--on-accent)",
+                        "font-size": "20px",
+                        "box-shadow": "var(--shadow-card)",
                       }}
                     >
-                      {m.content || (m.parts?.map((p) => p.text || "").join("\n") ?? "")}
-                    </pre>
-                    <Show when={m.parts && m.parts.length > 0}>
-                      <div style={{ "margin-top": "8px", display: "flex", "flex-wrap": "wrap", gap: "6px" }}>
-                        <For each={m.parts}>
-                          {(p) => (
-                            <Show when={p.type === "tool_call" || p.type === "tool_result"}>
-                              <span
-                                style={{
-                                  "font-size": "11px",
-                                  background: "#1f1f23",
-                                  border: "1px solid #27272a",
-                                  padding: "3px 7px",
-                                  "border-radius": "999px",
-                                  color: "#a1a1aa",
-                                }}
-                              >
-                                {p.type === "tool_call" ? "◷ " : "✓ "}
-                                {p.tool ?? p.type}
-                              </span>
-                            </Show>
+                      ✦
+                    </div>
+                    <div style={{ "font-weight": "700", color: "var(--fg)", "font-size": "var(--fs-lg)" }}>
+                      Welcome to Mira
+                    </div>
+                    <div style={{ "font-size": "var(--fs-sm)", color: "var(--fg-subtle)", "max-width": "44ch", "line-height": "1.6" }}>
+                      A self-hosted coding agent with streaming answers, tool execution, and snapshot undo. Create a
+                      session to start.
+                    </div>
+                    <button
+                      type="button"
+                      class="btn btn-solid"
+                      onClick={() => void props.store.createSession().catch(() => {})}
+                      style={{ padding: "8px 14px", "font-size": "var(--fs-sm)", "margin-top": "4px" }}
+                    >
+                      ＋ New session
+                    </button>
+                  </div>
+                </div>
+              }
+            >
+              <Show
+                when={s().messages.length > 0}
+                fallback={
+                  /* empty conversation — offer concrete first steps */
+                  <div
+                    style={{
+                      flex: "1",
+                      display: "grid",
+                      "place-items": "center",
+                      "text-align": "center",
+                      padding: "var(--sp-6)",
+                    }}
+                  >
+                    <div style={{ display: "flex", "flex-direction": "column", "align-items": "center", gap: "10px" }}>
+                      <div
+                        aria-hidden="true"
+                        style={{
+                          width: "38px",
+                          height: "38px",
+                          "border-radius": "var(--r-md)",
+                          background: "var(--accent-soft)",
+                          border: "1px solid var(--accent-border)",
+                          display: "grid",
+                          "place-items": "center",
+                          color: "var(--accent)",
+                          "font-size": "16px",
+                        }}
+                      >
+                        ✦
+                      </div>
+                      <div style={{ "font-weight": "600", color: "var(--fg)", "font-size": "var(--fs-md)" }}>
+                        Start the conversation
+                      </div>
+                      <div style={{ "font-size": "var(--fs-sm)", color: "var(--fg-subtle)", "max-width": "42ch", "line-height": "1.55" }}>
+                        Ask anything — Mira streams the answer, runs tools, and edits files with undo.
+                      </div>
+                      <div style={{ display: "flex", "flex-wrap": "wrap", gap: "6px", "justify-content": "center", "margin-top": "6px" }}>
+                        <For each={EXAMPLE_PROMPTS}>
+                          {(ex) => (
+                            <button type="button" class="chip" onClick={() => useExample(ex)}>
+                              {ex}
+                            </button>
                           )}
                         </For>
                       </div>
-                    </Show>
-                    <div style={{ "margin-top": "6px", "font-size": "11px", color: "#52525b" }}>
-                      {new Date(m.createdAt).toLocaleTimeString()}
                     </div>
                   </div>
-                </div>
-              )}
-            </For>
-          </Show>
+                }
+              >
+                <For each={s().messages}>
+                  {(m, i) => {
+                    const isUser = m.role === "user"
+                    const isLast = () => i() === s().messages.length - 1
+                    const showCaretHere = () => showCaret() && isLast()
 
-          <Show when={s().streaming && s().streamText}>
-            <div style={{ color: "#a1a1aa", "font-size": "12px", padding: "6px 2px" }}>
-              <span style={{ display: "inline-block", width: "6px", height: "6px", background: "#a78bfa", "border-radius": "50%", "margin-right": "6px", animation: "pulse 1s infinite" }} />
-              streaming…
-            </div>
-          </Show>
+                    // system / tool roles get compact treatments; user and
+                    // assistant are structurally distinct, not just recolored
+                    return (
+                      <Show
+                        when={m.role === "system"}
+                        fallback={
+                          <Show
+                            when={m.role === "tool"}
+                            fallback={
+                              /* ── user: right-aligned bubble / assistant: open block ── */
+                              <div
+                                class="msg-in"
+                                style={{
+                                  display: "flex",
+                                  "flex-direction": "column",
+                                  "align-items": isUser ? "flex-end" : "stretch",
+                                }}
+                              >
+                                <Show
+                                  when={!isUser}
+                                  fallback={
+                                    <>
+                                      <span style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "margin-bottom": "3px" }}>
+                                        You · {timeOf(m)}
+                                        {m.queued ? " · ⏳ queued" : ""}
+                                      </span>
+                                      <div
+                                        style={{
+                                          "max-width": "min(100%, 56ch)",
+                                          background: "var(--accent-soft)",
+                                          border: "1px solid var(--accent-border)",
+                                          "border-radius": "var(--r-lg)",
+                                          "border-top-right-radius": "var(--r-sm)",
+                                          padding: "9px 13px",
+                                        }}
+                                      >
+                                        <div
+                                          style={{
+                                            "white-space": "pre-wrap",
+                                            "word-break": "break-word",
+                                            "font-size": "var(--fs-md)",
+                                            "line-height": "1.6",
+                                            color: "var(--fg)",
+                                          }}
+                                        >
+                                          {contentOf(m)}
+                                        </div>
+                                      </div>
+                                    </>
+                                  }
+                                >
+                                  <div style={{ display: "flex", gap: "10px", "align-items": "flex-start" }}>
+                                    <div
+                                      aria-hidden="true"
+                                      style={{
+                                        width: "22px",
+                                        height: "22px",
+                                        "border-radius": "7px",
+                                        background: "var(--grad-brand)",
+                                        display: "grid",
+                                        "place-items": "center",
+                                        color: "var(--on-accent)",
+                                        "font-size": "11px",
+                                        flex: "none",
+                                        "margin-top": "2px",
+                                      }}
+                                    >
+                                      ✦
+                                    </div>
+                                    <div style={{ flex: "1", "min-width": "0" }}>
+                                      <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "margin-bottom": "3px" }}>
+                                        Mira · {timeOf(m)}
+                                      </div>
+                                      <div
+                                        style={{
+                                          "white-space": "pre-wrap",
+                                          "word-break": "break-word",
+                                          "font-size": "var(--fs-md)",
+                                          "line-height": "1.65",
+                                          color: "var(--fg)",
+                                        }}
+                                      >
+                                        {contentOf(m)}
+                                        <Show when={showCaretHere()}>
+                                          <span class="caret" aria-hidden="true" />
+                                        </Show>
+                                      </div>
+                                      <Show when={m.parts && m.parts.some((p) => p.type === "tool_call" || p.type === "tool_result")}>
+                                        <div style={{ "margin-top": "8px", display: "flex", "flex-direction": "column", gap: "5px", "align-items": "flex-start" }}>
+                                          <For each={m.parts}>
+                                            {(p) => (
+                                              <Show when={p.type === "tool_call" || p.type === "tool_result"}>
+                                                <ToolChip part={p} />
+                                              </Show>
+                                            )}
+                                          </For>
+                                        </div>
+                                      </Show>
+                                    </div>
+                                  </div>
+                                </Show>
+                              </div>
+                            }
+                          >
+                            {/* tool-role message */}
+                            <div class="msg-in" style={{ display: "flex", gap: "10px", "align-items": "flex-start" }}>
+                              <div
+                                aria-hidden="true"
+                                style={{
+                                  width: "22px",
+                                  height: "22px",
+                                  "border-radius": "7px",
+                                  background: "var(--bg-surface)",
+                                  border: "1px solid var(--border-strong)",
+                                  display: "grid",
+                                  "place-items": "center",
+                                  color: "var(--fg-muted)",
+                                  "font-size": "11px",
+                                  flex: "none",
+                                  "margin-top": "2px",
+                                }}
+                              >
+                                ⚙
+                              </div>
+                              <div style={{ flex: "1", "min-width": "0" }}>
+                                <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "margin-bottom": "3px" }}>
+                                  Tool · {timeOf(m)}
+                                </div>
+                                <pre
+                                  style={{
+                                    margin: "0",
+                                    "white-space": "pre-wrap",
+                                    "word-break": "break-word",
+                                    "font-family": "var(--font-mono)",
+                                    "font-size": "var(--fs-xs)",
+                                    "line-height": "1.55",
+                                    color: "var(--fg-muted)",
+                                  }}
+                                >
+                                  {contentOf(m)}
+                                </pre>
+                              </div>
+                            </div>
+                          </Show>
+                        }
+                      >
+                        {/* system-role message */}
+                        <div
+                          class="msg-in"
+                          role="note"
+                          style={{
+                            "align-self": "center",
+                            "max-width": "60ch",
+                            "font-size": "var(--fs-xs)",
+                            color: "var(--fg-subtle)",
+                            "text-align": "center",
+                            padding: "2px 0",
+                          }}
+                        >
+                          {contentOf(m)}
+                        </div>
+                      </Show>
+                    )
+                  }}
+                </For>
 
-          <div ref={endRef} />
+                {/* typing dots while the first tokens are in flight */}
+                <Show when={typingDots()}>
+                  <div class="msg-in" style={{ display: "flex", gap: "4px", padding: "4px 0 0 32px" }} aria-label="Mira is responding">
+                    {[0, 150, 300].map((d) => (
+                      <span
+                        class="dot dot-pulse"
+                        style={{ background: "var(--accent)", "animation-delay": `${d}ms` }}
+                      />
+                    ))}
+                  </div>
+                </Show>
+              </Show>
+              <div style={{ height: "4px", "flex-shrink": "0" }} />
+            </Show>
+          </div>
+        </div>
+
+        {/* autoscroll paused — hand control back to the reader */}
+        <Show when={!pinned()}>
+          <button
+            type="button"
+            class="jump-pill"
+            onClick={() => {
+              setPinned(true)
+              scrollToBottom(true)
+            }}
+          >
+            ↓ Jump to latest
+          </button>
         </Show>
       </div>
 
       {/* composer */}
       <Show when={s().currentId}>
-        <Show when={s().queued.length > 0}>
-          <div style={{ padding: "6px 12px 0", "font-size": "11px", color: "#c4b5fd" }}>
-            ⏳ {s().queued.length} message{s().queued.length === 1 ? "" : "s"} queued — runs after the current turn
-          </div>
-        </Show>
-        <form
-          onSubmit={handleSubmit}
-          style={{
-            padding: "12px",
-            "border-top": "1px solid #27272a",
-            background: "#09090b",
-            display: "flex",
-            gap: "10px",
-            "align-items": "flex-end",
-          }}
-        >
-          <textarea
-            ref={inputRef}
-            value={props.store.input()}
-            onKeyDown={onKeyDown}
-            placeholder="Message Mira… (Enter to send, Shift+Enter for newline)"
-            rows={1}
-            style={{
-              flex: "1",
-              resize: "none",
-              "min-height": "42px",
-              "max-height": "140px",
-              padding: "11px 12px",
-              "border-radius": "12px",
-              border: "1px solid #3f3f46",
-              background: "#18181b",
-              color: "#fafafa",
-              "font-size": "13.5px",
-              "line-height": "1.4",
-              outline: "none",
-            }}
-            onFocus={() => {
-              // auto-grow
-              const el = inputRef
-              if (!el) return
-              el.style.height = "auto"
-              el.style.height = Math.min(el.scrollHeight, 140) + "px"
-            }}
-            onInput={(e) => {
-              const el = e.currentTarget as HTMLTextAreaElement
-              props.store.setInput(el.value)
-              el.style.height = "auto"
-              el.style.height = Math.min(el.scrollHeight, 140) + "px"
-            }}
-          />
-          <Show
-            when={!s().streaming}
-            fallback={
-              <div style={{ display: "flex", gap: "8px", flex: "none" }}>
+        <div style={{ padding: "0 var(--sp-4) var(--sp-3)" }}>
+          <Show when={s().queued.length > 0}>
+            <div style={{ padding: "0 2px 6px", "font-size": "var(--fs-xs)", color: "var(--warn)" }} role="status">
+              ⏳ {s().queued.length} message{s().queued.length === 1 ? "" : "s"} queued — will run after the current turn
+            </div>
+          </Show>
+          <Show when={s().error}>
+            <div class="alert" role="alert" style={{ "margin-bottom": "8px", "font-size": "var(--fs-xs)" }}>
+              ⚠ {s().error}
+            </div>
+          </Show>
+          <form onSubmit={handleSubmit} class="composer" style={{ display: "flex", "flex-direction": "column", padding: "10px 12px 9px", gap: "8px" }}>
+            <textarea
+              ref={inputRef}
+              value={props.store.input()}
+              onKeyDown={onKeyDown}
+              onInput={(e) => {
+                props.store.setInput(e.currentTarget.value)
+                autoGrow()
+              }}
+              placeholder="Message Mira…"
+              aria-label="Message Mira"
+              rows={1}
+              style={{ "min-height": "24px", "max-height": "160px" }}
+            />
+            <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", gap: "10px" }}>
+              <span class="sr-only">
+                Press Enter to send, Shift+Enter for a newline.
+              </span>
+              <span aria-hidden="true" style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", display: "flex", gap: "5px", "align-items": "center" }}>
+                <span class="kbd">Enter</span> send
+                <span style={{ opacity: 0.5 }}>·</span>
+                <span class="kbd">Shift+Enter</span> newline
+              </span>
+              <Show
+                when={!s().streaming}
+                fallback={
+                  <div style={{ display: "flex", gap: "8px", flex: "none" }}>
+                    <button
+                      type="submit"
+                      class="btn btn-warn-ghost"
+                      disabled={!props.store.input().trim()}
+                      title="Queue this message — it runs after the current turn"
+                      style={{ padding: "7px 12px", "font-size": "var(--fs-sm)", "border-radius": "var(--r-md)" }}
+                    >
+                      Queue ↵
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-danger-ghost"
+                      onClick={() => props.store.stopStream()}
+                      title="Stop the current response"
+                      style={{ padding: "7px 12px", "font-size": "var(--fs-sm)", "border-radius": "var(--r-md)" }}
+                    >
+                      ■ Stop
+                    </button>
+                  </div>
+                }
+              >
                 <button
                   type="submit"
+                  class="btn btn-solid"
                   disabled={!props.store.input().trim()}
-                  title="Queue this message — it runs after the current turn"
-                  style={{
-                    padding: "10px 14px",
-                    "border-radius": "10px",
-                    border: props.store.input().trim() ? "1px solid #7c3aed" : "1px solid #27272a",
-                    background: props.store.input().trim() ? "#2e1065" : "#18181b",
-                    color: props.store.input().trim() ? "#c4b5fd" : "#71717a",
-                    "font-size": "13px",
-                    "font-weight": "600",
-                    cursor: props.store.input().trim() ? "pointer" : "not-allowed",
-                  }}
+                  style={{ padding: "7px 16px", "font-size": "var(--fs-sm)", flex: "none" }}
                 >
-                  Queue ↵
+                  Send ↵
                 </button>
-                <button
-                  type="button"
-                  onClick={() => props.store.stopStream()}
-                  style={{
-                    padding: "10px 14px",
-                    "border-radius": "10px",
-                    border: "1px solid #44403c",
-                    background: "#1c1917",
-                    color: "#fdba74",
-                    "font-size": "13px",
-                    "font-weight": "600",
-                    cursor: "pointer",
-                  }}
-                >
-                  Stop
-                </button>
-              </div>
-            }
-          >
-            <button
-              type="submit"
-              disabled={!props.store.input().trim()}
-              style={{
-                padding: "10px 16px",
-                "border-radius": "10px",
-                border: "none",
-                background: props.store.input().trim() ? "linear-gradient(135deg,#7c3aed,#ec4899)" : "#27272a",
-                color: props.store.input().trim() ? "white" : "#71717a",
-                "font-size": "13px",
-                "font-weight": "700",
-                cursor: props.store.input().trim() ? "pointer" : "not-allowed",
-                flex: "none",
-              }}
-            >
-              Send ↵
-            </button>
-          </Show>
-        </form>
+              </Show>
+            </div>
+          </form>
+        </div>
       </Show>
     </section>
   )

@@ -1,5 +1,6 @@
-import { createResource, For } from "solid-js"
+import { createResource, For, Show } from "solid-js"
 
+/** Skill picker in the top bar — selecting a skill starts a new session. */
 export function SkillSelector(props: { onSelect?: (skill: string) => void }) {
   const [skills] = createResource(async () => {
     try {
@@ -11,19 +12,26 @@ export function SkillSelector(props: { onSelect?: (skill: string) => void }) {
   })
 
   return (
-    <select
-      onChange={(e) => props.onSelect?.(e.currentTarget.value)}
-      style={{
-        padding: "6px 10px",
-        "border-radius": "8px",
-        border: "1px solid #3f3f46",
-        background: "#18181b",
-        color: "#fafafa",
-        "font-size": "12.5px",
-      }}
-    >
-      <option value="">Skills…</option>
-      <For each={skills() ?? []}>{(s) => <option value={s}>{s}</option>}</For>
-    </select>
+    <span class="select-wrap">
+      <select
+        id="skill-select"
+        class="input select"
+        aria-label="Start a session from a skill"
+        title="Start a session from a skill"
+        value=""
+        onChange={(e) => {
+          const v = e.currentTarget.value
+          if (v) props.onSelect?.(v)
+          e.currentTarget.selectedIndex = 0 // reset to placeholder after use
+        }}
+      >
+        <option value="">Skills…</option>
+        <Show when={!skills.loading} fallback={<option disabled>loading…</option>}>
+          <Show when={(skills() ?? []).length > 0} fallback={<option disabled>no skills on server</option>}>
+            <For each={skills() ?? []}>{(s) => <option value={s}>{s}</option>}</For>
+          </Show>
+        </Show>
+      </select>
+    </span>
   )
 }
