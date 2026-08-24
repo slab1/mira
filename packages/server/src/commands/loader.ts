@@ -40,6 +40,8 @@ const BUILT_INS: CommandEntry[] = [
 ]
 
 const COMMAND_DIRS = [".opencode/commands", ".mira/commands", "commands"]
+// Also scan repo root when server runs from packages/server (common in dev)
+const EXTRA_DIRS = ["../.opencode/commands", "../../.opencode/commands"]
 
 async function loadFromDir(dir: string, source: "command"): Promise<CommandEntry[]> {
   const out: CommandEntry[] = []
@@ -70,7 +72,7 @@ async function loadFromDir(dir: string, source: "command"): Promise<CommandEntry
 
 export async function loadCommands(cwd = process.cwd()): Promise<CommandEntry[]> {
   const discovered: CommandEntry[] = []
-  for (const dir of COMMAND_DIRS) {
+  for (const dir of [...COMMAND_DIRS, ...EXTRA_DIRS]) {
     const full = `${cwd}/${dir}`
     const list = await loadFromDir(full, "command")
     discovered.push(...list)
