@@ -102,9 +102,34 @@ docker run -d \
   ghcr.io/slab1/mira:latest
 ```
 
-**Required env vars:** `HOST=0.0.0.0`, `MIRA_TOKEN`, `OPENROUTER_API_KEY` or `NVIDIA_API_KEY`.
+**Required env vars:** `HOST=0.0.0.0`, `MIRA_TOKEN`, `OPENROUTER_API_KEY` or `NVIDIA_API_KEY`. See `.env.example` for the full set (multi-tenant keys, CORS allowlist, loop limits, eval gate).
 
-Health check: `GET http://host:4096/health`
+Health checks:
+- `GET /healthz` — unauthenticated liveness (used by Docker/compose HEALTHCHECK; works under auth)
+- `GET /health` — detailed, behind the bearer gate
+
+### Multi-tenancy
+
+Set `MIRA_API_KEYS=key-alice:alice,key-bob:bob` to issue per-user credentials. Sessions are stamped with an owner; every session route (prompt, messages, export, todos, snapshots, jobs) and WebSocket event stream is owner-scoped — foreign resources return 404. Child sessions spawned by the `task` tool inherit the parent's owner.
+
+Single-token mode (`MIRA_TOKEN` only) maps everything to an implicit `"default"` owner and behaves exactly as before.
+
+### API surface
+
+| Route | Auth | Description |
+|-------|------|-------------|
+| `GET /healthz` | none | liveness |
+| `GET /metrics` | see note | Prometheus scrape |
+| `GET/POST /session` | bearer | list (owner-scoped) / create |
+| `GET/DELETE /session/:id` | bearer | detail / delete (404 if foreign) |
+| `POST /session/:id/prompt` | bearer | SSE stream; body `{prompt, model?, maxSteps?}` |
+| `GET /session/:id/message` · `/todo` · `/export` | bearer | history, todos, transcript |
+| `GET/POST/DELETE /session/:id/queue` | bearer | message queue while streaming |
+| `GET /session/:id/snapshots` · `POST …/revert` | bearer | file undo/rewind |
+| `GET /session/:id/jobs` · `GET /job/:id` · `POST /job/:id/cancel` | bearer | background subagent job board |
+| `WS /` | bearer or first-message auth | live bus events, owner-scoped |
+
+Agent tools include `finding_write` / `finding_list` / `finding_resolve` — structured cross-session team memory (open findings are auto-injected into every loop context).
 
 CI/CD: `.github/workflows/cd.yml` builds multi-arch image to GHCR and deploys when `vars.DEPLOY_ENABLED=true`.
 
