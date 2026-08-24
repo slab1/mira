@@ -115,6 +115,13 @@ export interface PermissionRequest {
 export interface MiraConfig {
   model: string
   smallModel?: string
+  /** Agentic loop limits (env MIRA_MAX_STEPS etc. override these) */
+  loop?: {
+    maxSteps?: number
+    contextLimit?: number
+    compactionThreshold?: number
+    smallModel?: string
+  }
   permission: Record<string, PermissionAction | Record<string, PermissionAction>>
   guardrails?: {
     enforce?: boolean

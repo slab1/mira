@@ -347,13 +347,14 @@ async function main() {
   // Prompt — the core loop (streamed via SSE)
   app.post("/session/:id/prompt", async c => {
     const id = c.req.param("id")
-    const { prompt: text, model } = await c.req.json()
+    const { prompt: text, model, maxSteps } = await c.req.json().catch(() => ({}))
+    if (!text?.trim?.()) return c.json({ error: "empty prompt" }, 400)
     // Validate session exists
     const session = await prompt.getSession(id)
     if (!session) return c.json({ error: "session not found" }, 404)
 
-    // Stream response as SSE (Vercel AI SDK style)
-    return prompt.streamResponse(id, text, model)
+    // Stream response as SSE (Vercel AI SDK style); per-request loop options honored
+    return prompt.streamResponse(id, text, model, { maxSteps })
   })
 
   // Messages & parts

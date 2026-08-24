@@ -1,6 +1,7 @@
 /**
  * Mira Config — Loads mira.json / opencode.jsonc + env fallbacks
- * Supports AGENTS.md / Skills injection into system prompt
+ * Injects AGENTS.md project instructions into the system prompt.
+ * (Skills + todos injection happens per-turn in SessionPrompt.loadContext.)
  */
 import type { MiraConfig } from "../types/index.js"
 
@@ -56,8 +57,20 @@ export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
     try {
       const file = Bun.file(`${cwd}/${name}`)
       if (await file.exists()) {
-        const raw = await file.json()
-        cached = { ...DEFAULT_CONFIG, ...raw } as MiraConfig
+        const raw = await file.json() as Partial<MiraConfig>
+        // Deep-merge object sections so a partial mira.json (e.g. {"permission":{"bash":"ask"}})
+        // overrides only the keys it names — never wipes sibling defaults.
+        const mergeSection = <T extends Record<string, unknown>>(base: T | undefined, override: unknown): T => {
+          if (!override || typeof override !== "object" || Array.isArray(override)) return { ...(base ?? {}) as T }
+          return { ...((base ?? {}) as T), ...(override as T) }
+        }
+        cached = {
+          ...DEFAULT_CONFIG,
+          ...raw,
+          permission: mergeSection(DEFAULT_CONFIG.permission, raw.permission),
+          mcp: mergeSection(DEFAULT_CONFIG.mcp, raw.mcp),
+          provider: mergeSection(DEFAULT_CONFIG.provider, raw.provider),
+        } as MiraConfig
         return cached
       }
     } catch {}
@@ -98,13 +111,19 @@ function numFromEnv(raw: string | undefined, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback
 }
 
-/** Loop limits for SessionPrompt.runLoop — env > mira.json smallModel > built-in defaults */
+/**
+ * Loop limits for SessionPrompt.runLoop.
+ * Precedence: env var > mira.json `loop` section > built-in defaults.
+ */
 export function getLoopLimits(): LoopLimits {
+  const fileLoop = getConfig().loop ?? {}
+  const numFromFile = (raw: number | undefined, fallback: number): number =>
+    typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : fallback
   return {
-    maxSteps: numFromEnv(process.env.MIRA_MAX_STEPS, DEFAULT_LOOP_LIMITS.maxSteps),
-    contextLimit: numFromEnv(process.env.MIRA_CONTEXT_LIMIT, DEFAULT_LOOP_LIMITS.contextLimit),
-    compactionThreshold: numFromEnv(process.env.MIRA_COMPACTION_THRESHOLD, DEFAULT_LOOP_LIMITS.compactionThreshold),
-    smallModel: process.env.MIRA_SMALL_MODEL ?? getConfig().smallModel ?? DEFAULT_LOOP_LIMITS.smallModel,
+    maxSteps: numFromEnv(process.env.MIRA_MAX_STEPS, numFromFile(fileLoop.maxSteps, DEFAULT_LOOP_LIMITS.maxSteps)),
+    contextLimit: numFromEnv(process.env.MIRA_CONTEXT_LIMIT, numFromFile(fileLoop.contextLimit, DEFAULT_LOOP_LIMITS.contextLimit)),
+    compactionThreshold: numFromEnv(process.env.MIRA_COMPACTION_THRESHOLD, numFromFile(fileLoop.compactionThreshold, DEFAULT_LOOP_LIMITS.compactionThreshold)),
+    smallModel: process.env.MIRA_SMALL_MODEL ?? fileLoop.smallModel ?? getConfig().smallModel ?? DEFAULT_LOOP_LIMITS.smallModel,
   }
 }
 
