@@ -53,18 +53,51 @@ export const providerConfigSchema = z.object({
 })
 export type ProviderConfig = z.infer<typeof providerConfigSchema>
 
+export const loopConfigSchema = z.object({
+  maxSteps: z.number().int().positive().optional(),
+  contextLimit: z.number().int().positive().optional(),
+  compactionThreshold: z.number().min(0).max(1).optional(),
+  smallModel: z.string().optional(),
+})
+export type LoopConfig = z.infer<typeof loopConfigSchema>
+
+export const agentDefinitionSchema = z.object({
+  system: z.string(),
+  description: z.string().optional(),
+  tools: z.array(z.string()).optional(),
+  permissions: z.enum(["readonly", "standard", "elevated"]).optional(),
+})
+export type AgentDefinition = z.infer<typeof agentDefinitionSchema>
+
+export const guardrailsConfigSchema = z.object({
+  enforce: z.boolean().optional(),
+  allowedRoots: z.array(z.string()).optional(),
+  blockedPaths: z.array(z.string()).optional(),
+  blockedCommands: z.array(z.string()).optional(),
+  allowedCommands: z.array(z.string()).optional(),
+  maxOutputBytes: z.number().int().positive().optional(),
+  auditLogPath: z.string().optional(),
+})
+export type GuardrailsConfig = z.infer<typeof guardrailsConfigSchema>
+
 // ── MiraConfig (layer payload) ─────────────────────────────────────
 export const miraConfigSchema = z.object({
   /** Primary model ref: "provider/model-id" or "openrouter/anthropic/claude-sonnet-4" */
   model: z.string().min(1).default("openrouter/anthropic/claude-sonnet-4"),
   /** Cheap/fast model for subtasks */
   smallModel: z.string().optional(),
+  /** Agentic loop limits */
+  loop: loopConfigSchema.optional(),
   /** Permission matrix: tool → action | pattern → action (e.g. "bash:rm *": "deny") */
   permission: z.record(z.string(), permissionValueSchema).default({}),
+  /** Guardrails */
+  guardrails: guardrailsConfigSchema.optional(),
   /** MCP servers */
   mcp: z.record(z.string(), mcpServerConfigSchema).default({}),
   /** Provider registry (OpenRouter by default) */
   provider: z.record(z.string(), providerConfigSchema).default({}),
+  /** Custom agent definitions */
+  agents: z.record(z.string(), agentDefinitionSchema).optional(),
   /** Optional: theme, debug, etc. */
   theme: z.enum(["dark", "light", "system"]).optional(),
   debug: z.boolean().optional(),
@@ -127,30 +160,30 @@ export const envToConfigMap: Record<string, string> = {
 
 /** Parse env vars into a partial config (layer 6). Pure — no process access required if env passed. */
 export function parseEnvConfig(env: Record<string, string | undefined> = {}): PartialMiraConfig {
-  const out: Record<string, unknown> = {}
+  const out: PartialMiraConfig = {}
   // Direct mappings
   if (env.MIRA_MODEL) out.model = env.MIRA_MODEL
   if (env.MIRA_SMALL_MODEL) out.smallModel = env.MIRA_SMALL_MODEL
   // Provider keys → ensure provider record shape via zod safeParse later
   // Keep minimal: just apiKey injection; full provider is merged in applyLayers
-  return out as PartialMiraConfig
+  return out
 }
 
 // ── Merge ──────────────────────────────────────────────────────────
-export function isPlainObject(v: unknown): v is Record<string, unknown> {
+export function isPlainObject(v: PartialMiraConfig | MiraConfig | string | number | boolean | null): v is PartialMiraConfig {
   return typeof v === "object" && v !== null && !Array.isArray(v)
 }
 
 /** Deep merge: arrays replaced, objects merged, primitives last-wins. Used for layer stacking. */
-export function mergeConfigs<T extends Record<string, unknown>>(base: T, patch: Partial<T>): T {
-  const out: Record<string, unknown> = { ...base }
-  for (const [k, v] of Object.entries(patch as Record<string, unknown>)) {
+export function mergeConfigs<T extends PartialMiraConfig>(base: T, patch: Partial<T>): T {
+  const out: PartialMiraConfig = { ...base }
+  for (const [k, v] of Object.entries(patch)) {
     if (v === undefined) continue
-    const prev = out[k]
-    if (isPlainObject(prev) && isPlainObject(v)) {
-      out[k] = mergeConfigs(prev as Record<string, unknown>, v as Record<string, unknown>)
+    const prev = out[k as keyof PartialMiraConfig]
+    if (isPlainObject(prev as PartialMiraConfig) && isPlainObject(v as PartialMiraConfig)) {
+      out[k as keyof PartialMiraConfig] = mergeConfigs(prev as PartialMiraConfig, v as PartialMiraConfig) as never
     } else {
-      out[k] = v
+      out[k as keyof PartialMiraConfig] = v as never
     }
   }
   return out as T
@@ -161,7 +194,7 @@ export function applyLayers(layers: PartialMiraConfig[]): MiraConfig {
   // Start from defaults (layer 1) parsed via zod for defaults
   let acc = miraConfigSchema.parse({}) as MiraConfig
   for (const layer of layers) {
-    acc = mergeConfigs(acc as unknown as Record<string, unknown>, layer as Record<string, unknown>) as unknown as MiraConfig
+    acc = mergeConfigs(acc, layer)
   }
   // Re-validate final
   return miraConfigSchema.parse(acc)

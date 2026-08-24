@@ -31,14 +31,16 @@ import { SessionPrompt } from "./session/prompt.js"
 import { getAgentTemplates, AGENT_TEMPLATES } from "./agents/templates.js"
 const BUILTIN_AGENT_KEYS: Record<string, true> = Object.fromEntries(Object.keys(AGENT_TEMPLATES).map(k => [k, true as const]))
 import { MCPManager } from "./mcp/index.js"
-import { loadConfig } from "./config/index.js"
+import { loadConfig, saveConfig, getConfigLayers, getConfig } from "./config/index.js"
 import { createLearningSystem, mountLearningRoutes } from "./learning/index.js"
 import { setSharedKnowledge } from "./learning/knowledge.js"
 import { GuardrailsManager } from "./guardrails/index.js"
 import { getJob, listJobs, cancelJob } from "./tools/task.js"
 import { writeFinding, listFindings, resolveFinding, type FindingSeverity } from "./tools/findings.js"
-import type { BusEvent } from "./types/index.js"
+import type { BusEvent, MiraConfig } from "./types/index.js"
 import type { Snapshot } from "./storage/snapshots.js"
+
+type PartialMiraConfig = Partial<MiraConfig>
 
 // ── Bootstrap ──────────────────────────────────────────────────────
 const PORT = Number(process.env.PORT ?? Bun.argv.find(a => a.startsWith("--port="))?.split("=")[1] ?? 4096)
@@ -90,8 +92,13 @@ async function initOtel() {
     const { OTLPTraceExporter } = await import('@opentelemetry/exporter-trace-otlp-http')
     const resources = await import('@opentelemetry/resources')
     const { SemanticResourceAttributes } = await import('@opentelemetry/semantic-conventions')
-    const Resource = (resources as any).Resource
+    type OtelResource = { attributes: Record<string, string>; merge: (other: OtelResource) => OtelResource; getRawAttributes: () => Record<string, string> }
+    const maybeResource = (resources as object as Record<string, { new (attrs: Record<string, string>): OtelResource }>)["Resource"]
+    const fallbackResource = (resources as object as { default: Record<string, { new (attrs: Record<string, string>): OtelResource }> }).default?.["Resource"]
+    const Resource = maybeResource ?? fallbackResource
+    if (!Resource) throw new Error("Resource not found in @opentelemetry/resources")
     const sdk = new NodeSDK({
+      // @ts-expect-error — Resource interop between dynamic import and NodeSDK's expected type; runtime shape is correct
       resource: new Resource({ [SemanticResourceAttributes.SERVICE_NAME]: 'mira-server' }),
       traceExporter: new OTLPTraceExporter({ url: `${endpoint.replace(/\/$/, '')}/v1/traces` })
     })
@@ -483,6 +490,99 @@ async function main() {
   // MCP discovery — server statuses + tool counts
   app.get("/mcp", c => c.json(mcp.listServers()))
 
+  // ── Config — layered settings (behind auth gate, same as /mcp) ─────
+  function maskApiKey(key: string): string {
+    if (!key) return ""
+    if (key.length <= 4) return "***"
+    return `${key.slice(0, 3)}***${key.slice(-4)}`
+  }
+  function redactConfig<T extends MiraConfig | Partial<MiraConfig>>(cfg: T): T {
+    const out = JSON.parse(JSON.stringify(cfg)) as T
+    const providers = (out as MiraConfig).provider as Record<string, { options?: { apiKey?: string } }> | undefined
+    if (providers && typeof providers === "object") {
+      for (const p of Object.values(providers)) {
+        const opts = p.options
+        if (opts && typeof opts.apiKey === "string" && opts.apiKey) {
+          opts.apiKey = "***"
+        }
+      }
+    }
+    return out
+  }
+  function redactLayers(layers: Array<{ source: string; path: string | null; config: Partial<MiraConfig> }>) {
+    return layers.map(l => ({ ...l, config: redactConfig(l.config) }))
+  }
+
+  app.get("/config", async c => {
+    const { merged, layers } = await getConfigLayers()
+    return c.json({ merged: redactConfig(merged), layers: redactLayers(layers) })
+  })
+
+  app.patch("/config", async c => {
+    const body = await c.req.json().catch(() => null) as { patch?: PartialMiraConfig; layer?: string } | null
+    if (!body || typeof body.patch !== "object" || body.patch === null) return c.json({ error: "patch required" }, 400)
+    const layer = body.layer === "local" ? "local" : "project"
+    try {
+      const merged = await saveConfig(body.patch, layer)
+      return c.json({ merged: redactConfig(merged) })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return c.json({ error: msg }, 400)
+    }
+  })
+
+  app.get("/config/schema", async c => {
+    // Try zod-to-json-schema if available, else hand-map
+    try {
+      const mod = await import("zod-to-json-schema" as string).catch(() => null) as { zodToJsonSchema?: (schema: { parse: (data: PartialMiraConfig) => MiraConfig }) => Record<string, string> } | null
+      if (mod?.zodToJsonSchema) {
+        const configModule = await import("./config/index.js").catch(() => ({ miraConfigSchema: null })) as { miraConfigSchema?: { parse: (data: PartialMiraConfig) => MiraConfig } }
+        let schema: { parse: (data: PartialMiraConfig) => MiraConfig } | null = configModule.miraConfigSchema ?? null
+        if (!schema) {
+          try {
+            const shared = await import("../../shared/src/schemas/config.js") as { miraConfigSchema?: { parse: (data: PartialMiraConfig) => MiraConfig } }
+            schema = shared.miraConfigSchema ?? null
+          } catch {}
+        }
+        if (schema) return c.json(mod.zodToJsonSchema(schema))
+      }
+    } catch {}
+    // Fallback hand-mapped schema with 7 top keys
+    return c.json({
+      type: "object",
+      properties: {
+        model: { type: "string", description: "Primary model ref" },
+        smallModel: { type: "string" },
+        loop: { type: "object", properties: { maxSteps: { type: "number" }, contextLimit: { type: "number" }, compactionThreshold: { type: "number" }, smallModel: { type: "string" } } },
+        permission: { type: "object", description: "Permission matrix" },
+        guardrails: { type: "object" },
+        mcp: { type: "object", description: "MCP servers" },
+        provider: { type: "object", description: "Provider registry" },
+        agents: { type: "object" },
+        theme: { type: "string", enum: ["dark", "light", "system"] },
+        debug: { type: "boolean" },
+      },
+    })
+  })
+
+  app.get("/providers", async c => {
+    const cfg = getConfig()
+    const providers = cfg.provider ?? {}
+    const list = Object.entries(providers).map(([id, p]) => {
+      const prov = p as { name?: string; options?: { baseURL?: string; apiKey?: string }; models?: Record<string, { name: string; limit: { context: number; output: number } }> }
+      const apiKey = prov.options?.apiKey ?? ""
+      return {
+        id,
+        name: prov.name ?? id,
+        hasKey: !!apiKey,
+        masked: apiKey ? maskApiKey(apiKey) : "",
+        baseURL: prov.options?.baseURL ?? "",
+        modelCount: prov.models ? Object.keys(prov.models).length : 0,
+      }
+    })
+    return c.json(list)
+  })
+
   // Message queue — type while the agent streams (OpenCode-parity UX)
   app.post("/session/:id/queue", async c => {
     const { prompt: text } = await c.req.json()
@@ -659,7 +759,7 @@ async function main() {
     },
     websocket: {
       open(ws) {
-        const w = ws as unknown as MiraWS
+        const w = ws as object as MiraWS
         w.__active = false
         if ((!REQUIRED_TOKEN && API_KEY_OWNERS.size === 0) || w.data?.authenticated === true) {
           activateSocket(w, w.data?.owner)
@@ -673,7 +773,7 @@ async function main() {
         }
       },
       message(ws, msg) {
-        const w = ws as unknown as MiraWS
+        const w = ws as object as MiraWS
         let event: { type?: string; token?: string; sessionID?: string } | null = null
         try { event = JSON.parse(String(msg)) } catch {}
         if (!w.__active) {
@@ -690,7 +790,7 @@ async function main() {
         bus.publish(event as BusEvent)
       },
       close(ws) {
-        const w = ws as unknown as MiraWS
+        const w = ws as object as MiraWS
         clearTimeout(w.__authTimer)
         try { w.__unsub?.() } catch {}
       },

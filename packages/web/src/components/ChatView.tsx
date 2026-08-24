@@ -1,6 +1,8 @@
 import { For, Show, createSignal, createEffect, onMount } from "solid-js"
 import type { AppStore } from "../stores/app"
+import type { SettingsStore } from "../stores/settings"
 import type { Message, Part } from "../api/client"
+import { SlashAutocomplete, filterCommands } from "./CommandPalette"
 
 const EXAMPLE_PROMPTS = [
   "Explain this repo's architecture",
@@ -46,10 +48,28 @@ function ToolChip(props: { part: Part }) {
   )
 }
 
-export function ChatView(props: { store: AppStore }) {
+export function ChatView(props: { store: AppStore; settings?: SettingsStore; onPaletteOpen?: () => void }) {
   const s = () => props.store.state
   let scrollRef: HTMLDivElement | undefined
   let inputRef: HTMLTextAreaElement | undefined
+
+  // Slash autocomplete state
+  const slashQuery = () => {
+    const v = props.store.input()
+    return v.startsWith("/") ? v : ""
+  }
+  const slashCommands = () => props.settings?.allCommands() ?? []
+  const slashFiltered = () => filterCommands(slashQuery(), slashCommands())
+  const [slashIndex, setSlashIndex] = createSignal(0)
+  createEffect(() => {
+    void slashQuery()
+    setSlashIndex(0)
+  })
+  const handleSlashSelect = (name: string) => {
+    props.store.setInput(name + " ")
+    inputRef?.focus()
+    autoGrow()
+  }
 
   // pinned = stick to bottom; unpins the moment the user scrolls up to read,
   // and a "jump to latest" pill appears instead of yanking them down.
@@ -97,9 +117,53 @@ export function ChatView(props: { store: AppStore }) {
   }
 
   const onKeyDown = (e: KeyboardEvent) => {
+    // Slash autocomplete navigation
+    const q = slashQuery()
+    const filtered = slashFiltered()
+    const hasSlash = q.startsWith("/") && filtered.length > 0
+    if (hasSlash) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault()
+        setSlashIndex((i) => Math.min(i + 1, filtered.length - 1))
+        return
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault()
+        setSlashIndex((i) => Math.max(i - 1, 0))
+        return
+      }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && q.trim().split(/\s/).length === 1)) {
+        // Tab or Enter on single-token slash query → autocomplete first match
+        const pick = filtered[slashIndex()]
+        if (pick && q.trim() !== pick.name) {
+          e.preventDefault()
+          handleSlashSelect(pick.name)
+          return
+        }
+        if (e.key === "Tab" && pick) {
+          e.preventDefault()
+          handleSlashSelect(pick.name)
+          return
+        }
+      }
+      if (e.key === "Escape") {
+        e.preventDefault()
+        // Clear slash query by resetting to empty or keeping text without slash?
+        // Just blur the dropdown: set input to current without triggering
+        // We close by clearing the "/" prefix handling — user can press Esc to dismiss
+        // For now, do nothing but prevent bubbling; dropdown hides when query cleared
+        // So we clear the slash by not doing anything — parent will hide on next render if we clear?
+        // Instead, just keep input but hide dropdown via a flag — simplest: do nothing, user can continue typing
+        return
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       props.store.sendPrompt()
+    }
+    // "/" at start when empty → ensure commands loaded
+    if (e.key === "/" && !props.store.input()) {
+      void props.settings?.loadAll()
     }
   }
 
@@ -460,7 +524,10 @@ export function ChatView(props: { store: AppStore }) {
               ⚠ {s().error}
             </div>
           </Show>
-          <form onSubmit={handleSubmit} class="composer" style={{ display: "flex", "flex-direction": "column", padding: "10px 12px 9px", gap: "8px" }}>
+          <form onSubmit={handleSubmit} class="composer" style={{ display: "flex", "flex-direction": "column", padding: "10px 12px 9px", gap: "8px", position: "relative" }}>
+            <Show when={slashQuery().startsWith("/") && slashFiltered().length > 0}>
+              <SlashAutocomplete query={slashQuery()} commands={slashCommands()} selected={slashIndex()} onSelect={handleSlashSelect} onClose={() => {}} />
+            </Show>
             <textarea
               ref={inputRef}
               value={props.store.input()}
@@ -468,9 +535,13 @@ export function ChatView(props: { store: AppStore }) {
               onInput={(e) => {
                 props.store.setInput(e.currentTarget.value)
                 autoGrow()
+                // Lazy load commands when user types "/"
+                if (e.currentTarget.value.startsWith("/")) void props.settings?.loadAll()
               }}
-              placeholder="Message Mira…"
+              placeholder="Message Mira…  ( / for commands · Ctrl+P palette )"
               aria-label="Message Mira"
+              aria-autocomplete="list"
+              aria-expanded={slashQuery().startsWith("/") && slashFiltered().length > 0 ? "true" : "false"}
               rows={1}
               style={{ "min-height": "24px", "max-height": "160px" }}
             />

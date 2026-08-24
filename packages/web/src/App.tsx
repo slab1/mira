@@ -1,11 +1,14 @@
-import { createSignal, onMount, Show } from "solid-js"
+import { createSignal, onMount, Show, onCleanup } from "solid-js"
 import "./index.css"
 import { createAppStore } from "./stores/app"
+import { createSettingsStore } from "./stores/settings"
 import { SessionList } from "./components/SessionList"
 import { ChatView } from "./components/ChatView"
 import { ToolView } from "./components/ToolView"
 import { SkillSelector } from "./components/SkillSelector"
 import { QuestionPrompt } from "./components/QuestionPrompt"
+import { SettingsPanel } from "./components/SettingsPanel"
+import { CommandPalette } from "./components/CommandPalette"
 import { getToken, setToken } from "./api/client"
 
 /** Token gate: servers with MIRA_TOKEN/MIRA_API_KEYS reject unauthenticated
@@ -106,7 +109,10 @@ function AuthGate(props: { onReady: () => void }) {
 
 export default function App() {
   const store = createAppStore()
+  const settings = createSettingsStore()
   const [authorized, setAuthorized] = createSignal(false)
+  const [settingsOpen, setSettingsOpen] = createSignal(false)
+  const [paletteOpen, setPaletteOpen] = createSignal(false)
 
   onMount(() => {
     // Probe with stored credentials; unauthorized → show the gate
@@ -118,9 +124,37 @@ export default function App() {
         if (e.message !== "unauthorized") setAuthorized(true) // non-auth failure: proceed, banner shows offline
         else if (getToken()) setAuthorized(true) // stale token case — still let UI render; errors surface per-call
       })
+
+    // Global palette shortcut: Ctrl+P / Cmd+P and "/" hint
+    const onPaletteEvent = () => setPaletteOpen(true)
+    window.addEventListener("mira:open-palette", onPaletteEvent)
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
+        e.preventDefault()
+        setPaletteOpen((v) => !v)
+      }
+      if (e.key === "," && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault()
+        setSettingsOpen(true)
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    onCleanup(() => {
+      window.removeEventListener("mira:open-palette", onPaletteEvent)
+      window.removeEventListener("keydown", onKey)
+    })
   })
 
   const currentSession = () => store.state.sessions.find((s) => s.id === store.state.currentId)
+
+  const handlePaletteInsert = (text: string) => {
+    store.setInput(text)
+    // Focus composer after insert — ChatView's textarea is [aria-label="Message Mira"]
+    queueMicrotask(() => {
+      const el = document.querySelector<HTMLTextAreaElement>('[aria-label="Message Mira"]')
+      el?.focus()
+    })
+  }
 
   return (
     <Show when={authorized()} fallback={<AuthGate onReady={() => { setAuthorized(true); void store.loadSessions() }} />}>
@@ -201,6 +235,26 @@ export default function App() {
             </div>
 
             <div style={{ display: "flex", gap: "8px", "align-items": "center", "flex-shrink": "0" }}>
+              <button
+                type="button"
+                class="btn btn-ghost"
+                onClick={() => setPaletteOpen(true)}
+                title="Command palette (Ctrl+P)"
+                aria-label="Open command palette"
+                style={{ padding: "5px 9px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-md)" }}
+              >
+                ⌘ <span style={{ "font-family": "var(--font-mono)", "margin-left": "2px" }}>P</span>
+              </button>
+              <button
+                type="button"
+                class="btn btn-ghost"
+                onClick={() => setSettingsOpen(true)}
+                title="Settings (Ctrl+,)"
+                aria-label="Open settings"
+                style={{ padding: "5px 9px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-md)" }}
+              >
+                ⚙ Settings
+              </button>
               <Show when={store.state.currentId}>
                 <button
                   type="button"
@@ -254,12 +308,14 @@ export default function App() {
           </Show>
 
           <div style={{ flex: "1", display: "flex", overflow: "hidden", "min-height": "0" }}>
-            <ChatView store={store} />
+            <ChatView store={store} settings={settings} onPaletteOpen={() => setPaletteOpen(true)} />
             <ToolView store={store} />
           </div>
           <QuestionPrompt store={store} />
         </div>
       </div>
+      <SettingsPanel store={settings} open={settingsOpen()} onClose={() => setSettingsOpen(false)} />
+      <CommandPalette settings={settings} open={paletteOpen()} onClose={() => setPaletteOpen(false)} onInsert={handlePaletteInsert} />
     </Show>
   )
 }

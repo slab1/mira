@@ -4,6 +4,9 @@
  * (Skills + todos injection happens per-turn in SessionPrompt.loadContext.)
  */
 import type { MiraConfig } from "../types/index.js"
+import { z } from "zod"
+
+type PartialMiraConfig = Partial<MiraConfig>
 
 const DEFAULT_CONFIG: MiraConfig = {
   model: "openrouter/anthropic/claude-sonnet-4",
@@ -60,16 +63,22 @@ export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
         const raw = await file.json() as Partial<MiraConfig>
         // Deep-merge object sections so a partial mira.json (e.g. {"permission":{"bash":"ask"}})
         // overrides only the keys it names — never wipes sibling defaults.
-        const mergeSection = <T extends Record<string, unknown>>(base: T | undefined, override: unknown): T => {
-          if (!override || typeof override !== "object" || Array.isArray(override)) return { ...(base ?? {}) as T }
-          return { ...((base ?? {}) as T), ...(override as T) }
+        function mergeSection<T>(base: T | undefined, override: T | undefined): T | undefined {
+          if (override === undefined) return base
+          if (base === undefined) return override
+          if (typeof override !== "object" || override === null || Array.isArray(override)) return override
+          if (typeof base !== "object" || base === null || Array.isArray(base)) return override
+          return { ...(base as object), ...(override as object) } as T
         }
         cached = {
           ...DEFAULT_CONFIG,
           ...raw,
-          permission: mergeSection(DEFAULT_CONFIG.permission, raw.permission),
-          mcp: mergeSection(DEFAULT_CONFIG.mcp, raw.mcp),
-          provider: mergeSection(DEFAULT_CONFIG.provider, raw.provider),
+          permission: mergeSection(DEFAULT_CONFIG.permission, raw.permission) ?? DEFAULT_CONFIG.permission,
+          mcp: mergeSection(DEFAULT_CONFIG.mcp, raw.mcp) ?? DEFAULT_CONFIG.mcp,
+          provider: mergeSection(DEFAULT_CONFIG.provider, raw.provider) ?? DEFAULT_CONFIG.provider,
+          loop: mergeSection(DEFAULT_CONFIG.loop, raw.loop),
+          agents: mergeSection(DEFAULT_CONFIG.agents, raw.agents),
+          guardrails: mergeSection(DEFAULT_CONFIG.guardrails, raw.guardrails),
         } as MiraConfig
         return cached
       }
@@ -81,6 +90,149 @@ export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
 
 export function getConfig(): MiraConfig {
   return cached ?? DEFAULT_CONFIG
+}
+
+// ── Layer helpers ────────────────────────────────────────────────────
+function isPlainObject(v: PartialMiraConfig | MiraConfig | string | number | boolean | null): v is PartialMiraConfig {
+  return typeof v === "object" && v !== null && !Array.isArray(v)
+}
+
+function mergePartialMiraConfig(base: PartialMiraConfig, patch: PartialMiraConfig): PartialMiraConfig {
+  const out: PartialMiraConfig = { ...base }
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) continue
+    const prev = out[k as keyof PartialMiraConfig]
+    if (isPlainObject(prev as PartialMiraConfig) && isPlainObject(v as PartialMiraConfig)) {
+      out[k as keyof PartialMiraConfig] = mergePartialMiraConfig(prev as PartialMiraConfig, v as PartialMiraConfig) as never
+    } else {
+      out[k as keyof PartialMiraConfig] = v as never
+    }
+  }
+  return out
+}
+
+// Zod schema for patch validation (mirrors shared/schemas/config.ts)
+const miraConfigPatchSchema = z.object({
+  model: z.string().min(1).optional(),
+  smallModel: z.string().optional(),
+  loop: z.object({
+    maxSteps: z.number().int().positive().optional(),
+    contextLimit: z.number().int().positive().optional(),
+    compactionThreshold: z.number().min(0).max(1).optional(),
+    smallModel: z.string().optional(),
+  }).optional(),
+  permission: z.record(z.string(), z.union([z.enum(["allow", "deny", "ask"]), z.record(z.string(), z.enum(["allow", "deny", "ask"]))])).optional(),
+  guardrails: z.object({
+    enforce: z.boolean().optional(),
+    allowedRoots: z.array(z.string()).optional(),
+    blockedPaths: z.array(z.string()).optional(),
+    blockedCommands: z.array(z.string()).optional(),
+    allowedCommands: z.array(z.string()).optional(),
+    maxOutputBytes: z.number().int().positive().optional(),
+    auditLogPath: z.string().optional(),
+  }).optional(),
+  mcp: z.record(z.string(), z.object({
+    type: z.enum(["local", "remote"]),
+    command: z.array(z.string()).optional(),
+    url: z.string().optional(),
+    enabled: z.boolean().optional(),
+    env: z.record(z.string(), z.string()).optional(),
+  })).optional(),
+  provider: z.record(z.string(), z.object({
+    npm: z.string().optional(),
+    name: z.string().optional(),
+    options: z.object({
+      baseURL: z.string().optional(),
+      apiKey: z.string().optional(),
+    }).optional(),
+    models: z.record(z.string(), z.object({
+      name: z.string(),
+      limit: z.object({ context: z.number(), output: z.number() }),
+    })).optional(),
+  })).optional(),
+  agents: z.record(z.string(), z.object({
+    system: z.string(),
+    description: z.string().optional(),
+    tools: z.array(z.string()).optional(),
+    permissions: z.enum(["readonly", "standard", "elevated"]).optional(),
+  })).optional(),
+  theme: z.enum(["dark", "light", "system"]).optional(),
+  debug: z.boolean().optional(),
+}).passthrough()
+
+/** Write patch to target layer file, deep-merge, invalidate cache. */
+export async function saveConfig(
+  patch: Partial<MiraConfig>,
+  layer: "project" | "local" = "project",
+  cwd = process.cwd(),
+): Promise<MiraConfig> {
+  const parsed = miraConfigPatchSchema.partial().parse(patch) as Partial<MiraConfig>
+  const targetPath = layer === "local" ? `${cwd}/.mira/local.json` : `${cwd}/mira.json`
+  // Ensure directory exists
+  const dir = targetPath.slice(0, targetPath.lastIndexOf("/"))
+  if (dir) {
+    try {
+      const { mkdir } = await import("node:fs/promises")
+      await mkdir(dir, { recursive: true })
+    } catch {}
+  }
+  let existing: PartialMiraConfig = {}
+  try {
+    const f = Bun.file(targetPath)
+    if (await f.exists()) existing = (await f.json()) as PartialMiraConfig
+  } catch {}
+  const merged = mergePartialMiraConfig(existing, parsed)
+  await Bun.write(targetPath, JSON.stringify(merged, null, 2) + "\n")
+  cached = null
+  return loadConfig(cwd)
+}
+
+/** Return merged config + per-layer breakdown for debugging. */
+export async function getConfigLayers(cwd = process.cwd()): Promise<{
+  merged: MiraConfig
+  layers: Array<{ source: string; path: string | null; config: Partial<MiraConfig> }>
+}> {
+  const layers: Array<{ source: string; path: string | null; config: Partial<MiraConfig> }> = []
+  // defaults
+  layers.push({ source: "defaults", path: null, config: DEFAULT_CONFIG as Partial<MiraConfig> })
+  // system
+  try {
+    const f = Bun.file("/etc/mira/mira.json")
+    if (await f.exists()) layers.push({ source: "system", path: "/etc/mira/mira.json", config: (await f.json()) as Partial<MiraConfig> })
+  } catch {}
+  // global
+  try {
+    const home = process.env.HOME ?? ""
+    if (home) {
+      const p = `${home}/.mira/mira.json`
+      const f = Bun.file(p)
+      if (await f.exists()) layers.push({ source: "global", path: p, config: (await f.json()) as Partial<MiraConfig> })
+    }
+  } catch {}
+  // project candidates
+  for (const name of ["mira.json", "mira.jsonc", "opencode.jsonc", ".mira/config.json"]) {
+    try {
+      const p = `${cwd}/${name}`
+      const f = Bun.file(p)
+      if (await f.exists()) {
+        layers.push({ source: "project", path: p, config: (await f.json()) as Partial<MiraConfig> })
+        break
+      }
+    } catch {}
+  }
+  // local
+  try {
+    const p = `${cwd}/.mira/local.json`
+    const f = Bun.file(p)
+    if (await f.exists()) layers.push({ source: "local", path: p, config: (await f.json()) as Partial<MiraConfig> })
+  } catch {}
+  // env (synthetic)
+  const envConfig: PartialMiraConfig = {}
+  if (process.env.MIRA_MODEL) envConfig.model = process.env.MIRA_MODEL
+  if (process.env.MIRA_SMALL_MODEL) envConfig.smallModel = process.env.MIRA_SMALL_MODEL
+  if (Object.keys(envConfig).length) layers.push({ source: "env", path: null, config: envConfig })
+  const merged = await loadConfig(cwd)
+  return { merged, layers }
 }
 
 // ── Loop limits — sensible defaults, overridable via env ───────────

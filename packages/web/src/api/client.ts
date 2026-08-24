@@ -36,12 +36,14 @@ export type Message = {
   queued?: boolean
 }
 
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
+
 export type Part = {
   type: "text" | "tool_call" | "tool_result" | "reasoning"
   text?: string
   tool?: string
-  input?: unknown
-  output?: unknown
+  input?: JsonValue
+  output?: JsonValue
 }
 
 export type Todo = {
@@ -54,19 +56,94 @@ export type Todo = {
 export type ToolInfo = {
   name: string
   description: string
-  parameters?: unknown
+  parameters?: Record<string, JsonValue>
 }
 
 export type BusEvent = {
   type: string
-  payload?: unknown
+  payload?: JsonValue
   sessionID?: string
   timestamp: number
 }
 
+// ── Settings types ─────────────────────────────────────────────────
+export type ThemeChoice = "light" | "dark" | "system"
+
+export type MiraConfig = {
+  model: string
+  smallModel?: string
+  permission: Record<string, string | Record<string, string>>
+  mcp: Record<string, MCPServerConfig>
+  provider: Record<string, ProviderConfig>
+  agents?: Record<string, { system: string; description?: string; tools?: string[]; permissions?: string }>
+  loop?: { maxSteps?: number; contextLimit?: number; compactionThreshold?: number; smallModel?: string }
+}
+
+export type MCPServerConfig = {
+  type: "local" | "remote"
+  command?: string[]
+  url?: string
+  enabled: boolean
+  env?: Record<string, string>
+  headers?: Record<string, string>
+}
+
+export type ProviderConfig = {
+  npm?: string
+  name: string
+  options: { baseURL: string; apiKey: string }
+  models: Record<string, { name: string; limit: { context: number; output: number } }>
+}
+
+export type ConfigSchema = {
+  properties?: Record<string, { type: string; description?: string; default?: JsonValue; enum?: string[] }>
+  required?: string[]
+}
+
+export type ProviderEntry = {
+  id: string
+  name: string
+  maskedKey?: string
+  baseURL?: string
+  status?: "ok" | "error" | "unknown"
+  models?: string[]
+}
+
+export type MCPServerEntry = {
+  name: string
+  type: string
+  status: "connected" | "error" | "disabled" | "unknown"
+  toolCount: number
+  tools: Array<{ name: string; description: string }>
+  error?: string
+  config?: MCPServerConfig
+}
+
+export type AgentEntry = {
+  name: string
+  description: string
+  tools: string[]
+  permissions: string
+  custom: boolean
+}
+
+export type CommandEntry = {
+  name: string
+  description: string
+  content?: string
+  source: "command" | "skill"
+}
+
+export type SkillEntry = {
+  name: string
+  description: string
+}
+
+export type PermissionMatrix = Record<string, string | Record<string, string>>
+
 const BASE =
   (typeof import.meta !== "undefined" &&
-    (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_URL) ||
+    (import.meta as { env?: Record<string, string> }).env?.VITE_API_URL) ||
   ""
 
 function baseUrl(): string {
@@ -150,11 +227,35 @@ export const api = {
       body: JSON.stringify(messageID ? { messageID } : {}),
     }),
 
-  checkPermission: (body: unknown) =>
+  checkPermission: (body: Record<string, JsonValue>) =>
     req<{ allowed: boolean; reason?: string }>("/permission/check", {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  // ── Settings ─────────────────────────────────────────────────────
+  getConfig: () => req<MiraConfig>("/config"),
+  getConfigSchema: () => req<ConfigSchema>("/config/schema"),
+  patchConfig: (patch: Partial<MiraConfig>) =>
+    req<MiraConfig>("/config", { method: "PATCH", body: JSON.stringify(patch) }),
+
+  listProviders: () => req<ProviderEntry[] | Record<string, ProviderConfig>>("/providers"),
+  testProvider: (id: string) =>
+    req<{ ok: boolean; latencyMs?: number; error?: string }>(`/providers/${encodeURIComponent(id)}/test`, { method: "POST" }),
+
+  listMcp: () => req<MCPServerEntry[]>("/mcp"),
+  addMcp: (body: { name: string; type: "local" | "remote"; command?: string[]; url?: string; enabled?: boolean; env?: Record<string, string> }) =>
+    req<MCPServerEntry>("/mcp", { method: "POST", body: JSON.stringify(body) }),
+  toggleMcp: (name: string, enabled: boolean) =>
+    req<MCPServerEntry>(`/mcp/${encodeURIComponent(name)}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
+  testMcp: (name: string) =>
+    req<{ ok: boolean; toolCount?: number; error?: string }>(`/mcp/${encodeURIComponent(name)}/test`, { method: "POST" }),
+  removeMcp: (name: string) => req<{ ok: boolean }>(`/mcp/${encodeURIComponent(name)}`, { method: "DELETE" }),
+
+  listAgents: () => req<AgentEntry[]>("/agents"),
+  listCommands: () => req<CommandEntry[] | string[]>("/commands"),
+  listSkills: () => req<SkillEntry[] | string[]>("/skills"),
+  getPermission: () => req<PermissionMatrix>("/permission"),
 
   /**
    * Stream prompt response via SSE (POST /session/:id/prompt).
@@ -228,7 +329,7 @@ export type WSEvents = {
 export function createSocket(handlers: Partial<WSEvents> = {}): {
   connect: () => WebSocket
   disconnect: () => void
-  send: (msg: unknown) => void
+  send: (msg: JsonValue) => void
   get ws(): WebSocket | null
 } {
   let ws: WebSocket | null = null
@@ -276,7 +377,7 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
       } catch {}
       ws = null
     },
-    send(msg: unknown) {
+    send(msg: JsonValue) {
       if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg))
     },
   }

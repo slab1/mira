@@ -19,6 +19,10 @@ export default defineConfig({
       "/mcp": "http://127.0.0.1:4096",
       "/dev": "http://127.0.0.1:4096",
       "/learning": "http://127.0.0.1:4096",
+      "/config": "http://127.0.0.1:4096",
+      "/providers": "http://127.0.0.1:4096",
+      "/commands": "http://127.0.0.1:4096",
+      "/agents": "http://127.0.0.1:4096",
       // WebSocket (GlobalBus) — catch-all must be last
       "/": { target: "http://127.0.0.1:4096", ws: true },
     },
