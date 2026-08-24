@@ -26,7 +26,7 @@ import type { Bus } from "../bus/index.js"
 import type { ToolRegistry } from "../tools/registry.js"
 import type { PermissionManager } from "../permission/index.js"
 import type { Gateway } from "../gateway/index.js"
-import { buildSystemPrompt } from "../config/index.js"
+import { buildSystemPrompt, getLoopLimits } from "../config/index.js"
 import { DoomLoopDetector } from "./doom-loop-detector.js"
 import { needsCompaction, compactMessages, estimateTokens } from "./compaction.js"
 import { searchKnowledge } from "../learning/knowledge.js"
@@ -240,6 +240,7 @@ export class SessionPrompt {
         systemPrompt: await buildSystemPrompt(),
         send,
         writer: noopWriter,
+        agent: opts.agent ?? s.agent,
       })
     } catch (err) {
       text = `[subagent error] ${String(err)}`
@@ -254,7 +255,7 @@ export class SessionPrompt {
    *
    * Implements: LLM.stream → tool-call → execute → finish-step → doom-loop → compaction
    */
-  async streamResponse(sessionID: string, userText: string, modelOverride?: string): Promise<Response> {
+  async streamResponse(sessionID: string, userText: string, modelOverride?: string, options?: LoopOptions): Promise<Response> {
     const session = await this.getSession(sessionID)
     if (!session) throw new Error("session not found")
 
@@ -295,6 +296,9 @@ export class SessionPrompt {
     // Run loop in background (don't block response headers)
     this.runLoop({
       sessionID, assistantMessageID, userText, model, systemPrompt, send, writer,
+      agent: session.agent,
+      maxSteps: options?.maxSteps,
+      compactionThreshold: options?.compactionThreshold,
     }).catch(async err => {
       console.error(`[mira] loop error (session ${sessionID}):`, err?.stack ?? err)
       send("error", { error: String(err) })
@@ -319,11 +323,16 @@ export class SessionPrompt {
     systemPrompt: string
     send: (event: string, data: unknown) => void
     writer: WritableStreamDefaultWriter<Uint8Array>
+    agent?: string | null
+    maxSteps?: number
+    compactionThreshold?: number
   }) {
     const { sessionID, assistantMessageID, model, systemPrompt, send, writer } = opts
     const tracer = otelTrace.getTracer('mira-server')
     const span = tracer.startSpan('session.prompt.loop', { attributes: { session_id: sessionID, prompt_id: assistantMessageID } })
-    const MAX_STEPS = 32
+    // Loop limits: explicit option > env/config (MIRA_MAX_STEPS etc.) > built-in default
+    const limits = getLoopLimits()
+    const MAX_STEPS = opts.maxSteps ?? limits.maxSteps
     let step = 0
     let accumulatedText = ""
     this.doomDetector.reset()
@@ -341,11 +350,12 @@ export class SessionPrompt {
       step++
 
       // ── Compaction check ──
-      const contextLimit = 128_000 // from provider config
-      const { needed, tokenEstimate, ratio } = await needsCompaction(messages, contextLimit, 0.8)
+      const contextLimit = limits.contextLimit
+      const threshold = opts.compactionThreshold ?? limits.compactionThreshold
+      const { needed, tokenEstimate, ratio } = await needsCompaction(messages, contextLimit, threshold)
       if (needed) {
         send("compaction", { step, tokenEstimate, ratio })
-        const result = await compactMessages(this.deps.gateway, messages, { smallModel: "openrouter/deepseek/deepseek-v3.2-exp", contextLimit, threshold: 0.8 })
+        const result = await compactMessages(this.deps.gateway, messages, { smallModel: limits.smallModel, contextLimit, threshold })
         messages = result.messages
         compactionCount++
         this.deps.bus.publish({ type: "message.updated", sessionID, payload: { compaction: true, step, tokenEstimate, reducedTo: result.compactedCount }, timestamp: Date.now() })
@@ -356,7 +366,7 @@ export class SessionPrompt {
       const stream = await this.deps.gateway.stream({
         model,
         messages,
-        tools: this.deps.tools.toAISDKTools(), // Zod schemas → AI SDK tool definitions
+        tools: this.filterToolsForAgent(opts.agent), // lane-contract enforcement (agent allowlist)
         system: systemPrompt,
       })
 
@@ -522,6 +532,20 @@ export class SessionPrompt {
 
   // ── Helpers ──────────────────────────────────────────────────────
 
+  /**
+   * Lane-contract enforcement: when the session runs under an agent template
+   * that declares a `tools` allowlist, restrict the LLM-visible toolset to it.
+   * No template / no allowlist → full registry (general agent).
+   */
+  private filterToolsForAgent(agent?: string | null): Record<string, { description: string; parameters: any; execute?: any }> {
+    const all = this.deps.tools.toAISDKTools()
+    if (!agent) return all
+    const tpl = (AGENT_TEMPLATES as Record<string, { tools?: readonly string[] }>)[agent]
+    if (!tpl?.tools?.length) return all
+    const allow = new Set<string>(tpl.tools)
+    return Object.fromEntries(Object.entries(all).filter(([name]) => allow.has(name)))
+  }
+
   private async loadContext(sessionID: string, systemPrompt: string) {
     const messages = await this.getMessages(sessionID)
     const context: any[] = [{ role: "system", content: systemPrompt }]
@@ -530,6 +554,14 @@ export class SessionPrompt {
       const skills = await loadSkills()
       if (Object.keys(skills).length) {
         context.push({ role: "system", content: `Active skills:\n${Object.values(skills).map(s => `- ${s.name}: ${s.description.slice(0,200)}`).join("\n")}` })
+      }
+    } catch {}
+    // Todo continuity: inject open todos so a resumed session keeps its task state
+    try {
+      const todos = await this.getTodos(sessionID)
+      if (todos.length) {
+        const lines = (todos as any[]).map(t => `- [${t.status}] ${t.content}`)
+        context.push({ role: "system", content: `Current todo list — keep exactly ONE item "in_progress" and update the list before starting new work:\n${lines.join("\n")}` })
       }
     } catch {}
     // Memory retrieval: inject relevant knowledge (shared KB if injected, else standalone helper)

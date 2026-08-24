@@ -109,6 +109,21 @@ export async function migrate(db: any) {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS message_queue_session_idx ON message_queue(session_id);
+
+    CREATE TABLE IF NOT EXISTS jobs (
+      id TEXT PRIMARY KEY,
+      parent_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      child_session_id TEXT,
+      agent TEXT,
+      prompt TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      result TEXT,
+      error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS jobs_parent_session_idx ON jobs(parent_session_id);
+    CREATE INDEX IF NOT EXISTS jobs_status_idx ON jobs(status);
   `)
   // Idempotent column adds (SQLite lacks IF NOT EXISTS for columns)
   const addColumn = (table: string, col: string, type: string) => {

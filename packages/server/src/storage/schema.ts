@@ -1,6 +1,6 @@
 /**
  * Drizzle Schema — SQLite (WAL mode)
- * Tables: sessions, messages, parts, todos
+ * Tables: sessions, messages, parts, todos, file_snapshots, jobs
  * Pragmatism: SQLite over Postgres, Drizzle over Prisma (OpenCode pattern)
  * Postgres+pgvector is for memory/knowledge-graph (separate DB in prod)
  */
@@ -71,6 +71,24 @@ export const fileSnapshots = sqliteTable("file_snapshots", {
   index("file_snapshots_created_idx").on(t.createdAt),
 ])
 
+// Background subagent jobs — spawned by the `task` tool, pollable by job ID
+export const jobs = sqliteTable("jobs", {
+  id: text("id").primaryKey(),
+  parentSessionID: text("parent_session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+  // No FK: child sessions are created by the runner and may be ephemeral
+  childSessionID: text("child_session_id"),
+  agent: text("agent"),
+  prompt: text("prompt").notNull(),
+  status: text("status", { enum: ["running", "completed", "failed", "cancelled"] }).notNull().default("running"),
+  result: text("result"),
+  error: text("error"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (t) => [
+  index("jobs_parent_session_idx").on(t.parentSessionID),
+  index("jobs_status_idx").on(t.status),
+])
+
 // ── Relations (for db.query.*.findMany with: { parts: true }) ──────
 
 export const sessionsRelations = relations(sessions, ({ many }) => ({
@@ -92,4 +110,9 @@ export const todosRelations = relations(todos, ({ one }) => ({
   session: one(sessions, { fields: [todos.sessionID], references: [sessions.id] }),
 }))
 
-export const schema = { sessions, messages, parts, todos, fileSnapshots, sessionsRelations, messagesRelations, partsRelations, todosRelations }
+export const jobsRelations = relations(jobs, ({ one }) => ({
+  parentSession: one(sessions, { fields: [jobs.parentSessionID], references: [sessions.id] }),
+  childSession: one(sessions, { fields: [jobs.childSessionID], references: [sessions.id] }),
+}))
+
+export const schema = { sessions, messages, parts, todos, fileSnapshots, jobs, sessionsRelations, messagesRelations, partsRelations, todosRelations, jobsRelations }

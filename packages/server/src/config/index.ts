@@ -70,6 +70,44 @@ export function getConfig(): MiraConfig {
   return cached ?? DEFAULT_CONFIG
 }
 
+// ── Loop limits — sensible defaults, overridable via env ───────────
+// Env vars (MIRA_* convention): MIRA_MAX_STEPS, MIRA_CONTEXT_LIMIT,
+// MIRA_COMPACTION_THRESHOLD, MIRA_SMALL_MODEL
+
+export interface LoopLimits {
+  /** max agentic steps (LLM turns) per user prompt (default 32) */
+  maxSteps: number
+  /** provider context window used for compaction math (default 128_000 tokens) */
+  contextLimit: number
+  /** fraction of contextLimit at which compaction triggers (default 0.8) */
+  compactionThreshold: number
+  /** small model used for compaction summaries */
+  smallModel: string
+}
+
+const DEFAULT_LOOP_LIMITS: LoopLimits = {
+  maxSteps: 32,
+  contextLimit: 128_000,
+  compactionThreshold: 0.8,
+  smallModel: "openrouter/deepseek/deepseek-v3.2-exp",
+}
+
+function numFromEnv(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw === "") return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : fallback
+}
+
+/** Loop limits for SessionPrompt.runLoop — env > mira.json smallModel > built-in defaults */
+export function getLoopLimits(): LoopLimits {
+  return {
+    maxSteps: numFromEnv(process.env.MIRA_MAX_STEPS, DEFAULT_LOOP_LIMITS.maxSteps),
+    contextLimit: numFromEnv(process.env.MIRA_CONTEXT_LIMIT, DEFAULT_LOOP_LIMITS.contextLimit),
+    compactionThreshold: numFromEnv(process.env.MIRA_COMPACTION_THRESHOLD, DEFAULT_LOOP_LIMITS.compactionThreshold),
+    smallModel: process.env.MIRA_SMALL_MODEL ?? getConfig().smallModel ?? DEFAULT_LOOP_LIMITS.smallModel,
+  }
+}
+
 /** Build system prompt prefix: AGENTS.md + Skills + project context */
 export async function buildSystemPrompt(cwd = process.cwd()): Promise<string> {
   const parts: string[] = [

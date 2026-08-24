@@ -21,6 +21,7 @@
 
 import { Hono } from "hono"
 import { cors } from "hono/cors"
+import { timingSafeEqual } from "node:crypto"
 import { Bus } from "./bus/index.js"
 import { createDatabase, migrate } from "./storage/db.js"
 import { createGateway } from "./gateway/index.js"
@@ -36,6 +37,26 @@ import { GuardrailsManager } from "./guardrails/index.js"
 
 // ── Bootstrap ──────────────────────────────────────────────────────
 const PORT = Number(process.env.PORT ?? Bun.argv.find(a => a.startsWith("--port="))?.split("=")[1] ?? 4096)
+
+// ── Security config ────────────────────────────────────────────────
+// Bearer token gate (HTTP + WS). Empty = auth disabled (dev only).
+const REQUIRED_TOKEN = process.env.MIRA_TOKEN ?? ""
+// Timing-safe token comparison (avoids length/byte leaks via response time)
+function tokenEquals(a: string, b: string): boolean {
+  const ab = Buffer.from(a)
+  const bb = Buffer.from(b)
+  return ab.length === bb.length && timingSafeEqual(ab, bb)
+}
+// Origin allowlist for CORS + WebSocket upgrades. Empty list = allow all (dev).
+const CORS_ORIGIN_LIST = (process.env.CORS_ORIGINS ?? "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean)
+function isOriginAllowed(origin: string | null | undefined): boolean {
+  if (!origin) return true // non-browser clients (curl, TUI) send no Origin
+  if (CORS_ORIGIN_LIST.length === 0) return true // dev: allow all
+  return CORS_ORIGIN_LIST.includes(origin)
+}
 
 async function initOtel() {
   const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT
@@ -124,7 +145,8 @@ async function main() {
     activeSessions: 0,
   }
 
-  app.use("*", cors())
+  // Security: CORS origin allowlist (CORS_ORIGINS, comma-separated; empty = allow all for dev)
+  app.use("*", cors(CORS_ORIGIN_LIST.length > 0 ? { origin: CORS_ORIGIN_LIST } : {}))
   // OpenTelemetry tracer middleware
   app.use("*", async (c, next) => {
     const { trace } = await import('@opentelemetry/api')
@@ -137,14 +159,17 @@ async function main() {
       span.end()
     }
   })
-  // Security: optional bearer-token gate (set MIRA_TOKEN to enable)
-  if (process.env.MIRA_TOKEN) {
-    const required = process.env.MIRA_TOKEN
+  // Security: optional bearer-token gate (set MIRA_TOKEN to enable).
+  // Authorization header ONLY — query-param tokens (?token=) are no longer accepted
+  // (they leak into access logs, Referer headers, and browser history).
+  // Public paths bypass the gate so liveness probes and metrics scrapes work unauthenticated.
+  const PUBLIC_PATHS = new Set(["/healthz", "/metrics"])
+  if (REQUIRED_TOKEN) {
     app.use("*", async (c, next) => {
+      if (PUBLIC_PATHS.has(c.req.path)) return await next()
       const auth = c.req.header("Authorization") ?? ""
-      const token = auth.startsWith("Bearer ") ? auth.slice(7) : c.req.query("token")
-      // WebSocket upgrade: token via query param
-      if (token !== required) return c.json({ error: "unauthorized" }, 401)
+      const token = auth.startsWith("Bearer ") ? auth.slice(7) : ""
+      if (!tokenEquals(token, REQUIRED_TOKEN)) return c.json({ error: "unauthorized" }, 401)
       await next()
     })
   }
@@ -167,31 +192,51 @@ async function main() {
     console.log(JSON.stringify(log))
   })
 
-  // Rate limiting — token bucket per IP, 100 req/min, skip health
+  // Rate limiting — token bucket per IP, 100 req/min, skip health/metrics probes
+  const RATE_LIMIT_CAPACITY = 100
+  const RATE_LIMIT_WINDOW_MS = 60_000
+  const RATE_LIMIT_SKIP = new Set(["/health", "/dev/health", "/healthz", "/metrics"])
   const rateLimitBuckets = new Map<string, { tokens: number; last: number }>()
+  // Hygiene: evict idle buckets (>10min) so the map can't grow unbounded under IP churn
+  const RATE_LIMIT_BUCKET_TTL_MS = 10 * 60_000
+  const rateLimitCleanup = setInterval(() => {
+    const cutoff = Date.now() - RATE_LIMIT_BUCKET_TTL_MS
+    for (const [ip, bucket] of rateLimitBuckets) {
+      if (bucket.last < cutoff) rateLimitBuckets.delete(ip)
+    }
+  }, 60_000)
+  rateLimitCleanup.unref?.()
   app.use("*", async (c, next) => {
     const path = new URL(c.req.url).pathname
-    if (path === "/health" || path === "/dev/health") return await next()
+    if (RATE_LIMIT_SKIP.has(path)) return await next()
     const ip = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("cf-connecting-ip") ?? c.req.header("x-real-ip") ?? "unknown"
     const now = Date.now()
-    const windowMs = 60_000
-    const capacity = 100
     let bucket = rateLimitBuckets.get(ip)
     if (!bucket) {
-      bucket = { tokens: capacity, last: now }
+      bucket = { tokens: RATE_LIMIT_CAPACITY, last: now }
       rateLimitBuckets.set(ip, bucket)
     }
     const elapsed = now - bucket.last
     if (elapsed > 0) {
-      const refill = (elapsed / windowMs) * capacity
-      bucket.tokens = Math.min(capacity, bucket.tokens + refill)
+      const refill = (elapsed / RATE_LIMIT_WINDOW_MS) * RATE_LIMIT_CAPACITY
+      bucket.tokens = Math.min(RATE_LIMIT_CAPACITY, bucket.tokens + refill)
       bucket.last = now
     }
     if (bucket.tokens >= 1) {
       bucket.tokens -= 1
       await next()
+      // Standard RateLimit headers on every non-429 response
+      c.res.headers.set("X-RateLimit-Limit", String(RATE_LIMIT_CAPACITY))
+      c.res.headers.set("X-RateLimit-Remaining", String(Math.floor(bucket.tokens)))
     } else {
-      return c.json({ error: "Too Many Requests" }, 429)
+      // Seconds until one token refills (refill rate = capacity/window per ms)
+      const refillPerMs = RATE_LIMIT_CAPACITY / RATE_LIMIT_WINDOW_MS
+      const retryAfterSec = Math.max(1, Math.ceil((1 - bucket.tokens) / refillPerMs / 1000))
+      const res = c.json({ error: "Too Many Requests" }, 429)
+      res.headers.set("Retry-After", String(retryAfterSec))
+      res.headers.set("X-RateLimit-Limit", String(RATE_LIMIT_CAPACITY))
+      res.headers.set("X-RateLimit-Remaining", "0")
+      return res
     }
   })
 
@@ -237,7 +282,9 @@ async function main() {
 </div></body></html>`)
   })
 
-  // Health
+  // Liveness — minimal, no internals, bypasses auth + rate limit (Docker/k8s probes)
+  app.get("/healthz", c => c.json({ ok: true, version: "0.1.0", uptime: process.uptime() }))
+  // Health — detailed; stays behind MIRA_TOKEN when set
   app.get("/health", c => c.json({ ok: true, version: "0.1.0", tools: tools.count(), uptime: process.uptime(), memory: process.memoryUsage() }))
   app.get("/dev/health", c => c.json({ ok: true, version: "0.1.0", tools: tools.count(), busHistory: bus.recent(5).length, learning: learning.scheduler.status(), gateway: gateway.stats(), uptime: process.uptime() }))
   // Metrics
@@ -408,47 +455,103 @@ async function main() {
   mountLearningRoutes(app, learning)
 
   // WebSocket upgrade — GlobalBus → Worker → RPC → TUI (no polling)
-  // Hono WS via Bun.serve websocket handler below
+  //
+  // Security model:
+  //   • Upgrades are admitted EXPLICITLY in fetch below (a fall-through Response means
+  //     Bun never upgrades), so every socket passes the same checks as HTTP.
+  //   • Origin validated against CORS_ORIGINS allowlist (empty = allow all for dev).
+  //   • Auth = same bearer token as HTTP. Preferred: Authorization header on the upgrade
+  //     request. Fallback for clients that cannot set headers (browsers): send
+  //     {"type":"auth","token":"..."} as the FIRST message within 5s of open.
+  //   • Unauthenticated sockets are closed with 1008 (policy violation).
+  //   • Query-param tokens (?token=) are NOT accepted anywhere.
+  const WS_AUTH_TIMEOUT_MS = 5_000
+
+  function activateSocket(ws: any) {
+    if (ws.__active) return
+    ws.__active = true
+    clearTimeout(ws.__authTimer)
+    // Subscribe this socket to GlobalBus only after authentication
+    ws.__unsub = bus.subscribeAll(event => {
+      try { ws.send(JSON.stringify(event)) } catch {}
+    })
+    ws.send(JSON.stringify({ type: "server.heartbeat", payload: { connected: true }, timestamp: Date.now() }))
+  }
+
   const server = Bun.serve({
     port: PORT,
     // Security: loopback by default — remote access requires HOST env override
     hostname: process.env.HOST ?? "127.0.0.1",
     // Long SSE streams (LLM first-token latency can exceed 10s) need a generous idle timeout
     idleTimeout: 180,
-    fetch: app.fetch,
+    fetch(req, srv) {
+      if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+        if (!isOriginAllowed(req.headers.get("origin"))) {
+          return new Response(JSON.stringify({ error: "forbidden origin" }), { status: 403, headers: { "content-type": "application/json" } })
+        }
+        let authenticated = false
+        if (!REQUIRED_TOKEN) {
+          authenticated = true // dev mode: no token configured
+        } else {
+          const auth = req.headers.get("authorization") ?? ""
+          const token = auth.startsWith("Bearer ") ? auth.slice(7) : ""
+          authenticated = tokenEquals(token, REQUIRED_TOKEN)
+        }
+        const upgraded = srv.upgrade(req, { data: { authenticated } as any })
+        if (!upgraded) return new Response("WebSocket upgrade failed", { status: 500 })
+        return undefined
+      }
+      return app.fetch(req)
+    },
     websocket: {
       open(ws) {
-        // Subscribe this socket to GlobalBus
-        const unsub = bus.subscribeAll(event => {
-          try { ws.send(JSON.stringify(event)) } catch {}
-        })
-        // Store unsub on ws data
-        ;(ws as any).__unsub = unsub
-        ws.send(JSON.stringify({ type: "server.heartbeat", payload: { connected: true }, timestamp: Date.now() }))
+        const w = ws as any
+        w.__active = false
+        if (!REQUIRED_TOKEN || w.data?.authenticated === true) {
+          activateSocket(w)
+        } else {
+          // Grace window: client must send {"type":"auth","token":...} within 5s
+          w.__authTimer = setTimeout(() => {
+            if (!w.__active) {
+              try { w.close(1008, "unauthorized: auth message not received within timeout") } catch {}
+            }
+          }, WS_AUTH_TIMEOUT_MS)
+        }
       },
       message(ws, msg) {
-        // Handle permission replies, client pings, etc.
-        try {
-          const event = JSON.parse(String(msg))
-          if (event.type === "permission.reply" || event.type === "question.reply") {
-            bus.publish(event)
+        const w = ws as any
+        let event: any = null
+        try { event = JSON.parse(String(msg)) } catch {}
+        if (!w.__active) {
+          // Pre-auth: only the auth handshake is accepted; anything else is ignored
+          // (the 5s timer closes unauthenticated sockets with 1008)
+          if (REQUIRED_TOKEN && event?.type === "auth" && typeof event.token === "string" && tokenEquals(event.token, REQUIRED_TOKEN)) {
+            activateSocket(w)
           }
-        } catch {}
+          return
+        }
+        // Handle permission replies, client pings, etc.
+        if (event?.type === "permission.reply" || event?.type === "question.reply") {
+          bus.publish(event)
+        }
       },
       close(ws) {
-        try { (ws as any).__unsub?.() } catch {}
+        const w = ws as any
+        clearTimeout(w.__authTimer)
+        try { w.__unsub?.() } catch {}
       },
     },
   })
 
   console.log(`[mira] ✓ listening on http://${server.hostname}:${server.port}`)
-  console.log(`[mira]   health:  GET  /health`)
+  console.log(`[mira]   liveness: GET /healthz (no auth) · detail: GET /health`)
   console.log(`[mira]   prompt:  POST /session/:id/prompt  (SSE)`)
   console.log(`[mira]   ws:      WS   /  (BusEvent stream)`)
 
   // Graceful shutdown
   process.on("SIGINT", async () => {
     console.log("\n[mira] shutting down...")
+    clearInterval(rateLimitCleanup)
     server.stop()
     mcp.disconnectAll()
     const { shutdownAllServers } = await import("./lsp/client.js")
