@@ -110,6 +110,7 @@ export class ToolRegistry {
 
   get(name: string): ToolDef | undefined { return this.tools.get(name) }
   count(): number { return this.tools.size }
+  unregister(name: string): boolean { return this.tools.delete(name) }
   list(): Array<{ name: string; description: string; category: string }> {
     return [...this.tools.values()].map(t => ({ name: t.name, description: t.description, category: t.category }))
   }

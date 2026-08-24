@@ -48,7 +48,7 @@ interface ConnectedServer {
 
 export class MCPManager {
   private servers = new Map<string, ConnectedServer>()
-  private processes = new Map<string, any>() // Bun.Spawn handles for stdio
+  private processes = new Map<string, ReturnType<typeof Bun.spawn>>()
   private clients = new Map<string, McpStdioClient>()
 
   constructor(private deps: MCPManagerDeps) {}
@@ -179,9 +179,90 @@ export class MCPManager {
       type: s.config.type,
       status: s.status,
       toolCount: s.tools.length,
-      tools: s.tools.map((t: any) => ({ name: t.name, description: t.description ?? "" })),
+      tools: s.tools.map(name => ({ name, description: this.deps.tools.get(name)?.description ?? "" })),
       ...(s.error ? { error: s.error } : {}),
     }))
+  }
+
+  async addServer(name: string, cfg: MCPServerConfig): Promise<ConnectedServer> {
+    if (this.servers.has(name)) throw new Error(`MCP server ${name} already exists`)
+    this.deps.config[name] = cfg
+    if (!cfg.enabled) {
+      const entry: ConnectedServer = { name, config: cfg, tools: [], status: "disabled" }
+      this.servers.set(name, entry)
+      return entry
+    }
+    try {
+      await this.connect(name, cfg)
+      const entry = this.servers.get(name)
+      if (!entry) throw new Error(`Failed to connect ${name}`)
+      return entry
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e)
+      const entry: ConnectedServer = { name, config: cfg, tools: [], status: "error", error: err }
+      this.servers.set(name, entry)
+      return entry
+    }
+  }
+
+  async removeServer(name: string): Promise<void> {
+    const entry = this.servers.get(name)
+    if (!entry) throw new Error(`MCP server ${name} not found`)
+    const client = this.clients.get(name)
+    if (client) {
+      try { client.shutdown() } catch {}
+      this.clients.delete(name)
+    }
+    const proc = this.processes.get(name)
+    if (proc) {
+      try { proc.kill() } catch {}
+      this.processes.delete(name)
+    }
+    for (const toolName of entry.tools) {
+      this.deps.tools.unregister(toolName)
+    }
+    this.servers.delete(name)
+    delete this.deps.config[name]
+  }
+
+  async testServer(name: string): Promise<{ ok: boolean; toolCount?: number; error?: string }> {
+    const entry = this.servers.get(name)
+    if (!entry) return { ok: false, error: `Server ${name} not found` }
+    if (entry.status === "connected") return { ok: true, toolCount: entry.tools.length }
+    if (entry.status === "disabled") return { ok: false, error: "Server disabled" }
+    return { ok: false, error: entry.error ?? "Unknown error" }
+  }
+
+  async toggleServer(name: string, enabled: boolean): Promise<ConnectedServer> {
+    const entry = this.servers.get(name)
+    if (!entry) throw new Error(`Server ${name} not found`)
+    if (entry.config.enabled === enabled) return entry
+    entry.config.enabled = enabled
+    this.deps.config[name] = entry.config
+    if (enabled) {
+      try {
+        await this.connect(name, entry.config)
+        const updated = this.servers.get(name)
+        if (!updated) throw new Error(`Failed to connect ${name}`)
+        return updated
+      } catch (e) {
+        const err = e instanceof Error ? e.message : String(e)
+        const failed: ConnectedServer = { name, config: entry.config, tools: [], status: "error", error: err }
+        this.servers.set(name, failed)
+        return failed
+      }
+    } else {
+      const client = this.clients.get(name)
+      if (client) { try { client.shutdown() } catch {} ; this.clients.delete(name) }
+      const proc = this.processes.get(name)
+      if (proc) { try { proc.kill() } catch {} ; this.processes.delete(name) }
+      for (const toolName of entry.tools) {
+        this.deps.tools.unregister(toolName)
+      }
+      const disabled: ConnectedServer = { name, config: entry.config, tools: [], status: "disabled" }
+      this.servers.set(name, disabled)
+      return disabled
+    }
   }
 
   disconnectAll(): void {

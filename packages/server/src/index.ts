@@ -31,7 +31,7 @@ import { SessionPrompt } from "./session/prompt.js"
 import { getAgentTemplates, AGENT_TEMPLATES } from "./agents/templates.js"
 const BUILTIN_AGENT_KEYS: Record<string, true> = Object.fromEntries(Object.keys(AGENT_TEMPLATES).map(k => [k, true as const]))
 import { MCPManager } from "./mcp/index.js"
-import { loadConfig, saveConfig, getConfigLayers, getConfig } from "./config/index.js"
+import { loadConfig, saveConfig, removeMcpFromConfig, getConfigLayers, getConfig } from "./config/index.js"
 import { createLearningSystem, mountLearningRoutes } from "./learning/index.js"
 import { setSharedKnowledge } from "./learning/knowledge.js"
 import { GuardrailsManager } from "./guardrails/index.js"
@@ -351,6 +351,12 @@ async function main() {
     return c.json(Object.keys(skills))
   })
 
+  app.get("/commands", async c => {
+    const { loadCommands } = await import("./commands/loader.js")
+    const commands = await loadCommands()
+    return c.json(commands)
+  })
+
   // ── Multi-tenant ownership helpers ────────────────────────────────
   // Returns the session if it exists AND (ownership disabled OR requester owns
   // it OR it's a legacy unowned row). Null otherwise → routes answer 404.
@@ -489,6 +495,66 @@ async function main() {
 
   // MCP discovery — server statuses + tool counts
   app.get("/mcp", c => c.json(mcp.listServers()))
+
+  app.post("/mcp", async c => {
+    const body = await c.req.json().catch(() => null) as { name?: string; type?: string; command?: string[]; url?: string; enabled?: boolean; env?: Record<string, string>; headers?: Record<string, string> } | null
+    if (!body?.name?.trim() || !body?.type) return c.json({ error: "name and type required" }, 400)
+    if (body.type !== "local" && body.type !== "remote") return c.json({ error: "type must be local or remote" }, 400)
+    try {
+      const cfg = {
+        type: body.type as "local" | "remote",
+        command: body.command,
+        url: body.url,
+        enabled: body.enabled ?? true,
+        env: body.env,
+        headers: body.headers,
+      }
+      const entry = await mcp.addServer(body.name.trim(), cfg)
+      const current = getConfig().mcp ?? {}
+      await saveConfig({ mcp: { ...current, [body.name.trim()]: cfg } }, "project")
+      return c.json(entry, 201)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return c.json({ error: msg }, 400)
+    }
+  })
+
+  app.delete("/mcp/:name", async c => {
+    const name = c.req.param("name")
+    try {
+      await mcp.removeServer(name)
+      await removeMcpFromConfig(name)
+      return c.json({ ok: true })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return c.json({ error: msg }, 404)
+    }
+  })
+
+  app.patch("/mcp/:name", async c => {
+    const name = c.req.param("name")
+    const body = await c.req.json().catch(() => null) as { enabled?: boolean } | null
+    if (typeof body?.enabled !== "boolean") return c.json({ error: "enabled boolean required" }, 400)
+    try {
+      const entry = await mcp.toggleServer(name, body.enabled)
+      const current = getConfig().mcp ?? {}
+      const existing = current[name]
+      if (existing) {
+        await saveConfig({ mcp: { ...current, [name]: { ...existing, enabled: body.enabled } } }, "project")
+      }
+      return c.json(entry)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return c.json({ error: msg }, 404)
+    }
+  })
+
+  app.post("/mcp/:name/test", async c => {
+    const name = c.req.param("name")
+    const result = await mcp.testServer(name)
+    if (!result.ok && result.error?.includes("not found")) return c.json(result, 404)
+    return c.json(result)
+  })
 
   // ── Config — layered settings (behind auth gate, same as /mcp) ─────
   function maskApiKey(key: string): string {

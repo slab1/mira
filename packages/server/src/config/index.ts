@@ -187,10 +187,26 @@ export async function saveConfig(
   return loadConfig(cwd)
 }
 
+/** Remove an MCP server from the project config file (for DELETE /mcp/:name). */
+export async function removeMcpFromConfig(name: string, cwd = process.cwd()): Promise<void> {
+  const targetPath = `${cwd}/mira.json`
+  let existing: PartialMiraConfig = {}
+  try {
+    const f = Bun.file(targetPath)
+    if (await f.exists()) existing = (await f.json()) as PartialMiraConfig
+  } catch {}
+  if (existing.mcp && existing.mcp[name]) {
+    delete existing.mcp[name]
+    await Bun.write(targetPath, JSON.stringify(existing, null, 2) + "\n")
+    cached = null
+    await loadConfig(cwd)
+  }
+}
+
 /** Return merged config + per-layer breakdown for debugging. */
 export async function getConfigLayers(cwd = process.cwd()): Promise<{
   merged: MiraConfig
-  layers: Array<{ source: string; path: string | null; config: Partial<MiraConfig> }>
+  layers: Array<{ source: string; path: string | null; config: PartialMiraConfig }>
 }> {
   const layers: Array<{ source: string; path: string | null; config: Partial<MiraConfig> }> = []
   // defaults
