@@ -77,11 +77,31 @@ function baseUrl(): string {
   return "http://127.0.0.1:4096"
 }
 
+// ── Auth (bearer token; servers with MIRA_TOKEN/MIRA_API_KEYS require it) ──
+const TOKEN_KEY = "mira_token"
+
+export function getToken(): string {
+  try { return localStorage.getItem(TOKEN_KEY) ?? "" } catch { return "" }
+}
+
+export function setToken(token: string): void {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token)
+    else localStorage.removeItem(TOKEN_KEY)
+  } catch {}
+}
+
+function authHeaders(extra?: HeadersInit): HeadersInit {
+  const t = getToken()
+  return { ...(t ? { Authorization: `Bearer ${t}` } : {}), ...(extra || {}) }
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${baseUrl()}${path}`, {
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
     ...init,
+    headers: { "Content-Type": "application/json", ...authHeaders(init?.headers) },
   })
+  if (res.status === 401) throw new Error("unauthorized")
   if (!res.ok) {
     const text = await res.text().catch(() => "")
     throw new Error(`${res.status} ${res.statusText}${text ? `: ${text}` : ""}`)
@@ -148,7 +168,7 @@ export const api = {
   ) => {
     const res = await fetch(`${baseUrl()}/session/${id}/prompt`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      headers: { ...authHeaders({ "Content-Type": "application/json", Accept: "text/event-stream" }) },
       body: JSON.stringify({ prompt, model: opts.model }),
       signal: opts.signal,
     })
@@ -231,7 +251,13 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
     connect() {
       if (ws && ws.readyState === WebSocket.OPEN) return ws
       ws = new WebSocket(wsUrl())
-      ws.onopen = () => handlers.open?.()
+      ws.onopen = () => {
+        // Servers with auth enabled close unauthenticated sockets after 5s —
+        // browsers cannot set WS headers, so authenticate via first message.
+        const t = getToken()
+        if (t) ws?.send(JSON.stringify({ type: "auth", token: t }))
+        handlers.open?.()
+      }
       ws.onmessage = (ev) => {
         try {
           const data = JSON.parse(String(ev.data)) as BusEvent

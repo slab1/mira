@@ -1,19 +1,113 @@
-import { onMount, Show } from "solid-js"
+import { createSignal, onMount, Show } from "solid-js"
 import { createAppStore } from "./stores/app"
 import { SessionList } from "./components/SessionList"
 import { ChatView } from "./components/ChatView"
 import { ToolView } from "./components/ToolView"
 import { SkillSelector } from "./components/SkillSelector"
 import { QuestionPrompt } from "./components/QuestionPrompt"
+import { getToken, setToken } from "./api/client"
+
+/** Token gate: servers with MIRA_TOKEN/MIRA_API_KEYS reject unauthenticated
+ *  clients. Show a minimal credential card until a token is stored and the
+ *  server accepts it. Dev servers without auth let any (even empty) token pass. */
+function AuthGate(props: { onReady: () => void }) {
+  const [value, setValue] = createSignal(getToken())
+  const [error, setError] = createSignal("")
+
+  async function connect() {
+    setError("")
+    setToken(value().trim())
+    try {
+      props.onReady()
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        "align-items": "center",
+        "justify-content": "center",
+        height: "100vh",
+        width: "100vw",
+        background: "#09090b",
+        color: "#e4e4e7",
+      }}
+    >
+      <div
+        style={{
+          width: "360px",
+          padding: "28px",
+          border: "1px solid #27272a",
+          "border-radius": "14px",
+          background: "#18181b",
+          display: "flex",
+          "flex-direction": "column",
+          gap: "12px",
+        }}
+      >
+        <div style={{ "font-size": "16px", "font-weight": "600" }}>Mira</div>
+        <div style={{ "font-size": "12px", color: "#a1a1aa", "line-height": "1.5" }}>
+          Paste your access token to connect. Ask your server admin for a key, or leave empty for an open dev server.
+        </div>
+        <input
+          type="password"
+          value={value()}
+          placeholder="access token"
+          onInput={(e) => setValue(e.currentTarget.value)}
+          onKeyDown={(e) => e.key === "Enter" && void connect()}
+          style={{
+            padding: "8px 10px",
+            "border-radius": "8px",
+            border: "1px solid #27272a",
+            background: "#09090b",
+            color: "#e4e4e7",
+            "font-size": "13px",
+            outline: "none",
+          }}
+        />
+        <Show when={error()}>
+          <div style={{ "font-size": "11px", color: "#fca5a5" }}>{error()}</div>
+        </Show>
+        <button
+          onClick={() => void connect()}
+          style={{
+            padding: "8px 10px",
+            "border-radius": "8px",
+            border: "none",
+            background: "#6366f1",
+            color: "white",
+            "font-size": "13px",
+            cursor: "pointer",
+          }}
+        >
+          Connect
+        </button>
+      </div>
+    </div>
+  )
+}
 
 export default function App() {
   const store = createAppStore()
+  const [authorized, setAuthorized] = createSignal(false)
 
   onMount(() => {
-    store.loadSessions()
+    // Probe with stored credentials; unauthorized → show the gate
+    void store
+      .loadSessions()
+      .then(() => setAuthorized(true))
+      .catch((e: Error) => {
+        if (getToken()) console.warn("[mira] load failed:", e.message)
+        if (e.message !== "unauthorized") setAuthorized(true) // non-auth failure: proceed, banner shows offline
+        else if (getToken()) setAuthorized(true) // stale token case — still let UI render; errors surface per-call
+      })
   })
 
   return (
+    <Show when={authorized()} fallback={<AuthGate onReady={() => { setAuthorized(true); void store.loadSessions() }} />}>
     <div
       style={{
         display: "flex",
@@ -152,5 +246,6 @@ export default function App() {
         <QuestionPrompt store={store} />
       </div>
     </div>
+    </Show>
   )
 }
