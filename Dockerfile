@@ -40,6 +40,6 @@ RUN mkdir -p /app/data && chown -R mira:mira /app
 USER mira
 EXPOSE 4096
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD curl -f http://localhost:4096/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD curl -f http://localhost:4096/healthz || exit 1
 
 CMD ["bun", "packages/server/src/index.ts"]

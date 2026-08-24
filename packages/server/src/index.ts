@@ -34,6 +34,7 @@ import { loadConfig } from "./config/index.js"
 import { createLearningSystem, mountLearningRoutes } from "./learning/index.js"
 import { setSharedKnowledge } from "./learning/knowledge.js"
 import { GuardrailsManager } from "./guardrails/index.js"
+import { getJob, listJobs, cancelJob } from "./tools/task.js"
 
 // ── Bootstrap ──────────────────────────────────────────────────────
 const PORT = Number(process.env.PORT ?? Bun.argv.find(a => a.startsWith("--port="))?.split("=")[1] ?? 4096)
@@ -342,6 +343,24 @@ async function main() {
     await prompt.deleteSession(c.req.param("id"))
     bus.publish({ type: "session.deleted", payload: { id: c.req.param("id") }, timestamp: Date.now() })
     return c.json({ ok: true })
+  })
+
+  // Job board — background subagent task status/results (persistent jobs table)
+  app.get("/session/:id/jobs", async c => {
+    const id = c.req.param("id")
+    if (!(await prompt.getSession(id))) return c.json({ error: "session not found" }, 404)
+    return c.json(await listJobs(db, id))
+  })
+  app.get("/job/:id", async c => {
+    const job = await getJob(db, c.req.param("id"))
+    if (!job) return c.json({ error: "not found" }, 404)
+    return c.json(job)
+  })
+  app.post("/job/:id/cancel", async c => {
+    const job = await cancelJob(db, c.req.param("id"))
+    if (!job) return c.json({ error: "not found" }, 404)
+    bus.publish({ type: "job.cancelled", payload: { jobID: job.id }, timestamp: Date.now() })
+    return c.json(job)
   })
 
   // Prompt — the core loop (streamed via SSE)
