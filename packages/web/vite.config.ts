@@ -3,6 +3,9 @@ import solid from "vite-plugin-solid"
 
 export default defineConfig({
   plugins: [solid()],
+  // GitHub Pages serves project sites under /<repo>/ — assets must resolve there.
+  // Env override keeps other hosts (tunnel, PaaS, same-origin) on "/".
+  base: process.env.VITE_BASE ?? "/mira/",
   server: {
     port: 3000,
     host: true,
