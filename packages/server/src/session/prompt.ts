@@ -33,7 +33,7 @@ import { searchKnowledge } from "../learning/knowledge.js"
 import { openFindingsForContext } from "../tools/findings.js"
 import type { MiraDB } from "../storage/db.js"
 import { loadSkills } from "../skills/loader.js"
-import { AGENT_TEMPLATES } from "../agents/templates.js"
+import { getAgentTemplates, isKnownAgent } from "../agents/templates.js"
 import { initLangfuse } from "../telemetry/langfuse.js"
 import { eq } from "drizzle-orm"
 import { trace as otelTrace } from "@opentelemetry/api"
@@ -109,7 +109,7 @@ export class SessionPrompt {
 
   // ── Session CRUD (delegated to storage) ──────────────────────────
 
-  async createSession(input: { title?: string; model?: string; parentID?: string; agent?: keyof typeof AGENT_TEMPLATES; ownerID?: string | null }) {
+  async createSession(input: { title?: string; model?: string; parentID?: string; agent?: string; ownerID?: string | null }) {
     const id = crypto.randomUUID()
     const now = Date.now()
     // Subagent/fork children inherit the parent session's owner (multi-tenant)
@@ -128,7 +128,7 @@ export class SessionPrompt {
       createdAt: now,
       updatedAt: now,
       parentID: input.parentID,
-      agent: (input.agent && AGENT_TEMPLATES[input.agent] ? input.agent : null) as string | null,
+      agent: (input.agent && isKnownAgent(input.agent) ? input.agent : null) as string | null,
       ownerID: ownerID as string | null,
     }
     await this.deps.db.insert(this.deps.db.schema.sessions).values(session)
@@ -225,7 +225,7 @@ export class SessionPrompt {
   async runSubagent(opts: {
     prompt: string
     parentID: string
-    agent?: keyof typeof AGENT_TEMPLATES
+    agent?: string
     model?: string
     title?: string
   }): Promise<{ sessionID: string; text: string }> {
@@ -273,7 +273,7 @@ export class SessionPrompt {
     const model = modelOverride ?? session.model
     const basePrompt = await buildSystemPrompt()
     // Agent persona (researcher/coder/reviewer) prepended when set on the session
-    const persona = session.agent ? (AGENT_TEMPLATES as Record<string, { system: string }>)[session.agent]?.system : undefined
+    const persona = session.agent ? getAgentTemplates()[session.agent]?.system : undefined
     const systemPrompt = persona ? `${persona}\n\n${basePrompt}` : basePrompt
 
     // Persist user message + part immediately (so TUI sees it via bus)
@@ -551,7 +551,7 @@ export class SessionPrompt {
   private filterToolsForAgent(agent?: string | null): Record<string, { description: string; parameters: any; execute?: any }> {
     const all = this.deps.tools.toAISDKTools()
     if (!agent) return all
-    const tpl = (AGENT_TEMPLATES as Record<string, { tools?: readonly string[] }>)[agent]
+    const tpl = getAgentTemplates()[agent]
     if (!tpl?.tools?.length) return all
     const allow = new Set<string>(tpl.tools)
     return Object.fromEntries(Object.entries(all).filter(([name]) => allow.has(name)))

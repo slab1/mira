@@ -135,6 +135,16 @@ export interface MiraConfig {
   }
   mcp: Record<string, MCPServerConfig>
   provider: Record<string, ProviderConfig>
+  /** Custom agent definitions (mira.json "agents") — merged over built-in templates */
+  agents?: Record<string, AgentDefinition>
+}
+
+/** User-supplied agent definition; missing fields fall back to safe defaults. */
+export interface AgentDefinition {
+  system: string
+  description?: string
+  tools?: string[]
+  permissions?: "readonly" | "standard" | "elevated"
 }
 
 export interface MCPServerConfig {

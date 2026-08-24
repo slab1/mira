@@ -15,6 +15,8 @@ export const sessions = sqliteTable("sessions", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
   parentID: text("parent_id"),
+  // Lane-contract agent key ("architect", custom mira.json agents, …)
+  agent: text("agent"),
   // Multi-tenant ownership — null on legacy rows (accessible to all authenticated users)
   ownerID: text("owner_id"),
 }, (t) => [

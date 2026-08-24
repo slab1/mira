@@ -148,6 +148,7 @@ export async function migrate(db: any) {
   addColumn("sessions", "tokens_out", "INTEGER")
   addColumn("sessions", "cost_usd", "REAL")
   addColumn("sessions", "owner_id", "TEXT")
+  addColumn("sessions", "agent", "TEXT")
   // console.log("[storage] migrated")
 }
 

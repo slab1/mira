@@ -28,7 +28,8 @@ import { createGateway } from "./gateway/index.js"
 import { ToolRegistry } from "./tools/registry.js"
 import { PermissionManager } from "./permission/index.js"
 import { SessionPrompt } from "./session/prompt.js"
-import { AGENT_TEMPLATES } from "./agents/templates.js"
+import { getAgentTemplates, AGENT_TEMPLATES } from "./agents/templates.js"
+const BUILTIN_AGENT_KEYS: Record<string, true> = Object.fromEntries(Object.keys(AGENT_TEMPLATES).map(k => [k, true as const]))
 import { MCPManager } from "./mcp/index.js"
 import { loadConfig } from "./config/index.js"
 import { createLearningSystem, mountLearningRoutes } from "./learning/index.js"
@@ -151,7 +152,7 @@ async function main() {
   tools.setSubagentRunner((opts) => prompt.runSubagent({
     prompt: opts.prompt,
     parentID: opts.parentID,
-    agent: opts.agent as keyof typeof AGENT_TEMPLATES | undefined,
+    agent: opts.agent,
     model: opts.model,
   }))
   // Inject db/bus + fork runner so tools like session_list/session_fork work
@@ -531,6 +532,18 @@ async function main() {
 
   // Tools list (for TUI introspection)
   app.get("/tools", c => c.json(tools.list()))
+
+  // Agent catalog — built-in lane templates + mira.json custom agents
+  app.get("/agents", c => {
+    const registry = getAgentTemplates()
+    return c.json(Object.entries(registry).map(([name, tpl]) => ({
+      name,
+      description: tpl.description,
+      tools: [...tpl.tools],
+      permissions: tpl.permissions,
+      custom: !(name in BUILTIN_AGENT_KEYS),
+    })))
+  })
 
   // Permissions check (for TUI preflight)
   app.post("/permission/check", async c => {

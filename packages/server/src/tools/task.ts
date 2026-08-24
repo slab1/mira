@@ -10,7 +10,7 @@
 import { z } from "zod"
 import { and, desc, eq } from "drizzle-orm"
 import type { ToolDef } from "./registry.js"
-import { AGENT_TEMPLATES } from "../agents/templates.js"
+import { isKnownAgent } from "../agents/templates.js"
 import { jobs } from "../storage/schema.js"
 
 export type Job = typeof jobs.$inferSelect
@@ -106,8 +106,8 @@ export const taskTool = {
     // unknown types run with the default persona instead of resolving to undefined.
     const agent = subagent_type === "explore" || subagent_type === "research"
       ? "researcher" as const
-      : subagent_type in AGENT_TEMPLATES
-        ? (subagent_type as keyof typeof AGENT_TEMPLATES)
+      : isKnownAgent(subagent_type)
+        ? subagent_type
         : undefined
 
     // Persist the job BEFORE spawning so it is pollable immediately

@@ -125,3 +125,55 @@ export const AGENT_TEMPLATES = {
 } satisfies Record<string, AgentTemplate>
 
 export type AgentTemplateName = keyof typeof AGENT_TEMPLATES
+
+// ── Data-driven agents (mira.json "agents") ────────────────────────
+
+import { getConfig } from "../config/index.js"
+import type { AgentDefinition } from "../types/index.js"
+
+/** Keys must be safe for URLs/JSON/DB — lowercase word chars, dash, underscore. */
+const AGENT_KEY_RE = /^[a-z][a-z0-9_-]{1,40}$/
+
+// Warn once per invalid definition — getAgentTemplates() runs per request.
+const warnedInvalidAgents = new Set<string>()
+
+function materialize(name: string, def: AgentDefinition): AgentTemplate | null {
+  if (!AGENT_KEY_RE.test(name)) return null
+  if (typeof def?.system !== "string" || def.system.trim().length < 10) return null
+  const posture = def.permissions === "readonly" || def.permissions === "elevated" ? def.permissions : "standard"
+  const tools = Array.isArray(def.tools) ? def.tools.filter((t): t is string => typeof t === "string" && t.length > 0) : []
+  return {
+    system: def.system.trim(),
+    description: typeof def.description === "string" ? def.description : "",
+    tools,
+    permissions: posture,
+  }
+}
+
+/**
+ * Full agent registry: built-in lane-contract templates merged with
+ * mira.json `agents` definitions. Config entries with a colliding key
+ * OVERRIDE the built-in (lets operators re-tune personas without code).
+ * Invalid definitions are skipped with a warning, never fatal.
+ */
+export function getAgentTemplates(): Record<string, AgentTemplate> {
+  const registry: Record<string, AgentTemplate> = { ...AGENT_TEMPLATES }
+  const custom = getConfig().agents
+  if (!custom) return registry
+  for (const [name, def] of Object.entries(custom)) {
+    const tpl = materialize(name, def)
+    if (!tpl) {
+      if (!warnedInvalidAgents.has(name)) {
+        warnedInvalidAgents.add(name)
+        console.warn(`[agents] ignoring invalid custom agent "${name}" (bad name or system prompt <10 chars)`)
+      }
+      continue
+    }
+    registry[name] = tpl
+  }
+  return registry
+}
+
+export function isKnownAgent(agent: string | null | undefined): boolean {
+  return !!agent && agent in getAgentTemplates()
+}
