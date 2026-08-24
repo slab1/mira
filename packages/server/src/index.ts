@@ -35,6 +35,7 @@ import { createLearningSystem, mountLearningRoutes } from "./learning/index.js"
 import { setSharedKnowledge } from "./learning/knowledge.js"
 import { GuardrailsManager } from "./guardrails/index.js"
 import { getJob, listJobs, cancelJob } from "./tools/task.js"
+import { writeFinding, listFindings, resolveFinding, type FindingSeverity } from "./tools/findings.js"
 import type { BusEvent } from "./types/index.js"
 import type { Snapshot } from "./storage/snapshots.js"
 
@@ -398,6 +399,33 @@ async function main() {
     const cancelled = await cancelJob(db, c.req.param("id"))
     bus.publish({ type: "job.cancelled", payload: { jobID: job.id }, timestamp: Date.now() })
     return c.json(cancelled)
+  })
+
+  // Findings — structured cross-agent team memory (shared by design across owners)
+  app.get("/finding", async c => {
+    const status = c.req.query("status") as "open" | "resolved" | undefined
+    const severity = c.req.query("severity") as FindingSeverity | undefined
+    const limit = Number(c.req.query("limit") ?? "") || undefined
+    return c.json(await listFindings(db, { status, severity, limit }))
+  })
+  app.post("/finding", async c => {
+    const body = await c.req.json().catch(() => null)
+    if (!body?.title?.trim()) return c.json({ error: "title required" }, 400)
+    const f = await writeFinding(db, {
+      title: String(body.title).trim(),
+      severity: body.severity,
+      evidence: body.evidence,
+      source: body.source ?? "user",
+      sessionID: body.sessionID ?? null,
+    })
+    bus.publish({ type: "job.updated", payload: { finding: f.id, action: "created" }, timestamp: Date.now() })
+    return c.json(f, 201)
+  })
+  app.post("/finding/:id/resolve", async c => {
+    const f = await resolveFinding(db, c.req.param("id"))
+    if (!f) return c.json({ error: "not found" }, 404)
+    bus.publish({ type: "job.updated", payload: { finding: f.id, action: "resolved" }, timestamp: Date.now() })
+    return c.json(f)
   })
 
   // Prompt — the core loop (streamed via SSE)
