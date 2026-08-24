@@ -35,6 +35,8 @@ import { createLearningSystem, mountLearningRoutes } from "./learning/index.js"
 import { setSharedKnowledge } from "./learning/knowledge.js"
 import { GuardrailsManager } from "./guardrails/index.js"
 import { getJob, listJobs, cancelJob } from "./tools/task.js"
+import type { BusEvent } from "./types/index.js"
+import type { Snapshot } from "./storage/snapshots.js"
 
 // ── Bootstrap ──────────────────────────────────────────────────────
 const PORT = Number(process.env.PORT ?? Bun.argv.find(a => a.startsWith("--port="))?.split("=")[1] ?? 4096)
@@ -42,6 +44,25 @@ const PORT = Number(process.env.PORT ?? Bun.argv.find(a => a.startsWith("--port=
 // ── Security config ────────────────────────────────────────────────
 // Bearer token gate (HTTP + WS). Empty = auth disabled (dev only).
 const REQUIRED_TOKEN = process.env.MIRA_TOKEN ?? ""
+// Multi-tenant API keys: MIRA_API_KEYS="key1:alice,key2:bob" → credential→owner map.
+// When set, sessions are stamped with an ownerID and all session routes/WS
+// events enforce ownership. Single-token (MIRA_TOKEN-only) deployments map to
+// the implicit "default" owner — behavior unchanged.
+const API_KEY_OWNERS = new Map<string, string>()
+for (const pair of (process.env.MIRA_API_KEYS ?? "").split(",").map(s => s.trim()).filter(Boolean)) {
+  const i = pair.indexOf(":")
+  if (i > 0) API_KEY_OWNERS.set(pair.slice(0, i), pair.slice(i + 1))
+}
+const OWNERSHIP_ENABLED = API_KEY_OWNERS.size > 0
+/** Resolve a bearer credential to its owner id (undefined = invalid). */
+function resolveOwner(token: string): string | undefined {
+  if (!token) return undefined
+  if (REQUIRED_TOKEN && tokenEquals(token, REQUIRED_TOKEN)) return "default"
+  return API_KEY_OWNERS.get(token)
+}
+function bearerOf(authHeader: string | undefined): string {
+  return authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : ""
+}
 // Timing-safe token comparison (avoids length/byte leaks via response time)
 function tokenEquals(a: string, b: string): boolean {
   const ab = Buffer.from(a)
@@ -136,7 +157,7 @@ async function main() {
   tools.setDefaultCtx({ db, bus, forkRunner: (opts) => prompt.forkSession(opts) })
 
   // 8. HTTP + WebSocket RPC (Hono)
-  const app = new Hono()
+  const app = new Hono<{ Variables: { requestId: string } }>()
 
   // Metrics collector
   const metrics = {
@@ -165,19 +186,17 @@ async function main() {
   // (they leak into access logs, Referer headers, and browser history).
   // Public paths bypass the gate so liveness probes and metrics scrapes work unauthenticated.
   const PUBLIC_PATHS = new Set(["/healthz", "/metrics"])
-  if (REQUIRED_TOKEN) {
+  if (REQUIRED_TOKEN || API_KEY_OWNERS.size > 0) {
     app.use("*", async (c, next) => {
       if (PUBLIC_PATHS.has(c.req.path)) return await next()
-      const auth = c.req.header("Authorization") ?? ""
-      const token = auth.startsWith("Bearer ") ? auth.slice(7) : ""
-      if (!tokenEquals(token, REQUIRED_TOKEN)) return c.json({ error: "unauthorized" }, 401)
+      if (!resolveOwner(bearerOf(c.req.header("Authorization")))) return c.json({ error: "unauthorized" }, 401)
       await next()
     })
   }
   app.use("*", async (c, next) => {
     const start = Date.now()
     const requestId = crypto.randomUUID()
-    ;(c as any).set("requestId", requestId)
+    c.set("requestId", requestId)
     await next()
     const duration = Date.now() - start
     const status = c.res.status
@@ -323,23 +342,40 @@ async function main() {
     return c.json(Object.keys(skills))
   })
 
+  // ── Multi-tenant ownership helpers ────────────────────────────────
+  // Returns the session if it exists AND (ownership disabled OR requester owns
+  // it OR it's a legacy unowned row). Null otherwise → routes answer 404.
+  async function authorizedSession(id: string, c: { req: { header: (n: string) => string | undefined } }) {
+    const s = await prompt.getSession(id)
+    if (!s) return null
+    if (!OWNERSHIP_ENABLED || !s.ownerID) return s
+    return resolveOwner(bearerOf(c.req.header("Authorization"))) === s.ownerID ? s : null
+  }
+
   // REST — sessions
   app.get("/session", async c => {
-    const sessions = await db.query.sessions.findMany({ orderBy: (s, { desc }) => [desc(s.updatedAt)] })
-    return c.json(sessions)
+    const owner = OWNERSHIP_ENABLED ? resolveOwner(bearerOf(c.req.header("Authorization"))) : undefined
+    const all = await db.query.sessions.findMany({ orderBy: (s, { desc }) => [desc(s.updatedAt)] })
+    return c.json(owner ? all.filter(s => !s.ownerID || s.ownerID === owner) : all)
   })
   app.post("/session", async c => {
     const body = await c.req.json().catch(() => ({}))
-    const session = await prompt.createSession(body)
+    const session = await prompt.createSession({
+      ...body,
+      ownerID: OWNERSHIP_ENABLED ? resolveOwner(bearerOf(c.req.header("Authorization"))) ?? "default" : null,
+    })
+    sessionOwnerCache.set(session.id, session.ownerID ?? null)
     bus.publish({ type: "session.created", payload: session, timestamp: Date.now() })
     return c.json(session, 201)
   })
   app.get("/session/:id", async c => {
-    const session = await prompt.getSession(c.req.param("id"))
+    const session = await authorizedSession(c.req.param("id"), c)
     if (!session) return c.json({ error: "not found" }, 404)
     return c.json(session)
   })
   app.delete("/session/:id", async c => {
+    if (!(await authorizedSession(c.req.param("id"), c))) return c.json({ error: "not found" }, 404)
+    sessionOwnerCache.delete(c.req.param("id"))
     await prompt.deleteSession(c.req.param("id"))
     bus.publish({ type: "session.deleted", payload: { id: c.req.param("id") }, timestamp: Date.now() })
     return c.json({ ok: true })
@@ -348,19 +384,20 @@ async function main() {
   // Job board — background subagent task status/results (persistent jobs table)
   app.get("/session/:id/jobs", async c => {
     const id = c.req.param("id")
-    if (!(await prompt.getSession(id))) return c.json({ error: "session not found" }, 404)
+    if (!(await authorizedSession(id, c))) return c.json({ error: "session not found" }, 404)
     return c.json(await listJobs(db, id))
   })
   app.get("/job/:id", async c => {
     const job = await getJob(db, c.req.param("id"))
-    if (!job) return c.json({ error: "not found" }, 404)
+    if (!job || !(await authorizedSession(job.parentSessionID, c))) return c.json({ error: "not found" }, 404)
     return c.json(job)
   })
   app.post("/job/:id/cancel", async c => {
-    const job = await cancelJob(db, c.req.param("id"))
-    if (!job) return c.json({ error: "not found" }, 404)
+    const job = await getJob(db, c.req.param("id"))
+    if (!job || !(await authorizedSession(job.parentSessionID, c))) return c.json({ error: "not found" }, 404)
+    const cancelled = await cancelJob(db, c.req.param("id"))
     bus.publish({ type: "job.cancelled", payload: { jobID: job.id }, timestamp: Date.now() })
-    return c.json(job)
+    return c.json(cancelled)
   })
 
   // Prompt — the core loop (streamed via SSE)
@@ -368,9 +405,8 @@ async function main() {
     const id = c.req.param("id")
     const { prompt: text, model, maxSteps } = await c.req.json().catch(() => ({}))
     if (!text?.trim?.()) return c.json({ error: "empty prompt" }, 400)
-    // Validate session exists
-    const session = await prompt.getSession(id)
-    if (!session) return c.json({ error: "session not found" }, 404)
+    // Validate session exists + requester owns it
+    if (!(await authorizedSession(id, c))) return c.json({ error: "session not found" }, 404)
 
     // Stream response as SSE (Vercel AI SDK style); per-request loop options honored
     return prompt.streamResponse(id, text, model, { maxSteps })
@@ -378,6 +414,7 @@ async function main() {
 
   // Messages & parts
   app.get("/session/:id/message", async c => {
+    if (!(await authorizedSession(c.req.param("id"), c))) return c.json({ error: "not found" }, 404)
     const messages = await prompt.getMessages(c.req.param("id"))
     return c.json(messages)
   })
@@ -385,7 +422,7 @@ async function main() {
   // Session export — shareable transcript (markdown or JSON)
   app.get("/session/:id/export", async c => {
     const id = c.req.param("id")
-    const session = await prompt.getSession(id)
+    const session = await authorizedSession(id, c)
     if (!session) return c.json({ error: "not found" }, 404)
     const messages = await prompt.getMessages(id)
     const format = c.req.query("format") ?? "md"
@@ -401,10 +438,10 @@ async function main() {
       `- Exported: ${new Date().toISOString()}`,
       "",
     ]
-    for (const m of messages as any[]) {
+    for (const m of messages) {
       const role = m.role === "user" ? "🙋 User" : m.role === "assistant" ? "🤖 Mira" : m.role
       lines.push(`## ${role}`)
-      for (const p of (m.parts ?? []) as any[]) {
+      for (const p of m.parts ?? []) {
         if (p.type === "text" && p.text) lines.push(p.text)
         else if (p.type === "tool-call") lines.push(`> 🔧 \`${p.tool}\``)
         else if (p.type === "tool-result") lines.push(p.isError ? `> ⚠️ tool error` : `> ✓ result`)
@@ -422,7 +459,7 @@ async function main() {
     const { prompt: text } = await c.req.json()
     if (!text?.trim()) return c.json({ error: "empty prompt" }, 400)
     const id = c.req.param("id")
-    if (!(await prompt.getSession(id))) return c.json({ error: "session not found" }, 404)
+    if (!(await authorizedSession(id, c))) return c.json({ error: "session not found" }, 404)
     return c.json(prompt.queueMessage(id, String(text).trim()))
   })
   app.get("/session/:id/queue", c => c.json(prompt.getQueue(c.req.param("id"))))
@@ -430,6 +467,7 @@ async function main() {
 
   // File snapshots — undo/rewind agent file mutations
   app.get("/session/:id/snapshots", async c => {
+    if (!(await authorizedSession(c.req.param("id"), c))) return c.json({ error: "not found" }, 404)
     const { listSnapshots } = await import("./storage/snapshots.js")
     return c.json(listSnapshots(db, c.req.param("id")))
   })
@@ -437,13 +475,13 @@ async function main() {
     const body = await c.req.json().catch(() => ({}))
     const { revertLast, revertToMessage } = await import("./storage/snapshots.js")
     const id = c.req.param("id")
-    if (!(await prompt.getSession(id))) return c.json({ error: "not found" }, 404)
+    if (!(await authorizedSession(id, c))) return c.json({ error: "not found" }, 404)
     try {
       const reverted = body.messageID
         ? await revertToMessage(db, id, body.messageID)
         : [await revertLast(db, id)].filter(Boolean)
       bus.publish({ type: "session.updated", sessionID: id, payload: { reverted: reverted.length }, timestamp: Date.now() })
-      return c.json({ ok: true, reverted: reverted.length, files: reverted.map((r: any) => r.path) })
+      return c.json({ ok: true, reverted: reverted.length, files: reverted.filter(Boolean).map(r => (r as Snapshot).path) })
     } catch (e) {
       return c.json({ ok: false, error: String(e) }, 400)
     }
@@ -451,10 +489,12 @@ async function main() {
 
   // Todos
   app.get("/session/:id/todo", async c => {
+    if (!(await authorizedSession(c.req.param("id"), c))) return c.json({ error: "not found" }, 404)
     const todos = await prompt.getTodos(c.req.param("id"))
     return c.json(todos)
   })
   app.post("/session/:id/todo", async c => {
+    if (!(await authorizedSession(c.req.param("id"), c))) return c.json({ error: "not found" }, 404)
     const todos = await c.req.json()
     const result = await prompt.setTodos(c.req.param("id"), todos)
     bus.publish({ type: "todo.updated", sessionID: c.req.param("id"), payload: result, timestamp: Date.now() })
@@ -487,18 +527,70 @@ async function main() {
   //   • Query-param tokens (?token=) are NOT accepted anywhere.
   const WS_AUTH_TIMEOUT_MS = 5_000
 
-  function activateSocket(ws: any) {
+  // ── Per-owner live event filtering ────────────────────────────────
+  // Maps sessionID → ownerID (cached; lazily backfilled from the DB).
+  // Unknown sessions fail closed: events are dropped until ownership resolves.
+  const sessionOwnerCache = new Map<string, string | null>()
+  const pendingOwnerLookups = new Map<string, Promise<string | null>>()
+  function ownerOfSession(sessionID: string): Promise<string | null> {
+    const cached = sessionOwnerCache.get(sessionID)
+    if (cached !== undefined) return Promise.resolve(cached)
+    let p = pendingOwnerLookups.get(sessionID) as Promise<string | null> | undefined
+    if (!p) {
+      const lookup: Promise<string | null> = db.query.sessions.findFirst({ where: (s, { eq }) => eq(s.id, sessionID) })
+        .then(s => {
+          const o = (s?.ownerID ?? null) as string | null
+          sessionOwnerCache.set(sessionID, o)
+          pendingOwnerLookups.delete(sessionID)
+          return o
+        })
+        .catch(() => { pendingOwnerLookups.delete(sessionID); return null })
+      p = lookup
+      pendingOwnerLookups.set(sessionID, lookup)
+    }
+    return p
+  }
+
+  // WebSocket sockets carry server-side state beyond Bun's wire data —
+  // this structural type describes the extended shape (no `any`).
+  interface MiraWSData {
+    authenticated?: boolean
+    owner?: string
+  }
+  interface MiraWS {
+    data?: MiraWSData
+    __active: boolean
+    __authTimer?: ReturnType<typeof setTimeout>
+    __unsub?: () => void
+    __owner?: string | null
+    send(data: string): void
+    close(code: number, reason?: string): void
+  }
+
+  function activateSocket(ws: MiraWS, owner?: string) {
     if (ws.__active) return
     ws.__active = true
+    ws.__owner = owner ?? null
     clearTimeout(ws.__authTimer)
-    // Subscribe this socket to GlobalBus only after authentication
+    // Subscribe this socket to GlobalBus only after authentication;
+    // with multi-tenant keys enabled, events are scoped to the socket's owner.
     ws.__unsub = bus.subscribeAll(event => {
-      try { ws.send(JSON.stringify(event)) } catch {}
+      try {
+        if (!OWNERSHIP_ENABLED || !event.sessionID || event.type.startsWith("server.")) {
+          ws.send(JSON.stringify(event))
+          return
+        }
+        void ownerOfSession(event.sessionID).then(o => {
+          // Fail closed: drop events whose owner is unknown or foreign
+          if (!ws.__active) return
+          if (o === null || o === ws.__owner) ws.send(JSON.stringify(event))
+        })
+      } catch {}
     })
     ws.send(JSON.stringify({ type: "server.heartbeat", payload: { connected: true }, timestamp: Date.now() }))
   }
 
-  const server = Bun.serve({
+  const server = Bun.serve<MiraWSData>({
     port: PORT,
     // Security: loopback by default — remote access requires HOST env override
     hostname: process.env.HOST ?? "127.0.0.1",
@@ -510,14 +602,15 @@ async function main() {
           return new Response(JSON.stringify({ error: "forbidden origin" }), { status: 403, headers: { "content-type": "application/json" } })
         }
         let authenticated = false
-        if (!REQUIRED_TOKEN) {
-          authenticated = true // dev mode: no token configured
+        let owner: string | undefined
+        if (!REQUIRED_TOKEN && API_KEY_OWNERS.size === 0) {
+          authenticated = true // dev mode: no credentials configured
         } else {
           const auth = req.headers.get("authorization") ?? ""
-          const token = auth.startsWith("Bearer ") ? auth.slice(7) : ""
-          authenticated = tokenEquals(token, REQUIRED_TOKEN)
+          owner = resolveOwner(bearerOf(auth))
+          authenticated = owner !== undefined
         }
-        const upgraded = srv.upgrade(req, { data: { authenticated } as any })
+        const upgraded = srv.upgrade(req, { data: { authenticated, owner } })
         if (!upgraded) return new Response("WebSocket upgrade failed", { status: 500 })
         return undefined
       }
@@ -525,10 +618,10 @@ async function main() {
     },
     websocket: {
       open(ws) {
-        const w = ws as any
+        const w = ws as unknown as MiraWS
         w.__active = false
-        if (!REQUIRED_TOKEN || w.data?.authenticated === true) {
-          activateSocket(w)
+        if ((!REQUIRED_TOKEN && API_KEY_OWNERS.size === 0) || w.data?.authenticated === true) {
+          activateSocket(w, w.data?.owner)
         } else {
           // Grace window: client must send {"type":"auth","token":...} within 5s
           w.__authTimer = setTimeout(() => {
@@ -539,24 +632,24 @@ async function main() {
         }
       },
       message(ws, msg) {
-        const w = ws as any
-        let event: any = null
+        const w = ws as unknown as MiraWS
+        let event: { type?: string; token?: string; sessionID?: string } | null = null
         try { event = JSON.parse(String(msg)) } catch {}
         if (!w.__active) {
           // Pre-auth: only the auth handshake is accepted; anything else is ignored
           // (the 5s timer closes unauthenticated sockets with 1008)
-          if (REQUIRED_TOKEN && event?.type === "auth" && typeof event.token === "string" && tokenEquals(event.token, REQUIRED_TOKEN)) {
-            activateSocket(w)
-          }
+          const owner = event?.type === "auth" && typeof event.token === "string"
+            ? resolveOwner(event.token)
+            : undefined
+          if (owner !== undefined) activateSocket(w, owner)
           return
         }
         // Handle permission replies, client pings, etc.
-        if (event?.type === "permission.reply" || event?.type === "question.reply") {
-          bus.publish(event)
-        }
+        if (event?.type !== "permission.reply" && event?.type !== "question.reply") return
+        bus.publish(event as BusEvent)
       },
       close(ws) {
-        const w = ws as any
+        const w = ws as unknown as MiraWS
         clearTimeout(w.__authTimer)
         try { w.__unsub?.() } catch {}
       },

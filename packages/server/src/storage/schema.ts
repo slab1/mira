@@ -15,6 +15,8 @@ export const sessions = sqliteTable("sessions", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
   parentID: text("parent_id"),
+  // Multi-tenant ownership — null on legacy rows (accessible to all authenticated users)
+  ownerID: text("owner_id"),
 }, (t) => [
   index("sessions_updated_idx").on(t.updatedAt),
 ])
@@ -37,9 +39,8 @@ export const parts = sqliteTable("parts", {
   text: text("text"),
   tool: text("tool"),
   toolCallID: text("tool_call_id"),
-  // Drizzle SQLite stores JSON as text — use mode: "json" or manual JSON.parse
-  args: text("args", { mode: "json" }) as any,
-  result: text("result", { mode: "json" }) as any,
+  args: text("args", { mode: "json" }).$type<Record<string, unknown> | null>(),
+  result: text("result", { mode: "json" }).$type<unknown>(),
   isError: integer("is_error", { mode: "boolean" }),
   createdAt: integer("created_at").notNull(),
 }, (t) => [

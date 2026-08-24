@@ -109,9 +109,17 @@ export class SessionPrompt {
 
   // ── Session CRUD (delegated to storage) ──────────────────────────
 
-  async createSession(input: { title?: string; model?: string; parentID?: string; agent?: keyof typeof AGENT_TEMPLATES }) {
+  async createSession(input: { title?: string; model?: string; parentID?: string; agent?: keyof typeof AGENT_TEMPLATES; ownerID?: string | null }) {
     const id = crypto.randomUUID()
     const now = Date.now()
+    // Subagent/fork children inherit the parent session's owner (multi-tenant)
+    let ownerID = input.ownerID ?? null
+    if (!ownerID && input.parentID) {
+      try {
+        const parent = await this.getSession(input.parentID)
+        ownerID = (parent as any)?.ownerID ?? null
+      } catch {}
+    }
     const session = {
       id,
       title: input.title ?? (input.agent ? `${input.agent} session` : "New Session"),
@@ -121,6 +129,7 @@ export class SessionPrompt {
       updatedAt: now,
       parentID: input.parentID,
       agent: (input.agent && AGENT_TEMPLATES[input.agent] ? input.agent : null) as string | null,
+      ownerID: ownerID as string | null,
     }
     await this.deps.db.insert(this.deps.db.schema.sessions).values(session)
     return session
