@@ -77,7 +77,7 @@ export class ToolRegistry {
   /** Register a single tool */
   register<T extends z.ZodTypeAny>(def: ToolDef<T>) {
     if (this.tools.has(def.name)) console.warn(`[tools] overwriting ${def.name}`)
-    this.tools.set(def.name, def as unknown as ToolDef)
+    this.tools.set(def.name, def as ToolDef)
   }
 
   /** Register all built-in tools (called at startup) */

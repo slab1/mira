@@ -32,6 +32,7 @@ import { needsCompaction, compactMessages, estimateTokens } from "./compaction.j
 import { searchKnowledge } from "../learning/knowledge.js"
 import { openFindingsForContext } from "../tools/findings.js"
 import type { MiraDB } from "../storage/db.js"
+import type { Todo } from "../types/index.js"
 import { loadSkills } from "../skills/loader.js"
 import { getAgentTemplates, isKnownAgent } from "../agents/templates.js"
 import { initLangfuse } from "../telemetry/langfuse.js"
@@ -140,32 +141,32 @@ export class SessionPrompt {
   }
 
   async deleteSession(id: string) {
-    await this.deps.db.delete(this.deps.db.schema.messages).where((m: any) => m.sessionID === id)
-    await this.deps.db.delete(this.deps.db.schema.parts).where((p: any) => p.sessionID === id)
-    await this.deps.db.delete(this.deps.db.schema.todos).where((t: any) => t.sessionID === id)
-    await this.deps.db.delete(this.deps.db.schema.sessions).where((s: any) => s.id === id)
+    await this.deps.db.delete(this.deps.db.schema.messages).where(eq(this.deps.db.schema.messages.sessionID, id))
+    await this.deps.db.delete(this.deps.db.schema.parts).where(eq(this.deps.db.schema.parts.sessionID, id))
+    await this.deps.db.delete(this.deps.db.schema.todos).where(eq(this.deps.db.schema.todos.sessionID, id))
+    await this.deps.db.delete(this.deps.db.schema.sessions).where(eq(this.deps.db.schema.sessions.id, id))
   }
 
   async getMessages(sessionID: string) {
     return this.deps.db.query.messages.findMany({
-      where: (m: any, { eq }: any) => eq(m.sessionID, sessionID),
+      where: (m, { eq }) => eq(m.sessionID, sessionID),
       with: { parts: true },
-      orderBy: (m: any, { asc }: any) => [asc(m.createdAt)],
+      orderBy: (m, { asc }) => [asc(m.createdAt)],
     })
   }
 
   async getTodos(sessionID: string) {
     return this.deps.db.query.todos.findMany({
-      where: (t: any, { eq }: any) => eq(t.sessionID, sessionID),
+      where: (t, { eq }) => eq(t.sessionID, sessionID),
     })
   }
 
-  async setTodos(sessionID: string, todos: any[]) {
+  async setTodos(sessionID: string, todos: Todo[]) {
     // Replace todos for session
-    await this.deps.db.delete(this.deps.db.schema.todos).where((t: any) => t.sessionID === sessionID)
+    await this.deps.db.delete(this.deps.db.schema.todos).where(eq(this.deps.db.schema.todos.sessionID, sessionID))
     if (todos.length) {
       await this.deps.db.insert(this.deps.db.schema.todos).values(
-        todos.map((t: any) => ({ ...t, id: t.id ?? crypto.randomUUID(), sessionID, createdAt: Date.now() }))
+        todos.map((t: Todo) => ({ ...t, id: t.id ?? crypto.randomUUID(), sessionID, createdAt: Date.now() }))
       )
     }
     return todos
@@ -241,7 +242,7 @@ export class SessionPrompt {
       const d = data as { text?: string }
       if (d?.text !== undefined) text = d.text
     }
-    const noopWriter = { write: () => {}, close: async () => {} } as unknown as WritableStreamDefaultWriter<Uint8Array>
+    const noopWriter = { write: () => {}, close: async () => {} } as object as WritableStreamDefaultWriter<Uint8Array>
     try {
       await this.runLoop({
         sessionID: s.id,
