@@ -15,6 +15,10 @@ PORT="${PORT:-4096}"
 
 mkdir -p "$MIRA_DIR/data"
 [ -f "$MIRA_ENV" ] && . "$MIRA_ENV"
+# Sourcing alone does NOT export — without this, MIRA_TOKEN etc. stay shell-local
+# and bun boots an OPEN server. Re-export everything the env file may define.
+export MIRA_TOKEN="${MIRA_TOKEN:-}"
+export MIRA_API_KEYS="${MIRA_API_KEYS:-}"
 
 export MIRA_DB="${MIRA_DB:-$MIRA_DIR/data/mira.db}"
 export HOST="${HOST:-127.0.0.1}"          # loopback only — expose via cloudflared tunnel
