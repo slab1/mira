@@ -15,9 +15,9 @@
  * For replay, TUI fetches REST /session/:id/message on connect, then subscribes for live deltas.
  */
 
-import type { BusEvent, BusEventType, SessionID } from "../types/index.js"
+import type { BusEvent, BusEventType, SessionID, JsonValue } from "../types/index.js"
 
-type Handler<T = unknown> = (event: BusEvent<T>) => void
+type Handler<T = JsonValue> = (event: BusEvent<T>) => void
 type Unsubscribe = () => void
 
 // ── GlobalBus ──────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ export class Bus {
 
     // Handle permission.reply specially — resolve waiter
     if (event.type === "permission.reply") {
-      const payload = event.payload as any
+      const payload = event.payload as { toolCallID?: string; id?: string; decision?: "allow" | "deny"; action?: "allow" | "deny" }
       const waiter = this.waiters.get(payload.toolCallID ?? payload.id ?? "")
       if (waiter) {
         waiter(payload.decision ?? payload.action ?? "deny")

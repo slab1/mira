@@ -31,8 +31,8 @@ import { DoomLoopDetector } from "./doom-loop-detector.js"
 import { needsCompaction, compactMessages, estimateTokens } from "./compaction.js"
 import { searchKnowledge } from "../learning/knowledge.js"
 import { openFindingsForContext } from "../tools/findings.js"
+import type { Todo, JsonValue } from "../types/index.js"
 import type { MiraDB } from "../storage/db.js"
-import type { Todo } from "../types/index.js"
 import { loadSkills } from "../skills/loader.js"
 import { getAgentTemplates, isKnownAgent } from "../agents/templates.js"
 import { initLangfuse } from "../telemetry/langfuse.js"
@@ -40,6 +40,15 @@ import { eq } from "drizzle-orm"
 import { trace as otelTrace } from "@opentelemetry/api"
 
 // ── Types ──────────────────────────────────────────────────────────
+
+/** One turn-context message fed back into gateway.stream (loop working set). */
+interface LoopMessage {
+  role: string
+  content: string
+  toolCalls?: Array<{ id: string; name: string; args: Record<string, JsonValue> }>
+  toolResults?: Array<{ toolCallID: string; name: string; result: JsonValue; isError: boolean }>
+  toolCallID?: string
+}
 
 export interface SessionPromptDeps {
   db: MiraDB
@@ -86,7 +95,7 @@ export class SessionPrompt {
     try {
       return (this.deps.db.sqlite
         .prepare(`SELECT text FROM message_queue WHERE session_id = ? ORDER BY created_at, rowid`)
-        .all(sessionID) as any[]).map(r => r.text)
+        .all(sessionID) as Array<{ text: string }>).map(r => r.text)
     } catch { return [] }
   }
 
@@ -99,9 +108,9 @@ export class SessionPrompt {
   /** Atomically pop the oldest queued message (drain head) */
   private dequeueFirst(sessionID: string): string | null {
     try {
-      const row: any = this.deps.db.sqlite
+      const row = this.deps.db.sqlite
         .prepare(`SELECT id, text FROM message_queue WHERE session_id = ? ORDER BY created_at, rowid LIMIT 1`)
-        .get(sessionID)
+        .get(sessionID) as { id: string; text: string } | undefined
       if (!row) return null
       this.deps.db.sqlite.prepare(`DELETE FROM message_queue WHERE id = ?`).run(row.id)
       return row.text
@@ -118,7 +127,7 @@ export class SessionPrompt {
     if (!ownerID && input.parentID) {
       try {
         const parent = await this.getSession(input.parentID)
-        ownerID = (parent as any)?.ownerID ?? null
+        ownerID = parent?.ownerID ?? null
       } catch {}
     }
     const session = {
@@ -137,7 +146,7 @@ export class SessionPrompt {
   }
 
   async getSession(id: string) {
-    return this.deps.db.query.sessions.findFirst({ where: (s: any, { eq }: any) => eq(s.id, id) })
+    return this.deps.db.query.sessions.findFirst({ where: (s, { eq }) => eq(s.id, id) })
   }
 
   async deleteSession(id: string) {
@@ -184,7 +193,7 @@ export class SessionPrompt {
     const history = await this.getMessages(opts.sourceSessionID)
 
     // Slice at the fork point (inclusive of messageID if given)
-    let selected = history as any[]
+    let selected = history
     if (opts.messageID) {
       const idx = selected.findIndex(m => m.id === opts.messageID)
       if (idx === -1) throw new Error(`message ${opts.messageID} not found in source session`)
@@ -204,7 +213,7 @@ export class SessionPrompt {
       await this.deps.db.insert(this.deps.db.schema.messages).values({
         id: newMessageID, sessionID: fork.id, role: m.role, createdAt: m.createdAt ?? now,
       })
-      for (const p of (m.parts ?? []) as any[]) {
+      for (const p of m.parts ?? []) {
         const { id: _old, ...rest } = p
         await this.deps.db.insert(this.deps.db.schema.parts).values({
           id: crypto.randomUUID(), ...rest, messageID: newMessageID, sessionID: fork.id,
@@ -238,9 +247,8 @@ export class SessionPrompt {
     })
     let text = ""
     // No-op sink: collect only the final text (no SSE transport needed)
-    const send = (_event: string, data: unknown) => {
-      const d = data as { text?: string }
-      if (d?.text !== undefined) text = d.text
+    const send = (_event: string, data: JsonValue) => {
+      if (typeof data === "object" && data !== null && !Array.isArray(data) && typeof data.text === "string") text = data.text
     }
     const noopWriter = { write: () => {}, close: async () => {} } as object as WritableStreamDefaultWriter<Uint8Array>
     try {
@@ -300,7 +308,7 @@ export class SessionPrompt {
     const writer = writable.getWriter()
     const encoder = new TextEncoder()
 
-    const send = (event: string, data: unknown) => {
+    const send = (event: string, data: JsonValue) => {
       const line = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
       writer.write(encoder.encode(line))
     }
@@ -333,7 +341,7 @@ export class SessionPrompt {
     userText: string
     model: string
     systemPrompt: string
-    send: (event: string, data: unknown) => void
+    send: (event: string, data: JsonValue) => void
     writer: WritableStreamDefaultWriter<Uint8Array>
     agent?: string | null
     maxSteps?: number
@@ -349,7 +357,7 @@ export class SessionPrompt {
     let accumulatedText = ""
     this.doomDetector.reset()
     const lf = initLangfuse()
-    const trace = lf?.trace?.("session") ?? { update: (_data?: unknown) => {}, end: () => {} }
+    const trace = lf?.trace?.("session") ?? { update: (_data?: JsonValue) => {}, end: () => {} }
     // usage-learning counters for recordSession at finalize
     const t0 = Date.now()
     let toolCallCount = 0, toolErrorCount = 0, doomLoopCount = 0, compactionCount = 0
@@ -383,7 +391,7 @@ export class SessionPrompt {
       })
 
       let stepText = ""
-      const toolCalls: Array<{ id: string; name: string; args: unknown }> = []
+      const toolCalls: Array<{ id: string; name: string; args: Record<string, JsonValue> }> = []
 
       for await (const chunk of stream) {
         if (chunk.type === "text-delta" && chunk.text) {
@@ -400,7 +408,7 @@ export class SessionPrompt {
           send("tool_call", chunk.toolCall)
         } else if (chunk.type === "finish") {
           send("step_finish", { step, reason: chunk.finishReason, usage: chunk.usage })
-          const u: any = (chunk as any).usage
+          const u = chunk.usage
           if (u) {
             totalTokensIn += Number(u.promptTokens ?? u.inputTokens ?? 0) || 0
             totalTokensOut += Number(u.completionTokens ?? u.outputTokens ?? 0) || 0
@@ -409,8 +417,8 @@ export class SessionPrompt {
             // Conversation turn complete — drain trailing chunks (e.g. usage-report)
             // so gateway cost tracking sees them, then exit the loop.
             for await (const tail of stream) {
-              if ((tail as any).type === "usage-report") {
-                const tu: any = (tail as any).usage
+              if (tail.type === "usage-report") {
+                const tu = tail.usage
                 if (tu) {
                   totalTokensIn += Number(tu.inputTokens ?? tu.prompt_tokens ?? 0) || 0
                   totalTokensOut += Number(tu.outputTokens ?? tu.completion_tokens ?? 0) || 0
@@ -429,7 +437,7 @@ export class SessionPrompt {
       if (toolCalls.length === 0) break loop
 
       // ── Execute each tool-call ──
-      const toolResults: any[] = []
+      const toolResults: Array<{ toolCallID: string; name: string; result: JsonValue; isError: boolean }> = []
       for (const tc of toolCalls) {
         // Doom-loop detection
         const loopSignal = this.doomDetector.check({ name: tc.name, args: tc.args })
@@ -467,7 +475,7 @@ export class SessionPrompt {
 
         // Execute
         send("tool_execute", { toolCallID: tc.id, name: tc.name })
-        let result: unknown
+        let result: JsonValue = null
         let isError = false
         toolCallCount++
         const tTool = Date.now()
@@ -549,7 +557,7 @@ export class SessionPrompt {
    * that declares a `tools` allowlist, restrict the LLM-visible toolset to it.
    * No template / no allowlist → full registry (general agent).
    */
-  private filterToolsForAgent(agent?: string | null): Record<string, { description: string; parameters: any; execute?: any }> {
+  private filterToolsForAgent(agent?: string | null): ReturnType<ToolRegistry["toAISDKTools"]> {
     const all = this.deps.tools.toAISDKTools()
     if (!agent) return all
     const tpl = getAgentTemplates()[agent]
@@ -558,9 +566,9 @@ export class SessionPrompt {
     return Object.fromEntries(Object.entries(all).filter(([name]) => allow.has(name)))
   }
 
-  private async loadContext(sessionID: string, systemPrompt: string) {
+  private async loadContext(sessionID: string, systemPrompt: string): Promise<LoopMessage[]> {
     const messages = await this.getMessages(sessionID)
-    const context: any[] = [{ role: "system", content: systemPrompt }]
+    const context: LoopMessage[] = [{ role: "system", content: systemPrompt }]
     // Skills injection
     try {
       const skills = await loadSkills()
@@ -572,7 +580,7 @@ export class SessionPrompt {
     try {
       const todos = await this.getTodos(sessionID)
       if (todos.length) {
-        const lines = (todos as any[]).map(t => `- [${t.status}] ${t.content}`)
+        const lines = todos.map(t => `- [${t.status}] ${t.content}`)
         context.push({ role: "system", content: `Current todo list — keep exactly ONE item "in_progress" and update the list before starting new work:\n${lines.join("\n")}` })
       }
     } catch {}
@@ -582,7 +590,7 @@ export class SessionPrompt {
       if (fctx) context.push({ role: "system", content: fctx })
     } catch {}
     // Memory retrieval: inject relevant knowledge (shared KB if injected, else standalone helper)
-    const lastUserText = messages.length ? (messages[messages.length - 1].parts?.find((p: any) => p.type === "text")?.text ?? "") : ""
+    const lastUserText = messages.length ? (messages[messages.length - 1].parts?.find(p => p.type === "text")?.text ?? "") : ""
     if (lastUserText) {
       try {
         const docs = this.deps.knowledge
@@ -594,14 +602,14 @@ export class SessionPrompt {
       } catch {}
     }
     for (const m of messages) {
-      const parts = (m as any).parts ?? []
-      const text = parts.filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n")
+      const parts = m.parts ?? []
+      const text = parts.filter(p => p.type === "text").map(p => p.text).join("\n")
       if (text) context.push({ role: m.role, content: text })
       // Re-hydrate tool calls for continuity
-      for (const p of parts.filter((p: any) => p.type === "tool-call")) {
+      for (const p of parts.filter(p => p.type === "tool-call")) {
         context.push({ role: "assistant", content: "", toolCalls: [{ id: p.toolCallID, name: p.tool, args: p.args }] })
       }
-      for (const p of parts.filter((p: any) => p.type === "tool-result")) {
+      for (const p of parts.filter(p => p.type === "tool-result")) {
         context.push({ role: "tool", content: JSON.stringify(p.result), toolCallID: p.toolCallID })
       }
     }
@@ -610,7 +618,7 @@ export class SessionPrompt {
 
   private async upsertTextPart(messageID: string, sessionID: string, text: string) {
     const existing = await this.deps.db.query.parts.findFirst({
-      where: (p: any, { and, eq }: any) => and(eq(p.messageID, messageID), eq(p.type, "text")),
+      where: (p, { and, eq }) => and(eq(p.messageID, messageID), eq(p.type, "text")),
     })
     if (existing) {
       // NOTE: update().where() takes an SQL expression, not a callback
@@ -626,8 +634,8 @@ export class SessionPrompt {
 
   private async persistToolResult(
     messageID: string, sessionID: string,
-    tc: { id: string; name: string; args: unknown },
-    result: unknown, isError = false,
+    tc: { id: string; name: string; args: Record<string, JsonValue> },
+    result: JsonValue, isError = false,
   ) {
     // Tool-call part
     await this.deps.db.insert(this.deps.db.schema.parts).values({

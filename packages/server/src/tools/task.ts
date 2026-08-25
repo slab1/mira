@@ -10,11 +10,15 @@
 import { z } from "zod"
 import { and, desc, eq } from "drizzle-orm"
 import type { ToolDef } from "./registry.js"
+import type { MiraDB } from "../storage/db.js"
 import { isKnownAgent } from "../agents/templates.js"
 import { jobs } from "../storage/schema.js"
 
 export type Job = typeof jobs.$inferSelect
 type JobStatus = Job["status"]
+
+/** DB may be absent in degraded/embedded contexts — handlers degrade gracefully. */
+type MaybeDB = MiraDB | null | undefined
 
 /** Response shape of the task tool (spawn acknowledgement or final result). */
 export const taskResponseSchema = z.object({
@@ -30,17 +34,24 @@ export const taskResponseSchema = z.object({
 })
 export type TaskResponse = z.infer<typeof taskResponseSchema>
 
+const taskSchema = z.object({
+  description: z.string().describe("Short task label (3-5 words)"),
+  prompt: z.string().describe("Full task instructions for subagent"),
+  subagent_type: z.string().optional().describe("Agent type: explore, plan, general, etc. (default general)"),
+  background: z.boolean().optional().describe("Run in background (return immediately)"),
+})
+
 // ── Job board handlers (for REST/tool layers) ──────────────────────
 
 /** Fetch a single job by ID (undefined if not found). */
-export async function getJob(db: any, jobID: string): Promise<Job | undefined> {
+export async function getJob(db: MaybeDB, jobID: string): Promise<Job | undefined> {
   if (!db) return undefined
   const rows = await db.select().from(jobs).where(eq(jobs.id, jobID)).limit(1)
   return rows[0]
 }
 
 /** List jobs, newest first; optionally scoped to a parent session. */
-export async function listJobs(db: any, parentSessionID?: string): Promise<Job[]> {
+export async function listJobs(db: MaybeDB, parentSessionID?: string): Promise<Job[]> {
   if (!db) return []
   const q = db.select().from(jobs).$dynamic()
   if (parentSessionID) q.where(eq(jobs.parentSessionID, parentSessionID))
@@ -53,7 +64,7 @@ export async function listJobs(db: any, parentSessionID?: string): Promise<Job[]
  * updates guard on status='running' and will not overwrite 'cancelled'
  * (cancelled-on-poll).
  */
-export async function cancelJob(db: any, jobID: string): Promise<Job | undefined> {
+export async function cancelJob(db: MaybeDB, jobID: string): Promise<Job | undefined> {
   if (!db) return undefined
   await db.update(jobs)
     .set({ status: "cancelled" as JobStatus, updatedAt: Date.now() })
@@ -63,7 +74,7 @@ export async function cancelJob(db: any, jobID: string): Promise<Job | undefined
 
 /** Terminal transition — only applies while the job is still 'running'. */
 async function finishJob(
-  db: any,
+  db: MaybeDB,
   jobID: string,
   patch: { status: Exclude<JobStatus, "running">; result?: string; error?: string; childSessionID?: string },
 ) {
@@ -79,12 +90,7 @@ export const taskTool = {
   name: "task",
   description: "Delegate a task to a subagent (explore, plan, general, etc.). Subagent has isolated context and returns a summary. Use for parallel independent work. Background spawns are persisted and pollable via the returned jobID.",
   category: "execution",
-  schema: z.object({
-    description: z.string().describe("Short task label (3-5 words)"),
-    prompt: z.string().describe("Full task instructions for subagent"),
-    subagent_type: z.string().optional().describe("Agent type: explore, plan, general, etc. (default general)"),
-    background: z.boolean().optional().describe("Run in background (return immediately)"),
-  }),
+  schema: taskSchema,
   async execute({ description, prompt, subagent_type = "general", background }, ctx): Promise<TaskResponse> {
     const taskID = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     const bus = ctx.bus
@@ -103,7 +109,7 @@ export const taskTool = {
     }
 
     // Map requested subagent types onto Mira agent templates where they align;
-    // unknown types run with the default persona instead of resolving to undefined.
+    // unrecognized types run with the default persona instead of resolving to undefined.
     const agent = subagent_type === "explore" || subagent_type === "research"
       ? "researcher" as const
       : isKnownAgent(subagent_type)
@@ -179,7 +185,7 @@ export const taskTool = {
       throw err
     }
   },
-}
+} satisfies ToolDef<typeof taskSchema>
 
 export default taskTool
 export const tools = [taskTool]

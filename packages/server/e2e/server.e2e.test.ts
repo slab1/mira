@@ -132,6 +132,54 @@ describe("Mira server E2E", () => {
     await Bun.write(target, "") // cleanup
   })
 
+  test("config layered settings + PATCH persistence", async () => {
+    // GET /config returns merged + layers, apiKeys redacted
+    const cfgRes = await fetch(`${BASE}/config`)
+    expect(cfgRes.status).toBe(200)
+    const cfg = await cfgRes.json() as { merged: { model: string; provider: Record<string, { options: { apiKey: string } }> }; layers: Array<{ source: string }> }
+    expect(typeof cfg.merged.model).toBe("string")
+    expect(Array.isArray(cfg.layers)).toBe(true)
+    // Redaction: no raw key should leak as plain text longer than "***"
+    const rawKey = cfg.merged.provider?.["openrouter"]?.options?.apiKey ?? ""
+    expect(rawKey === "" || rawKey === "***" || rawKey.startsWith("sk-***")).toBe(true)
+
+    // GET /config/schema returns JSON Schema shape
+    const schema = await (await fetch(`${BASE}/config/schema`)).json() as { properties?: Record<string, { type: string }> }
+    expect(typeof schema.properties).toBe("object")
+    expect(schema.properties?.["model"]).toBeDefined()
+
+    // PATCH /config (project layer) → round-trips
+    const testModel = "openrouter/test-e2e-model"
+    const patched = await fetch(`${BASE}/config`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ patch: { model: testModel }, layer: "project" }),
+    })
+    expect(patched.status).toBe(200)
+    const afterPatch = await patched.json() as { merged: { model: string } }
+    expect(afterPatch.merged.model).toBe(testModel)
+
+    // GET again confirms persistence
+    const cfg2 = await (await fetch(`${BASE}/config`)).json() as { merged: { model: string } }
+    expect(cfg2.merged.model).toBe(testModel)
+
+    // Revert to default to not pollute later runs
+    const revert = await fetch(`${BASE}/config`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ patch: { model: "openrouter/anthropic/claude-sonnet-4" }, layer: "project" }),
+    })
+    expect(revert.status).toBe(200)
+
+    // Invalid patch → 400
+    const bad = await fetch(`${BASE}/config`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ patch: null }),
+    })
+    expect(bad.status).toBe(400)
+  })
+
   // ── Live LLM roundtrip (skips when no key is configured) ──────────
   const liveKey = process.env.NVIDIA_API_KEY
   const LIVE_MODEL = "nvidia/meta/llama-3.3-70b-instruct"

@@ -5,6 +5,7 @@
  */
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
+import type { JsonValue } from "../types/index.js"
 import { symbolIndex } from "../symbols/index.js"
 import { guardEdit } from "../symbols/semantic.js"
 import { resolve } from "node:path"
@@ -15,6 +16,15 @@ const LANG_BY_EXT: Record<string, string> = {
   go: "go", ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
   py: "python", rs: "rust", md: "markdown", json: "json",
 }
+
+/**
+ * Plain-JSON view of LSP payload values (typing only).
+ * LSP SDK results are declared as interfaces (SymbolInfo / LSPLocation), which
+ * are not assignable to JsonValue; a JSON round-trip yields identical data with
+ * a JsonValue-compatible type.
+ */
+const asJson = (v: object | string | number | boolean | null): JsonValue =>
+  JSON.parse(JSON.stringify(v ?? null)) as JsonValue
 
 /**
  * Real LSP path: spawn/connect a language server for the file's language,
@@ -36,20 +46,22 @@ async function withRealLSP<T>(
   return await op(client, uri)
 }
 
+const lspSchema = z.object({
+  operation: z.enum(["hover", "definition", "references", "diagnostics", "rename"]).describe("LSP operation"),
+  file: z.string().describe("File path"),
+  line: z.number().optional().describe("Line (1-indexed)"),
+  character: z.number().optional().describe("Character (0-indexed)"),
+  symbol: z.string().optional().describe("Symbol name for references/rename if line/char not provided"),
+  newName: z.string().optional().describe("For rename operation"),
+})
+
 export const lspTool = {
   name: "lsp",
   description: "LSP operations: hover, definition, references, diagnostics, rename. Use for symbol-aware code intelligence before edits.",
   category: "file",
-  schema: z.object({
-    operation: z.enum(["hover", "definition", "references", "diagnostics", "rename"]).describe("LSP operation"),
-    file: z.string().describe("File path"),
-    line: z.number().optional().describe("Line (1-indexed)"),
-    character: z.number().optional().describe("Character (0-indexed)"),
-    symbol: z.string().optional().describe("Symbol name for references/rename if line/char not provided"),
-    newName: z.string().optional().describe("For rename operation"),
-  }),
+  schema: lspSchema,
   async execute({ operation, file, line, character, symbol, newName }, ctx) {
-    const root = (ctx as any)?.cwd ?? process.cwd();
+    const root = ctx.cwd ?? process.cwd();
 
     // ── Real LSP first (gopls etc.); heuristic fallback when unavailable ──
     const real = await withRealLSP(file, root, async (client, uri) => {
@@ -59,14 +71,14 @@ export const lspTool = {
           return { operation, file, server: client.serverName, hover: await client.hover(uri, pos) }
         case "definition": {
           if (line == null || character == null) throw new Error("line and character required for definition")
-          return { operation, file, server: client.serverName, definition: await client.definition(uri, pos) }
+          return { operation, file, server: client.serverName, definition: asJson(await client.definition(uri, pos)) }
         }
         case "references": {
           const pos2 = line != null && character != null ? pos : null
           if (!pos2 && !symbol) throw new Error("symbol or line/character required for references")
           // When only a name is given, fall through to heuristics for locating it
           if (!pos2) throw new Error("SKIP_TO_FALLBACK")
-          return { operation, file, server: client.serverName, references: await client.references(uri, pos2) }
+          return { operation, file, server: client.serverName, references: asJson(await client.references(uri, pos2)) }
         }
       }
       throw new Error("SKIP_TO_FALLBACK")
@@ -85,7 +97,7 @@ export const lspTool = {
         case "definition": {
           if (line == null || character == null) throw new Error("line and character required for definition");
           const def = await symbolIndex.findDefinition(file, line, character);
-          return { operation, file, line, character, definition: def };
+          return { operation, file, line, character, definition: asJson(def) };
         }
         case "references": {
           const name = symbol ?? (line != null && character != null ? (await symbolIndex.findSymbolAt(file, line, character))?.name : undefined);
@@ -106,11 +118,14 @@ export const lspTool = {
           return { operation, oldName: targetName, newName, renamedFiles: result.files, occurrences: result.count };
         }
       }
+      // Switch above is exhaustive over the operation enum — unreachable guard
+      // so the inferred return type excludes undefined (JsonValue contract).
+      throw new Error(`unsupported LSP operation: ${operation}`);
     } catch (err) {
       return { operation, file, error: String(err) };
     }
   },
-}
+} satisfies ToolDef<typeof lspSchema>
 
 export default lspTool
 export const tools = [lspTool]

@@ -37,8 +37,8 @@ export interface Part {
   text?: string
   tool?: string          // tool name for tool-call/result
   toolCallID?: string
-  args?: unknown
-  result?: unknown
+  args?: JsonValue
+  result?: JsonValue
   isError?: boolean
   createdAt: number
 }
@@ -60,13 +60,13 @@ export interface Todo {
 export interface ToolCall {
   id: string
   name: string
-  args: unknown
+  args: Record<string, JsonValue>
 }
 
 export interface ToolResult {
   toolCallID: string
   name: string
-  result: unknown
+  result: JsonValue
   isError?: boolean
 }
 
@@ -84,6 +84,8 @@ export interface StreamChunk {
   usage?: { inputTokens: number; outputTokens: number }
 }
 
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue | undefined }
+
 // ── BusEvent (Event-driven, no polling) ────────────────────────────
 export type BusEventType =
   | "session.created" | "session.updated" | "session.deleted"
@@ -95,7 +97,7 @@ export type BusEventType =
   | "question.ask" | "question.reply"
   | "server.heartbeat" | "server.error"
 
-export interface BusEvent<T = unknown> {
+export interface BusEvent<T = JsonValue> {
   type: BusEventType
   sessionID?: SessionID
   payload: T
@@ -108,7 +110,7 @@ export type PermissionAction = "allow" | "deny" | "ask"
 export interface PermissionRequest {
   sessionID: SessionID
   tool: string
-  args: unknown
+  args: Record<string, JsonValue>
   pattern?: string      // matched permission pattern e.g. "bash:rm *"
 }
 

@@ -7,23 +7,25 @@ import type { ToolDef } from "./registry.js"
 import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 
+const writeSchema = z.object({
+  path: z.string().describe("File path to write"),
+  content: z.string().describe("File content"),
+})
+
 export const writeTool = {
   name: "write",
   description: "Create or overwrite a file. Creates parent directories if needed. Prefer edit for partial updates.",
   category: "file",
   needsPermission: true,
-  schema: z.object({
-    path: z.string().describe("File path to write"),
-    content: z.string().describe("File content"),
-  }),
+  schema: writeSchema,
   async execute({ path, content }, ctx) {
-    const cwd = (ctx as any).cwd ?? process.cwd()
+    const cwd = ctx.cwd ?? process.cwd()
     const abs = path.startsWith("/") ? path : `${cwd}/${path}`
     await mkdir(dirname(abs), { recursive: true })
     await Bun.write(abs, content)
     return { ok: true, path, bytes: Buffer.byteLength(content, "utf8") }
   },
-}
+} satisfies ToolDef<typeof writeSchema>
 
 export default writeTool
 export const tools = [writeTool]

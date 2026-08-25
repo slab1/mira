@@ -5,15 +5,17 @@ import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 import { Glob } from "bun"
 
+const globSchema = z.object({
+  pattern: z.string().describe("Glob pattern, e.g. **/*.ts"),
+  cwd: z.string().optional().describe("Base directory (default cwd)"),
+  limit: z.number().optional().describe("Max results (default 100)"),
+})
+
 export const globTool = {
   name: "glob",
   description: "Find files by glob pattern. Example: **/*.ts, src/**/*.tsx. Returns matching paths.",
   category: "file",
-  schema: z.object({
-    pattern: z.string().describe("Glob pattern, e.g. **/*.ts"),
-    cwd: z.string().optional().describe("Base directory (default cwd)"),
-    limit: z.number().optional().describe("Max results (default 100)"),
-  }),
+  schema: globSchema,
   async execute({ pattern, cwd, limit = 100 }, _ctx) {
     const base = cwd ?? process.cwd()
     const glob = new Glob(pattern)
@@ -24,18 +26,20 @@ export const globTool = {
     }
     return { pattern, cwd: base, count: results.length, files: results }
   },
-}
+} satisfies ToolDef<typeof globSchema>
+
+const grepSchema = z.object({
+  pattern: z.string().describe("Regex pattern to search"),
+  include: z.string().optional().describe("Glob filter, e.g. *.ts"),
+  path: z.string().optional().describe("Directory to search (default cwd)"),
+  limit: z.number().optional().describe("Max matches (default 50)"),
+})
 
 export const grepTool = {
   name: "grep",
   description: "Search file contents via regex. Returns file:line matches. Use glob first to narrow scope if needed.",
   category: "file",
-  schema: z.object({
-    pattern: z.string().describe("Regex pattern to search"),
-    include: z.string().optional().describe("Glob filter, e.g. *.ts"),
-    path: z.string().optional().describe("Directory to search (default cwd)"),
-    limit: z.number().optional().describe("Max matches (default 50)"),
-  }),
+  schema: grepSchema,
   async execute({ pattern, include, path, limit = 50 }, _ctx) {
     const cwd = path ?? process.cwd()
     const args = ["-rn", "--color=never", pattern, cwd]
@@ -57,7 +61,7 @@ export const grepTool = {
     const lines = out.split("\n").filter(Boolean).slice(0, limit)
     return { pattern, cwd, count: lines.length, matches: lines }
   },
-}
+} satisfies ToolDef<typeof grepSchema>
 
 export default globTool
 export const tools = [globTool, grepTool]

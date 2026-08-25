@@ -5,17 +5,19 @@
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 
+const readSchema = z.object({
+  path: z.string().describe("Absolute or relative path to file"),
+  offset: z.number().optional().describe("Line offset (1-indexed)"),
+  limit: z.number().optional().describe("Max lines to return (default 2000)"),
+})
+
 export const readTool = {
   name: "read",
   description: "Read a file from disk. Returns content with line numbers. For images, returns base64. Use glob to discover files first.",
   category: "file",
-  schema: z.object({
-    path: z.string().describe("Absolute or relative path to file"),
-    offset: z.number().optional().describe("Line offset (1-indexed)"),
-    limit: z.number().optional().describe("Max lines to return (default 2000)"),
-  }),
+  schema: readSchema,
   async execute({ path, offset = 1, limit = 2000 }, ctx) {
-    const cwd = (ctx as any).cwd ?? process.cwd()
+    const cwd = ctx.cwd ?? process.cwd()
     const abs = path.startsWith("/") ? path : `${cwd}/${path}`
     const file = Bun.file(abs)
     if (!(await file.exists())) throw new Error(`File not found: ${path}`)
@@ -35,7 +37,7 @@ export const readTool = {
     const truncated = lines.length > offset - 1 + limit ? `\n… ${lines.length - (offset - 1 + limit)} more lines` : ""
     return { path, content: numbered + truncated, totalLines: lines.length }
   },
-}
+} satisfies ToolDef<typeof readSchema>
 
 export default readTool
 export const tools = [readTool]

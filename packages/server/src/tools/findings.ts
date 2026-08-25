@@ -80,15 +80,17 @@ export async function openFindingsForContext(db: MaybeDB, limit = 10): Promise<s
 
 // ── Tools ──────────────────────────────────────────────────────────
 
+const findingWriteSchema = z.object({
+  title: z.string().describe("One-line summary of the finding"),
+  severity: z.enum(["info", "minor", "major", "critical"]).optional().describe("Impact level (default info)"),
+  evidence: z.string().optional().describe("Supporting detail: file:line, error text, what was tried"),
+})
+
 const findingWrite = {
   name: "finding_write",
   description: "Persist a structured finding (bug discovered, failed approach, user constraint) so future sessions can retrieve it. Use instead of prose memory when the insight is reusable.",
   category: "memory",
-  schema: z.object({
-    title: z.string().describe("One-line summary of the finding"),
-    severity: z.enum(["info", "minor", "major", "critical"]).optional().describe("Impact level (default info)"),
-    evidence: z.string().optional().describe("Supporting detail: file:line, error text, what was tried"),
-  }),
+  schema: findingWriteSchema,
   async execute({ title, severity, evidence }, ctx) {
     const f = await writeFinding(getCtxDB(ctx), {
       title, severity, evidence,
@@ -98,33 +100,37 @@ const findingWrite = {
     ctx.bus?.publish({ type: "job.updated", sessionID: ctx.sessionID, payload: { finding: f.id, action: "created" }, timestamp: Date.now() })
     return { id: f.id, status: f.status, severity: f.severity }
   },
-} satisfies ToolDef<any>
+} satisfies ToolDef<typeof findingWriteSchema>
+
+const findingListSchema = z.object({
+  status: z.enum(["open", "resolved"]).optional().describe("Filter by status (default: all)"),
+  severity: z.enum(["info", "minor", "major", "critical"]).optional().describe("Filter by severity"),
+  limit: z.number().int().positive().max(100).optional().describe("Max rows (default 50)"),
+})
 
 const findingList = {
   name: "finding_list",
   description: "List structured findings, newest first. Filter by status/severity to recall prior discoveries before redoing work.",
   category: "memory",
-  schema: z.object({
-    status: z.enum(["open", "resolved"]).optional().describe("Filter by status (default: all)"),
-    severity: z.enum(["info", "minor", "major", "critical"]).optional().describe("Filter by severity"),
-    limit: z.number().int().positive().max(100).optional().describe("Max rows (default 50)"),
-  }),
+  schema: findingListSchema,
   async execute({ status, severity, limit }, ctx) {
     return listFindings(getCtxDB(ctx), { status, severity, limit })
   },
-} satisfies ToolDef<any>
+} satisfies ToolDef<typeof findingListSchema>
+
+const findingResolveSchema = z.object({ id: z.string().describe("Finding ID to resolve") })
 
 const findingResolve = {
   name: "finding_resolve",
   description: "Mark a finding resolved once its underlying problem is fixed or the lesson is no longer actionable.",
   category: "memory",
-  schema: z.object({ id: z.string().describe("Finding ID to resolve") }),
+  schema: findingResolveSchema,
   async execute({ id }, ctx) {
     const f = await resolveFinding(getCtxDB(ctx), id)
     if (!f) return { error: `finding not found: ${id}` }
     return { id: f.id, status: f.status, resolvedAt: f.resolvedAt }
   },
-} satisfies ToolDef<any>
+} satisfies ToolDef<typeof findingResolveSchema>
 
 export const tools = [findingWrite, findingList, findingResolve]
 export default tools

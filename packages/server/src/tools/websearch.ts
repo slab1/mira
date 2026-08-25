@@ -5,14 +5,25 @@
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 
+const websearchSchema = z.object({
+  query: z.string().describe("Search query"),
+  count: z.number().optional().describe("Number of results (default 5, max 10)"),
+})
+
+/** Loose view of provider result rows (Firecrawl/Tavily) — typing only, fields optional as providers vary. */
+interface SearchRow {
+  title?: string
+  url?: string
+  description?: string
+  content?: string
+  metadata?: { title?: string; description?: string }
+}
+
 export const websearchTool = {
   name: "websearch",
   description: "Search the web. Returns titles, URLs, snippets. Use webfetch to read full content of promising results.",
   category: "web",
-  schema: z.object({
-    query: z.string().describe("Search query"),
-    count: z.number().optional().describe("Number of results (default 5, max 10)"),
-  }),
+  schema: websearchSchema,
   async execute({ query, count = 5 }, _ctx) {
     const count_ = Math.min(count, 10)
     // 1. Firecrawl (best quality)
@@ -26,8 +37,8 @@ export const websearchTool = {
           signal: AbortSignal.timeout(20_000),
         })
         if (res.ok) {
-          const data: any = await res.json()
-          const results = (data.data ?? data.results ?? []).map((r: any) => ({
+          const data = await res.json() as { data?: SearchRow[]; results?: SearchRow[] }
+          const results = (data.data ?? data.results ?? []).map(r => ({
             title: r.title ?? r.metadata?.title ?? r.url, url: r.url, snippet: r.description ?? r.metadata?.description ?? "",
           }))
           if (results.length) return { query, provider: "firecrawl", results }
@@ -45,8 +56,8 @@ export const websearchTool = {
           signal: AbortSignal.timeout(20_000),
         })
         if (res.ok) {
-          const data: any = await res.json()
-          const results = (data.results ?? []).map((r: any) => ({ title: r.title, url: r.url, snippet: r.content ?? "" }))
+          const data = await res.json() as { results?: SearchRow[] }
+          const results = (data.results ?? []).map(r => ({ title: r.title, url: r.url, snippet: r.content ?? "" }))
           if (results.length) return { query, provider: "tavily", results }
         }
       } catch {}
@@ -79,17 +90,19 @@ export const websearchTool = {
       note: "No search provider available. Set FIRECRAWL_API_KEY or TAVILY_API_KEY for live results; DuckDuckGo fallback may be rate-limited.",
     }
   },
-}
+} satisfies ToolDef<typeof websearchSchema>
+
+const webfetchSchema = z.object({
+  url: z.string().url().describe("URL to fetch"),
+  extract: z.enum(["markdown", "text", "html"]).optional().describe("Output format (default markdown)"),
+  maxChars: z.number().optional().describe("Max chars (default 15000)"),
+})
 
 export const webfetchTool = {
   name: "webfetch",
   description: "Fetch a URL and extract main content as markdown. Handles redirects, 30s timeout.",
   category: "web",
-  schema: z.object({
-    url: z.string().url().describe("URL to fetch"),
-    extract: z.enum(["markdown", "text", "html"]).optional().describe("Output format (default markdown)"),
-    maxChars: z.number().optional().describe("Max chars (default 15000)"),
-  }),
+  schema: webfetchSchema,
   async execute({ url, maxChars = 15000 }, _ctx) {
     const res = await fetch(url, {
       headers: { "User-Agent": "Mira/0.1 (+https://mira.ai)" },
@@ -107,7 +120,7 @@ export const webfetchTool = {
       .slice(0, maxChars)
     return { url, content: text, truncated: html.length > maxChars }
   },
-}
+} satisfies ToolDef<typeof webfetchSchema>
 
 export default websearchTool
 export const tools = [websearchTool, webfetchTool]
