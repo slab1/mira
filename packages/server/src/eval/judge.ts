@@ -2,7 +2,7 @@
  * Mira Eval — LLM-as-Judge
  *
  * Pattern: rubric + 0-5 Likert + binary pass + rationale
- * Works with any OpenAI-compatible gateway (OpenRouter). Falls back to
+ * Works with arbitrary OpenAI-compatible gateways (OpenRouter). Falls back to
  * heuristic judge when no API key is set so CI never flaps.
  *
  * Rubric dimensions (default):
@@ -39,9 +39,15 @@ export interface JudgeVerdict {
   score: number; // 0..1 (weighted)
   dimensionScores: Record<string, number>; // 0..5 normalized to 0..1
   rationale: string;
-  raw?: unknown;
+  raw?: JudgeModelOutput;
   latencyMs: number;
   costUsd?: number;
+}
+
+/** Shape the judge model is asked to return (JSON only) */
+export interface JudgeModelOutput {
+  dimensionScores?: Record<string, number>;
+  rationale?: string;
 }
 
 export interface JudgeSuiteResult {
@@ -193,9 +199,9 @@ Return JSON ONLY with shape:
     }),
   });
   if (!res.ok) throw new Error(`judge ${res.status}: ${(await res.text()).slice(0, 400)}`);
-  const data: any = await res.json();
+  const data = (await res.json()) as JudgeApiResponse;
   const content = data.choices?.[0]?.message?.content ?? "{}";
-  const parsed = JSON.parse(content);
+  const parsed = JSON.parse(content) as JudgeModelOutput;
   // dimensionScores are 0..5
   const dimScores5: Record<string, number> = parsed.dimensionScores ?? {};
   const dimScores: Record<string, number> = {};
@@ -230,8 +236,31 @@ function estimateCost(_model: string, prompt: number, completion: number): numbe
 
 import judgeCasesFixture from "./fixtures/judge-cases.json" with { type: "json" };
 
+/** OpenAI-compatible chat completion response (judge API) */
+interface JudgeApiResponse {
+  choices?: Array<{ message?: { content?: string } }>;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+}
+
+/** Shape of fixtures/judge-cases.json */
+interface JudgeFixture {
+  cases?: Array<{
+    id: string;
+    input: string;
+    expected?: string;
+    output: string;
+    context?: string | null;
+  }>;
+}
+
 export async function runJudgeSuite(opts: { model?: string; sample?: number; rubric?: string } = {}): Promise<JudgeSuiteResult> {
-  const all: JudgeCase[] = (judgeCasesFixture as any).cases ?? [];
+  const all: JudgeCase[] = ((judgeCasesFixture as JudgeFixture).cases ?? []).map(c => ({
+    id: c.id,
+    input: c.input,
+    expected: c.expected,
+    output: c.output,
+    context: c.context ?? undefined,
+  }));
   const slice = typeof opts.sample === "number" ? all.slice(0, opts.sample) : all;
   const cases = slice.length ? slice : fallbackCases;
   const verdicts: JudgeVerdict[] = [];

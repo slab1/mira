@@ -18,7 +18,7 @@
  */
 
 import { getTier, listTiers, type TierName, type TierReport } from "./tiers.js";
-import { createTrace, startSpan, endSpan, flush, exportTraces } from "./tracing.js";
+import { createTrace, startSpan, endSpan, flush, exportTraces, type ExportedTraces } from "./tracing.js";
 
 export interface EvalReport {
   requested: TierName | "all";
@@ -28,7 +28,7 @@ export interface EvalReport {
   tiers: TierReport[];
   passed: boolean;
   durationMs: number;
-  traces?: unknown;
+  traces?: ExportedTraces;
 }
 
 export class EvalRunner {
@@ -106,8 +106,8 @@ function parseTier(argv: string[]): TierName | "all" {
   const idx = argv.findIndex(a => a === "--tier" || a === "-t");
   const raw = idx !== -1 ? argv[idx + 1] : argv.find(a => a.startsWith("--tier="))?.split("=")[1];
   const v = (raw ?? "pr").toLowerCase();
-  if (v === "all" || v === "pr" || v === "nightly" || v === "prod") return v as any;
-  console.warn(`[eval] unknown tier "${raw}", defaulting to pr`);
+  if (v === "all" || v === "pr" || v === "nightly" || v === "prod") return v;
+  console.warn(`[eval] unrecognized tier "${raw}", defaulting to pr`);
   return "pr";
 }
 

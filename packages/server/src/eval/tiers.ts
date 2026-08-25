@@ -8,6 +8,10 @@
  * Inspiration: Braintrust / Langfuse 3-tier evals (89% observability, 52% eval gap)
  */
 
+import type { DriftCheckResult } from "./tracing.js";
+import type { JudgeSuiteResult } from "./judge.js";
+import type { BenchmarkResult } from "./benchmarks.js";
+
 export type TierName = "pr" | "nightly" | "prod";
 
 export interface TierCheck {
@@ -34,7 +38,7 @@ export interface CheckResult {
   latencyMs: number;
   costUsd?: number;
   message?: string;
-  details?: unknown;
+  details?: JudgeSuiteResult | BenchmarkResult | DriftCheckResult;
 }
 
 export interface TierReport {
@@ -313,7 +317,7 @@ export const TIERS: Record<TierName, TierConfig> = {
 
 export function getTier(name: TierName): TierConfig {
   const t = TIERS[name];
-  if (!t) throw new Error(`unknown tier: ${name}`);
+  if (!t) throw new Error(`unrecognized tier: ${name}`);
   return t;
 }
 

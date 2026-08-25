@@ -11,13 +11,35 @@
  *   MIRA_TRACE_SAMPLE_RATE  (0..1, default 1 in eval, 0.1 in prod)
  */
 
+import type { Tracer, Span as OTelSpan } from "@opentelemetry/api"
+
+/** Structural shims for the OPTIONAL langfuse SDK (not a hard dependency).
+ *  When absent we degrade to the in-memory store; these mirror the SDK surface
+ *  actually used here so no `any` is needed at call sites. */
+interface LangfuseSpanLike {
+  end(input?: { output?: Record<string, string | number | boolean | undefined>; statusMessage?: string }): void
+  update(input?: Record<string, string | number | boolean | undefined>): void
+}
+interface LangfuseTraceLike {
+  span(input: { id: string; name: string; input?: Record<string, string | number | boolean | undefined> }): LangfuseSpanLike
+  update(input?: Record<string, string | number | boolean | undefined>): void
+}
+interface LangfuseClientLike {
+  trace(input: { id: string; name: string; metadata?: Record<string, string | number | boolean | undefined> }): LangfuseTraceLike
+  flushAsync?(): Promise<void>
+}
+
+/** Attribute values we put on spans (OTel-compatible subset) */
+export type SpanAttrValue = string | number | boolean | undefined
+export type SpanAttributes = Record<string, SpanAttrValue>
+
 export interface Span {
   name: string;
   traceId: string;
   spanId: string;
   startMs: number;
   endMs?: number;
-  attributes: Record<string, unknown>;
+  attributes: SpanAttributes;
   status: "ok" | "error";
   error?: string;
   parentId?: string;
@@ -27,7 +49,7 @@ export interface Trace {
   traceId: string;
   name: string;
   spans: Span[];
-  metadata?: Record<string, unknown>;
+  metadata?: SpanAttributes;
 }
 
 export interface DriftCheckResult {
@@ -54,9 +76,19 @@ function nowMs() { return Date.now(); }
 
 // ── OTel + Langfuse lazy clients ─────────────────────────────────────
 
+/**
+ * Structural shim for the optional Langfuse SDK (not a hard dependency —
+ * installed separately; when absent we degrade to the in-memory store).
+ */
+
+/**
+ * Structural shim for the optional auto-instrumentations package (not a hard
+ * dependency). Return type mirrors NodeSDKConfiguration["instrumentations"].
+ */
+
 let otelInited = false;
-let otelTracer: any = null;
-let langfuseClient: any = null;
+let otelTracer: Tracer | null = null;
+let langfuseClient: LangfuseClientLike | null = null;
 
 async function initOtel(): Promise<void> {
   if (otelInited) return;
@@ -65,16 +97,20 @@ async function initOtel(): Promise<void> {
   if (!endpoint) return;
   try {
     // Optional deps — don't crash if not installed
-    const { NodeSDK } = await import("@opentelemetry/sdk-node" as any);
-    const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http" as any);
-    const { getNodeAutoInstrumentations } = await import("@opentelemetry/auto-instrumentations-node" as any);
+    const { NodeSDK } = await import("@opentelemetry/sdk-node");
+    const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http");
+    // Optional package: imported non-literally; only shape used is the
+    // instrumentation array NodeSDK already expects.
+    type Instrumentations = NonNullable<import("@opentelemetry/sdk-node").NodeSDKConfiguration["instrumentations"]>
+    const autoInstr = (await import("@opentelemetry/auto-instrumentations-node" as string).catch(() => null)) as { getNodeAutoInstrumentations?: () => Instrumentations } | null;
+    if (!autoInstr?.getNodeAutoInstrumentations) throw new Error("auto-instrumentations not installed");
     const sdk = new NodeSDK({
       traceExporter: new OTLPTraceExporter({ url: `${endpoint.replace(/\/$/, "")}/v1/traces` }),
-      instrumentations: [getNodeAutoInstrumentations()],
+      instrumentations: autoInstr.getNodeAutoInstrumentations(),
     });
     await sdk.start();
     // get tracer
-    const { trace } = await import("@opentelemetry/api" as any);
+    const { trace } = await import("@opentelemetry/api");
     otelTracer = trace.getTracer("mira-eval", "0.1.0");
     console.log(`[tracing] OTel enabled → ${endpoint}`);
   } catch (e) {
@@ -88,7 +124,9 @@ async function initLangfuse(): Promise<void> {
   const sec = process.env.LANGFUSE_SECRET_KEY;
   if (!pub || !sec) return;
   try {
-    const { Langfuse } = await import("langfuse" as any);
+    const mod = (await import("langfuse" as string).catch(() => null)) as { Langfuse?: new (opts: { publicKey: string; secretKey: string; baseUrl?: string }) => LangfuseClientLike } | null;
+    if (!mod?.Langfuse) throw new Error("langfuse not installed");
+    const { Langfuse } = mod;
     langfuseClient = new Langfuse({
       publicKey: pub,
       secretKey: sec,
@@ -106,20 +144,26 @@ initLangfuse().catch(() => {});
 
 // ── Public API ────────────────────────────────────────────────────────
 
-export function createTrace(name: string, metadata?: Record<string, unknown>): Trace {
+// Live SDK objects associated with our plain-data Trace/Span records
+// (WeakMap instead of expando properties — keeps the exported shapes pure).
+const lfTraceByTrace = new WeakMap<Trace, LangfuseTraceLike>();
+const otelSpanBySpan = new WeakMap<Span, OTelSpan>();
+const lfSpanBySpan = new WeakMap<Span, LangfuseSpanLike>();
+
+export function createTrace(name: string, metadata?: SpanAttributes): Trace {
   const trace: Trace = { traceId: rid("trace"), name, spans: [], metadata };
   traces.set(trace.traceId, trace);
   // Also start a Langfuse trace if available
   if (langfuseClient) {
     try {
       const lfTrace = langfuseClient.trace({ id: trace.traceId, name, metadata });
-      (trace as any).__lfTrace = lfTrace;
+      lfTraceByTrace.set(trace, lfTrace);
     } catch {}
   }
   return trace;
 }
 
-export function startSpan(trace: Trace, name: string, attrs: Record<string, unknown> = {}, parentId?: string): Span {
+export function startSpan(trace: Trace, name: string, attrs: SpanAttributes = {}, parentId?: string): Span {
   const span: Span = {
     name,
     traceId: trace.traceId,
@@ -133,27 +177,27 @@ export function startSpan(trace: Trace, name: string, attrs: Record<string, unkn
   // OTel live span
   if (otelTracer) {
     try {
-      const ctxSpan = otelTracer.startSpan(name, { attributes: attrs as any });
-      (span as any).__otelSpan = ctxSpan;
+      const ctxSpan = otelTracer.startSpan(name, { attributes: attrs });
+      otelSpanBySpan.set(span, ctxSpan);
     } catch {}
   }
   // Langfuse generation/span
-  const lfTrace = (trace as any).__lfTrace;
+  const lfTrace = lfTraceByTrace.get(trace);
   if (lfTrace) {
     try {
       const lfSpan = lfTrace.span({ id: span.spanId, name, input: attrs });
-      (span as any).__lfSpan = lfSpan;
+      lfSpanBySpan.set(span, lfSpan);
     } catch {}
   }
   return span;
 }
 
-export function endSpan(span: Span, attrs: Record<string, unknown> = {}, isError = false): void {
+export function endSpan(span: Span, attrs: SpanAttributes = {}, isError = false): void {
   span.endMs = nowMs();
   Object.assign(span.attributes, attrs);
   span.status = isError ? "error" : "ok";
   if (isError && typeof attrs.error === "string") span.error = attrs.error;
-  const otelSpan = (span as any).__otelSpan;
+  const otelSpan = otelSpanBySpan.get(span);
   if (otelSpan) {
     try {
       if (isError) otelSpan.setStatus({ code: 2, message: span.error });
@@ -161,7 +205,7 @@ export function endSpan(span: Span, attrs: Record<string, unknown> = {}, isError
       otelSpan.end();
     } catch {}
   }
-  const lfSpan = (span as any).__lfSpan;
+  const lfSpan = lfSpanBySpan.get(span);
   if (lfSpan) {
     try { lfSpan.end({ output: attrs, statusMessage: isError ? span.error : undefined }); } catch {}
   }
@@ -172,7 +216,7 @@ export function endSpan(span: Span, attrs: Record<string, unknown> = {}, isError
 
 export async function flush(): Promise<void> {
   if (langfuseClient) {
-    try { await langfuseClient.flushAsync(); } catch {}
+    try { await langfuseClient.flushAsync?.(); } catch {}
   }
   // OTel flush is via SDK shutdown; no-op here
 }
@@ -254,8 +298,29 @@ export function withTracing<T>(traceName: string, fn: (trace: Trace) => Promise<
     .finally(() => { flush().catch(() => {}); });
 }
 
+export interface ExportedTraceSpan {
+  spanId: string;
+  name: string;
+  startMs: number;
+  endMs?: number;
+  durationMs?: number;
+  status: "ok" | "error";
+  attributes: SpanAttributes;
+}
+
+export interface ExportedTrace {
+  traceId: string;
+  name: string;
+  spans: ExportedTraceSpan[];
+}
+
+export interface ExportedTraces {
+  resource: { service: string; version: string };
+  traces: ExportedTrace[];
+}
+
 /** Export traces in OTel-ish JSON (for Langfuse/Braintrust upload or local debug) */
-export function exportTraces(): unknown {
+export function exportTraces(): ExportedTraces {
   return {
     resource: { service: "mira-eval", version: "0.1.0" },
     traces: [...traces.values()].map(t => ({

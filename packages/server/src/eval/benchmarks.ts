@@ -14,12 +14,20 @@
 
 export type BenchmarkId = "swe-bench-mini" | "terminal-bench-mini" | "locomo-mini";
 
+import type { JsonValue } from "../types/index.js";
+
+/** Free-form per-task metadata carried through to judges/reporters */
+export interface BenchmarkTaskMeta {
+  solution?: string;
+  [key: string]: JsonValue | undefined;
+}
+
 export interface BenchmarkTask {
   id: string;
   input: string;
   expected: string;
   context?: string;
-  meta?: Record<string, unknown>;
+  meta?: BenchmarkTaskMeta;
 }
 
 export interface BenchmarkDef {
@@ -52,10 +60,51 @@ import sweBenchFixture from "./fixtures/swe-bench.sample.json" with { type: "jso
 import terminalBenchFixture from "./fixtures/terminal-bench.sample.json" with { type: "json" };
 import locomoFixture from "./fixtures/locomo.sample.json" with { type: "json" };
 
+// Fixture row shapes (supersets of the real files so the defensive
+// fallback chains below keep compiling against future schema variants).
+type SweBenchRow = {
+  id?: string;
+  instance_id?: string;
+  problem_statement?: string;
+  patch?: string;
+  repo?: string;
+  expected?: string;
+  input?: string;
+  issue?: string;
+  solution?: string;
+  context?: string;
+};
+type SweBenchFixture = SweBenchRow[] | { tasks?: SweBenchRow[]; instances?: SweBenchRow[] };
+
+type TerminalBenchRow = {
+  id?: string;
+  task_id?: string;
+  instruction?: string;
+  expected?: string;
+  solution?: string;
+  answer?: string;
+  environment?: string;
+  input?: string;
+  context?: string;
+};
+type TerminalBenchFixture = TerminalBenchRow[] | { tasks?: TerminalBenchRow[] };
+
+type LoCoMoQuestion = { id?: string; question?: string; answer?: string; category?: string };
+type LoCoMoConversation = {
+  id?: string;
+  qid?: string;
+  question?: string;
+  answer?: string;
+  conversation?: string;
+  context?: string;
+  questions?: LoCoMoQuestion[];
+};
+type LoCoMoFixture = LoCoMoConversation[] | { conversations?: LoCoMoConversation[]; tasks?: LoCoMoConversation[] };
+
 function tasksFromSweBench(): BenchmarkTask[] {
-  const raw: any = sweBenchFixture;
-  const arr = Array.isArray(raw) ? raw : raw.tasks ?? raw.instances ?? [];
-  return arr.map((t: any) => ({
+  const fixture = sweBenchFixture as SweBenchFixture;
+  const arr: SweBenchRow[] = Array.isArray(fixture) ? fixture : (fixture.tasks ?? fixture.instances ?? []);
+  return arr.map(t => ({
     id: t.id ?? t.instance_id ?? String(Math.random()).slice(2),
     input: t.problem_statement ?? t.input ?? t.issue ?? "",
     expected: t.expected ?? t.patch ?? t.solution ?? "",
@@ -65,9 +114,9 @@ function tasksFromSweBench(): BenchmarkTask[] {
 }
 
 function tasksFromTerminalBench(): BenchmarkTask[] {
-  const raw: any = terminalBenchFixture;
-  const arr = Array.isArray(raw) ? raw : raw.tasks ?? [];
-  return arr.map((t: any) => ({
+  const fixture = terminalBenchFixture as TerminalBenchFixture;
+  const arr: TerminalBenchRow[] = Array.isArray(fixture) ? fixture : (fixture.tasks ?? []);
+  return arr.map(t => ({
     id: t.id ?? t.task_id ?? "",
     input: t.instruction ?? t.input ?? "",
     expected: t.expected ?? t.solution ?? t.answer ?? "",
@@ -77,8 +126,8 @@ function tasksFromTerminalBench(): BenchmarkTask[] {
 }
 
 function tasksFromLoCoMo(): BenchmarkTask[] {
-  const raw: any = locomoFixture;
-  const arr = Array.isArray(raw) ? raw : raw.conversations ?? raw.tasks ?? [];
+  const fixture = locomoFixture as LoCoMoFixture;
+  const arr: LoCoMoConversation[] = Array.isArray(fixture) ? fixture : (fixture.conversations ?? fixture.tasks ?? []);
   // LoCoMo: long conversation + questions; flatten to tasks
   const out: BenchmarkTask[] = [];
   for (const conv of arr) {
@@ -94,8 +143,8 @@ function tasksFromLoCoMo(): BenchmarkTask[] {
       for (const q of conv.questions) {
         out.push({
           id: q.id ?? `${conv.id}-${out.length}`,
-          input: q.question,
-          expected: q.answer,
+          input: q.question ?? "",
+          expected: q.answer ?? "",
           context: conv.conversation ?? conv.context ?? "",
           meta: { ...conv, question: q },
         });
@@ -153,7 +202,7 @@ export async function runBenchmark(
   opts: { limit?: number; judgeModel?: string } = {}
 ): Promise<BenchmarkResult> {
   const bench = getBenchmark(id);
-  if (!bench) throw new Error(`unknown benchmark: ${id}. known: ${Object.keys(BENCHMARKS).join(", ")}`);
+  if (!bench) throw new Error(`unrecognized benchmark: ${id}. known: ${Object.keys(BENCHMARKS).join(", ")}`);
   const t0 = Date.now();
   const tasks = typeof opts.limit === "number" ? bench.tasks.slice(0, opts.limit) : bench.tasks;
 
@@ -206,7 +255,7 @@ async function stubAgent(task: BenchmarkTask): Promise<string> {
     ].join("\n");
   }
   if (isTerminal) {
-    const sol = (task as any).meta?.solution ?? task.expected;
+    const sol = task.meta?.solution ?? task.expected;
     return [
       `Task: ${task.input}`,
       `Executed in ${task.context ?? "terminal"}:`,

@@ -19,30 +19,107 @@
  *   - Summarization helper for compaction (uses smallModel)
  */
 
-import type { MiraConfig } from "../types/index.js"
+import type { JsonValue, MiraConfig } from "../types/index.js"
+import type { z } from "zod"
+
+// ── Wire types ────────────────────────────────────────────────────────
+
+/** Usage as reported by providers — both camelCase (Vercel AI SDK) and snake_case (OpenAI) shapes */
+export type ChunkUsage = {
+  inputTokens?: number
+  outputTokens?: number
+  promptTokens?: number
+  completionTokens?: number
+  prompt_tokens?: number
+  completion_tokens?: number
+}
+
+export type GatewayToolCall = {
+  id: string
+  name: string
+  args: Record<string, JsonValue>
+}
+
+/**
+ * Chunks yielded by Gateway.stream(): mirrors core StreamChunk
+ * plus the trailing "usage-report" chunk some OpenAI-compatible providers emit.
+ */
+export type GatewayChunk =
+  | { type: "text-delta"; text?: string }
+  | { type: "tool-call"; toolCall: GatewayToolCall }
+  | { type: "tool-result"; toolCallID?: string; result?: JsonValue; isError?: boolean }
+  | { type: "finish"; finishReason?: "stop" | "tool-calls" | "length" | "error"; usage?: ChunkUsage }
+  | { type: "error"; error?: string }
+  | { type: "usage-report"; usage: ChunkUsage }
+
+/** Minimal structural message accepted by stream()/summarize() */
+export interface GatewayMessage {
+  role: string
+  content: string
+  /** for role "tool": id of the tool call this result answers */
+  toolCallID?: string
+  toolCalls?: Array<{ id?: string; name?: string }>
+}
+
+/** Multimodal content part (vision) for complete() */
+export type GatewayContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail?: string } }
 
 export interface StreamOptions {
   model: string              // e.g. "openrouter/anthropic/claude-sonnet-4" or "anthropic/claude-sonnet-4"
-  messages: Array<{ role: string; content: unknown }>
-  tools?: Record<string, { description: string; parameters: unknown }>
+  messages: Array<GatewayMessage>
+  tools?: Record<string, { description: string; parameters: z.ZodTypeAny }>
   system?: string
   maxTokens?: number
   temperature?: number
 }
 
+// ── OpenAI-compatible wire shapes ─────────────────────────────────────
+
+interface ChatRequestMessage {
+  role: string
+  content: string | Array<Record<string, JsonValue>>
+  tool_call_id?: string
+}
+
+interface ChatCompletionRequest {
+  model: string
+  messages: ChatRequestMessage[]
+  stream?: boolean
+  stream_options?: { include_usage: boolean }
+  tools?: Array<{ type: "function"; function: { name: string; description: string; parameters: z.ZodTypeAny } }>
+  tool_choice?: "auto"
+  max_tokens?: number
+  temperature?: number
+}
+
+interface ChatCompletionResponse {
+  choices?: Array<{
+    message?: { content?: string }
+    finish_reason?: string
+    delta?: { content?: string; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> }
+  }>
+  usage?: { prompt_tokens?: number; completion_tokens?: number }
+}
+
+interface OpenRouterModelsResponse {
+  data?: Array<{ id?: string; name?: string; context_length?: number }>
+}
+
 export interface Gateway {
   /** Stream LLM response (async iterable of chunks) — Vercel AI SDK v5 style */
-  stream(opts: StreamOptions): Promise<AsyncIterable<any>>
+  stream(opts: StreamOptions): Promise<AsyncIterable<GatewayChunk>>
   /** Non-streaming completion — supports multimodal content parts (vision) */
   complete(opts: {
     model: string
     system?: string
     /** string OR OpenAI-style content parts (e.g. [{type:"text"},{type:"image_url"...}]) */
-    prompt: unknown
+    prompt: string | GatewayContentPart[]
     maxTokens?: number
   }): Promise<{ text: string; inputTokens?: number; outputTokens?: number }>
   /** Summarize messages via smallModel (for compaction) */
-  summarize(messages: any[], smallModel?: string): Promise<string>
+  summarize(messages: GatewayMessage[], smallModel?: string): Promise<string>
   /** List available models (from OpenRouter /api/models) */
   listModels(): Promise<Array<{ id: string; name: string; context: number }>>
   /** Cumulative cost/latency/token stats for this process */
@@ -50,7 +127,7 @@ export interface Gateway {
 }
 
 /** Wrap an async iterable, invoking onUsage when usage info appears (finish chunk or trailing report) */
-async function* trackedStream(iter: AsyncIterable<any>, onUsage: (u: { input: number; output: number }) => void): AsyncIterable<any> {
+async function* trackedStream(iter: AsyncIterable<GatewayChunk>, onUsage: (u: { input: number; output: number }) => void): AsyncIterable<GatewayChunk> {
   for await (const chunk of iter) {
     const u = chunk?.type === "finish"
       ? chunk.usage
@@ -170,7 +247,7 @@ export function createGateway(config: MiraConfig): Gateway {
         signal: AbortSignal.timeout(120_000),
       })
       if (!res.ok) throw new Error(`complete() ${res.status}: ${(await res.text()).slice(0, 300)}`)
-      const data: any = await res.json()
+      const data = (await res.json()) as ChatCompletionResponse
       const text = data.choices?.[0]?.message?.content ?? ""
       record(modelID, data.usage?.prompt_tokens ?? 0, data.usage?.completion_tokens ?? 0, Date.now() - t0)
       return {
@@ -189,7 +266,7 @@ export function createGateway(config: MiraConfig): Gateway {
       const MAX_MSG_CHARS = 800
       const transcript = messages
         .filter(m => m.role !== "system")
-        .map((m: any) => {
+        .map(m => {
           const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "")
           return `${m.role}: ${c.length > MAX_MSG_CHARS ? c.slice(0, MAX_MSG_CHARS) + "…" : c}`
         })
@@ -213,7 +290,7 @@ export function createGateway(config: MiraConfig): Gateway {
             signal: AbortSignal.timeout(45_000),
           })
           if (res.ok) {
-            const data: any = await res.json()
+            const data = (await res.json()) as ChatCompletionResponse
             const content = data.choices?.[0]?.message?.content
             if (content) {
               record(modelID, data.usage?.prompt_tokens ?? 0, data.usage?.completion_tokens ?? 0, Date.now() - t0)
@@ -227,14 +304,14 @@ export function createGateway(config: MiraConfig): Gateway {
 
       // ── Fallback: extractive summary (deterministic, no API) ──
       const lines: string[] = []
-      const firstUser = messages.find((m: any) => m.role === "user")
+      const firstUser = messages.find(m => m.role === "user")
       if (firstUser) lines.push(`Original task: ${String(typeof firstUser.content === "string" ? firstUser.content : JSON.stringify(firstUser.content)).slice(0, 300)}`)
       let toolsUsed = 0
       for (const m of messages) {
-        if (Array.isArray((m as any).toolCalls)) toolsUsed += (m as any).toolCalls.length
+        if (Array.isArray(m.toolCalls)) toolsUsed += m.toolCalls.length
       }
       if (toolsUsed) lines.push(`Tool calls in this span: ${toolsUsed}`)
-      const lastAssistant = [...messages].reverse().find((m: any) => m.role === "assistant" && typeof m.content === "string" && m.content.trim())
+      const lastAssistant = [...messages].reverse().find(m => m.role === "assistant" && typeof m.content === "string" && m.content.trim())
       if (lastAssistant) lines.push(`Last state: ${lastAssistant.content.slice(0, 300)}`)
       lines.push(`(${messages.length} messages condensed extractively — set an API key for abstractive summaries)`)
       return lines.join("\n")
@@ -248,8 +325,8 @@ export function createGateway(config: MiraConfig): Gateway {
           headers: { Authorization: `Bearer ${or.options.apiKey}` },
         })
         if (!res.ok) throw new Error(String(res.status))
-        const data: any = await res.json()
-        return (data.data ?? []).slice(0, 50).map((m: any) => ({ id: `openrouter/${m.id}`, name: m.name, context: m.context_length ?? 128_000 }))
+        const data = (await res.json()) as OpenRouterModelsResponse
+        return (data.data ?? []).slice(0, 50).map(m => ({ id: `openrouter/${m.id}`, name: m.name ?? "", context: m.context_length ?? 128_000 }))
       } catch {
         return [{ id: "openrouter/anthropic/claude-sonnet-4", name: "Claude Sonnet 4", context: 200_000 }]
       }
@@ -272,12 +349,12 @@ export function createGateway(config: MiraConfig): Gateway {
 
 // ── Live OpenAI-compatible stream (fetch + SSE) ────────────────────
 
-async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID: string; opts: StreamOptions }): Promise<AsyncIterable<any>> {
+async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID: string; opts: StreamOptions }): Promise<AsyncIterable<GatewayChunk>> {
   const { baseURL, apiKey, modelID, opts } = ctx
 
   // Build OpenAI-compatible request
   const isClaude = /claude|anthropic/i.test(modelID)
-  const systemMsg = opts.system
+  const systemMsg: ChatRequestMessage | null = opts.system
     ? {
         role: "system",
         // Prompt caching: OpenRouter forwards cache_control to Anthropic —
@@ -286,19 +363,19 @@ async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID:
       }
     : null
 
-  const body: any = {
+  const body: ChatCompletionRequest = {
     model: modelID,
     messages: [
       ...(systemMsg ? [systemMsg] : []),
       ...opts.messages.map(m => ({
         role: m.role === "tool" ? "tool" : m.role,
         content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
-        ...(m.role === "tool" ? { tool_call_id: (m as any).toolCallID } : {}),
+        ...(m.role === "tool" ? { tool_call_id: m.toolCallID } : {}),
       })),
     ],
     stream: true,
     stream_options: { include_usage: true },
-    ...(opts.tools ? { tools: Object.entries(opts.tools).map(([name, def]: any) => ({ type: "function", function: { name, description: def.description, parameters: def.parameters } })), tool_choice: "auto" } : {}),
+    ...(opts.tools ? { tools: Object.entries(opts.tools).map(([name, def]) => ({ type: "function" as const, function: { name, description: def.description, parameters: def.parameters } })), tool_choice: "auto" as const } : {}),
   }
 
   const res = await fetch(`${baseURL.replace(/\/$/, "")}/chat/completions`, {
@@ -319,7 +396,7 @@ async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID:
   }
 
   // Parse SSE → AsyncIterable<StreamChunk>
-  async function* gen() {
+  async function* gen(): AsyncGenerator<GatewayChunk> {
     const reader = res.body!.getReader()
     const decoder = new TextDecoder()
     let buf = ""
@@ -340,7 +417,7 @@ async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID:
           return
         }
         try {
-          const json: any = JSON.parse(data)
+          const json = JSON.parse(data) as ChatCompletionResponse
           // Usage-only chunks (choices: []) arrive before/without finish — always capture
           if (json.usage) {
             lastUsage = { inputTokens: json.usage.prompt_tokens ?? 0, outputTokens: json.usage.completion_tokens ?? 0 }
@@ -367,7 +444,7 @@ async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID:
 
 // ── Stub stream (no API key) ───────────────────────────────────────
 
-async function* stubStream(modelID: string, opts: StreamOptions): AsyncIterable<any> {
+async function* stubStream(modelID: string, opts: StreamOptions): AsyncIterable<GatewayChunk> {
   const lastUser = [...opts.messages].reverse().find(m => m.role === "user")
   const userText = typeof lastUser?.content === "string" ? lastUser.content : JSON.stringify(lastUser?.content ?? "")
   const hasTools = opts.tools && Object.keys(opts.tools).length > 0
