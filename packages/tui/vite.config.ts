@@ -14,6 +14,13 @@ export default defineConfig({
   plugins: [solid()],
   server: {
     port: 3001,
+    host: true,
+    strictPort: true,
+    cors: true,
+    hmr: { host: 'localhost' },
+    // Allow Cloudflare tunnel hosts
+    // @ts-ignore
+    allowedHosts: true,
     proxy: {
       // Proxy to Mira server (Bun Hono on :4096) — same as web
       "/session": "http://localhost:4096",
