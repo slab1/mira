@@ -22,6 +22,7 @@
  */
 
 import type { Bus } from "../bus/index.js"
+import type { MiraDB } from "../storage/db.js"
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -92,7 +93,7 @@ export interface UsageLearnerConfig {
 
 export interface UsageLearnerDeps {
   bus?: Bus
-  db?: any
+  db?: MiraDB
 }
 
 // ── UsageLearner ─────────────────────────────────────────────────────
@@ -115,8 +116,8 @@ export class UsageLearner {
     }
     // Wire usage telemetry via bus subscription for backward compatibility
     if (this.deps.bus) {
-      this.deps.bus.subscribe("part.created", (event: any) => {
-        const part = event.payload as { type?: string; tool?: string } | undefined
+      this.deps.bus.subscribe("part.created", (event) => {
+        const part = event.payload as { type?: string; tool?: string; isError?: boolean } | undefined
         if (!part || !part.tool) return
         // Record tool calls / results from bus events with privacy safeguards
         const now = Date.now()
@@ -134,15 +135,15 @@ export class UsageLearner {
           this.recordTool({
             tool: part.tool,
             durationMs: 0,
-            isError: !!event.payload?.isError,
-            errorKind: event.payload?.isError ? "execution" : undefined,
+            isError: !!part.isError,
+            errorKind: part.isError ? "execution" : undefined,
             sessionID: event.sessionID ?? "",
             timestamp: now,
           }).catch(() => {})
         }
       })
       // Record session completion via message.created as proxy
-      this.deps.bus.subscribe("message.created", (event: any) => {
+      this.deps.bus.subscribe("message.created", (event) => {
         // simple heuristic: if message is assistant, we may close session
         // actual session finish is handled by explicit recordSession call
       })
@@ -159,7 +160,7 @@ export class UsageLearner {
     }
     if (Array.isArray(input)) return input.map(v => this.redactSensitive(v))
     if (input && typeof input === "object") {
-      const out: any = {}
+      const out: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(input)) {
         const key = k.toLowerCase()
         if (["password","secret","token","apikey","api_key"].includes(key)) {
@@ -200,10 +201,10 @@ export class UsageLearner {
     if (this.sessionMetrics.length >= 5) {
       const analysis = await this.analyze()
       this.deps.bus?.publish({
-        type: "server.heartbeat" as any,
+        type: "learning.updated",
         payload: { kind: "learning.usage.analysis", analysis },
         timestamp: Date.now(),
-      } as any)
+        })
     }
   }
 
@@ -465,15 +466,19 @@ export class UsageLearner {
     const sqlite = this.deps.db?.sqlite
     if (!sqlite) return null
     try {
-      const tools: ToolMetric[] = sqlite.prepare(`SELECT * FROM usage_tools ORDER BY created_at DESC LIMIT 500`).all().map((r: any) => ({
+      interface UsageToolRow { tool: string; duration_ms: number; is_error: number; error_kind?: string; session_id: string; created_at: number }
+      const tools = (sqlite.prepare(`SELECT * FROM usage_tools ORDER BY created_at DESC LIMIT 500`).all() as UsageToolRow[]).map(r => ({
         tool: r.tool, durationMs: r.duration_ms, isError: !!r.is_error, errorKind: r.error_kind,
         sessionID: r.session_id, timestamp: r.created_at,
       }))
-      const sessions: SessionMetric[] = sqlite.prepare(`SELECT * FROM usage_sessions ORDER BY created_at DESC LIMIT 200`).all().map((r: any) => ({
+      type SessionRow = { session_id: string; model: string; steps: number; total_tokens_in: number; total_tokens_out: number; latency_ms: number; tool_calls: number; tool_errors: number; doom_loops?: number; compaction_count?: number; success: number; user_feedback?: string | null; created_at: number }
+      const sessions: SessionMetric[] = (sqlite.prepare(`SELECT * FROM usage_sessions ORDER BY created_at DESC LIMIT 200`).all() as SessionRow[]).map(r => ({
         sessionID: r.session_id, model: r.model, steps: r.steps,
         totalTokensIn: r.total_tokens_in, totalTokensOut: r.total_tokens_out,
         latencyMs: r.latency_ms, toolCalls: r.tool_calls, toolErrors: r.tool_errors,
-        doomLoops: r.doom_loops, success: !!r.success, userFeedback: r.user_feedback, createdAt: r.created_at,
+        doomLoops: r.doom_loops ?? 0, compactionCount: r.compaction_count ?? 0, success: !!r.success,
+        userFeedback: r.user_feedback === "up" || r.user_feedback === "down" ? r.user_feedback : null,
+        createdAt: r.created_at,
       }))
       // Return ascending for analysis window slicing
       return { tools: tools.reverse(), sessions: sessions.reverse() }

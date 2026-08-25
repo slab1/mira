@@ -1,3 +1,4 @@
+import type { JsonValue } from "../types/index.js"
 /**
  * Mira LSP Client — Language Server Protocol 3.17 over stdio (JSON-RPC 2.0)
  *
@@ -15,14 +16,14 @@ export interface LSPLocation { uri: string; range: { start: LSPPosition; end: LS
 export interface LSPDiagnostic { severity?: number; message: string; range: unknown; source?: string }
 
 interface PendingRequest {
-  resolve: (v: any) => void
+  resolve: (v: JsonValue) => void
   reject: (e: Error) => void
   timer: ReturnType<typeof setTimeout>
 }
 
 export class LSPClient {
   // Encapsulated process handle — Bun's Subprocess generics vary by version
-  private proc: any
+  private proc: ReturnType<typeof Bun.spawn>
   private buf = ""
   private nextId = 1
   private pending = new Map<number, PendingRequest>()
@@ -33,7 +34,7 @@ export class LSPClient {
   public readonly serverName: string
   public capabilities: Record<string, unknown> = {}
 
-  private constructor(serverName: string, proc: any) {
+  private constructor(serverName: string, proc: ReturnType<typeof Bun.spawn>) {
     this.serverName = serverName
     this.proc = proc
     void this.readLoop()
@@ -60,7 +61,7 @@ export class LSPClient {
         },
       },
     }, 20_000)
-    client.capabilities = (result?.capabilities as Record<string, unknown>) ?? {}
+    client.capabilities = ((result as { capabilities?: Record<string, unknown> } | null)?.capabilities) ?? {}
     await client.notify("initialized", {})
     return client
   }
@@ -79,7 +80,7 @@ export class LSPClient {
 
   // ── Protocol ───────────────────────────────────────────────────────
 
-  request<T = any>(method: string, params: unknown, timeoutMs = 30_000): Promise<T> {
+  request<T = JsonValue>(method: string, params: object | null, timeoutMs = 30_000): Promise<T> {
     if (!this.alive) {
       return Promise.reject(new Error(`LSP server not alive: ${this.serverName}`))
     }
@@ -92,7 +93,7 @@ export class LSPClient {
       }
     }, timeoutMs)
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject, timer })
+      this.pending.set(id, { resolve: (v) => resolve(v as T), reject, timer })
       try {
         this.write({ jsonrpc: "2.0", id, method, params })
       } catch (e) {
@@ -116,7 +117,7 @@ export class LSPClient {
   }
 
   async definition(fileUri: string, pos: LSPPosition): Promise<LSPLocation[] | null> {
-    const r = await this.request("textDocument/definition", {
+    const r = await this.request<LSPLocation[] | LSPLocation>("textDocument/definition", {
       textDocument: { uri: fileUri },
       position: pos,
     })
@@ -125,7 +126,7 @@ export class LSPClient {
   }
 
   async references(fileUri: string, pos: LSPPosition, includeDeclaration = true): Promise<LSPLocation[]> {
-    const r = await this.request("textDocument/references", {
+    const r = await this.request<LSPLocation[]>("textDocument/references", {
       textDocument: { uri: fileUri },
       position: pos,
       context: { includeDeclaration },
@@ -133,7 +134,7 @@ export class LSPClient {
     return Array.isArray(r) ? r : []
   }
 
-  async hover(fileUri: string, pos: LSPPosition): Promise<any | null> {
+  async hover(fileUri: string, pos: LSPPosition): Promise<{ contents?: { value?: string; kind?: string } } | null> {
     return await this.request("textDocument/hover", {
       textDocument: { uri: fileUri },
       position: pos,
@@ -146,11 +147,11 @@ export class LSPClient {
     if (!this.alive) throw new Error(`LSP server not alive: ${this.serverName}`)
     const body = JSON.stringify(msg)
     const frame = `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`
-    this.proc.stdin.write(frame)
+    ;(this.proc.stdin as Bun.FileSink).write(frame)
   }
 
   private async readLoop(): Promise<void> {
-    const reader = this.proc.stdout.getReader()
+    const reader = (this.proc.stdout as ReadableStream<Uint8Array>).getReader()
     const decoder = new TextDecoder()
     try {
       while (true) {
@@ -184,23 +185,26 @@ export class LSPClient {
   }
 
   private handleMessage(body: string): void {
-    let msg: any
+    let msg: Record<string, JsonValue | undefined>
     try { msg = JSON.parse(body) } catch { return }
 
-    if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
+    const id = msg.id
+    if (typeof id === "number" && (msg.result !== undefined || msg.error !== undefined)) {
       // Response to our request
-      const p = this.pending.get(msg.id)
+      const p = this.pending.get(id)
       if (p) {
         clearTimeout(p.timer)
-        this.pending.delete(msg.id)
-        if (msg.error) p.reject(new Error(`LSP error ${msg.error.code}: ${msg.error.message}`))
-        else p.resolve(msg.result)
+        this.pending.delete(id)
+        const errObj = msg.error as { code?: JsonValue; message?: JsonValue } | undefined
+        if (errObj) p.reject(new Error(`LSP error ${String(errObj.code)}: ${String(errObj.message)}`))
+        else p.resolve(msg.result ?? null)
       }
       return
     }
 
     if (msg.method === "textDocument/publishDiagnostics") {
-      this.diagnostics.set(msg.params?.uri ?? "", msg.params?.diagnostics ?? [])
+      const params = msg.params as { uri?: string; diagnostics?: LSPDiagnostic[] } | undefined
+      this.diagnostics.set(params?.uri ?? "", params?.diagnostics ?? [])
       return
     }
     // window/logMessage & friends: ignored

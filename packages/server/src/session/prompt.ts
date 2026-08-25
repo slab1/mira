@@ -106,7 +106,7 @@ export class SessionPrompt {
   }
 
   /** Atomically pop the oldest queued message (drain head) */
-  private dequeueFirst(sessionID: string): string | null {
+  dequeueFirst(sessionID: string): string | null {
     try {
       const row = this.deps.db.sqlite
         .prepare(`SELECT id, text FROM message_queue WHERE session_id = ? ORDER BY created_at, rowid LIMIT 1`)
@@ -376,7 +376,7 @@ export class SessionPrompt {
       if (needed) {
         send("compaction", { step, tokenEstimate, ratio })
         const result = await compactMessages(this.deps.gateway, messages, { smallModel: limits.smallModel, contextLimit, threshold })
-        messages = result.messages
+        messages = result.messages.filter(m => typeof m.content === "string") as unknown as LoopMessage[]
         compactionCount++
         this.deps.bus.publish({ type: "message.updated", sessionID, payload: { compaction: true, step, tokenEstimate, reducedTo: result.compactedCount }, timestamp: Date.now() })
       }
@@ -607,10 +607,12 @@ export class SessionPrompt {
       if (text) context.push({ role: m.role, content: text })
       // Re-hydrate tool calls for continuity
       for (const p of parts.filter(p => p.type === "tool-call")) {
-        context.push({ role: "assistant", content: "", toolCalls: [{ id: p.toolCallID, name: p.tool, args: p.args }] })
+        if (!p.toolCallID || !p.tool) continue
+        context.push({ role: "assistant", content: "", toolCalls: [{ id: p.toolCallID, name: p.tool, args: (p.args ?? {}) as Record<string, JsonValue> }] })
       }
       for (const p of parts.filter(p => p.type === "tool-result")) {
-        context.push({ role: "tool", content: JSON.stringify(p.result), toolCallID: p.toolCallID })
+        if (!p.toolCallID) continue
+        context.push({ role: "tool", content: JSON.stringify(p.result ?? null), toolCallID: p.toolCallID })
       }
     }
     return context

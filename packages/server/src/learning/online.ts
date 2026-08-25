@@ -20,6 +20,7 @@
  */
 
 import type { Bus } from "../bus/index.js"
+import type { MiraDB } from "../storage/db.js"
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -74,7 +75,7 @@ export interface OnlineLearnerConfig {
 
 export interface OnlineLearnerDeps {
   bus?: Bus
-  db?: any
+  db?: MiraDB
 }
 
 // ── Default query bank (rotated each cycle) ────────────────────────
@@ -182,10 +183,10 @@ export class OnlineLearner {
     // 5. Persist + publish (best-effort)
     if (this.deps.db) await this.persistInsights(redactedInsights).catch(() => {})
     this.deps.bus?.publish({
-      type: "server.heartbeat" as any,
+      type: "learning.updated",
       payload: { kind: "learning.online.insights", count: redactedInsights.length, insights: redactedInsights.slice(0, 5) },
       timestamp: Date.now(),
-    } as any)
+      })
 
     return redactedInsights
 
@@ -238,17 +239,17 @@ export class OnlineLearner {
    */
   async extractWithLLM(
     docs: Array<FetchedDoc & { category: InsightCategory; title?: string }>,
-    gateway?: { generate: (opts: any) => Promise<{ text: string }> },
+    gateway?: { generate: (opts: { prompt: string; model?: string }) => Promise<{ text: string }> },
   ): Promise<Insight[]> {
-    if (!gateway) return this.extractInsights(docs as any)
+    if (!gateway) return this.extractInsights(docs)
     try {
       const prompt = `Extract 1-3 concrete, actionable AI agent improvement insights from each doc.
 For each insight return JSON: { summary, pattern, tags: string[], relevance: 0..1 }.
 Docs:\n${docs.map((d, i) => `## Doc ${i + 1}: ${d.title} (${d.url})\n${d.markdown.slice(0, 4000)}`).join("\n\n")}`
       const { text } = await gateway.generate({ prompt, model: "openrouter/deepseek/deepseek-v3.2-exp" })
-      const parsed = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? "[]")
+      const parsed = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? "[]") as Array<{ summary?: string; pattern?: string; tags?: string[]; relevance?: number }>
       if (Array.isArray(parsed) && parsed.length) {
-        return parsed.slice(0, 8).map((p: any, i: number) => ({
+        return parsed.slice(0, 8).map((p, i: number) => ({
           id: `ins_llm_${Date.now().toString(36)}_${i}`,
           source: docs[i % docs.length]?.url ?? "llm",
           sourceTitle: docs[i % docs.length]?.title ?? "LLM extraction",
@@ -264,7 +265,7 @@ Docs:\n${docs.map((d, i) => `## Doc ${i + 1}: ${d.title} (${d.url})\n${d.markdow
     } catch (err) {
       this.log(`LLM extraction failed, falling back to heuristic: ${String(err)}`)
     }
-    return this.extractInsights(docs as any)
+    return this.extractInsights(docs)
   }
 
   private async persistInsights(insights: Insight[]): Promise<void> {
@@ -313,11 +314,12 @@ function createDefaultSearchFn(): OnlineLearnerConfig["searchFn"] {
           body: JSON.stringify({ query, limit: count }),
         })
         if (res.ok) {
-          const data: any = await res.json()
-          const results = data.data ?? data.results ?? []
-          if (results.length) return results.map((r: any) => ({
-            title: r.title ?? r.url,
-            url: r.url,
+          interface SearchHit { title?: string; url?: string; description?: string; markdown?: string }
+          const payload = (await res.json()) as { data?: SearchHit[]; results?: SearchHit[] }
+          const results = payload.data ?? payload.results ?? []
+          if (results.length) return results.map((r) => ({
+            title: r.title ?? r.url ?? "",
+            url: r.url ?? "",
             snippet: r.description ?? r.markdown?.slice(0, 200) ?? "",
           }))
         }
@@ -332,9 +334,10 @@ function createDefaultSearchFn(): OnlineLearnerConfig["searchFn"] {
           body: JSON.stringify({ api_key: process.env.TAVILY_API_KEY, query, max_results: count, include_answer: false }),
         })
         if (res.ok) {
-          const data: any = await res.json()
-          if (data.results?.length) return data.results.map((r: any) => ({
-            title: r.title, url: r.url, snippet: r.content?.slice(0, 200) ?? "", score: r.score,
+          interface TavilyHit { title?: string; url?: string; content?: string; score?: number }
+          const payload = (await res.json()) as { results?: TavilyHit[] }
+          if (payload.results?.length) return payload.results.map((r) => ({
+            title: r.title ?? "", url: r.url ?? "", snippet: r.content?.slice(0, 200) ?? "", score: r.score,
           }))
         }
       } catch {}
@@ -357,9 +360,10 @@ function createDefaultFetchFn(): OnlineLearnerConfig["fetchFn"] {
           body: JSON.stringify({ url, formats: ["markdown"], onlyMainContent: true }),
         })
         if (res.ok) {
-          const data: any = await res.json()
-          const md = data.data?.markdown ?? data.markdown ?? ""
-          if (md.length > 100) return { url, title: data.data?.metadata?.title, markdown: md.slice(0, 12_000), truncated: md.length > 12_000 }
+          interface ScrapeResponse { data?: { markdown?: string; metadata?: { title?: string } }; markdown?: string }
+          const payload = (await res.json()) as ScrapeResponse
+          const md = payload.data?.markdown ?? payload.markdown ?? ""
+          if (md.length > 100) return { url, title: payload.data?.metadata?.title, markdown: md.slice(0, 12_000), truncated: md.length > 12_000 }
         }
       } catch {}
     }

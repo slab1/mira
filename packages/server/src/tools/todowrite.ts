@@ -3,6 +3,7 @@
  * Persists to SQLite (todos table) + publishes BusEvent → TUI live update
  */
 import { z } from "zod"
+import { eq } from "drizzle-orm"
 import type { ToolDef } from "./registry.js"
 
 const todowriteSchema = z.object({
@@ -29,7 +30,7 @@ export const todowriteTool = {
     const sessionID = ctx.sessionID
 
     if (db && sessionID) {
-      await db.delete(db.schema.todos).where(t => t.sessionID === sessionID)
+      await db.delete(db.schema.todos).where(eq(db.schema.todos.sessionID, sessionID))
       if (todos.length) {
         await db.insert(db.schema.todos).values(
           todos.map(t => ({

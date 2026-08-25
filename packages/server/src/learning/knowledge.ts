@@ -22,6 +22,7 @@
 import type { Bus } from "../bus/index.js"
 import type { Insight } from "./online.js"
 import type { UsageAnalysis, FailurePattern, SuccessPattern } from "./usage.js"
+import type { MiraDB } from "../storage/db.js"
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -63,7 +64,22 @@ export interface RetrieveOptions {
 
 export interface KnowledgeBaseDeps {
   bus?: Bus
-  db?: any
+  db?: MiraDB
+}
+
+/** Raw knowledge_entries row as returned by bun:sqlite (snake_case columns) */
+interface KnowledgeRow {
+  id: string
+  tier: string
+  source: string
+  title: string
+  content: string
+  tags?: string | null
+  graph_links?: string | null
+  embedding?: string | null
+  metadata?: string | null
+  created_at: number
+  updated_at: number
 }
 
 // ── KnowledgeBase ────────────────────────────────────────────────────
@@ -103,10 +119,13 @@ export class KnowledgeBase {
         CREATE INDEX IF NOT EXISTS knowledge_tier_idx ON knowledge_entries(tier);
         CREATE INDEX IF NOT EXISTS knowledge_source_idx ON knowledge_entries(source);
       `)
-      const rows: any[] = sqlite.prepare(`SELECT * FROM knowledge_entries ORDER BY updated_at DESC LIMIT 2000`).all()
+      const rows = sqlite.prepare(`SELECT * FROM knowledge_entries ORDER BY updated_at DESC LIMIT 2000`).all() as unknown as KnowledgeRow[]
       for (const r of rows) {
         const e: MemoryEntry = {
-          id: r.id, tier: r.tier, source: r.source, title: r.title, content: r.content,
+          id: r.id,
+          tier: r.tier as MemoryTier,
+          source: r.source as MemorySource,
+          title: r.title, content: r.content,
           tags: JSON.parse(r.tags ?? "[]"),
           graphLinks: JSON.parse(r.graph_links ?? "[]"),
           embedding: r.embedding ? JSON.parse(r.embedding) : undefined,
@@ -175,7 +194,7 @@ export class KnowledgeBase {
       title: `Usage analysis: ${analysis.window.sessions} sessions @ ${new Date(analysis.generatedAt).toISOString().slice(0, 10)}`,
       content: `Window: ${analysis.window.sessions} sessions. Failures: ${analysis.failurePatterns.map(f => `${f.key}(${Math.round(f.errorRate * 100)}%)`).join(", ") || "none"}. Success: ${analysis.successPatterns.map(s => s.key).join("; ") || "none"}.`,
       tags: ["usage", "analysis"],
-      metadata: { kind: "usage_analysis", window: analysis.window } as any,
+      metadata: { kind: "usage_analysis", window: analysis.window },
     }))
     // Semantic: each failure pattern as a fact
     for (const f of analysis.failurePatterns) {
@@ -185,7 +204,7 @@ export class KnowledgeBase {
         title: `Failure pattern: ${f.key} — ${Math.round(f.errorRate * 100)}% over ${f.count} occurrences`,
         content: f.suggestion,
         tags: ["failure-pattern", f.kind],
-        metadata: { kind: "failure_pattern", pattern: f } as any,
+        metadata: { kind: "failure_pattern", pattern: f },
       }))
     }
     return out

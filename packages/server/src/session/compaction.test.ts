@@ -5,10 +5,11 @@ import { estimateTokens, needsCompaction, compactMessages } from "./compaction.j
 // Minimal gateway whose summarize echoes a marker (verifies wiring)
 const fakeGateway: Gateway = {
   stream: async () => { throw new Error("not used") },
+  complete: async () => ({ text: "" }),
   summarize: async (messages) => `SUMMARY_OF_${messages.length}`,
   listModels: async () => [],
   stats: () => ({ requests: 0, inputTokens: 0, outputTokens: 0, costUSD: 0, avgLatencyMs: 0, byModel: {} }),
-} as unknown as Gateway
+}
 
 describe("estimateTokens", () => {
   test("scales with content length", () => {
@@ -39,10 +40,11 @@ describe("compactMessages", () => {
       ...Array.from({ length: 10 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: `msg ${i}` })),
     ]
     const result = await compactMessages(fakeGateway, messages, { keepTailRatio: 0.25 })
-    const roles = result.messages.map((m: any) => m.role)
+    const roles = result.messages.map(m => m.role)
     expect(roles[0]).toBe("system")
-    const summaryBlock = result.messages.find((m: any) => m.__meta?.compacted)
-    expect(summaryBlock.content).toContain("SUMMARY_OF_")
+    const summaryBlock = result.messages.find(m => m.__meta?.compacted === true)
+    expect(summaryBlock).toBeDefined()
+    expect(summaryBlock?.content).toContain("SUMMARY_OF_")
     expect(result.originalCount).toBe(11)
     expect(result.compactedCount).toBeLessThan(11)
   })

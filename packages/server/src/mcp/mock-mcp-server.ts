@@ -7,6 +7,13 @@ import { exit } from "node:process"
 const decoder = new TextDecoder()
 let buf = ""
 
+/** Minimal JSON-RPC envelope the mock server understands */
+interface RpcMsg {
+  id?: number
+  method?: string
+  params?: { name?: string; arguments?: Record<string, number | string> }
+}
+
 function send(obj: object): void {
   process.stdout.write(JSON.stringify(obj) + "\n")
 }
@@ -18,8 +25,8 @@ for await (const chunk of process.stdin) {
     const line = buf.slice(0, nl).trim()
     buf = buf.slice(nl + 1)
     if (!line) continue
-    let msg: any
-    try { msg = JSON.parse(line) } catch { continue }
+    let msg: RpcMsg
+    try { msg = JSON.parse(line) as RpcMsg } catch { continue }
     const { id, method, params } = msg
     switch (method) {
       case "initialize":
@@ -36,13 +43,15 @@ for await (const chunk of process.stdin) {
         ] } })
         break
       case "tools/call": {
-        if (params.name === "echo") {
-          send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: `echo: ${JSON.stringify(params.arguments)}` }] } })
-        } else if (params.name === "add") {
-          const a = Number(params.arguments?.a ?? 0), b = Number(params.arguments?.b ?? 0)
+        const name = params?.name
+        const args = params?.arguments
+        if (name === "echo") {
+          send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: `echo: ${JSON.stringify(args)}` }] } })
+        } else if (name === "add") {
+          const a = Number(args?.a ?? 0), b = Number(args?.b ?? 0)
           send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: String(a + b) }] } })
         } else {
-          send({ jsonrpc: "2.0", id, error: { code: -32602, message: `Unknown tool: ${params.name}` } })
+          send({ jsonrpc: "2.0", id, error: { code: -32602, message: `Unknown tool: ${name}` } })
         }
         break
       }

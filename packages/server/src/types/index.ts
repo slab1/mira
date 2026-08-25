@@ -93,6 +93,7 @@ export type BusEventType =
   | "part.created" | "part.updated"
   | "todo.updated"
   | "job.created" | "job.updated" | "job.cancelled"
+  | "learning.updated"
   | "permission.ask" | "permission.reply"
   | "question.ask" | "question.reply"
   | "server.heartbeat" | "server.error"

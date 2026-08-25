@@ -11,7 +11,7 @@ describe("McpStdioClient (real newline-delimited JSON-RPC)", () => {
     const c = await McpStdioClient.spawn(["bun", "run", MOCK])
     clients.push(c)
     expect(c.alive).toBe(true)
-    expect((c.serverInfo as any).name).toBe("mock-mcp")
+    expect(c.serverInfo.name).toBe("mock-mcp")
   }, 20_000)
 
   test("tools/list discovers real tools", async () => {

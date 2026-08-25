@@ -8,6 +8,8 @@
  * - Track compaction history to avoid double-compaction
  */
 
+import type { JsonValue } from "../types/index.js"
+import type { GatewayMessage } from "../gateway/index.js"
 import type { Gateway } from "../gateway/index.js"
 
 export interface CompactionOptions {
@@ -17,8 +19,18 @@ export interface CompactionOptions {
   contextLimit?: number // tokens
 }
 
+/** Minimal message shape accepted by compaction (superset of GatewayMessage) */
+/** Minimal message shape accepted by compaction (superset of GatewayMessage) */
+/** Minimal message shape accepted by compaction (superset of GatewayMessage) */
+export interface CompactionMessage {
+  role: string
+  content: string
+  toolCalls?: Array<{ id?: string; name?: string }>
+  __meta?: { compacted?: true; originalCount?: number }
+}
+
 export interface CompactionResult {
-  messages: any[]
+  messages: CompactionMessage[]
   summary: string
   originalCount: number
   compactedCount: number
@@ -29,7 +41,7 @@ export interface CompactionResult {
  * Estimate token count from messages
  * Rough heuristic: ~4 chars per token + 10 overhead per message
  */
-export function estimateTokens(messages: any[]): number {
+export function estimateTokens(messages: CompactionMessage[]): number {
   return messages.reduce((total, m) => {
     const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '')
     return total + Math.ceil(content.length / 4) + 10
@@ -40,7 +52,7 @@ export function estimateTokens(messages: any[]): number {
  * Check if compaction is needed
  */
 export async function needsCompaction(
-  messages: any[],
+  messages: CompactionMessage[],
   contextLimit: number,
   threshold = 0.8
 ): Promise<{ needed: boolean; tokenEstimate: number; ratio: number }> {
@@ -58,7 +70,7 @@ export async function needsCompaction(
  */
 export async function compactMessages(
   gateway: Gateway,
-  messages: any[],
+  messages: CompactionMessage[],
   opts: CompactionOptions = {}
 ): Promise<CompactionResult> {
   const {
@@ -96,9 +108,9 @@ export async function compactMessages(
   }
 
   // Build summarization prompt with context boundaries
-  const summary = await gateway.summarize(head, smallModel)
+  const summary = await gateway.summarize(head.filter(m => typeof m.content === "string") as GatewayMessage[], smallModel)
 
-  const compacted: any[] = [
+  const compacted: CompactionMessage[] = [
     ...systemMessages,
     {
       role: 'system',
@@ -123,7 +135,7 @@ export async function compactMessages(
  */
 export async function progressiveCompact(
   gateway: Gateway,
-  messages: any[],
+  messages: CompactionMessage[],
   opts: CompactionOptions = {}
 ): Promise<CompactionResult> {
   let current = messages
@@ -163,7 +175,7 @@ export async function progressiveCompact(
  */
 export async function smartCompact(
   gateway: Gateway,
-  messages: any[],
+  messages: CompactionMessage[],
   opts: CompactionOptions = {}
 ): Promise<CompactionResult> {
   // Group messages into tool-call boundaries
@@ -196,7 +208,7 @@ export async function smartCompact(
     const tail = messages.slice(lastBoundary)
     
     if (head.length > 1) {
-      const summary = await gateway.summarize(head, opts.smallModel)
+      const summary = await gateway.summarize(head.filter(m => typeof m.content === "string") as GatewayMessage[], opts.smallModel)
       return {
         messages: [
           { role: 'system', content: `## Conversation Summary\n${summary}` },
@@ -205,7 +217,7 @@ export async function smartCompact(
         summary,
         originalCount: messages.length,
         compactedCount: tail.length + 1,
-        tokenEstimate: estimateTokens([...tail, { content: summary }]),
+        tokenEstimate: estimateTokens([...tail, { role: "user", content: summary }]),
       }
     }
   }

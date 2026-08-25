@@ -21,11 +21,14 @@
  *   await scheduler.trigger("all") // manual run
  */
 
+import type { MemoryEntry } from "./knowledge.js"
+import type { Insight, InsightCategory } from "./online.js"
 import type { Bus } from "../bus/index.js"
 import type { OnlineLearner } from "./online.js"
 import type { UsageLearner } from "./usage.js"
 import type { ImprovementEngine } from "./improvement.js"
 import type { KnowledgeBase } from "./knowledge.js"
+import type { MiraDB } from "../storage/db.js"
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -48,7 +51,7 @@ export interface SchedulerDeps {
   improvement: ImprovementEngine
   knowledge: KnowledgeBase
   bus?: Bus
-  db?: any
+  db?: MiraDB
 }
 
 export type JobKind = "online" | "usage" | "improvement" | "all"
@@ -99,8 +102,9 @@ export class LearningScheduler {
     if (this.config.busDrivenUsage && this.deps.bus) {
       const bus = this.deps.bus
       // Session finish signals: message.updated with done:true, or session.deleted
-      const unsub1 = bus.subscribe("message.updated" as any, async (event: any) => {
-        if (event.payload?.done) {
+      const unsub1 = bus.subscribe("message.updated", async (event) => {
+        const payload = event.payload as { done?: boolean } | undefined
+        if (payload?.done) {
           await this.runUsage().catch(err => console.warn("[learning:scheduler] usage (bus) failed:", String(err)))
         }
       })
@@ -192,7 +196,7 @@ export class LearningScheduler {
       // Gather inputs: recent online insights from knowledge + current usage analysis
       const recentInsights = await this.collectRecentInsights()
       const analysis = await this.deps.usage.analyze().catch(() => null)
-      const result = await this.deps.improvement.runCycle(recentInsights as any, analysis as any)
+      const result = await this.deps.improvement.runCycle(recentInsights, analysis)
       this.lastRun.improvement = Date.now()
       this.lastResult["improvement"] = { ...result, at: this.lastRun.improvement }
       this.publish("improvement", result)
@@ -218,31 +222,31 @@ export class LearningScheduler {
       fn().catch(err => console.warn(`[learning:scheduler] ${kind} failed:`, String(err)))
     }, jittered)
     // Don't prevent process exit in tests
-    if ((timer as any).unref) (timer as any).unref()
+    timer.unref?.()
     this.timers.push(timer)
   }
 
   private publish(kind: JobKind, payload: unknown): void {
     this.deps.bus?.publish({
-      type: "server.heartbeat" as any,
+      type: "learning.updated",
       payload: { kind: `learning.scheduler.${kind}`, result: payload },
       timestamp: Date.now(),
-    } as any)
+      })
   }
 
-  private async collectRecentInsights(): Promise<unknown[]> {
+  private async collectRecentInsights(): Promise<Insight[]> {
     // Pull recent semantic memories that came from online learning
     try {
       const entries = this.deps.knowledge.list({ source: "online", limit: 12 })
       // Map back to Insight-like shape for the improvement engine
-      return entries.map((e: any) => ({
+      return entries.map((e: MemoryEntry) => ({
         id: e.id,
-        source: e.metadata?.url ?? e.title,
+        source: (e.metadata as { url?: string }).url ?? e.title,
         sourceTitle: e.title,
-        category: e.metadata?.category ?? "other",
+        category: ((e.metadata as { category?: InsightCategory }).category ?? "other") as InsightCategory,
         summary: e.title,
         pattern: e.content?.split("\n")[0]?.replace(/^Pattern:\s*/, "") ?? e.content,
-        relevance: e.metadata?.relevance ?? 0.6,
+        relevance: typeof (e.metadata as { relevance?: number }).relevance === "number" ? (e.metadata as { relevance?: number }).relevance as number : 0.6,
         tags: e.tags ?? [],
         rawExcerpt: e.content?.slice(0, 500) ?? "",
         createdAt: e.createdAt,

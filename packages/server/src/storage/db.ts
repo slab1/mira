@@ -13,8 +13,13 @@ import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
 import * as schema from "./schema.js"
+import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite"
 
-export type MiraDB = ReturnType<typeof createDatabase>
+/** Drizzle instance (schema-aware → typed db.query.*) + raw client + schema refs */
+export type MiraDB = BunSQLiteDatabase<typeof schema> & {
+  sqlite: Database
+  schema: typeof schema
+}
 
 export function createDatabase(path = "./data/mira.db") {
   // Ensure parent dir exists
@@ -28,18 +33,20 @@ export function createDatabase(path = "./data/mira.db") {
   sqlite.exec("PRAGMA foreign_keys = ON;")
   sqlite.exec("PRAGMA busy_timeout = 5000;")
 
-  const db: any = drizzle({ client: sqlite, schema })
-  // Attach helpers for consumers
-  db.sqlite = sqlite
-  db.schema = schema
-  return db
+  // Augment the drizzle instance with the raw client + schema (consumers use
+  // both: query builder for ORM reads, raw sqlite for ad-hoc SQL like backups).
+  const db = drizzle({ client: sqlite, schema })
+  const mira = db as unknown as MiraDB
+  mira.sqlite = sqlite
+  mira.schema = schema
+  return mira
 }
 
 /**
  * Auto-migrate: create tables if not exist (dev convenience).
  * For production, use `drizzle-kit generate` + `drizzle-kit migrate`.
  */
-export async function migrate(db: any) {
+export async function migrate(db: MiraDB) {
   const sqlite: Database = db.sqlite
   if (!sqlite) return
 

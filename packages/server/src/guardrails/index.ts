@@ -12,6 +12,13 @@
 
 import type { MiraConfig } from "../types/index.js"
 
+/** Narrow untyped tool args to a string-keyed record (JsonValue-tolerant). */
+function argStr(args: unknown, key: string): string | undefined {
+  if (!args || typeof args !== "object") return undefined
+  const v = (args as Record<string, unknown>)[key]
+  return typeof v === "string" ? v : undefined
+}
+
 export interface GuardrailConfig {
   enforce?: boolean
   allowedRoots?: string[]        // file sandbox roots
@@ -112,7 +119,7 @@ export class GuardrailsManager {
   private logger: AuditLogger
 
   constructor(cfg?: Partial<GuardrailConfig>, config?: MiraConfig) {
-    const guardCfg = (config as any)?.guardrails ?? {}
+    const guardCfg = config?.guardrails ?? {}
     this.config = { ...DEFAULT_GUARDRAILS, ...guardCfg, ...cfg }
     this.logger = new AuditLogger(this.config.auditLogPath)
   }
@@ -124,7 +131,7 @@ export class GuardrailsManager {
     try {
       // File tools path checks
       if (["read", "write", "edit", "glob", "grep"].includes(tool)) {
-        const path = (args as any)?.path
+        const path = argStr(args, "path")
         if (typeof path === "string") {
           const s = sanitizePath(path)
           if (!s.ok) {
@@ -144,7 +151,7 @@ export class GuardrailsManager {
 
       // Bash command checks
       if (tool === "bash") {
-        const cmd = (args as any)?.command
+        const cmd = argStr(args, "command")
         if (typeof cmd === "string") {
           const s = sanitizeCommand(cmd)
           if (!s.ok) {
@@ -169,7 +176,7 @@ export class GuardrailsManager {
           }
         }
         // workdir sandbox
-        const workdir = (args as any)?.workdir
+        const workdir = argStr(args, "workdir")
         if (typeof workdir === "string") {
           if (!isPathAllowed(workdir, this.config.allowedRoots)) {
             decision.decision = "warn"
@@ -181,7 +188,7 @@ export class GuardrailsManager {
 
       // Web tools domain checks (basic)
       if (tool === "webfetch" || tool === "websearch") {
-        const url = (args as any)?.url || (args as any)?.query
+        const url = argStr(args, "url") || argStr(args, "query")
         if (typeof url === "string") {
           // basic scheme check
           if (!/^https?:\/\//.test(url) && tool === "webfetch") {

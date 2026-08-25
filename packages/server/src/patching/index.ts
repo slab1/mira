@@ -40,6 +40,8 @@ import { Verifier, type VerifyResult, type VerifierConfig } from "./verifier.js"
 import { Applier, type ApplyResult, type ApplierConfig, type ApplierDeps } from "./applier.js"
 import { LatencyTracker, type LatencyStats, type LatencyBudget } from "./latency.js"
 import { SecurityScanner, type SecurityScanResult, type SecurityScannerConfig } from "./security.js"
+import type { MiraDB } from "../storage/db.js"
+import type { Gateway } from "../gateway/index.js"
 
 // Re-exports for ergonomic imports
 export * from "./detector.js"
@@ -66,9 +68,9 @@ export interface PatchingEngineConfig {
 
 export interface PatchingEngineDeps {
   bus?: Bus
-  db?: any
+  db?: MiraDB
   knowledge?: KnowledgeBase
-  gateway?: any
+  gateway?: Gateway
 }
 
 export interface CycleInput {
@@ -256,10 +258,10 @@ export class PatchingEngine {
     }
 
     this.deps.bus?.publish({
-      type: "server.heartbeat" as any,
+      type: "learning.updated",
       payload: { kind: "patching.cycle", result },
       timestamp: Date.now(),
-    } as any)
+      })
 
     console.log(`[patching] cycle complete — ${applied} applied, ${rejected} rejected, ${verified - applied} gated`)
     return result

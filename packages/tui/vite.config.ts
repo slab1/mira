@@ -8,7 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 // If @opentui/solid is not installed (disk full / missing), alias to local shim so build stays functional.
 // When the real package is present, alias is still harmless — shim mirrors the API.
 const hasOpentuiSolid = existsSync(resolve(__dirname, "node_modules/@opentui/solid"))
-const opentuiAlias = hasOpentuiSolid ? {} : { "@opentui/solid": resolve(__dirname, "src/shim/opentui-solid.tsx") }
+const opentuiAlias: Record<string, string> = hasOpentuiSolid ? {} : { "@opentui/solid": resolve(__dirname, "src/shim/opentui-solid.tsx") }
 
 export default defineConfig({
   plugins: [solid()],
@@ -36,7 +36,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": resolve(__dirname, "src"),
-      ...(opentuiAlias as any),
+      ...(opentuiAlias),
     },
   },
 })

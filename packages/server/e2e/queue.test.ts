@@ -55,9 +55,9 @@ describe("message queue", () => {
     expect(cleared.cleared).toBe(1)
 
     // Chained turn persisted its own user+assistant messages
-    const msgs = await (await fetch(`${BASE}/session/${session.id}/message`)).json()
-    const userTexts = (msgs as any[]).filter(m => m.role === "user")
-      .flatMap(m => (m.parts ?? []).filter((p: any) => p.type === "text").map((p: any) => p.text))
+    const msgs = await (await fetch(`${BASE}/session/${session.id}/message`)).json() as Array<{ role?: string; parts?: Array<{ type?: string; text?: string }> }>
+    const userTexts = msgs.filter(m => m.role === "user")
+      .flatMap(m => (m.parts ?? []).filter(p => p.type === "text").map(p => p.text))
     expect(userTexts).toContain("first queued")
   })
 })

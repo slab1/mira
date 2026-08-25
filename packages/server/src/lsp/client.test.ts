@@ -47,7 +47,7 @@ describe("LSPClient (real JSON-RPC framing against mock server)", () => {
 
   test("hover returns formatted contents", async () => {
     const h = await client!.hover("file:///test/doc.ts", { line: 3, character: 7 })
-    expect(h.contents.value).toContain("**mock** hover at 3:7")
+    expect(h?.contents?.value).toContain("**mock** hover at 3:7")
   }, 20_000)
 
   test("request timeout rejects cleanly", async () => {

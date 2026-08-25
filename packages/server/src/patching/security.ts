@@ -33,6 +33,13 @@ export interface SecurityIssue {
   detectedAt: number
 }
 
+/** Narrow untyped tool args to a string-keyed record (JsonValue-tolerant). */
+function argStr(args: unknown, key: string): string | undefined {
+  if (!args || typeof args !== "object") return undefined
+  const v = (args as Record<string, unknown>)[key]
+  return typeof v === "string" ? v : undefined
+}
+
 export interface SecurityScanResult {
   issues: SecurityIssue[]
   passed: boolean
@@ -124,14 +131,14 @@ export class SecurityScanner {
     const str = JSON.stringify(args ?? "")
     // Path traversal — read/write/edit/glob
     if (["read", "write", "edit", "glob"].includes(tool)) {
-      const path = (args as any)?.path ?? (args as any)?.file ?? str
+      const path = argStr(args, "path") ?? argStr(args, "file") ?? str
       if (typeof path === "string" && PATH_TRAVERSAL_RE.test(path)) {
         out.push(this.issue("path-traversal", "high", `Path traversal in ${tool}: ${String(path).slice(0, 120)}`, String(path), "Validate and sandbox file paths"))
       }
     }
     // Command injection — bash/task
     if (["bash", "task"].includes(tool)) {
-      const cmd = (args as any)?.command ?? (args as any)?.cmd ?? str
+      const cmd = argStr(args, "command") ?? argStr(args, "cmd") ?? str
       if (typeof cmd === "string" && COMMAND_INJECTION_RE.test(cmd)) {
         // Only flag if it looks like chained injection, not normal use
         if (/[;|&`$]/.test(cmd) && /rm\s+-rf|:\(\)\{/.test(cmd)) {

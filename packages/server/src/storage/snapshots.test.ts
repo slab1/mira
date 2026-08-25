@@ -2,12 +2,12 @@ import { describe, test, expect, beforeEach, afterAll } from "bun:test"
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { createDatabase, migrate } from "./db.js"
+import { createDatabase, migrate, type MiraDB } from "./db.js"
 import { snapshotFile, revertLast, revertToMessage, listSnapshots } from "./snapshots.js"
 
 const dir = mkdtempSync(join(tmpdir(), "mira-snap-"))
 const dbFile = join(dir, "test.db")
-let db: any
+let db!: MiraDB
 
 /** Insert a parent session row (snapshots FK-reference sessions) */
 async function mkSession(id: string) {

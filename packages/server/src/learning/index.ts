@@ -36,15 +36,18 @@ export * from "./scheduler.js"
 
 import { OnlineLearner } from "./online.js"
 import { UsageLearner } from "./usage.js"
-import { KnowledgeBase } from "./knowledge.js"
+import { KnowledgeBase, type MemoryTier, type MemorySource } from "./knowledge.js"
 import { ImprovementEngine } from "./improvement.js"
 import { LearningScheduler } from "./scheduler.js"
 import type { Bus } from "../bus/index.js"
+import type { MiraDB } from "../storage/db.js"
+import type { Gateway } from "../gateway/index.js"
+import { Hono } from "hono"
 
 export interface LearningSystemDeps {
-  db?: any
+  db?: MiraDB
   bus?: Bus
-  gateway?: any
+  gateway?: Gateway
   /** override repo root for ImprovementEngine (default process.cwd()) */
   rootDir?: string
 }
@@ -82,10 +85,10 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
 
 /** Convenience: wire learning REST routes onto a Hono app */
 export function mountLearningRoutes(
-  app: { get: any; post: any },
+  app: Hono<{ Variables: { requestId: string } }>,
   system: LearningSystem,
 ): void {
-  app.get("/learning/status", (c: any) =>
+  app.get("/learning/status", (c) =>
     c.json({
       scheduler: system.scheduler.status(),
       knowledge: { size: system.knowledge.size(), tiers: ["episodic", "semantic", "procedural"] },
@@ -93,17 +96,17 @@ export function mountLearningRoutes(
     }),
   )
 
-  app.post("/learning/trigger", async (c: any) => {
+  app.post("/learning/trigger", async (c) => {
     const body = await c.req.json().catch(() => ({}))
     const kind = body.kind ?? "all"
     const result = await system.scheduler.trigger(kind)
     return c.json({ kind, result })
   })
 
-  app.get("/learning/insights", async (c: any) => {
+  app.get("/learning/insights", async (c) => {
     const url = new URL(c.req.url)
-    const tier = url.searchParams.get("tier") as any
-    const source = url.searchParams.get("source") as any
+    const tier = url.searchParams.get("tier") as MemoryTier | null
+    const source = url.searchParams.get("source") as MemorySource | null
     const q = url.searchParams.get("q")
     if (q) {
       const results = await system.knowledge.retrieve({ query: q, tier: tier ?? undefined, limit: 20 })

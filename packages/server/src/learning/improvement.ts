@@ -23,6 +23,8 @@ import { Bus } from "../bus/index.js"
 import type { Insight } from "./online.js"
 import type { UsageAnalysis, FailurePattern } from "./usage.js"
 import type { KnowledgeBase } from "./knowledge.js"
+import type { MiraDB } from "../storage/db.js"
+import type { Gateway } from "../gateway/index.js"
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -65,9 +67,9 @@ export interface ImprovementEngineConfig {
 
 export interface ImprovementEngineDeps {
   bus?: Bus
-  db?: any
+  db?: MiraDB
   knowledge?: KnowledgeBase
-  gateway?: any
+  gateway?: Gateway
 }
 
 // ── ImprovementEngine ────────────────────────────────────────────────
@@ -295,10 +297,10 @@ export class ImprovementEngine {
     }
 
     this.deps.bus?.publish({
-      type: "server.heartbeat" as any,
+      type: "learning.updated",
       payload: { kind: "learning.improvement.applied", id: imp.id, file: imp.targetFile },
       timestamp: Date.now(),
-    } as any)
+      })
     return true
   }
 

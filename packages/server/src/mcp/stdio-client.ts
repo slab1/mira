@@ -1,3 +1,4 @@
+import type { JsonValue } from "../types/index.js"
 /**
  * Mira MCP Stdio Client — JSON-RPC 2.0 over stdin/stdout (newline-delimited)
  *
@@ -14,13 +15,13 @@ export interface MCPToolDef {
 }
 
 interface Pending {
-  resolve: (v: any) => void
+  resolve: (v: JsonValue) => void
   reject: (e: Error) => void
   timer: ReturnType<typeof setTimeout>
 }
 
 export class McpStdioClient {
-  private proc: any
+  private proc: ReturnType<typeof Bun.spawn>
   private buf = ""
   private nextId = 1
   private pending = new Map<number, Pending>()
@@ -28,15 +29,19 @@ export class McpStdioClient {
   public capabilities: Record<string, unknown> = {}
   public name: string
 
-  private constructor(name: string, proc: any) {
+  private constructor(name: string, proc: ReturnType<typeof Bun.spawn>) {
     this.name = name
     this.proc = proc
     void this.readLoop()
   }
 
   static async spawn(command: string[], opts: { env?: Record<string, string>; cwd?: string } = {}): Promise<McpStdioClient> {
+    // Build a clean string-valued env (process.env values are `string | undefined`)
+    const env: Record<string, string> = {}
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
+    Object.assign(env, opts.env ?? {})
     const proc = Bun.spawn(command, {
-      env: { ...process.env, ...(opts.env ?? {}) } as any,
+      env,
       cwd: opts.cwd,
       stdin: "pipe",
       stdout: "pipe",
@@ -87,7 +92,7 @@ export class McpStdioClient {
       }
     }, timeoutMs)
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject, timer })
+      this.pending.set(id, { resolve: (v) => resolve(v as T), reject, timer })
       try {
         this.write({ jsonrpc: "2.0", id, method, params })
       } catch (e) {
@@ -103,18 +108,18 @@ export class McpStdioClient {
   }
 
   /** Expose the raw process handle so managers can kill on disconnectAll */
-  get handle(): any {
+  get handle(): ReturnType<typeof Bun.spawn> {
     return this.proc
   }
 
   private write(msg: object): void {
     if (!this.alive) throw new Error(`MCP server not alive: ${this.name}`)
     // MCP stdio framing: newline-delimited JSON (NOT Content-Length like LSP)
-    this.proc.stdin.write(JSON.stringify(msg) + "\n")
+    ;(this.proc.stdin as Bun.FileSink).write(JSON.stringify(msg) + "\n")
   }
 
   private async readLoop(): Promise<void> {
-    const reader = this.proc.stdout.getReader()
+    const reader = (this.proc.stdout as ReadableStream<Uint8Array>).getReader()
     const decoder = new TextDecoder()
     try {
       while (true) {
@@ -138,14 +143,16 @@ export class McpStdioClient {
   }
 
   private handleMessage(line: string): void {
-    let msg: any
+    let msg: Record<string, JsonValue | undefined>
     try { msg = JSON.parse(line) } catch { return }
-    if (msg.id === undefined || msg.id === null) return // notification
-    const p = this.pending.get(msg.id)
+    const id = msg.id
+    if (typeof id !== "number") return // notification
+    const p = this.pending.get(id)
     if (!p) return
     clearTimeout(p.timer)
-    this.pending.delete(msg.id)
-    if (msg.error) p.reject(new Error(`MCP error ${msg.error.code}: ${msg.error.message}`))
-    else p.resolve(msg.result)
+    this.pending.delete(id)
+    const errObj = msg.error as { code?: JsonValue; message?: JsonValue } | undefined
+    if (errObj) p.reject(new Error(`MCP error ${String(errObj.code)}: ${String(errObj.message)}`))
+    else p.resolve(msg.result ?? (null as JsonValue))
   }
 }

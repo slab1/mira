@@ -4,11 +4,18 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { createDatabase, migrate } from "../storage/db.js"
 import { SessionPrompt } from "./prompt.js"
+import { Bus } from "../bus/index.js"
+import { PermissionManager } from "../permission/index.js"
+import { ToolRegistry } from "../tools/registry.js"
+import type { Gateway } from "../gateway/index.js"
 
-// Minimal deps — queueing only touches db + bus
-class FakeBus {
-  published: any[] = []
-  publish(e: any) { this.published.push(e) }
+// Queueing only touches db + bus; gateway/tools/permissions are inert typed stubs
+const stubGateway: Gateway = {
+  stream: () => Promise.resolve((async function* () {})()),
+  complete: async () => ({ text: "" }),
+  summarize: async () => "",
+  listModels: async () => [],
+  stats: () => ({ requests: 0, inputTokens: 0, outputTokens: 0, costUSD: 0, avgLatencyMs: 0, byModel: {} }),
 }
 
 const dir = mkdtempSync(join(tmpdir(), "mira-queue-"))
@@ -17,7 +24,9 @@ const dbFile = join(dir, "q.db")
 async function boot() {
   const db = createDatabase(dbFile)
   await migrate(db)
-  return new SessionPrompt({ db, bus: new FakeBus() as any, gateway: {} as any, tools: {} as any, permissions: {} as any })
+  const permissions = new PermissionManager({})
+  const tools = new ToolRegistry({ db, bus: new Bus(), permissions, gateway: stubGateway })
+  return new SessionPrompt({ db, bus: new Bus(), gateway: stubGateway, tools, permissions })
 }
 
 describe("durable message queue", () => {
@@ -34,7 +43,7 @@ describe("durable message queue", () => {
     expect(second.getQueue(s.id)).toEqual(["survives restart one", "survives restart two"])
 
     // Drain head is destructive and ordered
-    const drained = (second as any).dequeueFirst(s.id)
+    const drained = second.dequeueFirst(s.id)
     expect(drained).toBe("survives restart one")
     expect(second.getQueue(s.id)).toEqual(["survives restart two"])
 

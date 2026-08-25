@@ -19,8 +19,20 @@ export interface Snapshot {
   createdAt: number
 }
 
+/** Raw file_snapshots row as returned by bun:sqlite (snake_case columns). */
+interface SnapshotRow {
+  id: string
+  session_id: string
+  message_id?: string | null
+  path: string
+  content?: string | null
+  created_at: number
+}
+
 /** Snapshot a file's current content before a mutation. No-op if path missing entirely. */
-export function snapshotFile(db: any, opts: { sessionID: string; messageID?: string; path: string }): Snapshot | null {
+import type { MiraDB } from "./db.js"
+
+export function snapshotFile(db: MiraDB, opts: { sessionID: string; messageID?: string; path: string }): Snapshot | null {
   const sqlite = db.sqlite
   if (!sqlite || !opts.path) return null
   sqlite.exec(`
@@ -54,12 +66,12 @@ export function snapshotFile(db: any, opts: { sessionID: string; messageID?: str
 }
 
 /** Undo the most recent mutation in a session: restore content (or delete if newly created). */
-export function revertLast(db: any, sessionID: string): Snapshot | null {
+export function revertLast(db: MiraDB, sessionID: string): Snapshot | null {
   const sqlite = db.sqlite
   if (!sqlite) return null
-  const row: any = sqlite.prepare(
+  const row = sqlite.prepare(
     `SELECT * FROM file_snapshots WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`
-  ).get(sessionID)
+  ).get(sessionID) as SnapshotRow | undefined
   if (!row) return null
 
   restoreRow(row)
@@ -68,22 +80,22 @@ export function revertLast(db: any, sessionID: string): Snapshot | null {
 }
 
 /** Rewind to a message boundary: revert every snapshot tied to that message or later ones. */
-export function revertToMessage(db: any, sessionID: string, messageID: string): Snapshot[] {
+export function revertToMessage(db: MiraDB, sessionID: string, messageID: string): Snapshot[] {
   const sqlite = db.sqlite
   if (!sqlite) return []
-  const target: any = sqlite.prepare(`SELECT id FROM messages WHERE id = ? AND session_id = ?`).get(messageID, sessionID)
+  const target = sqlite.prepare(`SELECT id FROM messages WHERE id = ? AND session_id = ?`).get(messageID, sessionID) as unknown as { id: string } | undefined
   if (!target) throw new Error(`message ${messageID} not found in session ${sessionID}`)
 
   // Message IDs at/after the boundary (conversation order), then matching snapshots
   const msgIds: string[] = sqlite.prepare(
     `SELECT id FROM messages WHERE session_id = ? AND created_at >= (SELECT created_at FROM messages WHERE id = ?) ORDER BY created_at, rowid`
-  ).all(sessionID, messageID).map((r: any) => r.id)
+  ).all(sessionID, messageID as string).map((r) => (r as { id: string }).id)
 
   const restored: Snapshot[] = []
   for (const mid of msgIds) {
-    const rows: any[] = sqlite.prepare(
+    const rows = sqlite.prepare(
       `SELECT * FROM file_snapshots WHERE session_id = ? AND message_id = ? ORDER BY created_at DESC, rowid DESC`
-    ).all(sessionID, mid)
+    ).all(sessionID, mid) as SnapshotRow[]
     for (const row of rows) {
       restoreRow(row)
       sqlite.prepare(`DELETE FROM file_snapshots WHERE id = ?`).run(row.id)
@@ -93,12 +105,12 @@ export function revertToMessage(db: any, sessionID: string, messageID: string): 
   return restored
 }
 
-function listAll(db: any, sessionID: string, limit = 50): Snapshot[] {
-  const rows: any[] = db.sqlite?.prepare(
+function listAll(db: MiraDB, sessionID: string, limit = 50): Snapshot[] {
+  const rows = (db.sqlite?.prepare(
     `SELECT id, session_id, message_id, path, content IS NOT NULL AS had_content, created_at FROM file_snapshots WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`
-  ).all(sessionID, limit) ?? []
+  ).all(sessionID, limit) ?? []) as Array<{ id: string; session_id: string; message_id?: string | null; path: string; had_content: number; created_at: number }>
   return rows.map(r => ({
-    id: r.id, sessionID: r.session_id, messageID: r.message_id,
+    id: r.id, sessionID: r.session_id, messageID: r.message_id ?? null,
     path: r.path, existedBefore: !!r.had_content, createdAt: r.created_at,
   }))
 }
@@ -106,19 +118,23 @@ export { listAll as listSnapshots }
 
 // ── Internals ──────────────────────────────────────────────────────
 
-function restoreRow(row: any): void {
+function restoreRow(row: SnapshotRow): void {
+  const path: string = row.path ?? ""
+  const content: string | null = row.content ?? null
   if (row.content === null) {
     // File was created by the agent — remove it
-    try { unlinkSync(row.path) } catch {}
+    if (path) { try { unlinkSync(path) } catch {} }
   } else {
-    try {
-      mkdirSync(dirname(row.path), { recursive: true })
-      writeFileSync(row.path, row.content, "utf-8")
-    } catch {}
+    if (path) {
+      try {
+        mkdirSync(dirname(path), { recursive: true })
+        writeFileSync(path, content ?? "", "utf-8")
+      } catch {}
+    }
   }
 }
 
-function rowToSnapshot(row: any): Snapshot {
+function rowToSnapshot(row: SnapshotRow): Snapshot {
   return {
     id: row.id, sessionID: row.session_id, messageID: row.message_id ?? null,
     path: row.path, existedBefore: row.content !== null, createdAt: row.created_at,

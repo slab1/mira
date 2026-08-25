@@ -25,6 +25,13 @@
 
 import type { PermissionRequest, PermissionAction } from "../types/index.js"
 
+/** Narrow untyped tool args to a string-keyed record (JsonValue-tolerant). */
+function argStr(args: unknown, key: string): string | undefined {
+  if (!args || typeof args !== "object") return undefined
+  const v = (args as Record<string, unknown>)[key]
+  return typeof v === "string" ? v : undefined
+}
+
 type PermRule = PermissionAction | Record<string, PermissionAction>
 
 export interface PermissionDecision {
@@ -100,8 +107,14 @@ function resolveForTool(
   // Record<string, PermissionAction> — pattern map
   // For file tools, match against path arg; for mcp, match tool name
   const valueToMatch = (() => {
-    if (tool === "bash" && args && typeof (args as any).command === "string") return (args as any).command
-    if ((tool === "read" || tool === "write" || tool === "edit") && args && typeof (args as any).path === "string") return (args as any).path
+    if (tool === "bash" && args) {
+      const command = argStr(args, "command")
+      if (command !== undefined) return command
+    }
+    if ((tool === "read" || tool === "write" || tool === "edit") && args) {
+      const path = argStr(args, "path")
+      if (path !== undefined) return path
+    }
     return tool
   })()
 
@@ -141,9 +154,12 @@ export class PermissionManager {
     }
 
     // Layer 4: BashArity (only for bash tool)
-    if (tool === "bash" && args && typeof (args as any).command === "string") {
-      // Only if no explicit rule matched above
-      return bashArityDecision((args as any).command)
+    if (tool === "bash" && args) {
+      const command = argStr(args, "command")
+      if (command !== undefined) {
+        // Only if no explicit rule matched above
+        return bashArityDecision(command)
+      }
     }
 
     // Layer 5: default

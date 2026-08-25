@@ -9,6 +9,7 @@ import type { Patch } from "./patcher.js"
 import type { VerifyResult } from "./verifier.js"
 import type { Bus } from "../bus/index.js"
 import type { KnowledgeBase } from "../learning/knowledge.js"
+import type { MiraDB } from "../storage/db.js"
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -27,7 +28,7 @@ export interface ApplierConfig {
 export interface ApplierDeps {
   bus?: Bus
   knowledge?: KnowledgeBase
-  db?: any
+  db?: MiraDB
 }
 
 // ── Applier ────────────────────────────────────────────────────────
@@ -122,10 +123,10 @@ export class Applier {
     }
 
     this.deps.bus?.publish({
-      type: "server.heartbeat" as any,
+      type: "learning.updated",
       payload: { kind: "patching.applied", id: patch.id, file: patch.targetFile, painPoint: patch.painPointId },
       timestamp: Date.now(),
-    } as any)
+      })
 
     return { applied: true, reason: verifyResult?.reason ?? "applied", patchId: patch.id, targetFile: patch.targetFile }
   }
@@ -136,7 +137,7 @@ export class Applier {
   ): Promise<ApplyResult[]> {
     const out: ApplyResult[] = []
     for (const p of patches) {
-      const vr = (p as any).result as VerifyResult | undefined
+      const vr = p.result
       if (vr && !vr.verified) {
         out.push({ applied: false, reason: `rejected: ${vr.reason}`, patchId: p.id, targetFile: p.targetFile })
         continue
@@ -151,7 +152,8 @@ export class Applier {
     try {
       const sqlite = this.deps.db?.sqlite
       if (!sqlite) return []
-      return sqlite.prepare(`SELECT patch_id, pain_point, target_file, created_at FROM patching_log ORDER BY created_at DESC LIMIT ?`).all(limit)
+      interface HistoryRow { patch_id: string; pain_point: string; target_file: string; created_at: number }
+      return sqlite.prepare(`SELECT patch_id, pain_point, target_file, created_at FROM patching_log ORDER BY created_at DESC LIMIT ?`).all(limit) as HistoryRow[]
     } catch { return [] }
   }
 }
