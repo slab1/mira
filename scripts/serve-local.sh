@@ -34,7 +34,8 @@ case "${1:-start}" in
     if [ -z "${MIRA_TOKEN:-}" ] && [ -z "${MIRA_API_KEYS:-}" ]; then
       echo "[mira] WARNING: no MIRA_TOKEN/MIRA_API_KEYS — server will be open. Set one in $MIRA_ENV"
     fi
-    nohup bun "$REPO_DIR/packages/server/src/index.ts" >>"$LOG_FILE" 2>&1 &
+    # setsid: own session — survives parent shell/process-group kills (tool runners, SSH drops)
+    setsid nohup bun "$REPO_DIR/packages/server/src/index.ts" >>"$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     # Boot involves DB migrate + tool registration + MCP connects — poll, don't guess
     for _ in $(seq 1 25); do

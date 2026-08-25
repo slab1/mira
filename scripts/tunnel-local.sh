@@ -23,7 +23,8 @@ if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
   exit 0
 fi
 
-nohup cloudflared tunnel --url "http://127.0.0.1:$PORT" --no-autoupdate >"$LOG_FILE" 2>&1 &
+# setsid: own session — survives parent shell/process-group kills (tool runners, SSH drops)
+setsid nohup cloudflared tunnel --url "http://127.0.0.1:$PORT" --no-autoupdate >"$LOG_FILE" 2>&1 &
 echo $! > "$PID_FILE"
 
 echo "[tunnel] starting (pid $(cat "$PID_FILE"))…"
