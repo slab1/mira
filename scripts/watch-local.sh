@@ -3,11 +3,14 @@
 # Tiny bash loop (~5MB RSS) that revives serve-local.sh whenever /healthz dies,
 # and re-attaches the reserved zrok share (slab1-mira.shares.zrok.io) if it drops.
 # Launch detached:  setsid nohup scripts/watch-local.sh >/dev/null 2>&1 &
+# Updated: adds nightly SQLite backup integration (keep 7).
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG="${HOME}/.mira/watchdog.log"
 PORT="${PORT:-4096}"
 ZROK_NAME="${ZROK_NAME:-slab1-mira}"
+BACKUP_INTERVAL=1440  # run backup once per ~24h (60s * 1440 = 86400s)
+BACKUP_COUNT=0
 echo "[watchdog] started $(date -Iseconds)" >>"$LOG"
 ZROK_FAILS=0
 while true; do
@@ -29,6 +32,12 @@ while true; do
       setsid nohup zrok share public -n "public:${ZROK_NAME}" "http://127.0.0.1:${PORT}" --headless >>"${HOME}/.mira/zrok.log" 2>&1 &
       ZROK_FAILS=0
     fi
+  fi
+  # Nightly SQLite backup integration (keep 7)
+  BACKUP_COUNT=$((BACKUP_COUNT + 1))
+  if [ "$BACKUP_COUNT" -ge "$BACKUP_INTERVAL" ]; then
+    bash "$DIR/backup-db.sh" >>"$LOG" 2>&1 || true
+    BACKUP_COUNT=0
   fi
   sleep 60
 done

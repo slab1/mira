@@ -59,6 +59,15 @@ export type ToolInfo = {
   parameters?: Record<string, JsonValue>
 }
 
+export type Snapshot = {
+  id: string
+  sessionID: string
+  messageID: string | null
+  path: string
+  existedBefore: boolean
+  createdAt: number
+}
+
 export type BusEvent = {
   type: string
   payload?: JsonValue
@@ -226,6 +235,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify(messageID ? { messageID } : {}),
     }),
+
+  listSnapshots: (id: string) => req<Snapshot[]>(`/session/${id}/snapshots`),
+
+  /** Export session transcript — markdown or JSON (triggers download in caller) */
+  exportSession: async (id: string, format: "md" | "json" = "md"): Promise<string> => {
+    const res = await fetch(`${baseUrl()}/session/${id}/export?format=${format}`, {
+      headers: authHeaders(),
+    })
+    if (res.status === 401) throw new Error("unauthorized")
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+    return await res.text()
+  },
 
   checkPermission: (body: Record<string, JsonValue>) =>
     req<{ allowed: boolean; reason?: string }>("/permission/check", {

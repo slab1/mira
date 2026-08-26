@@ -308,6 +308,24 @@ export class SessionPrompt {
     const writer = writable.getWriter()
     const encoder = new TextEncoder()
 
+    // SSE heartbeat — tunnel intermediaries (zrok/Cloudflare) idle-timeout silent
+    // connections, killing long generations mid-stream. SSE comment lines keep
+    // bytes flowing and are ignored by every client-side parser.
+    let streamClosed = false
+    const HEARTBEAT_MS = 20_000
+    const heartbeat = setInterval(() => {
+      if (streamClosed) return
+      writer.write(encoder.encode(": ping\n\n")).catch(() => {
+        streamClosed = true
+        clearInterval(heartbeat)
+      })
+    }, HEARTBEAT_MS)
+    const finishStream = () => {
+      if (streamClosed) return
+      streamClosed = true
+      clearInterval(heartbeat)
+    }
+
     const send = (event: string, data: JsonValue) => {
       const line = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
       writer.write(encoder.encode(line))
@@ -319,10 +337,12 @@ export class SessionPrompt {
       agent: session.agent,
       maxSteps: options?.maxSteps,
       compactionThreshold: options?.compactionThreshold,
+      onStreamClosed: finishStream,
     }).catch(async err => {
       console.error(`[mira] loop error (session ${sessionID}):`, err?.stack ?? err)
       send("error", { error: String(err) })
       try { await writer.close() } catch {}
+      finishStream()
     })
 
     return new Response(readable, {
@@ -346,6 +366,7 @@ export class SessionPrompt {
     agent?: string | null
     maxSteps?: number
     compactionThreshold?: number
+    onStreamClosed?: () => void
   }) {
     const { sessionID, assistantMessageID, model, systemPrompt, send, writer } = opts
     const tracer = otelTrace.getTracer('mira-server')
@@ -537,6 +558,7 @@ export class SessionPrompt {
       } catch {}
     }
     try { await writer.close() } catch {}
+    opts.onStreamClosed?.()
 
     // ── Drain queued messages: chain next turn automatically ──
     const next = this.dequeueFirst(sessionID)

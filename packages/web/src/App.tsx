@@ -9,7 +9,7 @@ import { SkillSelector } from "./components/SkillSelector"
 import { QuestionPrompt } from "./components/QuestionPrompt"
 import { SettingsPanel } from "./components/SettingsPanel"
 import { CommandPalette } from "./components/CommandPalette"
-import { getToken, setToken } from "./api/client"
+import { api, getToken, setToken } from "./api/client"
 
 /** Token gate: servers with MIRA_TOKEN/MIRA_API_KEYS reject unauthenticated
  *  clients. Show a credential card until a token is stored and the server
@@ -263,6 +263,33 @@ export default function App() {
                   class="pill pill-warn pill-btn"
                 >
                   ↩ undo
+                </button>
+              </Show>
+              <Show when={store.state.currentId}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void (async () => {
+                      const id = store.state.currentId
+                      if (!id) return
+                      try {
+                        const md = await api.exportSession(id, "md")
+                        const blob = new Blob([md], { type: "text/markdown;charset=utf-8" })
+                        const url = URL.createObjectURL(blob)
+                        const a = document.createElement("a")
+                        a.href = url
+                        a.download = `mira-${id.slice(0, 8)}.md`
+                        a.click()
+                        URL.revokeObjectURL(url)
+                      } catch (e) {
+                        console.error("[mira] export failed:", e)
+                      }
+                    })()
+                  }
+                  title="Export conversation transcript as Markdown"
+                  class="pill pill-btn"
+                >
+                  ⤓ export
                 </button>
               </Show>
               <Show when={store.state.cost}>

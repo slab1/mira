@@ -1,13 +1,14 @@
 import { For, Show, createSignal, createResource } from "solid-js"
 import type { AppStore } from "../stores/app"
-import { api, type ToolInfo } from "../api/client"
+import { api, type ToolInfo, type Snapshot } from "../api/client"
 
-type Tab = "todos" | "tools" | "events"
+type Tab = "todos" | "tools" | "events" | "history"
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "todos", label: "Todos" },
   { id: "tools", label: "Tools" },
   { id: "events", label: "Events" },
+  { id: "history", label: "History" },
 ]
 
 export function ToolView(props: { store: AppStore }) {
@@ -15,6 +16,10 @@ export function ToolView(props: { store: AppStore }) {
   const [tools] = createResource(() => api.listTools().catch(() => [] as ToolInfo[]))
   const [tab, setTab] = createSignal<Tab>("todos")
   const [collapsed, setCollapsed] = createSignal(false)
+  const snapshotsSource = () => (tab() === "history" ? s().currentId ?? null : null)
+  const [snapshots, { refetch: refetchSnaps }] = createResource(snapshotsSource, (id) =>
+    api.listSnapshots(id).catch(() => [] as Snapshot[]),
+  )
 
   const doneCount = () => s().todos.filter((t) => t.status === "completed").length
   const progress = () => (s().todos.length === 0 ? 0 : Math.round((doneCount() / s().todos.length) * 100))
@@ -298,6 +303,116 @@ export function ToolView(props: { store: AppStore }) {
               >
                 ◷ Streaming turn for <code style={{ "font-family": "var(--font-mono)", color: "var(--fg)" }}>{s().currentId?.slice(0, 8)}</code>…
               </div>
+            </Show>
+          </Show>
+
+          {/* ── History (snapshots / rewind) ────────────────────────── */}
+          <Show when={tab() === "history"}>
+            <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center", "margin-bottom": "10px", gap: "8px" }}>
+              <span style={{ "font-size": "var(--fs-xs)", "font-weight": "700", color: "var(--fg-muted)", "letter-spacing": "0.05em", "text-transform": "uppercase" }}>
+                History · {snapshots.loading ? "…" : (snapshots()?.length ?? 0)}
+              </span>
+              <Show when={s().currentId}>
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  onClick={() => refetchSnaps()}
+                  title="Refresh snapshots"
+                  style={{ padding: "2px 7px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-full)" }}
+                >
+                  ↻
+                </button>
+              </Show>
+            </div>
+            <Show
+              when={s().currentId}
+              fallback={<div style={{ color: "var(--fg-faint)", "font-size": "var(--fs-sm)", padding: "4px 0" }}>Select a session to see its file history.</div>}
+            >
+              <Show
+                when={!snapshots.loading}
+                fallback={
+                  <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
+                    {[0, 1].map(() => (
+                      <div class="skeleton" style={{ height: "52px", "border-radius": "var(--r-md)" }} />
+                    ))}
+                  </div>
+                }
+              >
+                <Show
+                  when={(snapshots()?.length ?? 0) > 0}
+                  fallback={
+                    <div
+                      style={{
+                        padding: "14px",
+                        border: "1px dashed var(--border-strong)",
+                        "border-radius": "var(--r-md)",
+                        color: "var(--fg-faint)",
+                        "font-size": "var(--fs-xs)",
+                        "text-align": "center",
+                        "line-height": "1.5",
+                      }}
+                    >
+                      No file mutations yet — edits are snapshotted before they land.
+                    </div>
+                  }
+                >
+                  <div style={{ display: "flex", "flex-direction": "column", gap: "6px" }}>
+                    <For each={snapshots() ?? []}>
+                      {(snap) => (
+                        <div class="card" style={{ padding: "9px 11px", display: "flex", gap: "9px", "align-items": "center" }}>
+                          <div style={{ flex: "1", "min-width": "0" }}>
+                            <div
+                              style={{
+                                "font-size": "12px",
+                                "font-weight": "600",
+                                color: "var(--fg)",
+                                "font-family": "var(--font-mono)",
+                                "white-space": "nowrap",
+                                overflow: "hidden",
+                                "text-overflow": "ellipsis",
+                              }}
+                              title={snap.path}
+                            >
+                              {snap.path}
+                            </div>
+                            <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "margin-top": "2px", "font-family": "var(--font-mono)" }}>
+                              {new Date(snap.createdAt).toLocaleTimeString()} · {snap.existedBefore ? "edit" : "new file"}
+                              {snap.messageID ? ` · ${snap.messageID.slice(0, 8)}` : ""}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            class="btn btn-ghost"
+                            onClick={() =>
+                              void (async () => {
+                                const id = s().currentId
+                                if (!id) return
+                                try {
+                                  await api.revertSession(id, snap.messageID ?? undefined)
+                                  await refetchSnaps()
+                                  await props.store.loadMessages(id)
+                                } catch (e) {
+                                  console.error("[mira] revert failed:", e)
+                                }
+                              })()
+                            }
+                            title={snap.messageID ? `Rewind to message ${snap.messageID.slice(0, 8)} (reverts this + later)` : "Undo last mutation"}
+                            style={{
+                              padding: "4px 8px",
+                              "font-size": "var(--fs-xs)",
+                              border: "1px solid var(--border)",
+                              "border-radius": "var(--r-full)",
+                              flex: "none",
+                            }}
+                          >
+                            ↩ revert
+                          </button>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </Show>
             </Show>
           </Show>
         </div>
