@@ -33,11 +33,13 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
   const [provTesting, setProvTesting] = createSignal<string | null>(null)
   const [provResult, setProvResult] = createSignal<Record<string, string>>({})
 
-  // MCP add form
+  // MCP add form (opencode parity: env + headers)
   const [mcpName, setMcpName] = createSignal("")
   const [mcpType, setMcpType] = createSignal<"local" | "remote">("local")
   const [mcpCommand, setMcpCommand] = createSignal("")
   const [mcpUrl, setMcpUrl] = createSignal("")
+  const [mcpEnv, setMcpEnv] = createSignal("")
+  const [mcpHeaders, setMcpHeaders] = createSignal("")
   const [mcpTesting, setMcpTesting] = createSignal<string | null>(null)
   const [mcpResult, setMcpResult] = createSignal<Record<string, string>>({})
 
@@ -147,14 +149,42 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     setProvTesting(null)
   }
 
+  const handleRemoveProvider = async (id: string) => {
+    if (!confirm(`Remove provider "${id}"?`)) return
+    await props.store.removeProvider(id)
+    await props.store.loadProviders()
+  }
+
   const handleAddMcp = async (e: Event) => {
     e.preventDefault()
     const name = mcpName().trim()
     if (!name) return
-    const body: { name: string; type: "local" | "remote"; command?: string[]; url?: string; enabled?: boolean } = {
+    const parseRecord = (raw: string): Record<string, string> | undefined => {
+      const s = raw.trim()
+      if (!s) return undefined
+      try {
+        const j = JSON.parse(s)
+        if (j && typeof j === "object" && !Array.isArray(j)) {
+          const out: Record<string, string> = {}
+          for (const [k, v] of Object.entries(j as Record<string, string>)) out[k] = String(v)
+          return out
+        }
+      } catch {}
+      const out: Record<string, string> = {}
+      for (const pair of s.split(/[,\n]+/)) {
+        const i = pair.indexOf("=")
+        if (i > 0) out[pair.slice(0, i).trim()] = pair.slice(i + 1).trim()
+      }
+      return Object.keys(out).length ? out : undefined
+    }
+    const env = parseRecord(mcpEnv())
+    const headers = parseRecord(mcpHeaders())
+    const body: { name: string; type: "local" | "remote"; command?: string[]; url?: string; enabled?: boolean; env?: Record<string, string>; headers?: Record<string, string> } = {
       name,
       type: mcpType(),
       enabled: true,
+      env,
+      headers,
     }
     if (mcpType() === "local") {
       const cmd = mcpCommand().trim()
@@ -170,6 +200,8 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
       setMcpName("")
       setMcpCommand("")
       setMcpUrl("")
+      setMcpEnv("")
+      setMcpHeaders("")
     }
   }
 
@@ -483,6 +515,15 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                             >
                               {provTesting() === p.id ? "Testing…" : "Test"}
                             </button>
+                            <button
+                              type="button"
+                              class="btn btn-ghost"
+                              onClick={() => void handleRemoveProvider(p.id)}
+                              title={`Remove ${p.id}`}
+                              style={{ padding: "5px 8px", "font-size": "var(--fs-xs)", color: "var(--danger)" }}
+                            >
+                              Remove
+                            </button>
                             <Show when={provResult()[p.id]}>
                               <span style={{ "font-size": "var(--fs-xs)", color: provResult()[p.id].startsWith("✓") ? "var(--ok)" : "var(--danger)" }}>{provResult()[p.id]}</span>
                             </Show>
@@ -736,6 +777,38 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                         <span class="settings-hint">Spawned via stdio. Env vars with {"{env:VAR}"} are expanded server-side.</span>
                       </div>
                     </Show>
+                    <div style={{ display: "grid", "grid-template-columns": "1fr 1fr", gap: "10px" }}>
+                      <div class="settings-field">
+                        <label for="mcp-env" class="settings-label">
+                          Env (opencode parity)
+                        </label>
+                        <input
+                          id="mcp-env"
+                          class="input"
+                          value={mcpEnv()}
+                          onInput={(e) => setMcpEnv(e.currentTarget.value)}
+                          placeholder='{"FOO":"bar"} or FOO=bar,BAZ=qux'
+                          autocomplete="off"
+                          spellcheck={false}
+                        />
+                        <span class="settings-hint">JSON or KEY=val, comma separated.</span>
+                      </div>
+                      <div class="settings-field">
+                        <label for="mcp-headers" class="settings-label">
+                          Headers (remote)
+                        </label>
+                        <input
+                          id="mcp-headers"
+                          class="input"
+                          value={mcpHeaders()}
+                          onInput={(e) => setMcpHeaders(e.currentTarget.value)}
+                          placeholder='{"Authorization":"Bearer ..."}'
+                          autocomplete="off"
+                          spellcheck={false}
+                        />
+                        <span class="settings-hint">For remote StreamableHTTP/SSE.</span>
+                      </div>
+                    </div>
                     <div style={{ display: "flex", "justify-content": "flex-end" }}>
                       <button type="submit" class="btn btn-solid" disabled={!mcpName().trim()} style={{ padding: "6px 12px", "font-size": "var(--fs-sm)" }}>
                         Add server

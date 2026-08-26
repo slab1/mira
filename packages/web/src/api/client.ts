@@ -303,9 +303,10 @@ export const api = {
   listProviders: () => req<ProviderEntry[] | Record<string, ProviderConfig>>("/providers"),
   testProvider: (id: string) =>
     req<{ ok: boolean; latencyMs?: number; error?: string }>(`/providers/${encodeURIComponent(id)}/test`, { method: "POST" }),
+  removeProvider: (id: string) => req<{ ok: boolean }>(`/providers/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   listMcp: () => req<MCPServerEntry[]>("/mcp"),
-  addMcp: (body: { name: string; type: "local" | "remote"; command?: string[]; url?: string; enabled?: boolean; env?: Record<string, string> }) =>
+  addMcp: (body: { name: string; type: "local" | "remote"; command?: string[]; url?: string; enabled?: boolean; env?: Record<string, string>; headers?: Record<string, string> }) =>
     req<MCPServerEntry>("/mcp", { method: "POST", body: JSON.stringify(body) }),
   toggleMcp: (name: string, enabled: boolean) =>
     req<MCPServerEntry>(`/mcp/${encodeURIComponent(name)}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),

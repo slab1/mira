@@ -203,6 +203,22 @@ export async function removeMcpFromConfig(name: string, cwd = process.cwd()): Pr
   }
 }
 
+/** Remove a provider from the project config file (for DELETE /provider/:name). */
+export async function removeProviderFromConfig(name: string, cwd = process.cwd()): Promise<void> {
+  const targetPath = `${cwd}/mira.json`
+  let existing: PartialMiraConfig = {}
+  try {
+    const f = Bun.file(targetPath)
+    if (await f.exists()) existing = (await f.json()) as PartialMiraConfig
+  } catch {}
+  if (existing.provider && existing.provider[name]) {
+    delete existing.provider[name]
+    await Bun.write(targetPath, JSON.stringify(existing, null, 2) + "\n")
+    cached = null
+    await loadConfig(cwd)
+  }
+}
+
 /** Return merged config + per-layer breakdown for debugging. */
 export async function getConfigLayers(cwd = process.cwd()): Promise<{
   merged: MiraConfig

@@ -298,7 +298,24 @@ export function createSettingsStore() {
     }
   }
 
-  async function addMcp(body: { name: string; type: "local" | "remote"; command?: string[]; url?: string; enabled?: boolean; env?: Record<string, string> }): Promise<MCPServerEntry | null> {
+  async function removeProvider(id: string): Promise<boolean> {
+    try {
+      await api.removeProvider(id)
+      setState("providers", (prev) => prev.filter((p) => p.id !== id))
+      // also drop from config if present
+      if (state.config?.provider?.[id]) {
+        const next = { ...state.config.provider }
+        delete next[id]
+        setState("config", (prev) => (prev ? { ...prev, provider: next } : prev))
+      }
+      return true
+    } catch (e) {
+      setState("error", (e as Error).message)
+      return false
+    }
+  }
+
+  async function addMcp(body: { name: string; type: "local" | "remote"; command?: string[]; url?: string; enabled?: boolean; env?: Record<string, string>; headers?: Record<string, string> }): Promise<MCPServerEntry | null> {
     try {
       const created = await api.addMcp(body)
       await loadMcp()
@@ -378,6 +395,7 @@ export function createSettingsStore() {
     saveConfig,
     patchConfigField,
     testProvider,
+    removeProvider,
     addMcp,
     toggleMcp,
     testMcp,

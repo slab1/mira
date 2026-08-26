@@ -32,7 +32,7 @@ import { SessionPrompt } from "./session/prompt.js"
 import { getAgentTemplates, AGENT_TEMPLATES } from "./agents/templates.js"
 const BUILTIN_AGENT_KEYS: Record<string, true> = Object.fromEntries(Object.keys(AGENT_TEMPLATES).map(k => [k, true as const]))
 import { MCPManager } from "./mcp/index.js"
-import { loadConfig, saveConfig, removeMcpFromConfig, getConfigLayers, getConfig } from "./config/index.js"
+import { loadConfig, saveConfig, removeMcpFromConfig, removeProviderFromConfig, getConfigLayers, getConfig } from "./config/index.js"
 import { createLearningSystem, mountLearningRoutes } from "./learning/index.js"
 import { setSharedKnowledge } from "./learning/knowledge.js"
 import { GuardrailsManager } from "./guardrails/index.js"
@@ -732,6 +732,60 @@ async function main() {
       }
     })
     return c.json(list)
+  })
+
+  // Provider test (opencode parity — checks apiKey presence + baseURL reachability)
+  app.post("/providers/:id/test", async c => {
+    const id = c.req.param("id")
+    const cfg = getConfig()
+    const prov = cfg.provider?.[id] as { options?: { apiKey?: string; baseURL?: string } } | undefined
+    if (!prov) return c.json({ ok: false, error: "provider not found" }, 404)
+    const hasKey = !!prov.options?.apiKey
+    if (!hasKey) return c.json({ ok: false, error: "missing apiKey" }, 400)
+    const baseURL = prov.options?.baseURL
+    if (baseURL) {
+      try {
+        const controller = new AbortController()
+        const t = setTimeout(() => controller.abort(), 3000)
+        await fetch(baseURL, { method: "HEAD", signal: controller.signal }).catch(() => {})
+        clearTimeout(t)
+      } catch {}
+    }
+    return c.json({ ok: true, hasKey, baseURL: baseURL ?? "" })
+  })
+  app.post("/provider/:id/test", async c => {
+    const id = c.req.param("id")
+    const cfg = getConfig()
+    const prov = cfg.provider?.[id] as { options?: { apiKey?: string; baseURL?: string } } | undefined
+    if (!prov) return c.json({ ok: false, error: "provider not found" }, 404)
+    const hasKey = !!prov.options?.apiKey
+    if (!hasKey) return c.json({ ok: false, error: "missing apiKey" }, 400)
+    const baseURL = prov.options?.baseURL
+    if (baseURL) {
+      try {
+        const controller = new AbortController()
+        const t = setTimeout(() => controller.abort(), 3000)
+        await fetch(baseURL, { method: "HEAD", signal: controller.signal }).catch(() => {})
+        clearTimeout(t)
+      } catch {}
+    }
+    return c.json({ ok: true, hasKey, baseURL: baseURL ?? "" })
+  })
+
+  // Provider delete (opencode parity)
+  app.delete("/providers/:id", async c => {
+    const id = c.req.param("id")
+    const cfg = getConfig()
+    if (!cfg.provider?.[id]) return c.json({ error: "provider not found" }, 404)
+    await removeProviderFromConfig(id)
+    return c.json({ ok: true })
+  })
+  app.delete("/provider/:id", async c => {
+    const id = c.req.param("id")
+    const cfg = getConfig()
+    if (!cfg.provider?.[id]) return c.json({ error: "provider not found" }, 404)
+    await removeProviderFromConfig(id)
+    return c.json({ ok: true })
   })
 
   // Message queue — type while the agent streams (OpenCode-parity UX)
