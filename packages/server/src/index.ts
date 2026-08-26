@@ -38,7 +38,7 @@ import { setSharedKnowledge } from "./learning/knowledge.js"
 import { GuardrailsManager } from "./guardrails/index.js"
 import { getJob, listJobs, cancelJob } from "./tools/task.js"
 import { writeFinding, listFindings, resolveFinding, type FindingSeverity } from "./tools/findings.js"
-import type { BusEvent, MiraConfig } from "./types/index.js"
+import type { BusEvent, MiraConfig, JsonValue } from "./types/index.js"
 import type { Snapshot } from "./storage/snapshots.js"
 
 type PartialMiraConfig = Partial<MiraConfig>
@@ -254,8 +254,14 @@ async function main() {
     if (v.type === "remote" && !v.url) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["url"], message: "remote type requires url" })
   })
   const mcpToggleSchema = z.object({ enabled: z.boolean() })
+  // JsonValue for config patch values — avoids `unknown` per codebase rule (see types/index.ts)
+  const jsonValueSchema: z.ZodType<JsonValue> = z.union([
+    z.string(), z.number(), z.boolean(), z.null(),
+    z.array(z.lazy(() => jsonValueSchema)),
+    z.record(z.string(), z.lazy(() => jsonValueSchema)),
+  ])
   const configPatchSchema = z.object({
-    patch: z.record(z.string(), z.unknown()),
+    patch: z.record(z.string(), jsonValueSchema),
     layer: z.enum(["project", "local"]).optional(),
   }).refine((v) => v.patch && typeof v.patch === "object" && Object.keys(v.patch).length > 0, { message: "patch must be non-empty object", path: ["patch"] })
   const queuePushSchema = z.object({ prompt: z.string().min(1).max(20000) })
@@ -775,7 +781,7 @@ async function main() {
       return c.json({ error: "invalid todos", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
     }
     const sid = c.req.param("id")
-    const todos = parsed.data.map(t => ({ ...t, id: crypto.randomUUID(), sessionID: sid, createdAt: Date.now() })) as unknown as Parameters<SessionPrompt["setTodos"]>[1]
+    const todos = parsed.data.map(t => ({ ...t, id: crypto.randomUUID(), sessionID: sid, createdAt: Date.now() })) as Parameters<SessionPrompt["setTodos"]>[1]
     const result = await prompt.setTodos(sid, todos)
     bus.publish({ type: "todo.updated", sessionID: sid, payload: result, timestamp: Date.now() })
     return c.json(result)

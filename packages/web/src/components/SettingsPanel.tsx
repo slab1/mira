@@ -20,6 +20,10 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
   // Form state for General
   const [model, setModel] = createSignal("")
   const [smallModel, setSmallModel] = createSignal("")
+  const [loopMaxSteps, setLoopMaxSteps] = createSignal("")
+  const [loopContextLimit, setLoopContextLimit] = createSignal("")
+  const [loopThreshold, setLoopThreshold] = createSignal("")
+  const [loopSmallModel, setLoopSmallModel] = createSignal("")
   const [theme, setThemeLocal] = createSignal<ThemeChoice>("system")
 
   // Providers add form
@@ -45,6 +49,11 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     if (props.open && s().config) {
       setModel(s().config?.model ?? "")
       setSmallModel(s().config?.smallModel ?? "")
+      const loop = s().config?.loop ?? {}
+      setLoopMaxSteps(loop.maxSteps != null ? String(loop.maxSteps) : "")
+      setLoopContextLimit(loop.contextLimit != null ? String(loop.contextLimit) : "")
+      setLoopThreshold(loop.compactionThreshold != null ? String(loop.compactionThreshold) : "")
+      setLoopSmallModel(loop.smallModel ?? "")
     }
     if (props.open) setThemeLocal(s().theme)
   })
@@ -88,6 +97,17 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     const patch: Partial<MiraConfig> = {}
     if (model().trim()) patch.model = model().trim()
     if (smallModel().trim()) patch.smallModel = smallModel().trim()
+    // Loop limits — only include fields the user touched (empty = leave as-is)
+    const loopPatch: Record<string, string | number> = {}
+    const maxSteps = parseInt(loopMaxSteps().trim(), 10)
+    if (loopMaxSteps().trim() && Number.isFinite(maxSteps) && maxSteps > 0) loopPatch.maxSteps = maxSteps
+    const ctxLimit = parseInt(loopContextLimit().trim(), 10)
+    if (loopContextLimit().trim() && Number.isFinite(ctxLimit) && ctxLimit > 0) loopPatch.contextLimit = ctxLimit
+    const thresh = parseFloat(loopThreshold().trim())
+    if (loopThreshold().trim() && Number.isFinite(thresh) && thresh > 0 && thresh <= 1) loopPatch.compactionThreshold = thresh
+    if (loopSmallModel().trim()) loopPatch.smallModel = loopSmallModel().trim()
+    if (Object.keys(loopPatch).length > 0) patch.loop = loopPatch as MiraConfig["loop"]
+    // Allow clearing loop fields when user empties them — send explicit null via delete? keep as-is for now
     if (Object.keys(patch).length > 0) await props.store.saveConfig(patch)
     // Theme is local-only (persisted via store, not server)
     props.store.setTheme(theme())
@@ -276,6 +296,79 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                           autocomplete="off"
                         />
                         <span class="settings-hint">Used for context compaction and summaries.</span>
+                      </div>
+
+                      <div style={{ "font-size": "var(--fs-xs)", "font-weight": "700", color: "var(--fg-muted)", "letter-spacing": "0.04em", "text-transform": "uppercase", "margin-top": "4px" }}>
+                        Loop limits
+                      </div>
+                      <div style={{ display: "grid", "grid-template-columns": "1fr 1fr", gap: "10px" }}>
+                        <div class="settings-field">
+                          <label for="settings-loop-maxsteps" class="settings-label">
+                            Max steps
+                          </label>
+                          <input
+                            id="settings-loop-maxsteps"
+                            class="input"
+                            type="number"
+                            min="1"
+                            value={loopMaxSteps()}
+                            onInput={(e) => setLoopMaxSteps(e.currentTarget.value)}
+                            placeholder="32"
+                            autocomplete="off"
+                          />
+                          <span class="settings-hint">LLM turns per prompt.</span>
+                        </div>
+                        <div class="settings-field">
+                          <label for="settings-loop-ctx" class="settings-label">
+                            Context limit
+                          </label>
+                          <input
+                            id="settings-loop-ctx"
+                            class="input"
+                            type="number"
+                            min="1000"
+                            value={loopContextLimit()}
+                            onInput={(e) => setLoopContextLimit(e.currentTarget.value)}
+                            placeholder="128000"
+                            autocomplete="off"
+                          />
+                          <span class="settings-hint">Tokens before compaction.</span>
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", "grid-template-columns": "1fr 1fr", gap: "10px" }}>
+                        <div class="settings-field">
+                          <label for="settings-loop-thresh" class="settings-label">
+                            Compaction threshold
+                          </label>
+                          <input
+                            id="settings-loop-thresh"
+                            class="input"
+                            type="number"
+                            min="0.1"
+                            max="1"
+                            step="0.05"
+                            value={loopThreshold()}
+                            onInput={(e) => setLoopThreshold(e.currentTarget.value)}
+                            placeholder="0.8"
+                            autocomplete="off"
+                          />
+                          <span class="settings-hint">0–1 fraction of limit.</span>
+                        </div>
+                        <div class="settings-field">
+                          <label for="settings-loop-small" class="settings-label">
+                            Loop small model
+                          </label>
+                          <input
+                            id="settings-loop-small"
+                            class="input"
+                            value={loopSmallModel()}
+                            onInput={(e) => setLoopSmallModel(e.currentTarget.value)}
+                            placeholder="openrouter/deepseek/..."
+                            autocomplete="off"
+                            spellcheck={false}
+                          />
+                          <span class="settings-hint">Overrides smallModel for loops.</span>
+                        </div>
                       </div>
 
                       <div class="settings-field">
