@@ -3,7 +3,7 @@
 # Tiny bash loop (~5MB RSS) that revives serve-local.sh whenever /healthz dies,
 # and re-attaches the reserved zrok share (slab1-mira.shares.zrok.io) if it drops.
 # Launch detached:  setsid nohup scripts/watch-local.sh >/dev/null 2>&1 &
-# Updated: adds nightly SQLite backup integration (keep 7).
+# Updated: adds nightly SQLite backup (keep 7) + weekly GC (30d sessions / 14d snaps / cap 50).
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG="${HOME}/.mira/watchdog.log"
@@ -11,6 +11,8 @@ PORT="${PORT:-4096}"
 ZROK_NAME="${ZROK_NAME:-slab1-mira}"
 BACKUP_INTERVAL=1440  # run backup once per ~24h (60s * 1440 = 86400s)
 BACKUP_COUNT=0
+GC_INTERVAL=10080    # run GC once per ~7d (60s * 10080 = 604800s)
+GC_COUNT=0
 echo "[watchdog] started $(date -Iseconds)" >>"$LOG"
 ZROK_FAILS=0
 while true; do
@@ -38,6 +40,12 @@ while true; do
   if [ "$BACKUP_COUNT" -ge "$BACKUP_INTERVAL" ]; then
     bash "$DIR/backup-db.sh" >>"$LOG" 2>&1 || true
     BACKUP_COUNT=0
+  fi
+  # Weekly GC: prune sessions >30d, snapshots >14d / cap 50 per session
+  GC_COUNT=$((GC_COUNT + 1))
+  if [ "$GC_COUNT" -ge "$GC_INTERVAL" ]; then
+    bun "$DIR/gc-db.ts" >>"$LOG" 2>&1 || true
+    GC_COUNT=0
   fi
   sleep 60
 done
