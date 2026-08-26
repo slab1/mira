@@ -5,7 +5,7 @@
  * BEFORE the mutation lands. Revert restores content; if the file did not
  * exist pre-mutation (content: null), revert deletes it.
  *
- * OpenCode-parity safety net: no agent edit is unrecoverable.
+ * Mira-parity safety net: no agent edit is unrecoverable.
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs"
 import { dirname } from "node:path"

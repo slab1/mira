@@ -1,7 +1,7 @@
 {
   "name": "mira",
   "version": "0.1.0",
-  "description": "AI agent platform better than all - OpenCode openness + Claude reasoning + Cursor polish",
+  "description": "AI agent platform — openness + reasoning + polish + autonomy + transparency, plus memory/eval/guardrails",
   "private": true,
   "workspaces": [
     "packages/*"

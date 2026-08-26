@@ -1,6 +1,6 @@
 # @mira/server — Agent Engine
 
-> **Mira is better than all** — OpenCode's openness + Claude's reasoning, minus weaknesses, plus memory/eval/guardrails.
+> **Mira** — hierarchical memory, eval-first observability, tool-layer guardrails, file snapshots with undo.
 
 ## Architecture
 
@@ -84,4 +84,4 @@ Real stdio protocol (`src/mcp/stdio-client.ts`) — newline-delimited JSON-RPC, 
 
 ## Sources
 
-- zengineer.blog (OpenCode deep-dive) · arXiv:2604.14228 (Claude Code) · O'Reilly 6-layer 2026 stack
+- zengineer.blog (Mira deep-dive) · arXiv:2604.14228 (Claude Code) · O'Reilly 6-layer 2026 stack

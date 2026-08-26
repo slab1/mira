@@ -1,7 +1,7 @@
 /**
  * Mira Tool Registry — 22+ tools with Zod schemas
  *
- * Design (OpenCode-inspired):
+ * Design (Mira-inspired):
  *   - Every tool has: name, description, schema (Zod), execute(ctx, args)
  *   - Registry is the single source of truth for LLM tool definitions
  *   - toAISDKTools() converts Zod schemas → Vercel AI SDK v5 tool format + JSON Schema

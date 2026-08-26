@@ -201,7 +201,7 @@ export function createAppStore() {
     if (!prompt || !state.currentId) return
     setInput("")
 
-    // Agent busy → queue the message instead of dropping it (OpenCode-parity UX)
+    // Agent busy → queue the message instead of dropping it (Mira-parity UX)
     if (state.streaming) {
       try {
         await api.queuePrompt(state.currentId, prompt)

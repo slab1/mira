@@ -13,7 +13,7 @@
  * Also supports direct provider keys for lower latency:
  *   ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY
  *
- * Features beyond OpenCode:
+ * Features beyond Mira:
  *   - Fallback chain (model → fallbackModel if 429/5xx)
  *   - Cost/latency tracking per request (for future eval/observability)
  *   - Summarization helper for compaction (uses smallModel)

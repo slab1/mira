@@ -1,7 +1,7 @@
 /**
  * Mira Shared — AGENTS.md + Skills
  *
- * Spec-compatible with OpenCode/Claude Code AGENTS.md loader:
+ * Spec-compatible with Mira/Claude Code AGENTS.md loader:
  *  - Searches cwd upward for AGENTS.md / CLAUDE.md / .mira/instructions.md
  *  - Frontmatter-aware (YAML between ---), but plain markdown also works
  *  - Skills: SKILL.md packs under .mira/skills/<name>/SKILL.md or <project>/skills/<name>/SKILL.md
@@ -15,7 +15,7 @@ export const AGENTS_FILES = ["AGENTS.md", "CLAUDE.md", ".mira/instructions.md"] 
 export type AgentsFileName = typeof AGENTS_FILES[number]
 
 /** Directories searched for skills (in order). */
-export const SKILL_DIRS = [".mira/skills", "skills", ".opencode/skills"] as const
+export const SKILL_DIRS = [".mira/skills", "skills"] as const
 
 /** Max chars to inject per AGENTS.md / skill to avoid context blowup. */
 export const MAX_AGENTS_CHARS = 8000

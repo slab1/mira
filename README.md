@@ -1,12 +1,12 @@
 # Mira — AI Agent Platform Better Than All
 
-> **OpenCode's openness + Claude's reasoning + Cursor's polish + Windsurf's autonomy + Cline's transparency, minus weaknesses, plus memory/eval/guardrails as first-class.**
+> **Openness + Claude's reasoning + Cursor's polish + Windsurf's autonomy + Cline's transparency, minus weaknesses, plus memory/eval/guardrails as first-class.**
 
 Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observability, tool-layer guardrails, file snapshots with undo, real LSP + MCP integration, HITL questions, and a cost-tracking model gateway — all verified by a 60+ test suite including live-provider E2E gates.**
 
 ## Why Mira?
 
-| Feature | OpenCode | Claude Code | Cursor | Windsurf | Cline | **Mira** |
+| Feature | Legacy | Claude Code | Cursor | Windsurf | Cline | **Mira** |
 |---------|----------|-------------|--------|----------|-------|------------|
 | Provider-agnostic | ✅ 25+ | ❌ Claude-only | ⚠️ Limited | ⚠️ Limited | ✅ BYO-key | ✅ **Gateway: OpenRouter + NVIDIA NIM** |
 | Real LSP servers | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ **JSON-RPC 3.17 (gopls today) + 9-layer edit fallback** |

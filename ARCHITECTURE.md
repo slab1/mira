@@ -16,7 +16,7 @@
 | Layer | Recommendation | Why |
 |-------|---------------|-----|
 | Shell | Next.js 16.2 + TypeScript | One language |
-| Runtime | Bun (native SQLite) | OpenCode proven, fast |
+| Runtime | Bun (native SQLite) | proven, fast |
 | Monorepo | Turborepo | Multi-package |
 | UI | SolidJS + Tauri v2 | Fine-grained reactivity |
 | LLM | Model Gateway (OpenRouter) | 75% multi-model |
@@ -50,7 +50,7 @@
 - **Multi-Agent:** Shared global vs hierarchical vs isolated
 - **Security:** MINJA 95% injection, need guardrails
 
-## OpenCode Patterns Worth Copying
+## Mira Patterns Worth Copying
 
 - Layered fallback > perfect prediction (9 edit replacers)
 - Constraints are security (tool visibility, not prompt)
@@ -92,7 +92,7 @@ Additional shipped systems:
 
 ## Sources
 
-- zengineer.blog (OpenCode deep-dive)
+- zengineer.blog (Mira deep-dive)
 - arxiv.org/abs/2604.14228 (Claude Code)
 - oreilly.com/radar/the-ai-agents-stack-2026-edition
 - vibeready.sh/blog/ai-agent-tech-stack-2026

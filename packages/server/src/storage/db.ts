@@ -27,7 +27,7 @@ export function createDatabase(path = "./data/mira.db") {
 
   const sqlite = new Database(path)
 
-  // WAL mode + sane pragmas (OpenCode pattern — pragmatism over Postgres for local)
+  // WAL mode + sane pragmas (Mira pattern — pragmatism over Postgres for local)
   sqlite.exec("PRAGMA journal_mode = WAL;")
   sqlite.exec("PRAGMA synchronous = NORMAL;")
   sqlite.exec("PRAGMA foreign_keys = ON;")

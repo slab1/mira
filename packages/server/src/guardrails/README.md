@@ -25,7 +25,7 @@ Security guardrails for Mira tool execution.
 
 ## Configuration
 
-Add to `mira.json` / `opencode.jsonc`:
+Add to `mira.json` / `mira.jsonc`:
 
 ```json
 {

@@ -1,6 +1,6 @@
 /**
  * Tool: edit — Precise string replacement (hash-anchored edit pattern)
- * Based on OpenCode's 9-layer edit fallback: exact → trimmed → fuzzy
+ * Based on Mira's 9-layer edit fallback: exact → trimmed → fuzzy
  * Prevents stale-line failures (raises success 7% → 68% in benchmarks)
  */
 import { z } from "zod"

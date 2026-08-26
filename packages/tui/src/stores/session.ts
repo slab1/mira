@@ -234,7 +234,7 @@ export function createSessionStore() {
     const prompt = (text ?? input()).trim()
     if (!prompt || !state.currentId) return
     setInput("")
-    // Agent busy → queue for chained-turn processing (OpenCode-parity UX)
+    // Agent busy → queue for chained-turn processing (Mira-parity UX)
     if (state.streaming) {
       try {
         await rpc.queuePrompt(state.currentId, prompt)

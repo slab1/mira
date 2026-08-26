@@ -1,5 +1,5 @@
 /**
- * Mira Config — Loads mira.json / opencode.jsonc + env fallbacks
+ * Mira Config — Loads mira.json / mira.jsonc + env fallbacks
  * Injects AGENTS.md project instructions into the system prompt.
  * (Skills + todos injection happens per-turn in SessionPrompt.loadContext.)
  */
@@ -54,8 +54,8 @@ let cached: MiraConfig | null = null
 
 export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
   if (cached) return cached
-  // Try mira.json, opencode.jsonc, .mira/config.json
-  const candidates = ["mira.json", "mira.jsonc", "opencode.jsonc", ".mira/config.json"]
+  // Try mira.json, mira.jsonc, .mira/config.json
+  const candidates = ["mira.json", "mira.jsonc", ".mira/config.json"]
   for (const name of candidates) {
     try {
       const file = Bun.file(`${cwd}/${name}`)
@@ -242,7 +242,7 @@ export async function getConfigLayers(cwd = process.cwd()): Promise<{
     }
   } catch {}
   // project candidates
-  for (const name of ["mira.json", "mira.jsonc", "opencode.jsonc", ".mira/config.json"]) {
+  for (const name of ["mira.json", "mira.jsonc", ".mira/config.json"]) {
     try {
       const p = `${cwd}/${name}`
       const f = Bun.file(p)

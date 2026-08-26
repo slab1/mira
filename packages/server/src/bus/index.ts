@@ -1,7 +1,7 @@
 /**
  * Mira Event Bus — BusEvent → GlobalBus → Worker → RPC → TUI
  *
- * Principles (from OpenCode):
+ * Principles (from Mira):
  *   - Event-driven glue — NO polling anywhere (TUI subscribes via WebSocket)
  *   - Single GlobalBus instance, typed BusEvent<T>
  *   - Workers subscribe to filtered streams; RPC layer bridges WebSocket → TUI

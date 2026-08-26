@@ -1,10 +1,10 @@
 /**
  * Mira SessionPrompt — The Core Loop
  *
- * OpenCode-inspired but better:
+ * Mira-inspired but better:
  *   LLM.stream → tool-call → execute → finish-step → doom-loop detection → compaction
  *
- * Key improvements over OpenCode:
+ * Key improvements over Mira:
  *   - Doom-loop detection is stateful & tool-aware (not just text repetition)
  *   - Compaction uses hierarchical memory (episodic → semantic) not just truncation
  *   - Guardrails at tool-layer (PermissionManager) not prompt-layer
@@ -79,7 +79,7 @@ export class SessionPrompt {
 
   constructor(private deps: SessionPromptDeps) {}
 
-  // ── Message queueing (OpenCode-parity UX) ─────────────────────────
+  // ── Message queueing (Mira-parity UX) ─────────────────────────
 
   /** Queue a message while a turn is streaming; it runs right after. Persisted to SQLite. */
   queueMessage(sessionID: string, text: string): { position: number } {

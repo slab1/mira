@@ -1,7 +1,7 @@
 /**
  * 9-Layer Edit Fallback Engine
  * Implements graceful degradation for code edits with verification at each layer.
- * Based on OpenCode hash-anchored edit pattern — raises success 7% → 68%.
+ * Based on Mira hash-anchored edit pattern — raises success 7% → 68%.
  *
  * Layers (degrading precision):
  * 1. Exact Hash-Anchored   — verbatim match with pre/post hash verification

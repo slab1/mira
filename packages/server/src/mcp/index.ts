@@ -14,7 +14,7 @@
  *   discovers tools via `tools/list`, registers them as mcp__<server>__<tool>
  *   into ToolRegistry. Permission layer sees them as `mcp_firecrawl_*`, etc.
  *
- * Based on OpenCode's MCP handling but with StreamableHTTP added.
+ * Based on Mira's MCP handling but with StreamableHTTP added.
  */
 
 import type { Bus } from "../bus/index.js"

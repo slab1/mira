@@ -5,12 +5,12 @@
  *   1. defaults   — hard-coded DEFAULT_CONFIG
  *   2. system     — /etc/mira/mira.json (machine-wide)
  *   3. global     — ~/.mira/mira.json (user-wide)
- *   4. project    — ./mira.json | ./mira.jsonc | ./opencode.jsonc (repo)
+ *   4. project    — ./mira.json | ./mira.jsonc (repo)
  *   5. local      — ./.mira/local.json (gitignored, per-clone overrides)
  *   6. env        — MIRA_MODEL, OPENROUTER_API_KEY, etc. (process env)
  *   7. override   — CLI flags / runtime override (highest)
  *
- * Mirrors opencode layered config + adds Mira specifics (model gateway, permission matrix).
+ * Layered config + Mira specifics (model gateway, permission matrix).
  */
 import { z } from "zod"
 
@@ -143,7 +143,7 @@ export const CONFIG_FILE_MAP: Record<ConfigLayerName, string | null> = {
   defaults: null,
   system: "/etc/mira/mira.json",
   global: "~/.mira/mira.json",
-  project: "mira.json", // also tries mira.jsonc, opencode.jsonc, .mira/config.json
+  project: "mira.json", // also tries mira.jsonc, .mira/config.json
   local: ".mira/local.json",
   env: null,
   override: null,

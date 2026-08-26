@@ -1,7 +1,7 @@
 /**
  * Mira Commands Loader — discovers slash commands from markdown files.
  *
- * Mirrors OpenCode's `.opencode/commands/<name>.md` convention:
+ * Mirrors Mira's `.mira/commands/<name>.md` convention:
  *   ---
  *   description: One-liner shown in palette
  *   agent: build | plan | ...
@@ -39,9 +39,9 @@ const BUILT_INS: CommandEntry[] = [
   { name: "/clear", description: "Clear current session", content: "", source: "built-in" },
 ]
 
-const COMMAND_DIRS = [".opencode/commands", ".mira/commands", "commands"]
+const COMMAND_DIRS = [".mira/commands", "commands"]
 // Also scan repo root when server runs from packages/server (common in dev)
-const EXTRA_DIRS = ["../.opencode/commands", "../../.opencode/commands"]
+const EXTRA_DIRS = ["../.mira/commands", "../../.mira/commands"]
 
 async function loadFromDir(dir: string, source: "command"): Promise<CommandEntry[]> {
   const out: CommandEntry[] = []
@@ -77,7 +77,7 @@ export async function loadCommands(cwd = process.cwd()): Promise<CommandEntry[]>
     const list = await loadFromDir(full, "command")
     discovered.push(...list)
   }
-  // Deduplicate: discovered overrides built-ins on name collision (like OpenCode)
+  // Deduplicate: discovered overrides built-ins on name collision (like Mira)
   const byName = new Map<string, CommandEntry>()
   for (const b of BUILT_INS) byName.set(b.name, b)
   for (const c of discovered) byName.set(c.name, c)

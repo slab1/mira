@@ -2,7 +2,7 @@ import type { JsonValue } from "../types/index.js"
 /**
  * Mira LSP Client — Language Server Protocol 3.17 over stdio (JSON-RPC 2.0)
  *
- * Real language-server integration (OpenCode-parity):
+ * Real language-server integration (Mira-parity):
  *   - Content-Length framed messages, bidirectional
  *   - Requests with id→promise correlation + timeout guard
  *   - Server notifications captured (publishDiagnostics)

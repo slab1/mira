@@ -33,7 +33,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
   const [provTesting, setProvTesting] = createSignal<string | null>(null)
   const [provResult, setProvResult] = createSignal<Record<string, string>>({})
 
-  // MCP add form (opencode parity: env + headers)
+  // MCP add form (mira parity: env + headers)
   const [mcpName, setMcpName] = createSignal("")
   const [mcpType, setMcpType] = createSignal<"local" | "remote">("local")
   const [mcpCommand, setMcpCommand] = createSignal("")
@@ -125,7 +125,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     if (loopThreshold().trim() && Number.isFinite(thresh) && thresh > 0 && thresh <= 1) loopPatch.compactionThreshold = thresh
     if (loopSmallModel().trim()) loopPatch.smallModel = loopSmallModel().trim()
     if (Object.keys(loopPatch).length > 0) patch.loop = loopPatch as MiraConfig["loop"]
-    // Guardrails — include when user touched fields (opencode parity)
+    // Guardrails — include when user touched fields (mira parity)
     const guardPatch: Record<string, string | number | boolean | string[]> = {}
     const guardOrig = s().config?.guardrails ?? {}
     if (guardEnforce() !== !!guardOrig.enforce) guardPatch.enforce = guardEnforce()
@@ -968,7 +968,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                     <div style={{ display: "grid", "grid-template-columns": "1fr 1fr", gap: "10px" }}>
                       <div class="settings-field">
                         <label for="mcp-env" class="settings-label">
-                          Env (opencode parity)
+                          Env (mira parity)
                         </label>
                         <input
                           id="mcp-env"
@@ -1075,7 +1075,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                 <div id="settings-panel-commands" role="tabpanel" aria-labelledby="settings-tab-commands">
                   <div class="settings-section-title">Commands & Skills</div>
                   <div class="settings-hint" style={{ "margin-bottom": "12px" }}>
-                    Slash commands from <code style={{ "font-family": "var(--font-mono)" }}>.opencode/commands/*.md</code> via{" "}
+                    Slash commands from <code style={{ "font-family": "var(--font-mono)" }}>.mira/commands/*.md</code> via{" "}
                     <code style={{ "font-family": "var(--font-mono)" }}>GET /commands</code> + skills from{" "}
                     <code style={{ "font-family": "var(--font-mono)" }}>GET /skills</code>. Type <code style={{ "font-family": "var(--font-mono)" }}>/</code> in the composer or press{" "}
                     <span class="kbd">Ctrl+P</span> to fuzzy-search.
@@ -1093,7 +1093,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                       }}
                     >
                       No commands or skills found. Add markdown files to{" "}
-                      <code style={{ "font-family": "var(--font-mono)" }}>.opencode/commands/</code> or{" "}
+                      <code style={{ "font-family": "var(--font-mono)" }}>.mira/commands/</code> or{" "}
                       <code style={{ "font-family": "var(--font-mono)" }}>packages/server/data/skills/</code>.
                     </div>
                   </Show>

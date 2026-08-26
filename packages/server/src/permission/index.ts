@@ -1,7 +1,7 @@
 /**
  * Mira Permission — 5 Layers + BashArity
  *
- * Layers (evaluated top→bottom, first match wins — like OpenCode):
+ * Layers (evaluated top→bottom, first match wins — like Mira):
  *   1. Explicit deny  — `tool: "deny"`  → always block
  *   2. Explicit allow — `tool: "allow"` → always allow (no prompt)
  *   3. Pattern rules  — `edit: { "src/secret/*": "deny", "*": "allow" }`
@@ -14,11 +14,11 @@
  *   - level 2 (destructive): rm, git reset --hard, DROP, sudo, curl | bash
  *   Rules: level 0 → allow, level 1 → ask, level 2 → ask (with warning) or deny if global deny
  *
- * Config shape (opencode.jsonc compatible):
+ * Config shape (mira.jsonc compatible):
  *   "permission": {
  *     "bash": "allow" | "deny" | "ask" | { "rm *": "deny", "git *": "allow" },
  *     "read": "allow",
- *     "edit": { "packages/opencode/migration/*": "ask", "*": "allow" },
+ *     "edit": { "packages/mira/migration/*": "ask", "*": "allow" },
  *     "mcp_firecrawl_*": "ask"
  *   }
  */
@@ -83,7 +83,7 @@ export function bashArityDecision(command: string): PermissionDecision {
   return { action: "ask", reason: `BashArity: ${label} (1) — requires confirmation`, arity: level }
 }
 
-// ── Pattern matching (glob-like, OpenCode-compatible) ──────────────
+// ── Pattern matching (glob-like, Mira-compatible) ──────────────
 
 function matchesPattern(pattern: string, value: string): boolean {
   // Support: "*", "*.ts", "src/*", "mcp_*", exact

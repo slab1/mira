@@ -1,7 +1,7 @@
 /**
  * Drizzle Schema — SQLite (WAL mode)
  * Tables: sessions, messages, parts, todos, file_snapshots, jobs
- * Pragmatism: SQLite over Postgres, Drizzle over Prisma (OpenCode pattern)
+ * Pragmatism: SQLite over Postgres, Drizzle over Prisma (Mira pattern)
  * Postgres+pgvector is for memory/knowledge-graph (separate DB in prod)
  */
 import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core"

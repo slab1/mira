@@ -1,6 +1,6 @@
 /**
  * Mira Server — Shared Types
- * Based on OpenCode architecture: sessions, messages, parts, todos + BusEvent
+ * Based on Mira architecture: sessions, messages, parts, todos + BusEvent
  */
 
 // ── Session & Message ──────────────────────────────────────────────

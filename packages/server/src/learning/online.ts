@@ -87,7 +87,7 @@ export const DEFAULT_TOPICS: Array<{ query: string; category: InsightCategory }>
   { query: "MCP model context protocol new servers tools 2026", category: "tool" },
   { query: "agent evaluation harness Braintrust Langfuse 2026", category: "eval-method" },
   { query: "github awesome AI agents framework trending", category: "github-repo" },
-  { query: "Claude OpenCode Cursor agent best practices 2026", category: "documentation" },
+  { query: "Claude Mira Cursor agent best practices 2026", category: "documentation" },
   { query: "agent memory architecture Mem0 Zep pgvector hybrid retrieval", category: "agent-technique" },
 ]
 

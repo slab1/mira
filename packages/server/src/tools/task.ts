@@ -1,5 +1,5 @@
 /**
- * Tool: task — Delegate to subagent (like OpenCode's Task tool)
+ * Tool: task — Delegate to subagent (like Mira's Task tool)
  * Spawns a focused subagent with its own context, returns aggregated result.
  * Supports background mode for parallel delegation.
  *

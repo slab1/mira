@@ -1,7 +1,7 @@
 /**
  * Mira Server — Main Entry
  *
- * Architecture (Better-than-OpenCode):
+ * Architecture (Better-than-Mira):
  *   Clients (TUI/Web/VSCode) ──RPC/WebSocket──► Server
  *     ├─ SessionPrompt.loop  — LLM.stream → tool-call → execute → finish-step → doom-loop → compaction
  *     ├─ Tool Registry (22+ tools, Zod schemas)
@@ -734,7 +734,7 @@ async function main() {
     return c.json(list)
   })
 
-  // Provider test (opencode parity — checks apiKey presence + baseURL reachability)
+  // Provider test (mira parity — checks apiKey presence + baseURL reachability)
   app.post("/providers/:id/test", async c => {
     const id = c.req.param("id")
     const cfg = getConfig()
@@ -772,7 +772,7 @@ async function main() {
     return c.json({ ok: true, hasKey, baseURL: baseURL ?? "" })
   })
 
-  // Provider delete (opencode parity)
+  // Provider delete (mira parity)
   app.delete("/providers/:id", async c => {
     const id = c.req.param("id")
     const cfg = getConfig()
@@ -788,7 +788,7 @@ async function main() {
     return c.json({ ok: true })
   })
 
-  // Message queue — type while the agent streams (OpenCode-parity UX)
+  // Message queue — type while the agent streams (Mira-parity UX)
   app.post("/session/:id/queue", async c => {
     const parsed = queuePushSchema.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: "invalid queue push", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
