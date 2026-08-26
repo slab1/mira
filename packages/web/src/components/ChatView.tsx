@@ -108,10 +108,14 @@ function FencedContent(props: { text: string; isUser?: boolean }) {
   )
 }
 
-/** Inline tool-call chip with expandable input/output detail. */
+/** Inline tool-call chip — special-cases edit/write/patch as unified diff (red/green). */
 function ToolChip(props: { part: Part }) {
   const [open, setOpen] = createSignal(false)
   const isCall = () => props.part.type === "tool_call"
+  const tool = () => props.part.tool ?? ""
+  const input = () => (props.part.input as Record<string, string> | undefined)
+  const isDiffTool = () => isCall() && ["edit", "write", "patch"].includes(tool())
+
   const detail = () => {
     const src = isCall() ? props.part.input : props.part.output
     if (src === undefined) return ""
@@ -120,6 +124,19 @@ function ToolChip(props: { part: Part }) {
     } catch {
       return String(src)
     }
+  }
+
+  const diffPreview = () => {
+    const inp = input()
+    if (!inp) return ""
+    if (tool() === "edit" && inp.path) {
+      const oldS = String(inp.oldString ?? "").slice(0, 240)
+      const newS = String(inp.newString ?? "").slice(0, 240)
+      return `${inp.path}: ${oldS.length > 40 ? oldS.slice(0, 40) + "…" : oldS} → ${newS.length > 40 ? newS.slice(0, 40) + "…" : newS}`
+    }
+    if (tool() === "write" && inp.path) return `${inp.path} (${String(inp.content ?? "").length} chars)`
+    if (tool() === "patch" && inp.patch) return `patch ${String(inp.patch).split("\n").length} lines`
+    return ""
   }
 
   return (
@@ -134,11 +151,44 @@ function ToolChip(props: { part: Part }) {
         <span style={{ color: isCall() ? "var(--warn)" : "var(--ok)", "font-size": "10px", flex: "none" }}>
           {isCall() ? "◷" : "✓"}
         </span>
-        <span class="chip-name">{props.part.tool ?? props.part.type}</span>
+        <span class="chip-name">{tool() || props.part.type}</span>
+        <Show when={isDiffTool() && diffPreview()}>
+          <span style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "margin-left": "6px", "font-family": "var(--font-mono)", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "max-width": "28ch" }}>
+            {diffPreview()}
+          </span>
+        </Show>
         <span class="chip-chevron">▶</span>
       </button>
-      <Show when={open() && detail()}>
-        <pre class="chip-detail">{detail()}</pre>
+      <Show when={open()}>
+        <Show
+          when={isDiffTool()}
+          fallback={<Show when={detail()}><pre class="chip-detail">{detail()}</pre></Show>}
+        >
+          <div class="card" style={{ margin: "6px 0 0", padding: "8px 10px", background: "var(--bg-surface)", border: "1px solid var(--border)", "border-radius": "var(--r-md)", "font-family": "var(--font-mono)", "font-size": "var(--fs-xs)", "line-height": "1.5", overflow: "auto", "max-height": "260px" }}>
+            <Show when={tool() === "edit"}>
+              <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "margin-bottom": "6px" }}>{String(input()?.path ?? "")}</div>
+              <Show when={String(input()?.oldString ?? "").length > 0}>
+                <div style={{ background: "color-mix(in srgb, var(--danger) 12%, transparent)", color: "var(--danger)", padding: "4px 6px", "border-radius": "4px", "white-space": "pre-wrap", "word-break": "break-word", "margin-bottom": "4px" }}>
+                  − {String(input()?.oldString ?? "").slice(0, 800)}
+                </div>
+              </Show>
+              <div style={{ background: "color-mix(in srgb, var(--ok) 14%, transparent)", color: "var(--ok)", padding: "4px 6px", "border-radius": "4px", "white-space": "pre-wrap", "word-break": "break-word" }}>
+                + {String(input()?.newString ?? "").slice(0, 800)}
+              </div>
+              <Show when={String(input()?.oldString ?? "").length > 800 || String(input()?.newString ?? "").length > 800}>
+                <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "margin-top": "4px" }}>… truncated, expand JSON for full</div>
+              </Show>
+            </Show>
+            <Show when={tool() === "write"}>
+              <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "margin-bottom": "6px" }}>{String(input()?.path ?? "")} · new file</div>
+              <pre style={{ margin: "0", "white-space": "pre-wrap", "word-break": "break-word", color: "var(--fg)", background: "var(--bg-app)", padding: "6px 8px", "border-radius": "4px", border: "1px solid var(--border)" }}>{String(input()?.content ?? "").slice(0, 1200)}</pre>
+              <Show when={String(input()?.content ?? "").length > 1200}><div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "margin-top": "4px" }}>… truncated</div></Show>
+            </Show>
+            <Show when={tool() === "patch"}>
+              <pre style={{ margin: "0", "white-space": "pre", overflow: "auto", color: "var(--fg)" }}>{String(input()?.patch ?? "").slice(0, 2000)}</pre>
+            </Show>
+          </div>
+        </Show>
       </Show>
     </div>
   )
