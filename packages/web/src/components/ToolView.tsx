@@ -1,14 +1,15 @@
 import { For, Show, createSignal, createResource } from "solid-js"
 import type { AppStore } from "../stores/app"
-import { api, type ToolInfo, type Snapshot } from "../api/client"
+import { api, type ToolInfo, type Snapshot, type Finding } from "../api/client"
 
-type Tab = "todos" | "tools" | "events" | "history"
+type Tab = "todos" | "tools" | "events" | "history" | "findings"
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "todos", label: "Todos" },
   { id: "tools", label: "Tools" },
   { id: "events", label: "Events" },
   { id: "history", label: "History" },
+  { id: "findings", label: "Findings" },
 ]
 
 export function ToolView(props: { store: AppStore }) {
@@ -19,6 +20,10 @@ export function ToolView(props: { store: AppStore }) {
   const snapshotsSource = () => (tab() === "history" ? s().currentId ?? null : null)
   const [snapshots, { refetch: refetchSnaps }] = createResource(snapshotsSource, (id) =>
     api.listSnapshots(id).catch(() => [] as Snapshot[]),
+  )
+  const findingsSource = () => (tab() === "findings" ? "open" : null)
+  const [findings, { refetch: refetchFindings }] = createResource(findingsSource, () =>
+    api.listFindings({ status: "open", limit: 50 }).catch(() => [] as Finding[]),
   )
 
   const doneCount = () => s().todos.filter((t) => t.status === "completed").length
@@ -412,6 +417,120 @@ export function ToolView(props: { store: AppStore }) {
                     </For>
                   </div>
                 </Show>
+              </Show>
+            </Show>
+          </Show>
+
+          {/* ── Findings (cross-agent memory) ─────────────────────── */}
+          <Show when={tab() === "findings"}>
+            <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center", "margin-bottom": "10px", gap: "8px" }}>
+              <span style={{ "font-size": "var(--fs-xs)", "font-weight": "700", color: "var(--fg-muted)", "letter-spacing": "0.05em", "text-transform": "uppercase" }}>
+                Findings · {findings.loading ? "…" : (findings()?.length ?? 0)} open
+              </span>
+              <button
+                type="button"
+                class="btn btn-ghost"
+                onClick={() => refetchFindings()}
+                title="Refresh findings"
+                style={{ padding: "2px 7px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-full)" }}
+              >
+                ↻
+              </button>
+            </div>
+            <Show
+              when={!findings.loading}
+              fallback={
+                <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
+                  {[0, 1].map(() => (
+                    <div class="skeleton" style={{ height: "52px", "border-radius": "var(--r-md)" }} />
+                  ))}
+                </div>
+              }
+            >
+              <Show
+                when={(findings()?.length ?? 0) > 0}
+                fallback={
+                  <div
+                    style={{
+                      padding: "14px",
+                      border: "1px dashed var(--border-strong)",
+                      "border-radius": "var(--r-md)",
+                      color: "var(--fg-faint)",
+                      "font-size": "var(--fs-xs)",
+                      "text-align": "center",
+                      "line-height": "1.5",
+                    }}
+                  >
+                    No open findings — team memory is clear.
+                  </div>
+                }
+              >
+                <div style={{ display: "flex", "flex-direction": "column", gap: "6px" }}>
+                  <For each={findings() ?? []}>
+                    {(f) => (
+                      <div class="card" style={{ padding: "9px 11px", display: "flex", gap: "9px", "align-items": "flex-start" }}>
+                        <div style={{ flex: "1", "min-width": "0" }}>
+                          <div style={{ display: "flex", gap: "6px", "align-items": "center", "margin-bottom": "3px" }}>
+                            <span
+                              style={{
+                                "font-size": "var(--fs-2xs)",
+                                "font-weight": "700",
+                                padding: "1px 6px",
+                                "border-radius": "var(--r-full)",
+                                background:
+                                  f.severity === "critical"
+                                    ? "var(--danger-soft)"
+                                    : f.severity === "major"
+                                      ? "var(--warn-soft)"
+                                      : f.severity === "minor"
+                                        ? "var(--accent-soft)"
+                                        : "var(--bg-surface)",
+                                color:
+                                  f.severity === "critical"
+                                    ? "var(--danger)"
+                                    : f.severity === "major"
+                                      ? "var(--warn)"
+                                      : f.severity === "minor"
+                                        ? "var(--accent)"
+                                        : "var(--fg-faint)",
+                                border: `1px solid ${f.severity === "critical" ? "var(--danger-border)" : f.severity === "major" ? "var(--warn-border)" : "var(--border)"}`,
+                              }}
+                            >
+                              {f.severity}
+                            </span>
+                            <span style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "font-family": "var(--font-mono)" }}>
+                              {new Date(f.createdAt).toLocaleDateString()} · {f.source}
+                            </span>
+                          </div>
+                          <div style={{ "font-size": "var(--fs-sm)", "font-weight": "600", color: "var(--fg)", "line-height": "1.4" }}>{f.title}</div>
+                          <Show when={f.evidence}>
+                            <div style={{ "font-size": "var(--fs-xs)", color: "var(--fg-subtle)", "margin-top": "3px", "line-height": "1.4", "white-space": "pre-wrap", "word-break": "break-word" }}>
+                              {String(f.evidence).slice(0, 240)}
+                            </div>
+                          </Show>
+                        </div>
+                        <button
+                          type="button"
+                          class="btn btn-ghost"
+                          onClick={() =>
+                            void (async () => {
+                              try {
+                                await api.resolveFinding(f.id)
+                                await refetchFindings()
+                              } catch (e) {
+                                console.error("[mira] resolve failed:", e)
+                              }
+                            })()
+                          }
+                          title="Mark resolved"
+                          style={{ padding: "4px 8px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-full)", flex: "none" }}
+                        >
+                          ✓ resolve
+                        </button>
+                      </div>
+                    )}
+                  </For>
+                </div>
               </Show>
             </Show>
           </Show>

@@ -123,10 +123,13 @@ export function createAppStore() {
     }
   }
 
-  async function createSession(title?: string) {
+  async function createSession(title?: string, opts: { agent?: string } = {}) {
     setState("error", null)
     try {
-      const s = await api.createSession(title ? { title } : {})
+      const body: Record<string, string> = {}
+      if (title) body.title = title
+      if (opts.agent) body.agent = opts.agent
+      const s = await api.createSession(body)
       setState("sessions", (prev) => [s, ...prev])
       await selectSession(s.id)
       return s

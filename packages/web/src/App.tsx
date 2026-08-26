@@ -1,4 +1,4 @@
-import { createSignal, onMount, Show, onCleanup } from "solid-js"
+import { createSignal, onMount, Show, onCleanup, createResource, For } from "solid-js"
 import "./index.css"
 import { createAppStore } from "./stores/app"
 import { createSettingsStore } from "./stores/settings"
@@ -113,6 +113,8 @@ export default function App() {
   const [authorized, setAuthorized] = createSignal(false)
   const [settingsOpen, setSettingsOpen] = createSignal(false)
   const [paletteOpen, setPaletteOpen] = createSignal(false)
+  const [agents] = createResource(() => api.listAgents().catch(() => []))
+  const [selectedAgent, setSelectedAgent] = createSignal("")
 
   onMount(() => {
     // Probe with stored credentials; unauthorized → show the gate
@@ -302,6 +304,28 @@ export default function App() {
                   </span>
                 )}
               </Show>
+              <Show when={(agents() ?? []).length > 0}>
+                <select
+                  value={selectedAgent()}
+                  onChange={(e) => setSelectedAgent(e.currentTarget.value)}
+                  title="Agent lane — session template (tools + posture)"
+                  aria-label="Agent lane"
+                  class="btn btn-ghost"
+                  style={{ padding: "4px 8px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-md)", background: "var(--bg-surface)", color: "var(--fg)" }}
+                >
+                  <option value="">general</option>
+                  <For each={agents() ?? []}>{(a) => <option value={a.name}>{a.name}{a.custom ? " *" : ""}</option>}</For>
+                </select>
+              </Show>
+              <button
+                type="button"
+                class="btn btn-ghost"
+                onClick={() => void store.createSession(selectedAgent() ? `${selectedAgent()} session` : undefined, { agent: selectedAgent() || undefined }).catch(() => {})}
+                title={selectedAgent() ? `New ${selectedAgent()} session` : "New session"}
+                style={{ padding: "4px 9px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-md)" }}
+              >
+                ＋ {selectedAgent() || "new"}
+              </button>
               <SkillSelector onSelect={(skill) => { if (skill) void store.createSession(`${skill} session`).catch(() => {}) }} />
               <span
                 title="Mira server health"

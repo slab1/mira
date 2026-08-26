@@ -20,6 +20,7 @@ export type Session = {
   id: string
   title?: string
   model?: string
+  agent?: string
   createdAt: string
   updatedAt: string
   status?: string
@@ -66,6 +67,19 @@ export type Snapshot = {
   path: string
   existedBefore: boolean
   createdAt: number
+}
+
+export type Finding = {
+  id: string
+  sessionID: string | null
+  source: string
+  severity: "info" | "minor" | "major" | "critical"
+  title: string
+  evidence: string | null
+  status: "open" | "resolved"
+  createdAt: number
+  updatedAt: number
+  resolvedAt: number | null
 }
 
 export type BusEvent = {
@@ -237,6 +251,15 @@ export const api = {
     }),
 
   listSnapshots: (id: string) => req<Snapshot[]>(`/session/${id}/snapshots`),
+
+  listFindings: (params: { status?: string; limit?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (params.status) q.set("status", params.status)
+    if (params.limit) q.set("limit", String(params.limit))
+    const qs = q.toString() ? `?${q}` : ""
+    return req<Finding[]>(`/finding${qs}`)
+  },
+  resolveFinding: (id: string) => req<Finding>(`/finding/${encodeURIComponent(id)}/resolve`, { method: "POST" }),
 
   /** Export session transcript — markdown or JSON (triggers download in caller) */
   exportSession: async (id: string, format: "md" | "json" = "md"): Promise<string> => {
