@@ -1149,3 +1149,15 @@ input:focus-visible,
     scroll-behavior: auto !important;
   }
 }
+
+/* ── PWA + viewport polish (phone installable, safe-area, touch) ─────── */
+html {
+  /* iPhone notch / home indicator */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+@media (pointer: coarse) {
+  /* ≥44px touch targets on touch devices (recommendation #7) */
+  .btn, .pill, .chip, .seg-tab, select.btn {
+    min-height: 36px;
+  }
+}

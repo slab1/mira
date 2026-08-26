@@ -241,6 +241,24 @@ async function main() {
     source: z.enum(["user", "agent", "tool"]).optional(),
     sessionID: z.string().max(100).optional(),
   })
+  const mcpCreateSchema = z.object({
+    name: z.string().min(1).max(100),
+    type: z.enum(["local", "remote"]),
+    command: z.array(z.string().min(1)).min(1).optional(),
+    url: z.string().url().optional(),
+    enabled: z.boolean().optional(),
+    env: z.record(z.string()).optional(),
+    headers: z.record(z.string()).optional(),
+  }).superRefine((v, ctx) => {
+    if (v.type === "local" && !v.command?.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["command"], message: "local type requires command[]" })
+    if (v.type === "remote" && !v.url) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["url"], message: "remote type requires url" })
+  })
+  const mcpToggleSchema = z.object({ enabled: z.boolean() })
+  const configPatchSchema = z.object({
+    patch: z.record(z.unknown()),
+    layer: z.enum(["project", "local"]).optional(),
+  }).refine((v) => v.patch && typeof v.patch === "object" && Object.keys(v.patch).length > 0, { message: "patch must be non-empty object", path: ["patch"] })
+  const queuePushSchema = z.object({ prompt: z.string().min(1).max(20000) })
   app.use("*", async (c, next) => {
     const start = Date.now()
     const requestId = crypto.randomUUID()
@@ -545,12 +563,12 @@ async function main() {
   app.get("/mcp", c => c.json(mcp.listServers()))
 
   app.post("/mcp", async c => {
-    const body = await c.req.json().catch(() => null) as { name?: string; type?: string; command?: string[]; url?: string; enabled?: boolean; env?: Record<string, string>; headers?: Record<string, string> } | null
-    if (!body?.name?.trim() || !body?.type) return c.json({ error: "name and type required" }, 400)
-    if (body.type !== "local" && body.type !== "remote") return c.json({ error: "type must be local or remote" }, 400)
+    const parsed = mcpCreateSchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: "invalid mcp", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
+    const body = parsed.data
     try {
       const cfg = {
-        type: body.type as "local" | "remote",
+        type: body.type,
         command: body.command,
         url: body.url,
         enabled: body.enabled ?? true,
@@ -581,8 +599,9 @@ async function main() {
 
   app.patch("/mcp/:name", async c => {
     const name = c.req.param("name")
-    const body = await c.req.json().catch(() => null) as { enabled?: boolean } | null
-    if (typeof body?.enabled !== "boolean") return c.json({ error: "enabled boolean required" }, 400)
+    const parsed = mcpToggleSchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: "invalid mcp toggle", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
+    const body = parsed.data
     try {
       const entry = await mcp.toggleServer(name, body.enabled)
       const current = getConfig().mcp ?? {}
@@ -633,11 +652,12 @@ async function main() {
   })
 
   app.patch("/config", async c => {
-    const body = await c.req.json().catch(() => null) as { patch?: PartialMiraConfig; layer?: string } | null
-    if (!body || typeof body.patch !== "object" || body.patch === null) return c.json({ error: "patch required" }, 400)
+    const parsed = configPatchSchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: "invalid config patch", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
+    const body = parsed.data
     const layer = body.layer === "local" ? "local" : "project"
     try {
-      const merged = await saveConfig(body.patch, layer)
+      const merged = await saveConfig(body.patch as Partial<MiraConfig>, layer)
       return c.json({ merged: redactConfig(merged) })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -699,8 +719,9 @@ async function main() {
 
   // Message queue — type while the agent streams (OpenCode-parity UX)
   app.post("/session/:id/queue", async c => {
-    const { prompt: text } = await c.req.json()
-    if (!text?.trim()) return c.json({ error: "empty prompt" }, 400)
+    const parsed = queuePushSchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: "invalid queue push", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
+    const text = parsed.data.prompt
     const id = c.req.param("id")
     if (!(await authorizedSession(id, c))) return c.json({ error: "session not found" }, 404)
     return c.json(prompt.queueMessage(id, String(text).trim()))
