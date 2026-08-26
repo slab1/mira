@@ -266,6 +266,16 @@ async function main() {
     await next()
     const duration = Date.now() - start
     const status = c.res.status
+    // Usage — surface cost/tokens per HTTP line for prompt turns (cumulative gateway stats)
+    let usage: Record<string, number> = {}
+    try {
+      if (c.req.path.includes("/prompt") || c.req.path.includes("/session")) {
+        const gw = gateway.stats()
+        if (gw.costUSD || gw.inputTokens || gw.outputTokens) {
+          usage = { cost_usd: Number(gw.costUSD.toFixed(4)), tokens_in: gw.inputTokens, tokens_out: gw.outputTokens }
+        }
+      }
+    } catch {}
     const log = {
       timestamp: new Date().toISOString(),
       level: "info",
@@ -274,6 +284,7 @@ async function main() {
       status,
       duration_ms: duration,
       request_id: requestId,
+      ...usage,
     }
     console.log(JSON.stringify(log))
   })
