@@ -45,6 +45,18 @@ type PartialMiraConfig = Partial<MiraConfig>
 
 // ── Bootstrap ──────────────────────────────────────────────────────
 const PORT = Number(process.env.PORT ?? Bun.argv.find(a => a.startsWith("--port="))?.split("=")[1] ?? 4096)
+const STARTED_AT = new Date().toISOString()
+const STARTED_AT_MS = Date.now()
+// Best-effort git SHA for /healthz (helps correlate deploys); falls back to env or "unknown"
+let GIT_SHA: string = process.env.MIRA_GIT_SHA ?? ""
+if (!GIT_SHA) {
+  try {
+    const proc = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd: import.meta.dir ? `${import.meta.dir}/../../..` : undefined, stdout: "pipe" })
+    const out = proc.stdout ? new TextDecoder().decode(proc.stdout).trim() : ""
+    if (out && /^[0-9a-f]{4,40}$/.test(out)) GIT_SHA = out
+  } catch {}
+  if (!GIT_SHA) GIT_SHA = "unknown"
+}
 
 // ── Security config ────────────────────────────────────────────────
 // Bearer token gate (HTTP + WS). Empty = auth disabled (dev only).
@@ -345,10 +357,10 @@ async function main() {
   })
 
   // Liveness — minimal, no internals, bypasses auth + rate limit (Docker/k8s probes)
-  app.get("/healthz", c => c.json({ ok: true, version: "0.1.0", uptime: process.uptime() }))
+  app.get("/healthz", c => c.json({ ok: true, version: "0.1.0", sha: GIT_SHA, startedAt: STARTED_AT, uptime: process.uptime() }))
   // Health — detailed; stays behind MIRA_TOKEN when set
-  app.get("/health", c => c.json({ ok: true, version: "0.1.0", tools: tools.count(), uptime: process.uptime(), memory: process.memoryUsage() }))
-  app.get("/dev/health", c => c.json({ ok: true, version: "0.1.0", tools: tools.count(), busHistory: bus.recent(5).length, learning: learning.scheduler.status(), gateway: gateway.stats(), uptime: process.uptime() }))
+  app.get("/health", c => c.json({ ok: true, version: "0.1.0", sha: GIT_SHA, startedAt: STARTED_AT, tools: tools.count(), uptime: process.uptime(), memory: process.memoryUsage() }))
+  app.get("/dev/health", c => c.json({ ok: true, version: "0.1.0", sha: GIT_SHA, startedAt: STARTED_AT, tools: tools.count(), busHistory: bus.recent(5).length, learning: learning.scheduler.status(), gateway: gateway.stats(), uptime: process.uptime() }))
   // Metrics
   app.get("/metrics", async c => {
     const gatewayStats = gateway.stats()
