@@ -12,6 +12,102 @@ const EXAMPLE_PROMPTS = [
 
 const contentOf = (m: Message) => m.content || (m.parts?.map((p) => p.text || "").join("\n") ?? "")
 
+/** Fenced code block with copy button — minimal markdownish (```lang blocks only). */
+function CodeFence(props: { lang: string; code: string }) {
+  const [copied, setCopied] = createSignal(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(props.code)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1400)
+    } catch {}
+  }
+  return (
+    <div
+      class="card"
+      style={{
+        margin: "8px 0",
+        padding: "0",
+        overflow: "hidden",
+        border: "1px solid var(--border-strong)",
+        "border-radius": "var(--r-md)",
+        background: "var(--bg-surface)",
+      }}
+    >
+      <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", padding: "6px 10px", background: "var(--bg-app)", borderBottom: "1px solid var(--border)", gap: "8px" }}>
+        <span style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "font-family": "var(--font-mono)", "text-transform": "uppercase", "letter-spacing": "0.04em" }}>
+          {props.lang || "code"}
+        </span>
+        <button
+          type="button"
+          class="btn btn-ghost"
+          onClick={copy}
+          title="Copy code"
+          style={{ padding: "2px 8px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-full)" }}
+        >
+          {copied() ? "✓ copied" : "⧉ copy"}
+        </button>
+      </div>
+      <pre
+        style={{
+          margin: "0",
+          padding: "10px 12px",
+          "white-space": "pre",
+          overflow: "auto",
+          "font-family": "var(--font-mono)",
+          "font-size": "var(--fs-xs)",
+          "line-height": "1.6",
+          color: "var(--fg)",
+        }}
+      >
+        <code>{props.code}</code>
+      </pre>
+    </div>
+  )
+}
+
+function FencedContent(props: { text: string; isUser?: boolean }) {
+  const segments = () => {
+    const text = props.text ?? ""
+    if (!text.includes("```")) return [{ type: "text" as const, content: text }]
+    const re = /```(\w*)\n([\s\S]*?)```/g
+    const out: Array<{ type: "text" | "code"; content: string; lang?: string }> = []
+    let last = 0
+    let m: RegExpExecArray | null
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) out.push({ type: "text", content: text.slice(last, m.index) })
+      out.push({ type: "code", content: m[2], lang: m[1] || "" })
+      last = re.lastIndex
+    }
+    if (last < text.length) out.push({ type: "text", content: text.slice(last) })
+    if (out.length === 0) out.push({ type: "text", content: text })
+    return out
+  }
+  return (
+    <div style={{ display: "flex", "flex-direction": "column", gap: "0" }}>
+      <For each={segments()}>
+        {(seg) =>
+          seg.type === "code" ? (
+            <CodeFence lang={seg.lang ?? ""} code={seg.content} />
+          ) : (
+            <div
+              style={{
+                "white-space": "pre-wrap",
+                "word-break": "break-word",
+                "font-size": "var(--fs-md)",
+                "line-height": props.isUser ? "1.6" : "1.65",
+                color: "var(--fg)",
+              }}
+            >
+              {seg.content}
+            </div>
+          )
+        }
+      </For>
+    </div>
+  )
+}
+
 /** Inline tool-call chip with expandable input/output detail. */
 function ToolChip(props: { part: Part }) {
   const [open, setOpen] = createSignal(false)
@@ -349,17 +445,7 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
                                           padding: "9px 13px",
                                         }}
                                       >
-                                        <div
-                                          style={{
-                                            "white-space": "pre-wrap",
-                                            "word-break": "break-word",
-                                            "font-size": "var(--fs-md)",
-                                            "line-height": "1.6",
-                                            color: "var(--fg)",
-                                          }}
-                                        >
-                                          {contentOf(m)}
-                                        </div>
+                                        <FencedContent text={contentOf(m)} isUser={true} />
                                       </div>
                                     </>
                                   }
@@ -386,20 +472,10 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
                                       <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "margin-bottom": "3px" }}>
                                         Mira · {timeOf(m)}
                                       </div>
-                                      <div
-                                        style={{
-                                          "white-space": "pre-wrap",
-                                          "word-break": "break-word",
-                                          "font-size": "var(--fs-md)",
-                                          "line-height": "1.65",
-                                          color: "var(--fg)",
-                                        }}
-                                      >
-                                        {contentOf(m)}
-                                        <Show when={showCaretHere()}>
-                                          <span class="caret" aria-hidden="true" />
-                                        </Show>
-                                      </div>
+                                      <FencedContent text={contentOf(m)} />
+                                      <Show when={showCaretHere()}>
+                                        <span class="caret" aria-hidden="true" style={{ display: "inline-block", width: "8px", height: "14px", background: "var(--accent)", "margin-left": "2px", "vertical-align": "text-bottom" }} />
+                                      </Show>
                                       <Show when={m.parts && m.parts.some((p) => p.type === "tool_call" || p.type === "tool_result")}>
                                         <div style={{ "margin-top": "8px", display: "flex", "flex-direction": "column", gap: "5px", "align-items": "flex-start" }}>
                                           <For each={m.parts}>
