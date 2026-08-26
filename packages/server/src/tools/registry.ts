@@ -18,6 +18,8 @@
  */
 
 import { z } from "zod"
+import { existsSync } from "node:fs"
+import { resolve } from "node:path"
 import type { Bus } from "../bus/index.js"
 import type { JsonValue } from "../types/index.js"
 import type { MiraDB } from "../storage/db.js"
@@ -123,6 +125,32 @@ export class ToolRegistry {
     return [...this.tools.values()].map(t => ({ name: t.name, description: t.description, category: t.category }))
   }
 
+  // ── Read-before-edit guard ─────────────────────────────────────────
+  /** sessionID → set of absolute file paths successfully read this session */
+  private readPaths = new Map<string, Set<string>>()
+  private static MUTATING = new Set(["edit", "write", "patch"])
+  /** Disable with MIRA_READ_GUARD=0 (tests / scripted migrations). */
+  private static READ_GUARD_ON = process.env.MIRA_READ_GUARD !== "0"
+
+  private recordRead(sessionID: string, absPath: string): void {
+    let set = this.readPaths.get(sessionID)
+    if (!set) { set = new Set(); this.readPaths.set(sessionID, set) }
+    set.add(absPath)
+  }
+
+  private assertReadBeforeMutation(sessionID: string, absPath: string): void {
+    if (!ToolRegistry.READ_GUARD_ON) return
+    let exists = false
+    try { exists = existsSync(absPath) } catch {}
+    if (!exists) return // creating a brand-new file is fine
+    if (this.readPaths.get(sessionID)?.has(absPath)) return
+    throw new Error(
+      `Read-before-edit guard: "${absPath}" exists but was not read in this session. ` +
+      `Call the read tool on it first (safety: never blind-overwrite unknown content). ` +
+      `Disable via MIRA_READ_GUARD=0.`,
+    )
+  }
+
   /** Execute a tool by name (called by SessionPrompt.loop) */
   async execute(name: string, args: JsonValue, ctx: ToolContext): Promise<JsonValue> {
     const tool = this.tools.get(name)
@@ -147,23 +175,30 @@ export class ToolRegistry {
     let result: JsonValue | null = null
     let error: JsonValue | null = null
     // Snapshot target files BEFORE mutation (edit/write/patch) — enables /undo
-    const MUTATING = new Set(["edit", "write", "patch"])
+    const MUTATING = ToolRegistry.MUTATING
     if (MUTATING.has(name)) {
-      try {
-        const { resolve } = await import("node:path")
-        const { snapshotFile } = await import("../storage/snapshots.js")
-        const p = (parsed.data as Record<string, string>)?.path ?? (parsed.data as Record<string, string>)?.file
-        if (typeof p === "string" && p) {
+      const p = (parsed.data as Record<string, string>)?.path ?? (parsed.data as Record<string, string>)?.file
+      if (typeof p === "string" && p) {
+        const abs = resolve(ctx.cwd ?? process.cwd(), p)
+        // Read-before-edit guard — throws OUTSIDE the snapshot try so it propagates
+        this.assertReadBeforeMutation(ctx.sessionID, abs)
+        try {
+          const { snapshotFile } = await import("../storage/snapshots.js")
           snapshotFile(this.deps.db, {
             sessionID: ctx.sessionID,
             messageID: ctx.messageID,
-            path: resolve(ctx.cwd ?? process.cwd(), p),
+            path: abs,
           })
-        }
-      } catch {}
+        } catch {}
+      }
     }
     try {
       result = await tool.execute(parsedArgs, fullCtx)
+      // Track successful reads so later mutations of the same path are permitted
+      if (name === "read") {
+        const p = (parsedArgs as Record<string, string>)?.path ?? (parsedArgs as Record<string, string>)?.file
+        if (typeof p === "string" && p) this.recordRead(ctx.sessionID, resolve(ctx.cwd ?? process.cwd(), p))
+      }
     } catch (e) {
       error = String(e) as JsonValue
       throw e

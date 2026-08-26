@@ -21,6 +21,7 @@
 
 import { Hono } from "hono"
 import { cors } from "hono/cors"
+import { z } from "zod"
 import { timingSafeEqual } from "node:crypto"
 import { Bus } from "./bus/index.js"
 import { createDatabase, migrate } from "./storage/db.js"
@@ -202,6 +203,32 @@ async function main() {
       await next()
     })
   }
+  // Body-size limit: reject oversized request bodies before they are parsed (413)
+  const MAX_BODY_BYTES = Number(process.env.MIRA_MAX_BODY_BYTES ?? 5 * 1024 * 1024)
+  app.use("*", async (c, next) => {
+    const len = Number(c.req.header("content-length") ?? 0)
+    if (len > MAX_BODY_BYTES) return c.json({ error: "payload too large", limit: MAX_BODY_BYTES }, 413)
+    await next()
+  })
+  // Global error handler — never leak stack traces to clients, always JSON
+  app.onError((err, c) => {
+    const requestId = c.get("requestId") ?? crypto.randomUUID()
+    console.error(JSON.stringify({ timestamp: new Date().toISOString(), level: "error", requestId, path: c.req.path, error: String(err?.stack ?? err) }))
+    return c.json({ error: "internal server error", requestId }, 500)
+  })
+  // Zod body-validation helper — parse or answer 400 with field-level issues
+  const todoSchema = z.array(z.object({
+    content: z.string().min(1).max(2000),
+    status: z.enum(["pending", "in_progress", "completed", "cancelled"]).default("pending"),
+    priority: z.enum(["high", "medium", "low"]).default("medium"),
+  })).max(200)
+  const findingSchema = z.object({
+    title: z.string().min(1).max(500),
+    severity: z.enum(["info", "minor", "major", "critical"]).optional(),
+    evidence: z.string().max(20_000).optional(),
+    source: z.enum(["user", "agent", "tool"]).optional(),
+    sessionID: z.string().max(100).optional(),
+  })
   app.use("*", async (c, next) => {
     const start = Date.now()
     const requestId = crypto.randomUUID()
@@ -270,15 +297,21 @@ async function main() {
   })
 
   // Metrics middleware
+  // Cardinality guard: collapse IDs/UUIDs/long segments to ":id", cap label space.
+  const METRICS_MAX_LABELS = 1000
+  const metricPath = (p: string): string =>
+    p.split("/").map(seg => (seg.length > 16 || /^\d+$/.test(seg) || /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(seg)) ? ":id" : seg).join("/")
   app.use('*', async (c, next) => {
     const start = Date.now()
     await next()
     const durationSec = (Date.now() - start) / 1000
     const method = c.req.method
-    const path = c.req.path
+    const path = metricPath(c.req.path)
     const status = c.res.status
     const key = `${method} ${path} ${status}`
-    metrics.httpRequestsTotal.set(key, (metrics.httpRequestsTotal.get(key) ?? 0) + 1)
+    if (metrics.httpRequestsTotal.has(key) || metrics.httpRequestsTotal.size < METRICS_MAX_LABELS) {
+      metrics.httpRequestsTotal.set(key, (metrics.httpRequestsTotal.get(key) ?? 0) + 1)
+    }
     metrics.httpRequestDurationSecondsSum += durationSec
     metrics.httpRequestDurationSecondsCount += 1
     // Track active sessions in-memory
@@ -423,10 +456,13 @@ async function main() {
     return c.json(await listFindings(db, { status, severity, limit }))
   })
   app.post("/finding", async c => {
-    const body = await c.req.json().catch(() => null)
-    if (!body?.title?.trim()) return c.json({ error: "title required" }, 400)
+    const parsed = findingSchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) {
+      return c.json({ error: "invalid finding", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
+    }
+    const body = parsed.data
     const f = await writeFinding(db, {
-      title: String(body.title).trim(),
+      title: body.title.trim(),
       severity: body.severity,
       evidence: body.evidence,
       source: body.source ?? "user",
@@ -690,9 +726,14 @@ async function main() {
   })
   app.post("/session/:id/todo", async c => {
     if (!(await authorizedSession(c.req.param("id"), c))) return c.json({ error: "not found" }, 404)
-    const todos = await c.req.json()
-    const result = await prompt.setTodos(c.req.param("id"), todos)
-    bus.publish({ type: "todo.updated", sessionID: c.req.param("id"), payload: result, timestamp: Date.now() })
+    const parsed = todoSchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) {
+      return c.json({ error: "invalid todos", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
+    }
+    const sid = c.req.param("id")
+    const todos = parsed.data.map(t => ({ ...t, id: crypto.randomUUID(), sessionID: sid, createdAt: Date.now() })) as unknown as Parameters<SessionPrompt["setTodos"]>[1]
+    const result = await prompt.setTodos(sid, todos)
+    bus.publish({ type: "todo.updated", sessionID: sid, payload: result, timestamp: Date.now() })
     return c.json(result)
   })
 
@@ -824,6 +865,7 @@ async function main() {
       return app.fetch(req)
     },
     websocket: {
+      // Frame cap enforced in message() below (close 1009 >1MB) — Bun ws has no maxPayload option here
       open(ws) {
         const w = ws as object as MiraWS
         w.__active = false
@@ -840,8 +882,13 @@ async function main() {
       },
       message(ws, msg) {
         const w = ws as object as MiraWS
+        const raw = String(msg)
+        if (raw.length > 1_000_000) {
+          try { w.close(1009, "message too large") } catch {}
+          return
+        }
         let event: { type?: string; token?: string; sessionID?: string } | null = null
-        try { event = JSON.parse(String(msg)) } catch {}
+        try { event = JSON.parse(raw) } catch {}
         if (!w.__active) {
           // Pre-auth: only the auth handshake is accepted; anything else is ignored
           // (the 5s timer closes unauthenticated sockets with 1008)
@@ -868,16 +915,24 @@ async function main() {
   console.log(`[mira]   prompt:  POST /session/:id/prompt  (SSE)`)
   console.log(`[mira]   ws:      WS   /  (BusEvent stream)`)
 
-  // Graceful shutdown
-  process.on("SIGINT", async () => {
-    console.log("\n[mira] shutting down...")
+  // Graceful shutdown — handles SIGINT (Ctrl-C) AND SIGTERM (systemd/docker/kill)
+  let shuttingDown = false
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) return
+    shuttingDown = true
+    console.log(`\n[mira] ${signal} — draining…`)
     clearInterval(rateLimitCleanup)
-    server.stop()
-    mcp.disconnectAll()
-    const { shutdownAllServers } = await import("./lsp/client.js")
-    await shutdownAllServers().catch(() => {})
+    try { server.stop(true) } catch {}
+    try { mcp.disconnectAll() } catch {}
+    try {
+      const { shutdownAllServers } = await import("./lsp/client.js")
+      await shutdownAllServers().catch(() => {})
+    } catch {}
+    try { db.sqlite?.close?.() } catch {}
     process.exit(0)
-  })
+  }
+  process.on("SIGINT", () => void shutdown("SIGINT"))
+  process.on("SIGTERM", () => void shutdown("SIGTERM"))
 }
 
 // Only auto-start when run directly (not imported)
