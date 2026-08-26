@@ -43,6 +43,17 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
   const [mcpTesting, setMcpTesting] = createSignal<string | null>(null)
   const [mcpResult, setMcpResult] = createSignal<Record<string, string>>({})
 
+  // Permission add form
+  const [permTool, setPermTool] = createSignal("")
+  const [permPattern, setPermPattern] = createSignal("")
+  const [permAction, setPermAction] = createSignal<"allow" | "deny" | "ask">("allow")
+
+  // Guardrails (advanced)
+  const [guardEnforce, setGuardEnforce] = createSignal(false)
+  const [guardAllowedRoots, setGuardAllowedRoots] = createSignal("")
+  const [guardBlockedPaths, setGuardBlockedPaths] = createSignal("")
+  const [guardMaxBytes, setGuardMaxBytes] = createSignal("")
+
   let dialogRef: HTMLDivElement | undefined
   let firstFocusRef: HTMLButtonElement | undefined
 
@@ -56,6 +67,11 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
       setLoopContextLimit(loop.contextLimit != null ? String(loop.contextLimit) : "")
       setLoopThreshold(loop.compactionThreshold != null ? String(loop.compactionThreshold) : "")
       setLoopSmallModel(loop.smallModel ?? "")
+      const guard = s().config?.guardrails ?? {}
+      setGuardEnforce(!!guard.enforce)
+      setGuardAllowedRoots((guard.allowedRoots ?? []).join(", "))
+      setGuardBlockedPaths((guard.blockedPaths ?? []).join(", "))
+      setGuardMaxBytes(guard.maxOutputBytes != null ? String(guard.maxOutputBytes) : "")
     }
     if (props.open) setThemeLocal(s().theme)
   })
@@ -109,6 +125,23 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     if (loopThreshold().trim() && Number.isFinite(thresh) && thresh > 0 && thresh <= 1) loopPatch.compactionThreshold = thresh
     if (loopSmallModel().trim()) loopPatch.smallModel = loopSmallModel().trim()
     if (Object.keys(loopPatch).length > 0) patch.loop = loopPatch as MiraConfig["loop"]
+    // Guardrails — include when user touched fields (opencode parity)
+    const guardPatch: Record<string, string | number | boolean | string[]> = {}
+    const guardOrig = s().config?.guardrails ?? {}
+    if (guardEnforce() !== !!guardOrig.enforce) guardPatch.enforce = guardEnforce()
+    const roots = guardAllowedRoots().split(",").map((s) => s.trim()).filter(Boolean)
+    const rootsOrig = (guardOrig.allowedRoots ?? []).join(", ")
+    if (guardAllowedRoots().trim() !== rootsOrig) guardPatch.allowedRoots = roots
+    const blocked = guardBlockedPaths().split(",").map((s) => s.trim()).filter(Boolean)
+    const blockedOrig = (guardOrig.blockedPaths ?? []).join(", ")
+    if (guardBlockedPaths().trim() !== blockedOrig) guardPatch.blockedPaths = blocked
+    const maxBytes = parseInt(guardMaxBytes().trim(), 10)
+    const maxOrig = guardOrig.maxOutputBytes != null ? String(guardOrig.maxOutputBytes) : ""
+    if (guardMaxBytes().trim() !== maxOrig) {
+      if (guardMaxBytes().trim() === "") guardPatch.maxOutputBytes = 0 // 0 = clear (server treats 0 as no limit)
+      else if (Number.isFinite(maxBytes) && maxBytes > 0) guardPatch.maxOutputBytes = maxBytes
+    }
+    if (Object.keys(guardPatch).length > 0) patch.guardrails = guardPatch as MiraConfig["guardrails"]
     // Allow clearing loop fields when user empties them — send explicit null via delete? keep as-is for now
     if (Object.keys(patch).length > 0) await props.store.saveConfig(patch)
     // Theme is local-only (persisted via store, not server)
@@ -203,6 +236,59 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
       setMcpEnv("")
       setMcpHeaders("")
     }
+  }
+
+  const handleAddPermission = async (e: Event) => {
+    e.preventDefault()
+    const tool = permTool().trim()
+    const pattern = permPattern().trim()
+    const action = permAction()
+    if (!tool) return
+    const current = { ...(s().config?.permission ?? {}) } as Record<string, string | Record<string, string>>
+    let next: Record<string, string | Record<string, string>>
+    if (pattern) {
+      const existing = current[tool]
+      const rec = typeof existing === "object" && existing !== null ? { ...(existing as Record<string, string>), [pattern]: action } : { [pattern]: action }
+      next = { ...current, [tool]: rec }
+    } else {
+      next = { ...current, [tool]: action }
+    }
+    await props.store.saveConfig({ permission: next } as Partial<MiraConfig>)
+    setPermTool("")
+    setPermPattern("")
+  }
+
+  const handleRemovePermission = async (tool: string, pattern?: string) => {
+    if (!confirm(`Remove permission "${tool}${pattern ? ":" + pattern : ""}"?`)) return
+    const current = { ...(s().config?.permission ?? {}) } as Record<string, string | Record<string, string>>
+    if (pattern) {
+      const rec = current[tool]
+      if (typeof rec === "object" && rec !== null) {
+        const copy = { ...(rec as Record<string, string>) }
+        delete copy[pattern]
+        if (Object.keys(copy).length === 0) delete current[tool]
+        else current[tool] = copy
+      }
+    } else {
+      delete current[tool]
+    }
+    await props.store.saveConfig({ permission: current } as Partial<MiraConfig>)
+  }
+
+  const handleSaveGuardrails = async (e: Event) => {
+    e.preventDefault()
+    const guardPatch: Record<string, string | number | boolean | string[]> = {}
+    guardPatch.enforce = guardEnforce()
+    const roots = guardAllowedRoots().split(",").map((s) => s.trim()).filter(Boolean)
+    const blocked = guardBlockedPaths().split(",").map((s) => s.trim()).filter(Boolean)
+    const maxBytes = parseInt(guardMaxBytes().trim(), 10)
+    // Only include lists when user has provided values; empty string clears when previously set
+    if (roots.length > 0) guardPatch.allowedRoots = roots
+    else if (guardAllowedRoots().trim() === "" && s().config?.guardrails?.allowedRoots?.length) guardPatch.allowedRoots = []
+    if (blocked.length > 0) guardPatch.blockedPaths = blocked
+    else if (guardBlockedPaths().trim() === "" && s().config?.guardrails?.blockedPaths?.length) guardPatch.blockedPaths = []
+    if (Number.isFinite(maxBytes) && maxBytes > 0) guardPatch.maxOutputBytes = maxBytes
+    await props.store.saveConfig({ guardrails: guardPatch } as Partial<MiraConfig>)
   }
 
   const handleToggleMcp = async (name: string, enabled: boolean) => {
@@ -403,6 +489,65 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                         </div>
                       </div>
 
+                      <div style={{ "font-size": "var(--fs-xs)", "font-weight": "700", color: "var(--fg-muted)", "letter-spacing": "0.04em", "text-transform": "uppercase", "margin-top": "4px" }}>
+                        Guardrails
+                      </div>
+                      <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
+                        <label style={{ display: "inline-flex", "align-items": "center", gap: "6px", "font-size": "var(--fs-sm)", color: "var(--fg)", cursor: "pointer" }}>
+                          <input type="checkbox" checked={guardEnforce()} onChange={(e) => setGuardEnforce(e.currentTarget.checked)} />
+                          Enforce
+                        </label>
+                        <span class="settings-hint" style={{ margin: "0" }}>Block outside allowed roots.</span>
+                      </div>
+                      <div style={{ display: "grid", "grid-template-columns": "1fr 1fr", gap: "10px" }}>
+                        <div class="settings-field">
+                          <label for="settings-guard-roots" class="settings-label">
+                            Allowed roots
+                          </label>
+                          <input
+                            id="settings-guard-roots"
+                            class="input"
+                            value={guardAllowedRoots()}
+                            onInput={(e) => setGuardAllowedRoots(e.currentTarget.value)}
+                            placeholder="/tmp/aether, /root"
+                            autocomplete="off"
+                            spellcheck={false}
+                          />
+                          <span class="settings-hint">Comma separated.</span>
+                        </div>
+                        <div class="settings-field">
+                          <label for="settings-guard-blocked" class="settings-label">
+                            Blocked paths
+                          </label>
+                          <input
+                            id="settings-guard-blocked"
+                            class="input"
+                            value={guardBlockedPaths()}
+                            onInput={(e) => setGuardBlockedPaths(e.currentTarget.value)}
+                            placeholder="**/.env, **/secrets/**"
+                            autocomplete="off"
+                            spellcheck={false}
+                          />
+                          <span class="settings-hint">Glob patterns.</span>
+                        </div>
+                      </div>
+                      <div class="settings-field">
+                        <label for="settings-guard-max" class="settings-label">
+                          Max output bytes
+                        </label>
+                        <input
+                          id="settings-guard-max"
+                          class="input"
+                          type="number"
+                          min="1024"
+                          value={guardMaxBytes()}
+                          onInput={(e) => setGuardMaxBytes(e.currentTarget.value)}
+                          placeholder="1048576"
+                          autocomplete="off"
+                        />
+                        <span class="settings-hint">Truncate tool output.</span>
+                      </div>
+
                       <div class="settings-field">
                         <label for="settings-theme" class="settings-label">
                           Theme
@@ -598,6 +743,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                           <tr>
                             <th>Tool / pattern</th>
                             <th>Policy</th>
+                            <th style={{ width: "40px" }}></th>
                           </tr>
                         </thead>
                         <tbody>
@@ -619,6 +765,11 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                                             <td>
                                               <span class={`perm-badge ${action === "allow" ? "perm-allow" : action === "deny" ? "perm-deny" : "perm-ask"}`}>{action}</span>
                                             </td>
+                                            <td style={{ "text-align": "right" }}>
+                                              <button type="button" class="btn btn-ghost" onClick={() => void handleRemovePermission(tool, pattern)} title={`Remove ${tool}:${pattern}`} style={{ padding: "2px 6px", "font-size": "var(--fs-2xs)", color: "var(--danger)" }}>
+                                                ✕
+                                              </button>
+                                            </td>
                                           </tr>
                                         )}
                                       </For>
@@ -628,6 +779,11 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                                       <td style={{ "font-family": "var(--font-mono)", "font-size": "var(--fs-xs)", color: "var(--fg)" }}>{tool}</td>
                                       <td>
                                         <span class={`perm-badge ${rule === "allow" ? "perm-allow" : rule === "deny" ? "perm-deny" : "perm-ask"}`}>{String(rule)}</span>
+                                      </td>
+                                      <td style={{ "text-align": "right" }}>
+                                        <button type="button" class="btn btn-ghost" onClick={() => void handleRemovePermission(tool)} title={`Remove ${tool}`} style={{ padding: "2px 6px", "font-size": "var(--fs-2xs)", color: "var(--danger)" }}>
+                                          ✕
+                                        </button>
                                       </td>
                                     </tr>
                                   </Show>
@@ -639,6 +795,38 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                       </table>
                     </div>
                   </Show>
+
+                  <form onSubmit={handleAddPermission} class="settings-card" style={{ display: "flex", "flex-direction": "column", gap: "8px", "margin-top": "12px", padding: "10px 12px" }}>
+                    <div style={{ "font-size": "var(--fs-sm)", "font-weight": "600", color: "var(--fg)" }}>Add / update rule</div>
+                    <div style={{ display: "grid", "grid-template-columns": "1fr 1fr 110px auto", gap: "8px", "align-items": "end" }}>
+                      <div class="settings-field">
+                        <label class="settings-label" for="perm-tool">
+                          Tool
+                        </label>
+                        <input id="perm-tool" class="input" value={permTool()} onInput={(e) => setPermTool(e.currentTarget.value)} placeholder="bash or read" spellcheck={false} autocomplete="off" />
+                      </div>
+                      <div class="settings-field">
+                        <label class="settings-label" for="perm-pattern">
+                          Pattern (optional)
+                        </label>
+                        <input id="perm-pattern" class="input" value={permPattern()} onInput={(e) => setPermPattern(e.currentTarget.value)} placeholder="rm -rf * or *.ts" spellcheck={false} autocomplete="off" />
+                      </div>
+                      <div class="settings-field">
+                        <label class="settings-label" for="perm-action">
+                          Action
+                        </label>
+                        <select id="perm-action" class="input" value={permAction()} onChange={(e) => setPermAction(e.currentTarget.value as "allow" | "deny" | "ask")}>
+                          <option value="allow">allow</option>
+                          <option value="deny">deny</option>
+                          <option value="ask">ask</option>
+                        </select>
+                      </div>
+                      <button type="submit" class="btn btn-solid" disabled={!permTool().trim()} style={{ padding: "7px 12px", "font-size": "var(--fs-sm)", height: "36px" }}>
+                        Add
+                      </button>
+                    </div>
+                    <span class="settings-hint">Pattern empty = tool-wide rule. With pattern = tool:pattern → action (7-layer).</span>
+                  </form>
 
                   <div style={{ "margin-top": "10px", "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "line-height": "1.6" }}>
                     Per-agent overrides live in <code style={{ "font-family": "var(--font-mono)" }}>agents.*.permissions</code> (readonly / standard / elevated). MCP tools surface as{" "}
