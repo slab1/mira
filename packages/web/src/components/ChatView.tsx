@@ -1,7 +1,8 @@
-import { For, Show, createSignal, createEffect, onMount } from "solid-js"
+import { For, Show, createSignal, createEffect, onMount, onCleanup, createResource } from "solid-js"
 import type { AppStore } from "../stores/app"
 import type { SettingsStore } from "../stores/settings"
-import type { Message, Part } from "../api/client"
+import type { Message, Part, Job } from "../api/client"
+import { api } from "../api/client"
 import { SlashAutocomplete, filterCommands } from "./CommandPalette"
 
 const EXAMPLE_PROMPTS = [
@@ -220,6 +221,18 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
   // pinned = stick to bottom; unpins the moment the user scrolls up to read,
   // and a "jump to latest" pill appears instead of yanking them down.
   const [pinned, setPinned] = createSignal(true)
+
+  // background jobs — poll while session active, show spinner cards in chat
+  const [jobs, { refetch: refetchJobs }] = createResource(() => s().currentId, (id) => api.listJobs(id).catch(() => [] as Job[]))
+  let jobsTimer: number | undefined
+  createEffect(() => {
+    const id = s().currentId
+    if (jobsTimer) { clearInterval(jobsTimer); jobsTimer = undefined }
+    if (!id) return
+    jobsTimer = window.setInterval(() => refetchJobs(), 4000)
+    onCleanup(() => { if (jobsTimer) clearInterval(jobsTimer) })
+  })
+  const runningJobs = () => (jobs() ?? []).filter((j) => j.status === "running")
 
   const scrollToBottom = (smooth: boolean) => {
     const el = scrollRef
@@ -640,6 +653,31 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
       {/* composer */}
       <Show when={s().currentId}>
         <div style={{ padding: "0 var(--sp-4) var(--sp-3)" }}>
+          <Show when={runningJobs().length > 0}>
+            <div style={{ display: "flex", "flex-direction": "column", gap: "6px", "margin-bottom": "8px" }}>
+              <For each={runningJobs()}>
+                {(job) => (
+                  <div class="card" style={{ display: "flex", "align-items": "center", gap: "8px", padding: "8px 10px", background: "var(--warn-soft)", border: "1px solid var(--warn-border)" }}>
+                    <span class="dot dot-pulse" style={{ background: "var(--warn)", width: "8px", height: "8px", flex: "none" }} />
+                    <span style={{ flex: "1", "min-width": "0", "font-size": "var(--fs-xs)", color: "var(--fg)", "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis" }}>
+                      {job.agent ? `${job.agent}: ` : ""}
+                      {job.prompt.slice(0, 100)}
+                      {job.prompt.length > 100 ? "…" : ""}
+                    </span>
+                    <button
+                      type="button"
+                      class="btn btn-ghost"
+                      onClick={() => void api.cancelJob(job.id).then(() => refetchJobs()).catch(() => {})}
+                      title="Cancel background job"
+                      style={{ padding: "3px 8px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-full)", flex: "none" }}
+                    >
+                      ✕ cancel
+                    </button>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
           <Show when={s().queued.length > 0}>
             <div style={{ padding: "0 2px 6px", "font-size": "var(--fs-xs)", color: "var(--warn)" }} role="status">
               ⏳ {s().queued.length} message{s().queued.length === 1 ? "" : "s"} queued — will run after the current turn

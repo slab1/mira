@@ -1,8 +1,8 @@
 import { For, Show, createSignal, createResource } from "solid-js"
 import type { AppStore } from "../stores/app"
-import { api, type ToolInfo, type Snapshot, type Finding } from "../api/client"
+import { api, type ToolInfo, type Snapshot, type Finding, type Job } from "../api/client"
 
-type Tab = "todos" | "tools" | "events" | "history" | "findings"
+type Tab = "todos" | "tools" | "events" | "history" | "findings" | "jobs"
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "todos", label: "Todos" },
@@ -10,6 +10,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "events", label: "Events" },
   { id: "history", label: "History" },
   { id: "findings", label: "Findings" },
+  { id: "jobs", label: "Jobs" },
 ]
 
 export function ToolView(props: { store: AppStore }) {
@@ -24,6 +25,10 @@ export function ToolView(props: { store: AppStore }) {
   const findingsSource = () => (tab() === "findings" ? "open" : null)
   const [findings, { refetch: refetchFindings }] = createResource(findingsSource, () =>
     api.listFindings({ status: "open", limit: 50 }).catch(() => [] as Finding[]),
+  )
+  const jobsSource = () => (tab() === "jobs" ? s().currentId ?? null : null)
+  const [jobs, { refetch: refetchJobs }] = createResource(jobsSource, (id) =>
+    api.listJobs(id).catch(() => [] as Job[]),
   )
 
   const doneCount = () => s().todos.filter((t) => t.status === "completed").length
@@ -531,6 +536,130 @@ export function ToolView(props: { store: AppStore }) {
                     )}
                   </For>
                 </div>
+              </Show>
+            </Show>
+          </Show>
+
+          {/* ── Jobs (background subagents) ───────────────────────── */}
+          <Show when={tab() === "jobs"}>
+            <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center", "margin-bottom": "10px", gap: "8px" }}>
+              <span style={{ "font-size": "var(--fs-xs)", "font-weight": "700", color: "var(--fg-muted)", "letter-spacing": "0.05em", "text-transform": "uppercase" }}>
+                Jobs · {jobs.loading ? "…" : (jobs()?.length ?? 0)}
+              </span>
+              <button
+                type="button"
+                class="btn btn-ghost"
+                onClick={() => refetchJobs()}
+                title="Refresh jobs"
+                style={{ padding: "2px 7px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-full)" }}
+              >
+                ↻
+              </button>
+            </div>
+            <Show
+              when={s().currentId}
+              fallback={<div style={{ color: "var(--fg-faint)", "font-size": "var(--fs-sm)", padding: "4px 0" }}>Select a session to see its jobs.</div>}
+            >
+              <Show
+                when={!jobs.loading}
+                fallback={
+                  <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
+                    {[0, 1].map(() => (
+                      <div class="skeleton" style={{ height: "52px", "border-radius": "var(--r-md)" }} />
+                    ))}
+                  </div>
+                }
+              >
+                <Show
+                  when={(jobs()?.length ?? 0) > 0}
+                  fallback={
+                    <div
+                      style={{
+                        padding: "14px",
+                        border: "1px dashed var(--border-strong)",
+                        "border-radius": "var(--r-md)",
+                        color: "var(--fg-faint)",
+                        "font-size": "var(--fs-xs)",
+                        "text-align": "center",
+                        "line-height": "1.5",
+                      }}
+                    >
+                      No background jobs — `task` tool spawns appear here.
+                    </div>
+                  }
+                >
+                  <div style={{ display: "flex", "flex-direction": "column", gap: "6px" }}>
+                    <For each={jobs() ?? []}>
+                      {(job) => (
+                        <div class="card" style={{ padding: "9px 11px", display: "flex", gap: "9px", "align-items": "flex-start" }}>
+                          <span
+                            style={{
+                              width: "8px",
+                              height: "8px",
+                              "border-radius": "50%",
+                              background: job.status === "running" ? "var(--warn)" : job.status === "completed" ? "var(--ok)" : job.status === "failed" ? "var(--danger)" : "var(--fg-faint)",
+                              flex: "none",
+                              "margin-top": "6px",
+                            }}
+                          />
+                          <div style={{ flex: "1", "min-width": "0" }}>
+                            <div style={{ display: "flex", gap: "6px", "align-items": "center", "margin-bottom": "2px" }}>
+                              <span
+                                style={{
+                                  "font-size": "var(--fs-2xs)",
+                                  "font-weight": "700",
+                                  padding: "1px 6px",
+                                  "border-radius": "var(--r-full)",
+                                  background: job.status === "running" ? "var(--warn-soft)" : job.status === "completed" ? "var(--ok-soft)" : "var(--bg-surface)",
+                                  color: job.status === "running" ? "var(--warn)" : job.status === "completed" ? "var(--ok)" : job.status === "failed" ? "var(--danger)" : "var(--fg-faint)",
+                                  border: `1px solid ${job.status === "running" ? "var(--warn-border)" : "var(--border)"}`,
+                                }}
+                              >
+                                {job.status}
+                              </span>
+                              <span style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "font-family": "var(--font-mono)" }}>
+                                {job.agent ?? "general"} · {new Date(job.createdAt).toLocaleTimeString()}
+                              </span>
+                            </div>
+                            <div style={{ "font-size": "var(--fs-xs)", color: "var(--fg)", "line-height": "1.4", "white-space": "pre-wrap", "word-break": "break-word" }}>
+                              {job.prompt.slice(0, 160)}
+                              {job.prompt.length > 160 ? "…" : ""}
+                            </div>
+                            <Show when={job.status === "completed" && job.result}>
+                              <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-subtle)", "margin-top": "4px", "white-space": "pre-wrap", "word-break": "break-word", background: "var(--bg-app)", padding: "4px 6px", "border-radius": "4px", border: "1px solid var(--border)" }}>
+                                {String(job.result).slice(0, 200)}
+                                {String(job.result ?? "").length > 200 ? "…" : ""}
+                              </div>
+                            </Show>
+                            <Show when={job.status === "failed" && job.error}>
+                              <div style={{ "font-size": "var(--fs-2xs)", color: "var(--danger)", "margin-top": "4px" }}>{String(job.error).slice(0, 200)}</div>
+                            </Show>
+                          </div>
+                          <Show when={job.status === "running"}>
+                            <button
+                              type="button"
+                              class="btn btn-ghost"
+                              onClick={() =>
+                                void (async () => {
+                                  try {
+                                    await api.cancelJob(job.id)
+                                    await refetchJobs()
+                                  } catch (e) {
+                                    console.error("[mira] cancel failed:", e)
+                                  }
+                                })()
+                              }
+                              title="Cancel job"
+                              style={{ padding: "4px 8px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-full)", flex: "none" }}
+                            >
+                              ✕ cancel
+                            </button>
+                          </Show>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
               </Show>
             </Show>
           </Show>

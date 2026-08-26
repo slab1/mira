@@ -82,6 +82,19 @@ export type Finding = {
   resolvedAt: number | null
 }
 
+export type Job = {
+  id: string
+  parentSessionID: string
+  childSessionID: string | null
+  agent: string | null
+  prompt: string
+  status: "running" | "completed" | "failed" | "cancelled"
+  result: string | null
+  error: string | null
+  createdAt: number
+  updatedAt: number
+}
+
 export type BusEvent = {
   type: string
   payload?: JsonValue
@@ -260,6 +273,10 @@ export const api = {
     return req<Finding[]>(`/finding${qs}`)
   },
   resolveFinding: (id: string) => req<Finding>(`/finding/${encodeURIComponent(id)}/resolve`, { method: "POST" }),
+
+  listJobs: (sessionId: string) => req<Job[]>(`/session/${encodeURIComponent(sessionId)}/jobs`),
+  getJob: (id: string) => req<Job>(`/job/${encodeURIComponent(id)}`),
+  cancelJob: (id: string) => req<Job>(`/job/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
 
   /** Export session transcript — markdown or JSON (triggers download in caller) */
   exportSession: async (id: string, format: "md" | "json" = "md"): Promise<string> => {
