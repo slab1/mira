@@ -247,15 +247,15 @@ async function main() {
     command: z.array(z.string().min(1)).min(1).optional(),
     url: z.string().url().optional(),
     enabled: z.boolean().optional(),
-    env: z.record(z.string()).optional(),
-    headers: z.record(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    headers: z.record(z.string(), z.string()).optional(),
   }).superRefine((v, ctx) => {
     if (v.type === "local" && !v.command?.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["command"], message: "local type requires command[]" })
     if (v.type === "remote" && !v.url) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["url"], message: "remote type requires url" })
   })
   const mcpToggleSchema = z.object({ enabled: z.boolean() })
   const configPatchSchema = z.object({
-    patch: z.record(z.unknown()),
+    patch: z.record(z.string(), z.unknown()),
     layer: z.enum(["project", "local"]).optional(),
   }).refine((v) => v.patch && typeof v.patch === "object" && Object.keys(v.patch).length > 0, { message: "patch must be non-empty object", path: ["patch"] })
   const queuePushSchema = z.object({ prompt: z.string().min(1).max(20000) })
