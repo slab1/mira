@@ -34,7 +34,7 @@ function CodeFence(props: { lang: string; code: string }) {
         background: "var(--bg-surface)",
       }}
     >
-      <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", padding: "6px 10px", background: "var(--bg-app)", borderBottom: "1px solid var(--border)", gap: "8px" }}>
+      <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", padding: "6px 10px", background: "var(--bg-app)", "border-bottom": "1px solid var(--border)", gap: "8px" }}>
         <span style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "font-family": "var(--font-mono)", "text-transform": "uppercase", "letter-spacing": "0.04em" }}>
           {props.lang || "code"}
         </span>
