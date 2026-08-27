@@ -13,6 +13,11 @@ if [[ "${PORT}" =~ ^(start|stop|status)$ ]]; then
 else
   ACTION="${2:-start}"
 fi
+# Alias: "github" or "pages" points to local web that mirrors https://slab1.github.io/mira/
+if [[ "${PORT}" == "github" || "${PORT}" == "pages" || "${PORT}" == "mira" ]]; then
+  echo "[ngrok] alias '${PORT}' → http://127.0.0.1:3000 (mirrors https://slab1.github.io/mira/)"
+  PORT="3000"
+fi
 
 PID_FILE="${HOME}/.mira/ngrok.pid"
 LOG_FILE="${HOME}/.mira/ngrok.log"
