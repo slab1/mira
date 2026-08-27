@@ -86,7 +86,15 @@ export class ToolRegistry {
 
   /** Register a single tool */
   register<T extends z.ZodTypeAny>(def: ToolDef<T>) {
-    if (this.tools.has(def.name)) console.warn(`[tools] overwriting ${def.name}`)
+    const existing = this.tools.get(def.name)
+    if (existing) {
+      // Allow re-register of same MCP tool after disconnect (unregister → register cycle may race)
+      if (existing.category === "mcp" && def.category === "mcp") {
+        console.warn(`[tools] overwriting mcp tool ${def.name}`)
+      } else {
+        throw new Error(`Tool ${def.name} already registered — collision rejected (existing: ${existing.category})`)
+      }
+    }
     this.tools.set(def.name, def as ToolDef)
   }
 

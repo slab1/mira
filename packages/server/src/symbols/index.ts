@@ -145,24 +145,37 @@ export class SymbolIndex {
 
   async renameSymbol(oldName: string, newName: string): Promise<{ files: string[]; count: number }> {
     const occurrences = await this.findReferences(oldName);
+    // Group by file to batch writes — one read + one write per file
+    const byFile = new Map<string, typeof occurrences>()
+    for (const occ of occurrences) {
+      const list = byFile.get(occ.file) ?? []
+      list.push(occ)
+      byFile.set(occ.file, list)
+    }
     const filesSet = new Set<string>();
     let count = 0;
-    for (const occ of occurrences) {
-      const abs = occ.file.startsWith("/") ? occ.file : `${this.root}/${occ.file}`;
-      const content = await this.readFile(occ.file);
-      const lines = content.split("\n");
-      const lineIdx = occ.line - 1;
-      const line = lines[lineIdx];
-      const idx = occ.character;
-      if (line.slice(idx, idx + oldName.length) === oldName) {
-        const newLine = line.slice(0, idx) + newName + line.slice(idx + oldName.length);
-        lines[lineIdx] = newLine;
-        const newContent = lines.join("\n");
-        await Bun.write(abs, newContent);
-        filesSet.add(occ.file);
-        count++;
-        // Invalidate cache
-        this.cache.delete(occ.file);
+    for (const [file, occs] of byFile) {
+      const abs = file.startsWith("/") ? file : `${this.root}/${file}`;
+      let content = await this.readFile(file);
+      let lines = content.split("\n");
+      // Sort descending by line+char so replacements don't shift earlier offsets on same line
+      occs.sort((a, b) => b.line - a.line || b.character - a.character)
+      let changed = false
+      for (const occ of occs) {
+        const lineIdx = occ.line - 1;
+        const line = lines[lineIdx];
+        if (!line) continue
+        const idx = occ.character;
+        if (line.slice(idx, idx + oldName.length) === oldName) {
+          lines[lineIdx] = line.slice(0, idx) + newName + line.slice(idx + oldName.length);
+          count++;
+          changed = true
+        }
+      }
+      if (changed) {
+        await Bun.write(abs, lines.join("\n"));
+        filesSet.add(file);
+        this.cache.delete(file);
       }
     }
     return { files: [...filesSet], count };

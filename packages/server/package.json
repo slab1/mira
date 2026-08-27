@@ -6,7 +6,7 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "bun --watch src/index.ts",
-    "build": "tsc --noEmit || echo 'typecheck warning' && bun build src/index.ts --outdir dist --target bun || echo 'build warning'",
+    "build": "tsc --noEmit && bun build src/index.ts --outdir dist --target bun",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "eval": "bun src/eval/index.ts",
@@ -14,20 +14,21 @@
     "db:migrate": "bun src/storage/migrate.ts"
   },
   "dependencies": {
-    "ai": "^5.0.0",
-    "@ai-sdk/openai": "^2.0.0",
     "@ai-sdk/anthropic": "^2.0.0",
     "@ai-sdk/google": "^2.0.0",
-    "drizzle-orm": "^0.44.0",
-    "zod": "^4.0.0",
-    "hono": "^4.7.0",
+    "@ai-sdk/openai": "^2.0.0",
     "@hono/zod-validator": "^0.7.0",
-    "ws": "^8.18.0",
     "@opentelemetry/api": "^1.9.0",
-    "@opentelemetry/sdk-node": "^0.221.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
     "@opentelemetry/resources": "^2.10.0",
-    "@opentelemetry/semantic-conventions": "^1.26.0"
+    "@opentelemetry/sdk-node": "^0.221.0",
+    "@opentelemetry/semantic-conventions": "^1.26.0",
+    "ai": "^5.0.0",
+    "drizzle-orm": "^0.44.0",
+    "hono": "^4.7.0",
+    "js-tiktoken": "^1.0.21",
+    "ws": "^8.18.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "typescript": "^5.8.0",

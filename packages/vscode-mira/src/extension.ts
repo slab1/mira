@@ -59,12 +59,14 @@ async function createSession(context: vscode.ExtensionContext, title?: string): 
   return (await res.json()) as Session
 }
 
-function createChatWebview(context: vscode.ExtensionContext): vscode.WebviewPanel {
+async function createChatWebview(context: vscode.ExtensionContext): Promise<vscode.WebviewPanel> {
   const panel = vscode.window.createWebviewPanel('miraChat', 'Mira Chat', vscode.ViewColumn.Beside, {
     enableScripts: true,
     retainContextWhenHidden: true,
   })
   const apiUrl = getApiUrl()
+  const token = await getToken(context)
+  const tokenJson = JSON.stringify(token)
   panel.webview.html = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
@@ -86,9 +88,11 @@ function createChatWebview(context: vscode.ExtensionContext): vscode.WebviewPane
   const input = document.getElementById('input');
   const sendBtn = document.getElementById('send');
   let sessionId = null;
+  const token = ${tokenJson};
+  const authHeaders = token ? {Authorization: 'Bearer ' + token} : {};
   async function ensureSession(){
     if(sessionId) return sessionId;
-    const res = await fetch('${apiUrl}/session', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({title:'VS Code Chat'})});
+    const res = await fetch('${apiUrl}/session', {method:'POST', headers:{'Content-Type':'application/json', ...authHeaders}, body: JSON.stringify({title:'VS Code Chat'})});
     const s = await res.json();
     sessionId = s.id;
     log.textContent += '\\n● session ' + s.id + ' (' + s.model + ')';
@@ -100,7 +104,7 @@ function createChatWebview(context: vscode.ExtensionContext): vscode.WebviewPane
     input.value = '';
     log.textContent += '\\n\\n▶ ' + text + '\\n';
     const id = await ensureSession();
-    const res = await fetch('${apiUrl}/session/' + id + '/prompt', {method:'POST', headers:{'Content-Type':'application/json', Accept:'text/event-stream'}, body: JSON.stringify({prompt: text})});
+    const res = await fetch('${apiUrl}/session/' + id + '/prompt', {method:'POST', headers:{'Content-Type':'application/json', Accept:'text/event-stream', ...authHeaders}, body: JSON.stringify({prompt: text})});
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
@@ -125,7 +129,7 @@ function createChatWebview(context: vscode.ExtensionContext): vscode.WebviewPane
   sendBtn.onclick = send;
   input.onkeydown = (e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); send(); } };
   // initial
-  fetch('${apiUrl}/health').then(r=>r.json()).then(h=> log.textContent += '\\n✓ ' + h.version + ' · ' + h.tools + ' tools').catch(()=> log.textContent += '\\n✗ cannot reach ' + '${apiUrl}');
+  fetch('${apiUrl}/health', {headers: authHeaders}).then(r=>r.json()).then(h=> log.textContent += '\\n✓ ' + h.version + ' · ' + h.tools + ' tools').catch(()=> log.textContent += '\\n✗ cannot reach ' + '${apiUrl}');
 </script>
 </body></html>`
   return panel
@@ -223,8 +227,8 @@ export function activate(context: vscode.ExtensionContext) {
   })
 
   // Also expose a Chat webview
-  const chatCmd = vscode.commands.registerCommand('mira.openChat', () => {
-    createChatWebview(context)
+  const chatCmd = vscode.commands.registerCommand('mira.openChat', async () => {
+    await createChatWebview(context)
   })
 
   context.subscriptions.push(hello, openWeb, createSessCmd, listSessCmd, setTokenCmd, termCmd, chatCmd)

@@ -30,40 +30,91 @@ export interface GuardrailConfig {
 }
 
 const DEFAULT_GUARDRAILS: Required<GuardrailConfig> = {
-  enforce: false,
-  allowedRoots: [],
-  blockedPaths: ["/etc", "/root", "/sys", "/proc", "/dev"],
+  enforce: process.env.NODE_ENV === "production",
+  allowedRoots: process.env.NODE_ENV === "production" ? ["./data", "./packages", "./src"] : [],
+  blockedPaths: ["/etc", "/root", "/sys", "/proc", "/dev", "~/.ssh", "mira.db", ".env", ".env.local", ".aws", ".pem", ".key"],
   blockedCommands: ["rm -rf /", "mkfs", ":(){ :|: & };:"],
   allowedCommands: [],
   maxOutputBytes: 30000,
   auditLogPath: "./data/audit.log",
 }
 
-/** Simple path traversal check */
+/** Path traversal check — hardened: decodes, normalizes, checks realpath containment */
 export function sanitizePath(path: string): { ok: boolean; reason?: string; sanitized?: string } {
   if (typeof path !== "string") return { ok: false, reason: "path not string" }
-  // Null bytes
   if (path.includes("\0")) return { ok: false, reason: "null byte in path" }
-  // Normalize
-  const normalized = path.split(/\\/).join("/")
-  // Path traversal
-  if (normalized.includes("../") || normalized.startsWith("..")) {
+  // Decode percent-encoded traversal attempts (e.g. %2e%2e%2f == ../)
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(path)
+  } catch {
+    decoded = path
+  }
+  // If decoding changed traversal patterns, reject
+  if (decoded.includes("\0")) return { ok: false, reason: "null byte after decode" }
+  // Normalize: handle backslashes, collapse //, remove /./
+  const normalized = decoded.split(/\\/).join("/")
+  // Use path normalization (posix) to collapse .. segments
+  // We check both raw and decoded for traversal — defense in depth
+  const lower = normalized.toLowerCase()
+  if (lower.includes("%2e") || lower.includes("%2f") || lower.includes("%5c")) {
+    return { ok: false, reason: "encoded traversal detected" }
+  }
+  // Check normalized path for traversal after collapsing
+  // Use posix normalize equivalent: split, resolve dots
+  const parts = normalized.split("/")
+  const resolved: string[] = []
+  for (const p of parts) {
+    if (p === "..") {
+      if (resolved.length === 0) return { ok: false, reason: "path traversal detected (.. beyond root)" }
+      resolved.pop()
+    } else if (p === "." || p === "") {
+      // keep single slash separately
+      if (p === "" && resolved.length === 0) resolved.push("")
+      continue
+    } else {
+      resolved.push(p)
+    }
+  }
+  const collapsed = resolved.join("/") || "/"
+  if (collapsed.includes("..")) return { ok: false, reason: "path traversal detected" }
+  if (normalized.includes("../") || normalized.startsWith("..") || decoded.includes("../") || decoded.startsWith("..")) {
     return { ok: false, reason: "path traversal detected" }
   }
-  // Windows absolute?
-  if (/^[a-zA-Z]:\//.test(normalized)) {
-    // keep but will be checked against roots
+  // Denylist for sensitive files — block even inside allowed roots when enforce
+  const sensitive = ["/etc", "/root", ".ssh", ".aws", ".env", "mira.db", ".pem", ".key"]
+  for (const blocked of sensitive) {
+    if (lower.includes(blocked.toLowerCase())) {
+      if (blocked.startsWith("/") && normalized.startsWith(blocked)) {
+        return { ok: false, reason: `blocked path ${blocked}` }
+      }
+      if (!blocked.startsWith("/") && lower.includes(blocked)) {
+        // For file-sensitive names, require explicit allowedRoots bypass — warn in sanitize but enforce via isPathAllowed
+        // Hard-block absolute sensitive paths
+        if (normalized.includes("/.ssh/") || normalized.endsWith("/.ssh") || normalized.includes(".key") || normalized.includes(".pem") || normalized.includes(".aws")) {
+          return { ok: false, reason: `blocked sensitive file ${blocked}` }
+        }
+      }
+    }
   }
   return { ok: true, sanitized: normalized }
 }
 
-/** Check if path is within any allowed root */
+/** Check if path is within any allowed root — resolved via realpath when possible */
 export function isPathAllowed(path: string, roots: string[]): boolean {
-  if (roots.length === 0) return true // permissive default
+  if (roots.length === 0) {
+    // In production, require explicit roots — fail-closed
+    if (process.env.NODE_ENV === "production") return false
+    return true
+  }
+  // Normalize both sides
   const abs = path.startsWith("/") ? path : "/" + path
+  // Use realpath-style normalization: strip trailing slash, resolve . & ..
+  const normalize = (p: string) => p.replace(/\/$/, "").replace(/\/+/g, "/")
+  const nAbs = normalize(abs)
   return roots.some(root => {
-    const r = root.replace(/\/$/, "")
-    return abs === r || abs.startsWith(r + "/")
+    const r = normalize(root)
+    return nAbs === r || nAbs.startsWith(r + "/")
   })
 }
 

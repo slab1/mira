@@ -73,6 +73,7 @@ export interface StreamOptions {
   system?: string
   maxTokens?: number
   temperature?: number
+  signal?: AbortSignal
 }
 
 // ── OpenAI-compatible wire shapes ─────────────────────────────────────
@@ -219,14 +220,28 @@ export function createGateway(config: MiraConfig): Gateway {
       const { baseURL, apiKey, modelID } = resolveModel(opts.model)
       const t0 = Date.now()
 
-      // If API key is set, try live call via fetch (OpenAI-compatible)
+      // If API key is set, try live call via fetch (OpenAI-compatible) with retry + fallbackModel
       if (apiKey) {
-        try {
-          const iter = await liveOpenAIStream({ baseURL, apiKey, modelID, opts })
-          // Wrap to capture usage + latency from the live stream
-          return trackedStream(iter, (usage) => record(modelID, usage.input, usage.output, Date.now() - t0))
-        } catch (e) {
-          console.warn("[gateway] live stream failed, falling back to stub:", (e as Error).message)
+        const fallbackModel = (config as unknown as Record<string, unknown>).fallbackModel as string | undefined
+        const candidates = [modelID, fallbackModel].filter(Boolean) as string[]
+        for (const candModel of candidates.length ? candidates : [modelID]) {
+          const candResolved = candidates.length > 1 && candModel !== modelID ? resolveModel(candModel) : { baseURL, apiKey, modelID: candModel }
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              const iter = await liveOpenAIStream({ baseURL: candResolved.baseURL, apiKey: candResolved.apiKey, modelID: candResolved.modelID, opts })
+              return trackedStream(iter, (usage) => record(candResolved.modelID, usage.input, usage.output, Date.now() - t0))
+            } catch (e) {
+              const msg = (e as Error).message
+              const retryable = /429|5\d\d|timeout|ECONN/i.test(msg)
+              if (!retryable || attempt === 2) {
+                console.warn(`[gateway] live stream failed (${candResolved.modelID} attempt ${attempt + 1}):`, msg)
+                break
+              }
+              const backoff = 500 * Math.pow(2, attempt)
+              await new Promise(r => setTimeout(r, backoff))
+            }
+          }
+          if (candModel !== modelID) console.warn(`[gateway] falling back to stub after ${candModel} failed`)
         }
       }
 
@@ -386,6 +401,9 @@ async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID:
     ...(opts.tools ? { tools: Object.entries(opts.tools).map(([name, def]) => ({ type: "function" as const, function: { name, description: def.description, parameters: def.parameters } })), tool_choice: "auto" as const } : {}),
   }
 
+  // Combine provider timeout with caller's abort signal (client disconnect)
+  const timeoutSignal = AbortSignal.timeout(120_000)
+  const combinedSignal = opts.signal ? AbortSignal.any([timeoutSignal, opts.signal]) : timeoutSignal
   const res = await fetch(`${baseURL.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
@@ -395,20 +413,24 @@ async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID:
       "X-Title": "Mira",
     },
     body: JSON.stringify(body),
-    // Never let a stalled provider hang the session loop — fail → stub fallback
-    signal: AbortSignal.timeout(120_000),
+    signal: combinedSignal,
   })
   if (!res.ok) {
     const err = await res.text()
     throw new Error(`Gateway ${res.status}: ${err.slice(0, 500)}`)
   }
 
-  // Parse SSE → AsyncIterable<StreamChunk>
+  // Parse SSE → AsyncIterable<StreamChunk> with streaming tool-call argument accumulation
   async function* gen(): AsyncGenerator<GatewayChunk> {
     const reader = res.body!.getReader()
     const decoder = new TextDecoder()
     let buf = ""
     let lastUsage: { inputTokens: number; outputTokens: number } | null = null
+    // Accumulate fragmented tool-call arguments across SSE chunks
+    const toolCallAccum = new Map<string, { name: string; argsFragments: string[] }>()
+    // Fallback index counter for tool_calls without id (OpenAI spec uses index field)
+    let toolCallIndexCounter = 0
+    const indexToId = new Map<number, string>()
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
@@ -420,29 +442,74 @@ async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID:
         if (!trimmed.startsWith("data:")) continue
         const data = trimmed.slice(5).trim()
         if (data === "[DONE]") {
-          // Providers that send usage in a trailing chunk: emit it before closing
+          // Flush any accumulated tool-calls whose arguments were streamed fragmented
+          for (const [id, acc] of toolCallAccum) {
+            const assembled = acc.argsFragments.join("")
+            let args: Record<string, JsonValue> = {}
+            if (assembled.trim()) {
+              try { args = JSON.parse(assembled) as Record<string, JsonValue> } catch { args = {} }
+            }
+            yield { type: "tool-call", toolCall: { id, name: acc.name, args } }
+            toolCallAccum.delete(id)
+          }
           if (lastUsage) yield { type: "usage-report", usage: lastUsage }
           return
         }
         try {
           const json = JSON.parse(data) as ChatCompletionResponse
-          // Usage-only chunks (choices: []) arrive before/without finish — always capture
           if (json.usage) {
             lastUsage = { inputTokens: json.usage.prompt_tokens ?? 0, outputTokens: json.usage.completion_tokens ?? 0 }
           }
-          const choice = json.choices?.[0]
+          const choice = json.choices?.[0] as unknown as { delta?: { content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> }; finish_reason?: string } | undefined
           if (!choice) continue
           if (choice.delta?.content) yield { type: "text-delta", text: choice.delta.content }
           if (choice.delta?.tool_calls) {
             for (const tc of choice.delta.tool_calls) {
-              yield { type: "tool-call", toolCall: { id: tc.id ?? `call-${Date.now()}`, name: tc.function?.name ?? "unknown", args: tc.function?.arguments ? JSON.parse(tc.function.arguments) : {} } }
+              const idx = tc.index ?? toolCallIndexCounter++
+              let id = tc.id ?? indexToId.get(idx)
+              if (!id) {
+                id = tc.id ?? `call-${Date.now()}-${idx}`
+                indexToId.set(idx, id)
+              } else if (tc.id) {
+                indexToId.set(idx, id)
+              }
+              const existing = toolCallAccum.get(id) ?? { name: tc.function?.name ?? "unknown", argsFragments: [] }
+              if (tc.function?.name) existing.name = tc.function.name
+              if (tc.function?.arguments) existing.argsFragments.push(tc.function.arguments)
+              toolCallAccum.set(id, existing)
+              // If this fragment looks like complete JSON, we can try emit early — but defer to finish_reason or [DONE] for safety
+              // Check if we have a complete JSON object (heuristic: try parse)
+              const assembled = existing.argsFragments.join("")
+              if (assembled.trim() && (() => { try { JSON.parse(assembled); return true } catch { return false } })()) {
+                // Don't emit yet — wait for finish_reason or next tool_call boundary; keep accumulating
+              }
             }
           }
           if (choice.finish_reason) {
+            // Flush accumulated tool-calls on finish
+            for (const [id, acc] of [...toolCallAccum.entries()]) {
+              const assembled = acc.argsFragments.join("")
+              let args: Record<string, JsonValue> = {}
+              if (assembled.trim()) {
+                try { args = JSON.parse(assembled) as Record<string, JsonValue> } catch { args = {} }
+              }
+              yield { type: "tool-call", toolCall: { id, name: acc.name, args } }
+            }
+            toolCallAccum.clear()
+            indexToId.clear()
             yield { type: "finish", finishReason: choice.finish_reason === "tool_calls" ? "tool-calls" : "stop", ...(lastUsage ? { usage: lastUsage } : {}) }
           }
         } catch {}
       }
+    }
+    // Stream ended without [DONE] — flush any remaining tool calls
+    for (const [id, acc] of toolCallAccum) {
+      const assembled = acc.argsFragments.join("")
+      let args: Record<string, JsonValue> = {}
+      if (assembled.trim()) {
+        try { args = JSON.parse(assembled) as Record<string, JsonValue> } catch { args = {} }
+      }
+      yield { type: "tool-call", toolCall: { id, name: acc.name, args } }
     }
     yield { type: "finish", finishReason: "stop" as const, ...(lastUsage ? { usage: lastUsage } : {}) }
   }
@@ -458,7 +525,7 @@ async function* stubStream(modelID: string, opts: StreamOptions): AsyncIterable<
   const hasTools = opts.tools && Object.keys(opts.tools).length > 0
 
   // If tools available and prompt looks like a task, demo a tool call
-  if (hasTools && /read|file|list|glob|search/i.test(userText)) {
+  if (hasTools && /read|file|list|glob|search|write|edit/i.test(userText)) {
     yield { type: "text-delta", text: `I'll help with: "${userText.slice(0, 80)}". Let me check the project.\n` }
     const firstTool = Object.keys(opts.tools!)[0]
     yield { type: "tool-call", toolCall: { id: "stub-1", name: firstTool, args: firstTool === "read" ? { path: "README.md" } : firstTool === "glob" ? { pattern: "**/*" } : {} } }

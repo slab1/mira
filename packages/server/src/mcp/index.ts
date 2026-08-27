@@ -126,6 +126,9 @@ export class MCPManager {
   }
 
   // ── Remote transport (StreamableHTTP / SSE) ──────────────────────
+  // NOTE: Remote MCP is currently EXPERIMENTAL — stub implementation.
+  // Real StreamableHTTP transport (session id, Accept: application/json+text/event-stream, notifications/tools/list_changed) is pending SDK integration.
+  // For production, prefer type:"local" (stdio) or await real remote support.
   private async connectRemote(name: string, cfg: MCPServerConfig): Promise<void> {
     if (!cfg.url) throw new Error(`No url for remote MCP server ${name}`)
 
@@ -136,13 +139,14 @@ export class MCPManager {
     // Expand env in url
     const url = cfg.url.replace(/\{env:([^}]+)\}/g, (_, varName) => process.env[varName] ?? "")
 
+    console.warn(`[mcp] ${name} remote transport is EXPERIMENTAL stub — no StreamableHTTP discovery yet`)
     // Try StreamableHTTP first (POST /mcp with JSON-RPC), fallback to SSE
     // Stub: register placeholder tool, real impl uses @modelcontextprotocol/sdk StreamableHTTPTransport
     const stubTools = [`mcp__${name}__remote_tool`]
     for (const toolName of stubTools) {
       this.deps.tools.register({
         name: toolName,
-        description: `MCP remote tool ${toolName} from ${name} (${url}) — StreamableHTTP/SSE`,
+        description: `[EXPERIMENTAL STUB] MCP remote tool ${toolName} from ${name} (${url}) — StreamableHTTP pending. Use local stdio for real tools.`,
         category: "mcp",
         needsPermission: true,
         schema: z.object({ input: z.string().optional() }).passthrough(),

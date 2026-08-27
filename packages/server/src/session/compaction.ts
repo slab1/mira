@@ -11,6 +11,7 @@
 import type { JsonValue } from "../types/index.js"
 import type { GatewayMessage } from "../gateway/index.js"
 import type { Gateway } from "../gateway/index.js"
+import { getEncoding } from "js-tiktoken"
 
 export interface CompactionOptions {
   threshold?: number // 0.8 = compact at 80% of limit
@@ -37,14 +38,27 @@ export interface CompactionResult {
   tokenEstimate: number
 }
 
+let cachedEnc: ReturnType<typeof getEncoding> | null = null
+function getEnc(): ReturnType<typeof getEncoding> | null {
+  if (cachedEnc) return cachedEnc
+  try {
+    cachedEnc = getEncoding("cl100k_base")
+    return cachedEnc
+  } catch {
+    return null
+  }
+}
+
 /**
  * Estimate token count from messages
- * Rough heuristic: ~4 chars per token + 10 overhead per message
+ * Uses js-tiktoken cl100k_base when available, fallback to ~4 chars/token +10 overhead
  */
 export function estimateTokens(messages: CompactionMessage[]): number {
+  const enc = getEnc()
   return messages.reduce((total, m) => {
     const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '')
-    return total + Math.ceil(content.length / 4) + 10
+    const tokens = enc ? enc.encode(content).length : Math.ceil(content.length / 4)
+    return total + tokens + 10
   }, 0)
 }
 

@@ -36,9 +36,14 @@ export class McpStdioClient {
   }
 
   static async spawn(command: string[], opts: { env?: Record<string, string>; cwd?: string } = {}): Promise<McpStdioClient> {
-    // Build a clean string-valued env (process.env values are `string | undefined`)
-    const env: Record<string, string> = {}
-    for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
+    // Build minimal env — only cfg.env + safe defaults (PATH, HOME) to avoid leaking secrets like OPENROUTER_API_KEY
+    const env: Record<string, string> = {
+      PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/local/bin",
+      HOME: process.env.HOME ?? "",
+      // Keep locale/timezone if present
+      ...(process.env.LANG ? { LANG: process.env.LANG } : {}),
+      ...(process.env.TZ ? { TZ: process.env.TZ } : {}),
+    }
     Object.assign(env, opts.env ?? {})
     const proc = Bun.spawn(command, {
       env,

@@ -70,6 +70,7 @@ export interface LoopOptions {
   maxSteps?: number        // default 32
   maxTokens?: number       // per-step
   compactionThreshold?: number // 0.8 = compact at 80% context
+  signal?: AbortSignal
 }
 
 // ── SessionPrompt ──────────────────────────────────────────────────
@@ -339,6 +340,7 @@ export class SessionPrompt {
       maxSteps: options?.maxSteps,
       compactionThreshold: options?.compactionThreshold,
       onStreamClosed: finishStream,
+      signal: options?.signal,
     }).catch(async err => {
       console.error(`[mira] loop error (session ${sessionID}):`, err?.stack ?? err)
       send("error", { error: String(err) })
@@ -368,6 +370,7 @@ export class SessionPrompt {
     maxSteps?: number
     compactionThreshold?: number
     onStreamClosed?: () => void
+    signal?: AbortSignal
   }) {
     const { sessionID, assistantMessageID, model, systemPrompt, send, writer } = opts
     const tracer = otelTrace.getTracer('mira-server')
@@ -398,7 +401,8 @@ export class SessionPrompt {
       if (needed) {
         send("compaction", { step, tokenEstimate, ratio })
         const result = await compactMessages(this.deps.gateway, messages, { smallModel: limits.smallModel, contextLimit, threshold })
-        messages = result.messages.filter(m => typeof m.content === "string") as unknown as LoopMessage[]
+        // Preserve tool-call history — don't drop non-string contents (tool results) which are needed for correct summarization
+        messages = result.messages as unknown as LoopMessage[]
         compactionCount++
         this.deps.bus.publish({ type: "message.updated", sessionID, payload: { compaction: true, step, tokenEstimate, reducedTo: result.compactedCount }, timestamp: Date.now() })
       }
@@ -410,10 +414,13 @@ export class SessionPrompt {
         messages,
         tools: this.filterToolsForAgent(opts.agent), // lane-contract enforcement (agent allowlist)
         system: systemPrompt,
+        signal: opts?.signal,
       })
 
       let stepText = ""
       const toolCalls: Array<{ id: string; name: string; args: Record<string, JsonValue> }> = []
+      let lastFlush = Date.now()
+      let lastPersistedLen = accumulatedText.length
 
       for await (const chunk of stream) {
         if (chunk.type === "text-delta" && chunk.text) {
@@ -421,8 +428,13 @@ export class SessionPrompt {
           accumulatedText += chunk.text
           send("text_delta", { delta: chunk.text, step })
 
-          // Persist incremental text part (for resume)
-          await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
+          // Batch persist: flush every 200ms or 200 chars to reduce SQLite WAL write amplification
+          const now = Date.now()
+          if (now - lastFlush > 200 || accumulatedText.length - lastPersistedLen > 200) {
+            await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
+            lastFlush = now
+            lastPersistedLen = accumulatedText.length
+          }
           this.deps.bus.publish({ type: "part.updated", sessionID, payload: { text: chunk.text, step }, timestamp: Date.now() })
 
         } else if (chunk.type === "tool-call" && chunk.toolCall) {
@@ -436,6 +448,10 @@ export class SessionPrompt {
             totalTokensOut += Number(u.completionTokens ?? u.outputTokens ?? 0) || 0
           }
           if (chunk.finishReason === "stop" && toolCalls.length === 0) {
+            // Flush any remaining batched text before exiting
+            if (accumulatedText.length !== lastPersistedLen) {
+              await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
+            }
             // Conversation turn complete — drain trailing chunks (e.g. usage-report)
             // so gateway cost tracking sees them, then exit the loop.
             for await (const tail of stream) {
@@ -453,6 +469,12 @@ export class SessionPrompt {
           send("error", chunk)
           break loop
         }
+      }
+
+      // Ensure any remaining batched text is persisted before tool execution / loop exit
+      if (accumulatedText.length !== lastPersistedLen) {
+        await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
+        lastPersistedLen = accumulatedText.length
       }
 
       // ── No tool calls? We're done ──

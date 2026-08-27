@@ -40,6 +40,11 @@ import { getJob, listJobs, cancelJob } from "./tools/task.js"
 import { writeFinding, listFindings, resolveFinding, type FindingSeverity } from "./tools/findings.js"
 import type { BusEvent, MiraConfig, JsonValue } from "./types/index.js"
 import type { Snapshot } from "./storage/snapshots.js"
+import { mountHealthRoutes } from "./routes/health.js"
+import { mountSessionRoutes } from "./routes/session.js"
+import { mountConfigRoutes } from "./routes/config.js"
+import { mountMcpRoutes } from "./routes/mcp.js"
+import { mountExtrasRoutes } from "./routes/extras.js"
 
 type PartialMiraConfig = Partial<MiraConfig>
 
@@ -73,6 +78,10 @@ for (const pair of (process.env.MIRA_API_KEYS ?? "").split(",").map(s => s.trim(
   const i = pair.indexOf(":")
   if (i > 0) API_KEY_OWNERS.set(pair.slice(0, i), pair.slice(i + 1))
 }
+if (process.env.NODE_ENV === "production" && !REQUIRED_TOKEN && API_KEY_OWNERS.size === 0 && process.env.MIRA_STRICT_AUTH !== "0") {
+  console.error("[mira] ❌ MIRA_TOKEN or MIRA_API_KEYS required in production — refusing to start without auth")
+  process.exit(1)
+}
 const OWNERSHIP_ENABLED = API_KEY_OWNERS.size > 0
 /** Resolve a bearer credential to its owner id (undefined = invalid). */
 function resolveOwner(token: string): string | undefined {
@@ -89,11 +98,21 @@ function tokenEquals(a: string, b: string): boolean {
   const bb = Buffer.from(b)
   return ab.length === bb.length && timingSafeEqual(ab, bb)
 }
+// Host binding — validate allowed values
+const HOST = process.env.HOST ?? "127.0.0.1"
+const ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost", "0.0.0.0", "::1"])
+if (!ALLOWED_HOSTS.has(HOST)) {
+  console.warn(`[mira] ⚠️  HOST=${HOST} not in allowed list, defaulting to 127.0.0.1`)
+}
 // Origin allowlist for CORS + WebSocket upgrades. Empty list = allow all (dev).
 const CORS_ORIGIN_LIST = (process.env.CORS_ORIGINS ?? "")
   .split(",")
   .map(s => s.trim())
   .filter(Boolean)
+if (process.env.NODE_ENV === "production" && HOST === "0.0.0.0" && CORS_ORIGIN_LIST.length === 0) {
+  console.error("[mira] ❌ CORS_ORIGINS must be set when HOST=0.0.0.0 in production — refusing to start with open CORS")
+  if (process.env.MIRA_STRICT_CORS !== "0") process.exit(1)
+}
 function isOriginAllowed(origin: string | null | undefined): boolean {
   if (!origin) return true // non-browser clients (curl, TUI) send no Origin
   if (origin.startsWith("vscode-webview://") || origin.startsWith("vscode-file://") || origin.startsWith("vscode:")) return true // VS Code webview
@@ -208,11 +227,18 @@ async function main() {
 
   // Security: CORS origin allowlist (CORS_ORIGINS, comma-separated; empty = allow all for dev)
   app.use("*", cors(CORS_ORIGIN_LIST.length > 0 ? { origin: CORS_ORIGIN_LIST } : {}))
-  // OpenTelemetry tracer middleware
+  // OpenTelemetry tracer middleware — cache tracer outside per-request import
+  let cachedTracer: any = null
+  let otelFailed = false
+  if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
+    try {
+      const { trace } = await import('@opentelemetry/api')
+      cachedTracer = trace.getTracer('mira-server')
+    } catch { otelFailed = true }
+  }
   app.use("*", async (c, next) => {
-    const { trace } = await import('@opentelemetry/api')
-    const tracer = trace.getTracer('mira-server')
-    const span = tracer.startSpan('http.request', { attributes: { 'http.method': c.req.method, 'http.route': c.req.path } })
+    if (!cachedTracer || otelFailed) return await next()
+    const span = cachedTracer.startSpan('http.request', { attributes: { 'http.method': c.req.method, 'http.route': c.req.path } })
     try {
       await next()
       span.setAttribute('http.status_code', c.res.status)
@@ -286,7 +312,9 @@ async function main() {
     const start = Date.now()
     const requestId = crypto.randomUUID()
     c.set("requestId", requestId)
+    c.header("X-Request-Id", requestId)
     await next()
+    c.header("X-Request-Id", requestId)
     const duration = Date.now() - start
     const status = c.res.status
     // Usage — surface cost/tokens per HTTP line for prompt turns (cumulative gateway stats)
@@ -326,10 +354,14 @@ async function main() {
     }
   }, 60_000)
   rateLimitCleanup.unref?.()
+  // Only trust proxy headers when explicitly enabled (MIRA_TRUST_PROXY=1)
+  const TRUST_PROXY = process.env.MIRA_TRUST_PROXY === "1"
   app.use("*", async (c, next) => {
     const path = new URL(c.req.url).pathname
     if (RATE_LIMIT_SKIP.has(path)) return await next()
-    const ip = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("cf-connecting-ip") ?? c.req.header("x-real-ip") ?? "unknown"
+    const ip = TRUST_PROXY
+      ? (c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("cf-connecting-ip") ?? c.req.header("x-real-ip") ?? "unknown")
+      : "unknown"
     const now = Date.now()
     let bucket = rateLimitBuckets.get(ip)
     if (!bucket) {
@@ -491,52 +523,9 @@ async function main() {
     return await next()
   })
 
-  // Liveness — minimal, no internals, bypasses auth + rate limit (Docker/k8s probes)
-  app.get("/healthz", c => c.json({ ok: true, version: "0.1.0", sha: GIT_SHA, startedAt: STARTED_AT, uptime: process.uptime() }))
-  // Health — detailed; stays behind MIRA_TOKEN when set — now includes terminal/providers for observability (redacted)
-  app.get("/health", c =>
-    c.json({
-      ok: true,
-      version: "0.1.0",
-      sha: GIT_SHA,
-      startedAt: STARTED_AT,
-      tools: tools.count(),
-      mcp: mcp.count(),
-      providers: Object.keys(config.provider).length,
-      terminal: { enabled: TERMINAL_ENABLED, sandbox: TERMINAL_SANDBOX },
-      ws: { auth: !!(REQUIRED_TOKEN || API_KEY_OWNERS.size), cors: CORS_ORIGIN_LIST.length ? CORS_ORIGIN_LIST : ["*"] },
-      uptime: process.uptime(),
-      memory: process.memoryUsage(),
-    }),
-  )
-  app.get("/dev/health", c => c.json({ ok: true, version: "0.1.0", sha: GIT_SHA, startedAt: STARTED_AT, tools: tools.count(), mcp: mcp.count(), providers: Object.keys(config.provider).length, terminal: { enabled: TERMINAL_ENABLED, sandbox: TERMINAL_SANDBOX }, busHistory: bus.recent(5).length, learning: learning.scheduler.status(), gateway: gateway.stats(), uptime: process.uptime() }))
-  // Metrics
-  app.get("/metrics", async c => {
-    const gatewayStats = gateway.stats()
-    const cost = gatewayStats.costUSD
-    const activeSessions = metrics.activeSessions
-
-    let out = ''
-    out += '# HELP http_requests_total Total HTTP requests\n'
-    out += '# TYPE http_requests_total counter\n'
-    for (const [key, val] of metrics.httpRequestsTotal) {
-      const parts = key.split(' ')
-      const method = parts[0]
-      const status = parts[parts.length - 1]
-      const route = parts.slice(1, -1).join(' ')
-      out += `http_requests_total{method="${method}",route="${route}",status="${status}"} ${val}\n`
-    }
-    out += '# HELP http_request_duration_seconds HTTP request duration seconds\n'
-    out += '# TYPE http_request_duration_seconds summary\n'
-    out += `http_request_duration_seconds_sum ${metrics.httpRequestDurationSecondsSum}\n`
-    out += `http_request_duration_seconds_count ${metrics.httpRequestDurationSecondsCount}\n`
-    out += '# HELP active_sessions Number of active sessions\n'
-    out += '# TYPE active_sessions gauge\n'
-    out += `active_sessions ${activeSessions}\n`
-    out += '# HELP gateway_cost_total Total gateway cost USD\n'
-    out += '# TYPE gateway_cost_total counter\n'
-    out += `gateway_cost_total ${cost}\n`
-    return c.text(out, 200, { 'Content-Type': 'text/plain; version=0.0.4' })
+  mountHealthRoutes(app, {
+    GIT_SHA, STARTED_AT, tools, mcp, config, bus, learning, gateway, metrics,
+    TERMINAL_ENABLED, TERMINAL_SANDBOX, REQUIRED_TOKEN, API_KEY_OWNERS, CORS_ORIGIN_LIST,
   })
   // Skills
   app.get("/skills", async c => {
@@ -561,83 +550,30 @@ async function main() {
     return resolveOwner(bearerOf(c.req.header("Authorization"))) === s.ownerID ? s : null
   }
 
-  // REST — sessions
-  app.get("/session", async c => {
-    const owner = OWNERSHIP_ENABLED ? resolveOwner(bearerOf(c.req.header("Authorization"))) : undefined
-    const all = await db.query.sessions.findMany({ orderBy: (s, { desc }) => [desc(s.updatedAt)] })
-    return c.json(owner ? all.filter(s => !s.ownerID || s.ownerID === owner) : all)
-  })
-  app.post("/session", async c => {
-    const body = await c.req.json().catch(() => ({}))
-    const session = await prompt.createSession({
-      ...body,
-      ownerID: OWNERSHIP_ENABLED ? resolveOwner(bearerOf(c.req.header("Authorization"))) ?? "default" : null,
-    })
-    sessionOwnerCache.set(session.id, session.ownerID ?? null)
-    bus.publish({ type: "session.created", payload: session, timestamp: Date.now() })
-    return c.json(session, 201)
-  })
-  app.get("/session/:id", async c => {
-    const session = await authorizedSession(c.req.param("id"), c)
-    if (!session) return c.json({ error: "not found" }, 404)
-    return c.json(session)
-  })
-  app.delete("/session/:id", async c => {
-    if (!(await authorizedSession(c.req.param("id"), c))) return c.json({ error: "not found" }, 404)
-    sessionOwnerCache.delete(c.req.param("id"))
-    await prompt.deleteSession(c.req.param("id"))
-    bus.publish({ type: "session.deleted", payload: { id: c.req.param("id") }, timestamp: Date.now() })
-    return c.json({ ok: true })
-  })
-
-  // Job board — background subagent task status/results (persistent jobs table)
-  app.get("/session/:id/jobs", async c => {
-    const id = c.req.param("id")
-    if (!(await authorizedSession(id, c))) return c.json({ error: "session not found" }, 404)
-    return c.json(await listJobs(db, id))
-  })
-  app.get("/job/:id", async c => {
-    const job = await getJob(db, c.req.param("id"))
-    if (!job || !(await authorizedSession(job.parentSessionID, c))) return c.json({ error: "not found" }, 404)
-    return c.json(job)
-  })
-  app.post("/job/:id/cancel", async c => {
-    const job = await getJob(db, c.req.param("id"))
-    if (!job || !(await authorizedSession(job.parentSessionID, c))) return c.json({ error: "not found" }, 404)
-    const cancelled = await cancelJob(db, c.req.param("id"))
-    bus.publish({ type: "job.cancelled", payload: { jobID: job.id }, timestamp: Date.now() })
-    return c.json(cancelled)
-  })
-  // Aliases for opencode/mira parity — /task and /jobs global
-  app.get("/jobs", async c => {
-    const owner = OWNERSHIP_ENABLED ? resolveOwner(bearerOf(c.req.header("Authorization"))) : undefined
-    const all = await listJobs(db)
-    if (!owner) return c.json(all)
-    // Filter to sessions owned by requester (legacy null rows visible to all)
-    const filtered: typeof all = []
-    for (const j of all) {
-      const o = await ownerOfSession(j.parentSessionID)
-      if (o === null || o === owner) filtered.push(j)
+  // ── Per-owner live event filtering (moved up for route mounts) ────────
+  const sessionOwnerCache = new Map<string, string | null>()
+  const pendingOwnerLookups = new Map<string, Promise<string | null>>()
+  function ownerOfSession(sessionID: string): Promise<string | null> {
+    const cached = sessionOwnerCache.get(sessionID)
+    if (cached !== undefined) return Promise.resolve(cached)
+    let p = pendingOwnerLookups.get(sessionID) as Promise<string | null> | undefined
+    if (!p) {
+      const lookup: Promise<string | null> = db.query.sessions.findFirst({ where: (s, { eq }) => eq(s.id, sessionID) })
+        .then(s => {
+          const o = (s?.ownerID ?? null) as string | null
+          sessionOwnerCache.set(sessionID, o)
+          pendingOwnerLookups.delete(sessionID)
+          return o
+        })
+        .catch(() => { pendingOwnerLookups.delete(sessionID); return null })
+      p = lookup
+      pendingOwnerLookups.set(sessionID, lookup)
     }
-    return c.json(filtered)
-  })
-  app.get("/task/:id", async c => {
-    const job = await getJob(db, c.req.param("id"))
-    if (!job || !(await authorizedSession(job.parentSessionID, c))) return c.json({ error: "not found" }, 404)
-    return c.json(job)
-  })
-  app.post("/task/:id/cancel", async c => {
-    const job = await getJob(db, c.req.param("id"))
-    if (!job || !(await authorizedSession(job.parentSessionID, c))) return c.json({ error: "not found" }, 404)
-    const cancelled = await cancelJob(db, c.req.param("id"))
-    bus.publish({ type: "job.cancelled", payload: { jobID: job.id }, timestamp: Date.now() })
-    return c.json(cancelled)
-  })
-  // Plural alias
-  app.get("/jobs/:id", async c => {
-    const job = await getJob(db, c.req.param("id"))
-    if (!job || !(await authorizedSession(job.parentSessionID, c))) return c.json({ error: "not found" }, 404)
-    return c.json(job)
+    return p
+  }
+
+  mountSessionRoutes(app, {
+    db, bus, prompt, authorizedSession, ownerOfSession, resolveOwner, bearerOf, OWNERSHIP_ENABLED, sessionOwnerCache,
   })
 
   // Findings — structured cross-agent team memory (shared by design across owners)
@@ -679,7 +615,9 @@ async function main() {
     if (!(await authorizedSession(id, c))) return c.json({ error: "session not found" }, 404)
 
     // Stream response as SSE (Vercel AI SDK style); per-request loop options honored
-    return prompt.streamResponse(id, text, model, { maxSteps })
+    // Propagate client abort (disconnect) to gateway fetch via AbortSignal
+    const signal = (c.req.raw as Request & { signal?: AbortSignal })?.signal
+    return prompt.streamResponse(id, text, model, { maxSteps, signal })
   })
 
   // Messages & parts
@@ -721,222 +659,9 @@ async function main() {
     return c.text(lines.join("\n"), 200, { "Content-Type": "text/markdown; charset=utf-8" })
   })
 
-  // MCP discovery — server statuses + tool counts
-  app.get("/mcp", c => c.json(mcp.listServers()))
+  mountMcpRoutes(app, mcp)
 
-  app.post("/mcp", async c => {
-    const parsed = mcpCreateSchema.safeParse(await c.req.json().catch(() => null))
-    if (!parsed.success) return c.json({ error: "invalid mcp", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
-    const body = parsed.data
-    try {
-      const cfg = {
-        type: body.type,
-        command: body.command,
-        url: body.url,
-        enabled: body.enabled ?? true,
-        env: body.env,
-        headers: body.headers,
-      }
-      const entry = await mcp.addServer(body.name.trim(), cfg)
-      const current = getConfig().mcp ?? {}
-      await saveConfig({ mcp: { ...current, [body.name.trim()]: cfg } }, "project")
-      return c.json(entry, 201)
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      return c.json({ error: msg }, 400)
-    }
-  })
-
-  app.delete("/mcp/:name", async c => {
-    const name = c.req.param("name")
-    try {
-      await mcp.removeServer(name)
-      await removeMcpFromConfig(name)
-      return c.json({ ok: true })
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      return c.json({ error: msg }, 404)
-    }
-  })
-
-  app.patch("/mcp/:name", async c => {
-    const name = c.req.param("name")
-    const parsed = mcpToggleSchema.safeParse(await c.req.json().catch(() => null))
-    if (!parsed.success) return c.json({ error: "invalid mcp toggle", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
-    const body = parsed.data
-    try {
-      const entry = await mcp.toggleServer(name, body.enabled)
-      const current = getConfig().mcp ?? {}
-      const existing = current[name]
-      if (existing) {
-        await saveConfig({ mcp: { ...current, [name]: { ...existing, enabled: body.enabled } } }, "project")
-      }
-      return c.json(entry)
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      return c.json({ error: msg }, 404)
-    }
-  })
-
-  app.post("/mcp/:name/test", async c => {
-    const name = c.req.param("name")
-    const result = await mcp.testServer(name)
-    if (!result.ok && result.error?.includes("not found")) return c.json(result, 404)
-    return c.json(result)
-  })
-
-  // ── Config — layered settings (behind auth gate, same as /mcp) ─────
-  function maskApiKey(key: string): string {
-    if (!key) return ""
-    if (key.length <= 4) return "***"
-    return `${key.slice(0, 3)}***${key.slice(-4)}`
-  }
-  function redactConfig<T extends MiraConfig | Partial<MiraConfig>>(cfg: T): T {
-    const out = JSON.parse(JSON.stringify(cfg)) as T
-    const providers = (out as MiraConfig).provider as Record<string, { options?: { apiKey?: string } }> | undefined
-    if (providers && typeof providers === "object") {
-      for (const p of Object.values(providers)) {
-        const opts = p.options
-        if (opts && typeof opts.apiKey === "string" && opts.apiKey) {
-          opts.apiKey = "***"
-        }
-      }
-    }
-    return out
-  }
-  function redactLayers(layers: Array<{ source: string; path: string | null; config: Partial<MiraConfig> }>) {
-    return layers.map(l => ({ ...l, config: redactConfig(l.config) }))
-  }
-
-  app.get("/config", async c => {
-    const { merged, layers } = await getConfigLayers()
-    return c.json({ merged: redactConfig(merged), layers: redactLayers(layers) })
-  })
-
-  app.patch("/config", async c => {
-    const parsed = configPatchSchema.safeParse(await c.req.json().catch(() => null))
-    if (!parsed.success) return c.json({ error: "invalid config patch", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
-    const body = parsed.data
-    const layer = body.layer === "local" ? "local" : "project"
-    try {
-      const merged = await saveConfig(body.patch as Partial<MiraConfig>, layer)
-      return c.json({ merged: redactConfig(merged) })
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      return c.json({ error: msg }, 400)
-    }
-  })
-
-  app.get("/config/schema", async c => {
-    // Try zod-to-json-schema if available, else hand-map
-    try {
-      const mod = await import("zod-to-json-schema" as string).catch(() => null) as { zodToJsonSchema?: (schema: { parse: (data: PartialMiraConfig) => MiraConfig }) => Record<string, string> } | null
-      if (mod?.zodToJsonSchema) {
-        const configModule = await import("./config/index.js").catch(() => ({ miraConfigSchema: null })) as { miraConfigSchema?: { parse: (data: PartialMiraConfig) => MiraConfig } }
-        let schema: { parse: (data: PartialMiraConfig) => MiraConfig } | null = configModule.miraConfigSchema ?? null
-        if (!schema) {
-          try {
-            const shared = await import("../../shared/src/schemas/config.js") as { miraConfigSchema?: { parse: (data: PartialMiraConfig) => MiraConfig } }
-            schema = shared.miraConfigSchema ?? null
-          } catch {}
-        }
-        if (schema) return c.json(mod.zodToJsonSchema(schema))
-      }
-    } catch {}
-    // Fallback hand-mapped schema with 7 top keys
-    return c.json({
-      type: "object",
-      properties: {
-        model: { type: "string", description: "Primary model ref" },
-        smallModel: { type: "string" },
-        loop: { type: "object", properties: { maxSteps: { type: "number" }, contextLimit: { type: "number" }, compactionThreshold: { type: "number" }, smallModel: { type: "string" } } },
-        permission: { type: "object", description: "Permission matrix" },
-        guardrails: { type: "object" },
-        mcp: { type: "object", description: "MCP servers" },
-        provider: { type: "object", description: "Provider registry" },
-        agents: { type: "object" },
-        theme: { type: "string", enum: ["dark", "light", "system"] },
-        debug: { type: "boolean" },
-      },
-    })
-  })
-
-  app.get("/providers", async c => {
-    const cfg = getConfig()
-    const providers = cfg.provider ?? {}
-    const list = Object.entries(providers).map(([id, p]) => {
-      const prov = p as { name?: string; options?: { baseURL?: string; apiKey?: string }; models?: Record<string, { name: string; limit: { context: number; output: number } }> }
-      const rawKey = prov.options?.apiKey ?? ""
-      const apiKey = expandEnv(rawKey)
-      const rawBase = prov.options?.baseURL ?? ""
-      return {
-        id,
-        name: prov.name ?? id,
-        hasKey: !!apiKey,
-        masked: apiKey ? maskApiKey(apiKey) : "",
-        baseURL: expandEnv(rawBase),
-        rawBaseURL: rawBase,
-        modelCount: prov.models ? Object.keys(prov.models).length : 0,
-      }
-    })
-    return c.json(list)
-  })
-
-  // Provider test (mira parity — checks apiKey presence + baseURL reachability; expands {env:VAR})
-  app.post("/providers/:id/test", async c => {
-    const id = c.req.param("id")
-    const cfg = getConfig()
-    const prov = cfg.provider?.[id] as { options?: { apiKey?: string; baseURL?: string } } | undefined
-    if (!prov) return c.json({ ok: false, error: "provider not found" }, 404)
-    const apiKey = expandEnv(prov.options?.apiKey ?? "")
-    const hasKey = !!apiKey
-    if (!hasKey) return c.json({ ok: false, error: "missing apiKey (check {env:VAR} + mira.env)" }, 400)
-    const baseURL = expandEnv(prov.options?.baseURL ?? "")
-    if (baseURL) {
-      try {
-        const controller = new AbortController()
-        const t = setTimeout(() => controller.abort(), 3000)
-        await fetch(baseURL, { method: "HEAD", signal: controller.signal }).catch(() => {})
-        clearTimeout(t)
-      } catch {}
-    }
-    return c.json({ ok: true, hasKey, baseURL, expanded: true })
-  })
-  app.post("/provider/:id/test", async c => {
-    const id = c.req.param("id")
-    const cfg = getConfig()
-    const prov = cfg.provider?.[id] as { options?: { apiKey?: string; baseURL?: string } } | undefined
-    if (!prov) return c.json({ ok: false, error: "provider not found" }, 404)
-    const apiKey = expandEnv(prov.options?.apiKey ?? "")
-    const hasKey = !!apiKey
-    if (!hasKey) return c.json({ ok: false, error: "missing apiKey (check {env:VAR} + mira.env)" }, 400)
-    const baseURL = expandEnv(prov.options?.baseURL ?? "")
-    if (baseURL) {
-      try {
-        const controller = new AbortController()
-        const t = setTimeout(() => controller.abort(), 3000)
-        await fetch(baseURL, { method: "HEAD", signal: controller.signal }).catch(() => {})
-        clearTimeout(t)
-      } catch {}
-    }
-    return c.json({ ok: true, hasKey, baseURL, expanded: true })
-  })
-
-  // Provider delete (mira parity)
-  app.delete("/providers/:id", async c => {
-    const id = c.req.param("id")
-    const cfg = getConfig()
-    if (!cfg.provider?.[id]) return c.json({ error: "provider not found" }, 404)
-    await removeProviderFromConfig(id)
-    return c.json({ ok: true })
-  })
-  app.delete("/provider/:id", async c => {
-    const id = c.req.param("id")
-    const cfg = getConfig()
-    if (!cfg.provider?.[id]) return c.json({ error: "provider not found" }, 404)
-    await removeProviderFromConfig(id)
-    return c.json({ ok: true })
-  })
+  mountConfigRoutes(app)
 
   // Message queue — type while the agent streams (Mira-parity UX)
   app.post("/session/:id/queue", async c => {
@@ -1038,30 +763,6 @@ async function main() {
   //   • Query-param tokens (?token=) are NOT accepted anywhere.
   const WS_AUTH_TIMEOUT_MS = 10_000
 
-  // ── Per-owner live event filtering ────────────────────────────────
-  // Maps sessionID → ownerID (cached; lazily backfilled from the DB).
-  // Unknown sessions fail closed: events are dropped until ownership resolves.
-  const sessionOwnerCache = new Map<string, string | null>()
-  const pendingOwnerLookups = new Map<string, Promise<string | null>>()
-  function ownerOfSession(sessionID: string): Promise<string | null> {
-    const cached = sessionOwnerCache.get(sessionID)
-    if (cached !== undefined) return Promise.resolve(cached)
-    let p = pendingOwnerLookups.get(sessionID) as Promise<string | null> | undefined
-    if (!p) {
-      const lookup: Promise<string | null> = db.query.sessions.findFirst({ where: (s, { eq }) => eq(s.id, sessionID) })
-        .then(s => {
-          const o = (s?.ownerID ?? null) as string | null
-          sessionOwnerCache.set(sessionID, o)
-          pendingOwnerLookups.delete(sessionID)
-          return o
-        })
-        .catch(() => { pendingOwnerLookups.delete(sessionID); return null })
-      p = lookup
-      pendingOwnerLookups.set(sessionID, lookup)
-    }
-    return p
-  }
-
   // WebSocket sockets carry server-side state beyond Bun's wire data —
   // this structural type describes the extended shape (no `any`).
   interface MiraWSData {
@@ -1146,7 +847,7 @@ async function main() {
   const server = Bun.serve<MiraWSData>({
     port: PORT,
     // Security: loopback by default — remote access requires HOST env override
-    hostname: process.env.HOST ?? "127.0.0.1",
+    hostname: HOST,
     // Long SSE streams (LLM first-token latency can exceed 10s) need a generous idle timeout
     idleTimeout: 180,
     fetch(req, srv) {
@@ -1299,6 +1000,7 @@ async function main() {
   }
   process.on("SIGINT", () => void shutdown("SIGINT"))
   process.on("SIGTERM", () => void shutdown("SIGTERM"))
+  process.on("beforeExit", () => { try { mcp.disconnectAll() } catch {} })
 }
 
 // Only auto-start when run directly (not imported)

@@ -181,17 +181,18 @@ describe("Mira server E2E", () => {
   })
 
   // ── Live LLM roundtrip (skips when no key is configured) ──────────
-  const liveKey = process.env.NVIDIA_API_KEY
-  const LIVE_MODEL = "nvidia/meta/llama-3.3-70b-instruct"
+  const liveKey = process.env.NVIDIA_API_KEY ?? process.env.OPENROUTER_API_KEY
+  const LIVE_MODEL = process.env.NVIDIA_API_KEY ? "nvidia/meta/llama-3.3-70b-instruct" : "openrouter/anthropic/claude-sonnet-4"
+  const MIRA_E2E_MODEL = process.env.MIRA_E2E_MODEL ?? LIVE_MODEL
 
   test.skipIf(!liveKey)("LIVE: real LLM streams through the full pipeline", async () => {
     const created = await fetch(`${BASE}/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: "live-llm-test", model: LIVE_MODEL }),
+      body: JSON.stringify({ title: "live-llm-test", model: MIRA_E2E_MODEL }),
     })
     const session = await created.json()
-    expect(session.model).toBe(LIVE_MODEL)
+    expect(session.model).toBe(MIRA_E2E_MODEL)
 
     // Provider latency from CI sandboxes varies wildly (6s–60s+ first byte).
     // Retry the prompt up to 3× so one network hiccup doesn't fail the suite.

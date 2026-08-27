@@ -143,4 +143,15 @@ export const findingsRelations = relations(findings, ({ one }) => ({
   session: one(sessions, { fields: [findings.sessionID], references: [sessions.id] }),
 }))
 
-export const schema = { sessions, messages, parts, todos, fileSnapshots, jobs, findings, sessionsRelations, messagesRelations, partsRelations, todosRelations, jobsRelations, findingsRelations }
+export const knowledgeEntries = sqliteTable("knowledge_entries", {
+  id: text("id").primaryKey(),
+  sessionID: text("session_id"),
+  kind: text("kind").notNull(),
+  content: text("content").notNull(),
+  createdAt: integer("created_at").notNull(),
+}, (t) => [
+  index("knowledge_entries_session_idx").on(t.sessionID),
+  index("knowledge_entries_kind_idx").on(t.kind),
+])
+
+export const schema = { sessions, messages, parts, todos, fileSnapshots, jobs, findings, knowledgeEntries, sessionsRelations, messagesRelations, partsRelations, todosRelations, jobsRelations, findingsRelations }

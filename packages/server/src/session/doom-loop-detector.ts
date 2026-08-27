@@ -25,8 +25,8 @@ export interface LoopSignal {
 export class DoomLoopDetector {
   private history: string[] = []
   private fileEditHistory = new Map<string, { lastHash?: string, count: number }>()
-  private readonly window = 8
-  private readonly maxIdentical = 3
+  private readonly window = Number(process.env.MIRA_DOOM_WINDOW ?? 12)
+  private readonly maxIdentical = Number(process.env.MIRA_DOOM_THRESHOLD ?? 3)
   private readonly maxCycleLength = 4
 
   private fingerprint(tool: string, args: unknown): string {

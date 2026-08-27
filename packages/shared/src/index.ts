@@ -28,5 +28,8 @@ export {
 } from "./agents/index.js"
 export type { Skill, AgentsContext, AgentsFileName } from "./agents/index.js"
 
+// Utils
+export { expandEnv } from "./utils/env.js"
+
 // Types (canonical TS types; schemas also export inferred Zod types)
 export * from "./types/index.js"

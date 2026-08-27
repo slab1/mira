@@ -5,23 +5,13 @@
  */
 import type { MiraConfig, JsonValue } from "../types/index.js"
 import { z } from "zod"
+import { DEFAULT_CONFIG as SHARED_DEFAULT } from "../../../shared/src/schemas/config.js"
 
 type PartialMiraConfig = Partial<MiraConfig>
 
 const DEFAULT_CONFIG: MiraConfig = {
-  model: "openrouter/anthropic/claude-sonnet-4",
-  smallModel: "openrouter/deepseek/deepseek-v3.2-exp",
-  permission: {
-    bash: "allow",
-    read: "allow",
-    glob: "allow",
-    grep: "allow",
-    write: "allow",
-    edit: "allow",
-    todowrite: "allow",
-    webfetch: "allow",
-    websearch: "allow",
-  },
+  ...SHARED_DEFAULT,
+  // Server adds richer defaults — MCP + provider registry (shared has minimal)
   mcp: {
     firecrawl: {
       type: "remote" as const,

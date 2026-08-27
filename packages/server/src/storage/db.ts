@@ -22,6 +22,11 @@ export type MiraDB = BunSQLiteDatabase<typeof schema> & {
 }
 
 export function createDatabase(path = "./data/mira.db") {
+  // Validate DB path — prevent writing to sensitive locations like /etc/mira.db
+  const normalized = path.replace(/\/$/, "")
+  if (normalized.startsWith("/etc/") || normalized.startsWith("/proc/") || normalized.startsWith("/sys/") || normalized.includes("..")) {
+    throw new Error(`MIRA_DB path blocked: ${path}`)
+  }
   // Ensure parent dir exists
   try { mkdirSync(dirname(path), { recursive: true }) } catch {}
 
@@ -146,16 +151,40 @@ export async function migrate(db: MiraDB) {
     );
     CREATE INDEX IF NOT EXISTS findings_status_idx ON findings(status);
     CREATE INDEX IF NOT EXISTS findings_session_idx ON findings(session_id);
+
+    CREATE TABLE IF NOT EXISTS knowledge_entries (
+      id TEXT PRIMARY KEY,
+      session_id TEXT,
+      kind TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_entries_session_idx ON knowledge_entries(session_id);
+    CREATE INDEX IF NOT EXISTS knowledge_entries_kind_idx ON knowledge_entries(kind);
   `)
   // Idempotent column adds (SQLite lacks IF NOT EXISTS for columns)
+  // Log real errors but ignore duplicate column
   const addColumn = (table: string, col: string, type: string) => {
-    try { sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type};`) } catch {}
+    try { sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type};`) } catch (e) {
+      const msg = String(e)
+      if (!msg.includes("duplicate column name")) console.warn(`[storage] addColumn ${table}.${col} failed:`, msg)
+    }
   }
   addColumn("sessions", "tokens_in", "INTEGER")
   addColumn("sessions", "tokens_out", "INTEGER")
   addColumn("sessions", "cost_usd", "REAL")
   addColumn("sessions", "owner_id", "TEXT")
   addColumn("sessions", "agent", "TEXT")
+  // Retention: prune old knowledge_entries >30d if table large
+  try {
+    const count = sqlite.prepare("SELECT COUNT(*) as c FROM knowledge_entries").get() as { c: number } | undefined
+    if (count && count.c > 5000) {
+      sqlite.exec("DELETE FROM knowledge_entries WHERE created_at < " + (Date.now() - 30 * 24 * 60 * 60 * 1000) + " LIMIT 1000")
+    }
+  } catch {}
+  if (process.env.MIRA_VACUUM === "1") {
+    try { sqlite.exec("VACUUM;") } catch {}
+  }
   // console.log("[storage] migrated")
 }
 

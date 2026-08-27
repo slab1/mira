@@ -30,6 +30,7 @@ export class LSPClient {
   /** uri → latest published diagnostics */
   readonly diagnostics = new Map<string, LSPDiagnostic[]>()
   private shuttingDown = false
+  private openDocs = new Map<string, number>()
 
   public readonly serverName: string
   public capabilities: Record<string, unknown> = {}
@@ -111,8 +112,30 @@ export class LSPClient {
   // ── Document sync + language features ─────────────────────────────
 
   async didOpen(fileUri: string, text: string, languageId = "plaintext", version = 1): Promise<void> {
+    if (this.openDocs.has(fileUri)) {
+      await this.didChange(fileUri, text, this.openDocs.get(fileUri)! + 1)
+      return
+    }
+    this.openDocs.set(fileUri, version)
     await this.notify("textDocument/didOpen", {
       textDocument: { uri: fileUri, languageId, version, text },
+    })
+  }
+
+  async didChange(fileUri: string, text: string, version?: number): Promise<void> {
+    const v = version ?? (this.openDocs.get(fileUri) ?? 0) + 1
+    this.openDocs.set(fileUri, v)
+    await this.notify("textDocument/didChange", {
+      textDocument: { uri: fileUri, version: v },
+      contentChanges: [{ text }],
+    })
+  }
+
+  async didClose(fileUri: string): Promise<void> {
+    if (!this.openDocs.has(fileUri)) return
+    this.openDocs.delete(fileUri)
+    await this.notify("textDocument/didClose", {
+      textDocument: { uri: fileUri },
     })
   }
 
@@ -234,6 +257,23 @@ export function serverCommandFor(filePath: string): { cmd: string[]; lang: strin
     case "go": {
       const cmd = env("MIRA_LSP_GO_CMD") ?? ["gopls"]
       return { cmd, lang: "go", name: "gopls" }
+    }
+    case "ts":
+    case "tsx":
+    case "js":
+    case "jsx":
+    case "mjs":
+    case "cjs": {
+      const cmd = env("MIRA_LSP_TS_CMD") ?? env("MIRA_LSP_TYPESCRIPT_CMD") ?? ["typescript-language-server", "--stdio"]
+      return { cmd, lang: "ts", name: "tsserver" }
+    }
+    case "py": {
+      const cmd = env("MIRA_LSP_PY_CMD") ?? env("MIRA_LSP_PYTHON_CMD") ?? ["pylsp"]
+      return { cmd, lang: "py", name: "pylsp" }
+    }
+    case "rs": {
+      const cmd = env("MIRA_LSP_RS_CMD") ?? ["rust-analyzer"]
+      return { cmd, lang: "rs", name: "rust-analyzer" }
     }
     default:
       return null
