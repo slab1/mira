@@ -43,7 +43,8 @@ export async function createPullRequestForPatch(opts: {
   const cur = await sh(["git", "rev-parse", "--abbrev-ref", "HEAD"], { cwd })
   if (cur.code !== 0) return { created: false, reason: `not a git repo: ${cur.out.slice(0, 120)}` }
   const original = cur.out
-
+  let branchCreated = false
+  let prResult: AutopilotResult | null = null
   try {
     for (const step of [
       ["git", "checkout", "-b", branch],
@@ -52,7 +53,11 @@ export async function createPullRequestForPatch(opts: {
       ["git", "push", "-u", "origin", branch],
     ] as string[][]) {
       const r = await sh(step, { cwd })
-      if (r.code !== 0) return { created: false, reason: `${step.join(" ")} failed: ${r.out.slice(0, 200)}` }
+      if (step[1] === "checkout" && step[2] === "-b" && r.code === 0) branchCreated = true
+      if (r.code !== 0) {
+        prResult = { created: false, reason: `${step.join(" ")} failed: ${r.out.slice(0, 200)}` }
+        return prResult
+      }
     }
 
     const title = `mira(autopilot): ${opts.painPointId}`
@@ -70,14 +75,24 @@ export async function createPullRequestForPatch(opts: {
       `_Shadow-verified by the patching engine. Human review required._`,
     ].join("\n")
     const pr = await sh(["gh", "pr", "create", "--title", title, "--body", body], { cwd })
-    if (pr.code !== 0) return { created: false, reason: `pr create failed: ${pr.out.slice(0, 200)}`, }
+    if (pr.code !== 0) {
+      prResult = { created: false, reason: `pr create failed: ${pr.out.slice(0, 200)}` }
+      return prResult
+    }
 
-    // Restore original branch regardless
-    await sh(["git", "checkout", original!], { cwd })
-
-    return { created: true, prUrl: pr.out.split("\n").find(l => l.startsWith("http")) }
+    prResult = { created: true, prUrl: pr.out.split("\n").find(l => l.startsWith("http")) }
+    return prResult
   } catch (e) {
-    await sh(["git", "checkout", original!], { cwd }).catch(() => {})
-    return { created: false, reason: String(e).slice(0, 200) }
+    prResult = { created: false, reason: String(e).slice(0, 200) }
+    return prResult
+  } finally {
+    // Always restore original branch, even on early return/failure
+    if (branchCreated) {
+      await sh(["git", "checkout", original], { cwd }).catch(() => {})
+    }
+    // Clean up failed branch locally to avoid clutter (keep remote if pushed)
+    if (prResult && !prResult.created && branchCreated) {
+      await sh(["git", "branch", "-D", branch], { cwd }).catch(() => {})
+    }
   }
 }

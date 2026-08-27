@@ -38,6 +38,7 @@ import { getAgentTemplates, isKnownAgent } from "../agents/templates.js"
 import { initLangfuse } from "../telemetry/langfuse.js"
 import { eq } from "drizzle-orm"
 import { trace as otelTrace } from "@opentelemetry/api"
+import { classifyBashArity } from "../permission/index.js"
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -473,8 +474,25 @@ export class SessionPrompt {
           break loop
         }
 
-        // Permission check (5 layers + BashArity)
-        const perm = await this.deps.permissions.check({ sessionID, tool: tc.name, args: tc.args })
+        // Per-agent permission profile (roadmap item 3) — enforce lane contracts beyond tool allowlist
+        let perm: Awaited<ReturnType<typeof this.deps.permissions.check>> | null = null
+        if (opts.agent) {
+          const tpl = getAgentTemplates()[opts.agent]
+          if (tpl?.permissions === "readonly") {
+            const mutating = new Set(["write", "edit", "patch", "todowrite"])
+            if (mutating.has(tc.name)) {
+              perm = { action: "deny", reason: `lane contract: agent "${opts.agent}" is readonly — ${tc.name} blocked` }
+            } else if (tc.name === "bash") {
+              const cmd = (tc.args as Record<string, unknown>).command as string | undefined
+              if (cmd) {
+                const { level } = classifyBashArity(cmd)
+                if (level > 0) perm = { action: "deny", reason: `lane contract: readonly agent "${opts.agent}" — bash level ${level} blocked (${cmd.slice(0,60)})` }
+              }
+            }
+          }
+        }
+        // Permission check (5 layers + BashArity) — only if not already denied by lane
+        if (!perm) perm = await this.deps.permissions.check({ sessionID, tool: tc.name, args: tc.args })
         if (perm.action === "deny") {
           const err = `Permission denied for ${tc.name}: ${perm.reason}`
           send("tool_result", { toolCallID: tc.id, name: tc.name, error: err })

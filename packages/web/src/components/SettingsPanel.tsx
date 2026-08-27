@@ -2,7 +2,7 @@ import { createSignal, createEffect, For, Show, onCleanup } from "solid-js"
 import type { SettingsStore } from "../stores/settings"
 import type { MiraConfig, ThemeChoice } from "../api/client"
 
-type TabId = "general" | "providers" | "permissions" | "connectors" | "agents" | "commands"
+type TabId = "general" | "providers" | "permissions" | "connectors" | "agents" | "commands" | "terminal"
 
 const TABS: Array<{ id: TabId; label: string; icon: string; desc: string }> = [
   { id: "general", label: "General", icon: "⚙", desc: "Model & appearance" },
@@ -11,6 +11,7 @@ const TABS: Array<{ id: TabId; label: string; icon: string; desc: string }> = [
   { id: "connectors", label: "Connectors", icon: "🔌", desc: "MCP servers" },
   { id: "agents", label: "Agents", icon: "🤖", desc: "Lane personas" },
   { id: "commands", label: "Commands", icon: "⌘", desc: "Slash & skills" },
+  { id: "terminal", label: "Terminal", icon: "▣", desc: "PTY & sandbox" },
 ]
 
 export function SettingsPanel(props: { store: SettingsStore; open: boolean; onClose: () => void }) {
@@ -54,6 +55,19 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
   const [guardBlockedPaths, setGuardBlockedPaths] = createSignal("")
   const [guardMaxBytes, setGuardMaxBytes] = createSignal("")
 
+  // Terminal
+  const [termEnabled, setTermEnabled] = createSignal(true)
+  const [termSandbox, setTermSandbox] = createSignal(true)
+  const [termAllowed, setTermAllowed] = createSignal("")
+  const [termTimeout, setTermTimeout] = createSignal("")
+  const [termTesting, setTermTesting] = createSignal(false)
+  const [termResult, setTermResult] = createSignal("")
+
+  // Features
+  const [featInject, setFeatInject] = createSignal(true)
+  const [featLane, setFeatLane] = createSignal(true)
+  const [featPerAgent, setFeatPerAgent] = createSignal(true)
+
   let dialogRef: HTMLDivElement | undefined
   let firstFocusRef: HTMLButtonElement | undefined
 
@@ -72,6 +86,18 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
       setGuardAllowedRoots((guard.allowedRoots ?? []).join(", "))
       setGuardBlockedPaths((guard.blockedPaths ?? []).join(", "))
       setGuardMaxBytes(guard.maxOutputBytes != null ? String(guard.maxOutputBytes) : "")
+      const tools = (s().config as unknown as { tools?: { terminal?: { enabled?: boolean; sandbox?: boolean; allowedCommands?: string[]; timeoutMs?: number } } })?.tools
+      const term = tools?.terminal
+      if (term) {
+        setTermEnabled(term.enabled ?? true)
+        setTermSandbox(term.sandbox ?? true)
+        setTermAllowed((term.allowedCommands ?? []).join(", "))
+        setTermTimeout(term.timeoutMs != null ? String(term.timeoutMs) : "")
+      }
+      const feats = (s().config as unknown as { features?: Record<string, boolean> })?.features ?? {}
+      setFeatInject(feats.injectTodosIntoLoadContext ?? true)
+      setFeatLane(feats.enforceLaneContracts ?? true)
+      setFeatPerAgent(feats.perAgentPermissionProfiles ?? true)
     }
     if (props.open) setThemeLocal(s().theme)
   })
@@ -142,6 +168,13 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
       else if (Number.isFinite(maxBytes) && maxBytes > 0) guardPatch.maxOutputBytes = maxBytes
     }
     if (Object.keys(guardPatch).length > 0) patch.guardrails = guardPatch as MiraConfig["guardrails"]
+    // Features — lane contracts
+    const feats = (s().config as unknown as { features?: Record<string, boolean> })?.features ?? {}
+    const featPatch: Record<string, boolean> = {}
+    if (featInject() !== (feats.injectTodosIntoLoadContext ?? true)) featPatch.injectTodosIntoLoadContext = featInject()
+    if (featLane() !== (feats.enforceLaneContracts ?? true)) featPatch.enforceLaneContracts = featLane()
+    if (featPerAgent() !== (feats.perAgentPermissionProfiles ?? true)) featPatch.perAgentPermissionProfiles = featPerAgent()
+    if (Object.keys(featPatch).length > 0) (patch as unknown as { features: Record<string, boolean> }).features = { ...feats, ...featPatch }
     // Allow clearing loop fields when user empties them — send explicit null via delete? keep as-is for now
     if (Object.keys(patch).length > 0) await props.store.saveConfig(patch)
     // Theme is local-only (persisted via store, not server)
@@ -289,6 +322,77 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     else if (guardBlockedPaths().trim() === "" && s().config?.guardrails?.blockedPaths?.length) guardPatch.blockedPaths = []
     if (Number.isFinite(maxBytes) && maxBytes > 0) guardPatch.maxOutputBytes = maxBytes
     await props.store.saveConfig({ guardrails: guardPatch } as Partial<MiraConfig>)
+  }
+
+  const handleSaveTerminal = async (e: Event) => {
+    e.preventDefault()
+    const allowed = termAllowed().split(",").map((s) => s.trim()).filter(Boolean)
+    const timeout = parseInt(termTimeout().trim(), 10)
+    const patch = {
+      tools: {
+        ...(s().config as unknown as { tools?: Record<string, unknown> })?.tools,
+        terminal: {
+          enabled: termEnabled(),
+          sandbox: termSandbox(),
+          allowedCommands: allowed.length ? allowed : undefined,
+          timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : undefined,
+        },
+      },
+    }
+    await props.store.saveConfig(patch as Partial<MiraConfig>)
+  }
+
+  const handleTestTerminal = async () => {
+    setTermTesting(true)
+    setTermResult("")
+    try {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:"
+      const ws = new WebSocket(`${proto}//${location.host}/terminal`)
+      let done = false
+      const t = setTimeout(() => {
+        if (!done) {
+          try { ws.close() } catch {}
+          setTermResult("✗ timeout (no terminal.connected)")
+          setTermTesting(false)
+        }
+      }, 6000)
+      ws.onopen = () => {}
+      ws.onmessage = (ev) => {
+        try {
+          const m = JSON.parse(String(ev.data))
+          if (m.type === "terminal.connected") {
+            ws.send(JSON.stringify({ type: "terminal.input", data: "echo mira-terminal-ok\n" }))
+          } else if (m.type === "terminal.output" && String(m.payload?.data).includes("mira-terminal-ok")) {
+            done = true
+            clearTimeout(t)
+            setTermResult("✓ terminal ok — echo returned")
+            try { ws.close() } catch {}
+            setTermTesting(false)
+          } else if (m.type === "terminal.output" && String(m.payload?.data).includes("sandbox:")) {
+            done = true
+            clearTimeout(t)
+            setTermResult(`✗ sandbox blocked: ${String(m.payload.data).slice(0, 120)}`)
+            try { ws.close() } catch {}
+            setTermTesting(false)
+          }
+        } catch {}
+      }
+      ws.onerror = () => {
+        clearTimeout(t)
+        setTermResult("✗ WS error")
+        setTermTesting(false)
+      }
+      ws.onclose = () => {
+        clearTimeout(t)
+        if (!done && !termResult()) {
+          setTermResult("✗ closed without output")
+          setTermTesting(false)
+        }
+      }
+    } catch (err) {
+      setTermResult(`✗ ${(err as Error).message}`)
+      setTermTesting(false)
+    }
   }
 
   const handleToggleMcp = async (name: string, enabled: boolean) => {
@@ -546,6 +650,25 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                           autocomplete="off"
                         />
                         <span class="settings-hint">Truncate tool output.</span>
+                      </div>
+
+                      <div style={{ "font-size": "var(--fs-xs)", "font-weight": "700", color: "var(--fg-muted)", "letter-spacing": "0.04em", "text-transform": "uppercase", "margin-top": "4px" }}>
+                        Features
+                      </div>
+                      <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
+                        <label style={{ display: "flex", "align-items": "center", gap: "8px", "font-size": "var(--fs-sm)", color: "var(--fg)", cursor: "pointer" }}>
+                          <input type="checkbox" checked={featInject()} onChange={(e) => setFeatInject(e.currentTarget.checked)} />
+                          Inject todos into loadContext
+                        </label>
+                        <label style={{ display: "flex", "align-items": "center", gap: "8px", "font-size": "var(--fs-sm)", color: "var(--fg)", cursor: "pointer" }}>
+                          <input type="checkbox" checked={featLane()} onChange={(e) => setFeatLane(e.currentTarget.checked)} />
+                          Enforce lane contracts (tool allowlist)
+                        </label>
+                        <label style={{ display: "flex", "align-items": "center", gap: "8px", "font-size": "var(--fs-sm)", color: "var(--fg)", cursor: "pointer" }}>
+                          <input type="checkbox" checked={featPerAgent()} onChange={(e) => setFeatPerAgent(e.currentTarget.checked)} />
+                          Per-agent permission profiles
+                        </label>
+                        <span class="settings-hint">Saved to mira.json → features. Controls context injection and agent tool filtering.</span>
                       </div>
 
                       <div class="settings-field">
@@ -1134,6 +1257,55 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                       </For>
                     </div>
                   </Show>
+                </div>
+              </Show>
+
+              {/* ── Terminal ────────────────────────────────────────── */}
+              <Show when={tab() === "terminal"}>
+                <div id="settings-panel-terminal" role="tabpanel" aria-labelledby="settings-tab-terminal">
+                  <div class="settings-section-title">Terminal — PTY</div>
+                  <div class="settings-hint" style={{ "margin-bottom": "12px" }}>
+                    Interactive shell via <code style={{ "font-family": "var(--font-mono)" }}>WS /terminal</code>. Toggle + sandbox allowlist. <code style={{ "font-family": "var(--font-mono)" }}>MIRA_TERMINAL_ENABLED/SANDBOX</code> env also gates it.
+                  </div>
+                  <form onSubmit={handleSaveTerminal} style={{ display: "flex", "flex-direction": "column", gap: "14px" }}>
+                    <div class="settings-card" style={{ display: "flex", "flex-direction": "column", gap: "12px" }}>
+                      <label style={{ display: "flex", "align-items": "center", gap: "8px", "font-size": "var(--fs-sm)", color: "var(--fg)", cursor: "pointer" }}>
+                        <input type="checkbox" checked={termEnabled()} onChange={(e) => setTermEnabled(e.currentTarget.checked)} />
+                        Enabled
+                      </label>
+                      <label style={{ display: "flex", "align-items": "center", gap: "8px", "font-size": "var(--fs-sm)", color: "var(--fg)", cursor: "pointer" }}>
+                        <input type="checkbox" checked={termSandbox()} onChange={(e) => setTermSandbox(e.currentTarget.checked)} />
+                        Sandbox (allowlist)
+                      </label>
+                      <div class="settings-field">
+                        <label for="settings-term-allowed" class="settings-label">
+                          Allowed commands
+                        </label>
+                        <input id="settings-term-allowed" class="input" value={termAllowed()} onInput={(e) => setTermAllowed(e.currentTarget.value)} placeholder="bash, ls, cat, git, bun, node, tsc, echo, pwd" autocomplete="off" spellcheck={false} />
+                        <span class="settings-hint">Comma separated. When sandbox on, first token must be in this list.</span>
+                      </div>
+                      <div class="settings-field">
+                        <label for="settings-term-timeout" class="settings-label">
+                          Timeout ms
+                        </label>
+                        <input id="settings-term-timeout" class="input" type="number" min="1000" value={termTimeout()} onInput={(e) => setTermTimeout(e.currentTarget.value)} placeholder="30000" autocomplete="off" />
+                        <span class="settings-hint">Kill after this long.</span>
+                      </div>
+                      <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
+                        <button type="button" class="btn btn-outline" disabled={termTesting()} onClick={() => void handleTestTerminal()} style={{ padding: "6px 12px", "font-size": "var(--fs-sm)" }}>
+                          {termTesting() ? "Testing…" : "Test terminal"}
+                        </button>
+                        <Show when={termResult()}>
+                          <span style={{ "font-size": "var(--fs-xs)", color: termResult().startsWith("✓") ? "var(--ok)" : "var(--danger)" }}>{termResult()}</span>
+                        </Show>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: "8px", "justify-content": "flex-end" }}>
+                      <button type="submit" class="btn btn-solid" disabled={props.store.saving()} style={{ padding: "7px 14px", "font-size": "var(--fs-sm)" }}>
+                        {props.store.saving() ? "Saving…" : "Save terminal"}
+                      </button>
+                    </div>
+                  </form>
                 </div>
               </Show>
             </div>

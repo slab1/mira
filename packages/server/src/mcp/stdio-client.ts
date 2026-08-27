@@ -11,7 +11,7 @@ import type { JsonValue } from "../types/index.js"
 export interface MCPToolDef {
   name: string
   description?: string
-  inputSchema?: Record<string, unknown>
+  inputSchema?: Record<string, JsonValue>
 }
 
 interface Pending {
@@ -25,8 +25,8 @@ export class McpStdioClient {
   private buf = ""
   private nextId = 1
   private pending = new Map<number, Pending>()
-  public serverInfo: Record<string, unknown> = {}
-  public capabilities: Record<string, unknown> = {}
+  public serverInfo: Record<string, JsonValue> = {}
+  public capabilities: Record<string, JsonValue> = {}
   public name: string
 
   private constructor(name: string, proc: ReturnType<typeof Bun.spawn>) {
@@ -48,13 +48,13 @@ export class McpStdioClient {
       stderr: "pipe",
     })
     const client = new McpStdioClient(command[0], proc)
-    const result = await client.request("initialize", {
+    const result = await client.request<Record<string, JsonValue>>("initialize", {
       protocolVersion: "2024-11-05",
       capabilities: {},
       clientInfo: { name: "mira", version: "0.1.0" },
     }, 15_000)
-    if (result?.serverInfo) client.serverInfo = result.serverInfo
-    if (result?.capabilities) client.capabilities = result.capabilities
+    if (result?.serverInfo) client.serverInfo = result.serverInfo as Record<string, JsonValue>
+    if (result?.capabilities) client.capabilities = result.capabilities as Record<string, JsonValue>
     await client.notify("notifications/initialized")
     return client
   }
@@ -65,11 +65,17 @@ export class McpStdioClient {
   private exited = false
 
   async listTools(timeoutMs = 20_000): Promise<MCPToolDef[]> {
-    const r = await this.request("tools/list", {}, timeoutMs)
-    return Array.isArray(r?.tools) ? r.tools : []
+    const r = await this.request<Record<string, JsonValue>>("tools/list", {}, timeoutMs)
+    const tools = r?.tools
+    if (!Array.isArray(tools)) return []
+    return (tools as Array<Record<string, JsonValue>>).map(t => ({
+      name: String(t.name ?? ""),
+      description: typeof t.description === "string" ? t.description : undefined,
+      inputSchema: t.inputSchema as Record<string, JsonValue> | undefined,
+    })).filter(t => t.name.length > 0)
   }
 
-  async callTool(name: string, args: Record<string, unknown>, timeoutMs = 60_000): Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }> {
+  async callTool(name: string, args: Record<string, JsonValue>, timeoutMs = 60_000): Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }> {
     return await this.request("tools/call", { name, arguments: args }, timeoutMs)
   }
 
@@ -81,7 +87,7 @@ export class McpStdioClient {
 
   // ── Protocol ───────────────────────────────────────────────────────
 
-  request<T = any>(method: string, params: unknown, timeoutMs = 30_000): Promise<T> {
+  request<T = Record<string, JsonValue>>(method: string, params: JsonValue, timeoutMs = 30_000): Promise<T> {
     if (!this.alive) return Promise.reject(new Error(`MCP server not alive: ${this.name}`))
     const id = this.nextId++
     const timer = setTimeout(() => {
@@ -103,7 +109,7 @@ export class McpStdioClient {
     })
   }
 
-  async notify(method: string, params: unknown = {}): Promise<void> {
+  async notify(method: string, params: JsonValue = {}): Promise<void> {
     this.write({ jsonrpc: "2.0", method, params })
   }
 

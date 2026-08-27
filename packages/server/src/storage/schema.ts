@@ -4,7 +4,7 @@
  * Pragmatism: SQLite over Postgres, Drizzle over Prisma (Mira pattern)
  * Postgres+pgvector is for memory/knowledge-graph (separate DB in prod)
  */
-import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core"
+import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core"
 import { relations } from "drizzle-orm"
 
 export const sessions = sqliteTable("sessions", {
@@ -19,6 +19,10 @@ export const sessions = sqliteTable("sessions", {
   agent: text("agent"),
   // Multi-tenant ownership — null on legacy rows (accessible to all authenticated users)
   ownerID: text("owner_id"),
+  // Token/cost tracking — populated by SessionPrompt.runLoop, migrated via ALTER TABLE if missing
+  tokensIn: integer("tokens_in"),
+  tokensOut: integer("tokens_out"),
+  costUsd: real("cost_usd"),
 }, (t) => [
   index("sessions_updated_idx").on(t.updatedAt),
 ])

@@ -39,6 +39,7 @@ import { UsageLearner } from "./usage.js"
 import { KnowledgeBase, type MemoryTier, type MemorySource } from "./knowledge.js"
 import { ImprovementEngine } from "./improvement.js"
 import { LearningScheduler } from "./scheduler.js"
+import { createPatchingSystem, type PatchingEngine } from "../patching/index.js"
 import type { Bus } from "../bus/index.js"
 import type { MiraDB } from "../storage/db.js"
 import type { Gateway } from "../gateway/index.js"
@@ -57,6 +58,7 @@ export interface LearningSystem {
   usage: UsageLearner
   knowledge: KnowledgeBase
   improvement: ImprovementEngine
+  patching: PatchingEngine
   scheduler: LearningScheduler
 }
 
@@ -76,11 +78,16 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
     { rootDir: deps.rootDir ?? process.cwd() },
   )
 
-  const scheduler = new LearningScheduler(
-    { online, usage, improvement, knowledge, bus: deps.bus, db: deps.db },
+  const patching = createPatchingSystem(
+    { bus: deps.bus, db: deps.db, knowledge, gateway: deps.gateway },
+    { rootDir: deps.rootDir ?? process.cwd(), autoPatch: true },
   )
 
-  return { online, usage, knowledge, improvement, scheduler }
+  const scheduler = new LearningScheduler(
+    { online, usage, improvement, knowledge, bus: deps.bus, db: deps.db, patching, gateway: deps.gateway },
+  )
+
+  return { online, usage, knowledge, improvement, patching, scheduler }
 }
 
 /** Convenience: wire learning REST routes onto a Hono app */

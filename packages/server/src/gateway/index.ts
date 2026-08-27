@@ -146,6 +146,12 @@ async function* trackedStream(iter: AsyncIterable<GatewayChunk>, onUsage: (u: { 
   }
 }
 
+/** Expand {env:VAR} templates in provider strings — lets mira.json keep secrets out of git. */
+function expandEnv(value: string): string {
+  if (!value) return value
+  return value.replace(/\{env:([^}]+)\}/g, (_, name: string) => process.env[name] ?? "")
+}
+
 export function createGateway(config: MiraConfig): Gateway {
   // ── Cost/latency tracking (cumulative per process) ────────────────
   const stats = {
@@ -203,9 +209,9 @@ export function createGateway(config: MiraConfig): Gateway {
     if (!provider) {
       // Fallback to openrouter
       const or = config.provider["openrouter"]
-      return { baseURL: or.options.baseURL, apiKey: or.options.apiKey, modelID }
+      return { baseURL: expandEnv(or.options.baseURL), apiKey: expandEnv(or.options.apiKey), modelID }
     }
-    return { baseURL: provider.options.baseURL, apiKey: provider.options.apiKey, modelID }
+    return { baseURL: expandEnv(provider.options.baseURL), apiKey: expandEnv(provider.options.apiKey), modelID }
   }
 
   return {
@@ -319,10 +325,12 @@ export function createGateway(config: MiraConfig): Gateway {
 
     async listModels() {
       const or = config.provider["openrouter"]
-      if (!or?.options.apiKey) return [{ id: "openrouter/anthropic/claude-sonnet-4", name: "Claude Sonnet 4 (stub)", context: 200_000 }]
+      const orKey = or ? expandEnv(or.options.apiKey) : ""
+      const orBase = or ? expandEnv(or.options.baseURL) : ""
+      if (!orKey) return [{ id: "openrouter/anthropic/claude-sonnet-4", name: "Claude Sonnet 4 (stub)", context: 200_000 }]
       try {
-        const res = await fetch(`${or.options.baseURL}/models`, {
-          headers: { Authorization: `Bearer ${or.options.apiKey}` },
+        const res = await fetch(`${orBase}/models`, {
+          headers: { Authorization: `Bearer ${orKey}` },
         })
         if (!res.ok) throw new Error(String(res.status))
         const data = (await res.json()) as OpenRouterModelsResponse

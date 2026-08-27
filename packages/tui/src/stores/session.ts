@@ -8,12 +8,12 @@
 
 import { createSignal, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
-import { rpc, createSocket, type Session, type Message, type Todo, type BusEvent, type Part } from "../rpc/client"
+import { rpc, createSocket, type Session, type Message, type Todo, type BusEvent, type Part, type JsonValue } from "../rpc/client"
 
 export type PendingPermission = {
   toolCallID: string
   tool: string
-  args: unknown
+  args: Record<string, JsonValue>
   sessionID: string
 }
 
@@ -30,7 +30,7 @@ export type PendingQuestion = {
 
 export type StreamEvent = {
   type: string
-  data: unknown
+  data: JsonValue
   at: number
 }
 
@@ -102,14 +102,16 @@ export function createSessionStore() {
   }
 
   function handleBusEvent(e: BusEvent) {
+    const payload = e.payload as Record<string, JsonValue> | JsonValue[] | null
     switch (e.type) {
       case "session.created": {
-        const s = e.payload as Session
+        const s = payload as Session
         if (s?.id) setState("sessions", (prev) => [s, ...prev.filter((x) => x.id !== s.id)])
         break
       }
       case "session.deleted": {
-        const { id } = (e.payload as { id: string }) ?? {}
+        const p = payload as Record<string, JsonValue>
+        const id = p?.id as string | undefined
         if (!id) break
         setState("sessions", (prev) => prev.filter((s) => s.id !== id))
         if (state.currentId === id) {
@@ -119,7 +121,7 @@ export function createSessionStore() {
         break
       }
       case "todo.updated": {
-        if (e.sessionID === state.currentId) setState("todos", e.payload as Todo[])
+        if (e.sessionID === state.currentId) setState("todos", payload as Todo[])
         break
       }
       case "message.created":
@@ -130,18 +132,37 @@ export function createSessionStore() {
         break
       }
       case "permission.ask": {
-        const p = e.payload as PendingPermission & { sessionID?: string }
+        const p = payload as Record<string, JsonValue>
         setState("pendingPermission", {
-          toolCallID: (p.toolCallID as string) ?? (p as unknown as { id: string }).id ?? uid(),
-          tool: p.tool ?? "unknown",
-          args: p.args ?? {},
-          sessionID: e.sessionID ?? p.sessionID ?? state.currentId ?? "",
+          toolCallID: (p.toolCallID as string) ?? (p.id as string) ?? uid(),
+          tool: (p.tool as string) ?? "unknown",
+          args: (p.args as Record<string, JsonValue>) ?? {},
+          sessionID: e.sessionID ?? (p.sessionID as string) ?? state.currentId ?? "",
         })
         break
       }
       case "question.ask": {
-        const q = e.payload as PendingQuestion
+        const q = payload as PendingQuestion
         if (q?.questionID) setState("pendingQuestion", { ...q, sessionID: e.sessionID })
+        break
+      }
+      case "job.created":
+      case "job.updated":
+      case "job.cancelled": {
+        // Refresh queue/jobs view when background task changes
+        if (e.sessionID === state.currentId) {
+          // Trigger a lightweight refresh — TUI doesn't have job list yet, but keep connected
+          setState("error", null)
+        }
+        break
+      }
+      case "learning.updated": {
+        // Scheduler patching/online events — surface as transient status
+        break
+      }
+      case "server.heartbeat": {
+        // Keepalive — ensure connected stays true
+        setState("connected", true)
         break
       }
       default:
@@ -272,7 +293,7 @@ export function createSessionStore() {
         model,
         signal: abort.signal,
         onEvent: (event, data) => {
-          const d = data as Record<string, unknown>
+          const d = data as Record<string, JsonValue>
           setState("streamEvents", (ev) => [...ev, { type: event, data, at: Date.now() }])
 
           if (event === "text_delta") {
@@ -309,7 +330,7 @@ export function createSessionStore() {
                           type: "tool-call",
                           tool,
                           toolCallID,
-                          args: d.args ?? d.input ?? {},
+                          args: (d.args as Record<string, JsonValue>) ?? (d.input as Record<string, JsonValue>) ?? {},
                           createdAt: Date.now(),
                         } as Part,
                       ],
@@ -334,7 +355,7 @@ export function createSessionStore() {
                           type: "tool-result",
                           tool,
                           toolCallID,
-                          result: d.result ?? d.output ?? data,
+                          result: (d.result as JsonValue) ?? (d.output as JsonValue) ?? data,
                           isError: Boolean(d.isError),
                           createdAt: Date.now(),
                         } as Part,
@@ -347,7 +368,7 @@ export function createSessionStore() {
             setState("pendingPermission", {
               toolCallID: (d.toolCallID as string) ?? (d.id as string) ?? uid(),
               tool: (d.tool as string) ?? "unknown",
-              args: d.args ?? {},
+              args: (d.args as Record<string, JsonValue>) ?? {},
               sessionID: state.currentId!,
             })
           }
@@ -389,12 +410,11 @@ export function createSessionStore() {
   function answerQuestion(answers: Array<{ header: string; selections: string[] }>) {
     const q = state.pendingQuestion
     if (!q) return
-    socket.send({
-      type: "question.reply",
-      sessionID: q.sessionID ?? state.currentId ?? undefined,
-      payload: { questionID: q.questionID, answers },
-      timestamp: Date.now(),
-    })
+    const payload: Record<string, JsonValue> = { questionID: q.questionID, answers: answers as JsonValue }
+    const msg: Record<string, JsonValue> = { type: "question.reply", payload, timestamp: Date.now() }
+    const sid = q.sessionID ?? state.currentId
+    if (sid) msg.sessionID = sid
+    socket.send(msg as JsonValue)
     setState("pendingQuestion", null)
   }
 

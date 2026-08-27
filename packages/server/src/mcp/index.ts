@@ -19,6 +19,7 @@
 
 import type { Bus } from "../bus/index.js"
 import type { ToolRegistry } from "../tools/registry.js"
+import type { JsonValue } from "../types/index.js"
 import { z } from "zod"
 import { McpStdioClient } from "./stdio-client.js"
 
@@ -109,7 +110,7 @@ export class MCPManager {
         // JSON Schema from the server passes through; remote validates its own args
         schema: z.object({}).passthrough(),
         async execute(args) {
-          const result = await client.callTool(t.name, (args as Record<string, unknown>) ?? {})
+          const result = await client.callTool(t.name, (args as Record<string, JsonValue>) ?? {})
           const text = (result.content ?? [])
             .filter(c => c.type === "text")
             .map(c => c.text)

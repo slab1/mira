@@ -10,8 +10,19 @@
   "contributes": {
     "commands": [
       { "command": "mira.hello", "title": "Mira: Hello" },
-      { "command": "mira.openWeb", "title": "Mira: Open Web Panel" }
-    ]
+      { "command": "mira.openWeb", "title": "Mira: Open Web Panel" },
+      { "command": "mira.createSession", "title": "Mira: Create Session" },
+      { "command": "mira.listSessions", "title": "Mira: List Sessions" },
+      { "command": "mira.setToken", "title": "Mira: Set API Token" },
+      { "command": "mira.openTerminal", "title": "Mira: Open Terminal (PTY)" }
+    ],
+    "configuration": {
+      "title": "Mira",
+      "properties": {
+        "mira.apiUrl": { "type": "string", "default": "http://127.0.0.1:4096", "description": "Mira server URL" },
+        "mira.model": { "type": "string", "default": "openrouter/anthropic/claude-sonnet-4", "description": "Default model for new sessions" }
+      }
+    }
   },
   "scripts": {
     "compile": "tsc -p ./",

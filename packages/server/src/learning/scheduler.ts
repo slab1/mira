@@ -29,6 +29,8 @@ import type { UsageLearner } from "./usage.js"
 import type { ImprovementEngine } from "./improvement.js"
 import type { KnowledgeBase } from "./knowledge.js"
 import type { MiraDB } from "../storage/db.js"
+import type { JsonValue } from "../types/index.js"
+import type { PatchingEngine } from "../patching/index.js"
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -37,6 +39,8 @@ export interface SchedulerConfig {
   onlineIntervalMs?: number
   /** improvement cycle interval (default 24h) */
   improvementIntervalMs?: number
+  /** patching cycle interval (default 12h, 0 = disabled) */
+  patchingIntervalMs?: number
   /** whether to run online on start (default false — wait for interval) */
   runOnStart?: boolean
   /** jitter fraction 0..1 to randomize intervals (default 0.15) */
@@ -52,9 +56,13 @@ export interface SchedulerDeps {
   knowledge: KnowledgeBase
   bus?: Bus
   db?: MiraDB
+  /** optional 9-pain-point patching engine — wired when available, runs every patchingIntervalMs */
+  patching?: PatchingEngine
+  /** optional gateway for token-cost/latency signals (feeds patching latency detector) */
+  gateway?: { stats: () => { avgLatencyMs: number; requests: number } }
 }
 
-export type JobKind = "online" | "usage" | "improvement" | "all"
+export type JobKind = "online" | "usage" | "improvement" | "patching" | "all"
 
 // ── Scheduler ────────────────────────────────────────────────────────
 
@@ -67,9 +75,9 @@ export class LearningScheduler {
 
   // Last-run timestamps (for /health + TUI)
   public lastRun: Record<JobKind, number | null> = {
-    online: null, usage: null, improvement: null, all: null,
+    online: null, usage: null, improvement: null, patching: null, all: null,
   }
-  public lastResult: Record<string, unknown> = {}
+  public lastResult: Record<string, JsonValue> = {}
 
   constructor(
     private deps: SchedulerDeps,
@@ -78,10 +86,11 @@ export class LearningScheduler {
     this.config = {
       onlineIntervalMs: config.onlineIntervalMs ?? 60 * 60 * 1000,          // 1h
       improvementIntervalMs: config.improvementIntervalMs ?? 24 * 60 * 60 * 1000, // 24h
+      patchingIntervalMs: config.patchingIntervalMs ?? 12 * 60 * 60 * 1000, // 12h, 0 = disabled
       runOnStart: config.runOnStart ?? false,
       jitter: config.jitter ?? 0.15,
       busDrivenUsage: config.busDrivenUsage ?? true,
-    }
+    } as Required<SchedulerConfig>
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────
@@ -95,8 +104,13 @@ export class LearningScheduler {
     // Periodic online search
     this.schedule("online", this.config.onlineIntervalMs, () => this.runOnline())
 
-    // Periodic improvement cycle (daily)
+    // Periodic improvement cycle (daily) — consumes online + usage
     this.schedule("improvement", this.config.improvementIntervalMs, () => this.runImprovement())
+
+    // Periodic patching cycle (9 pain points) — only if engine wired
+    if (this.deps.patching && this.config.patchingIntervalMs > 0) {
+      this.schedule("patching", this.config.patchingIntervalMs, () => this.runPatching())
+    }
 
     // Bus-driven usage analysis (after each session)
     if (this.config.busDrivenUsage && this.deps.bus) {
@@ -130,21 +144,22 @@ export class LearningScheduler {
 
   // ── Manual trigger (for TUI / API / tests) ─────────────────────────
 
-  async trigger(kind: JobKind): Promise<unknown> {
+  async trigger(kind: JobKind): Promise<JsonValue> {
     switch (kind) {
       case "online": return this.runOnline()
       case "usage": return this.runUsage()
       case "improvement": return this.runImprovement()
+      case "patching": return this.runPatching()
       case "all": return this.runAll()
     }
   }
 
   // ── Jobs ───────────────────────────────────────────────────────────
 
-  private async runOnline(): Promise<unknown> {
+  private async runOnline(): Promise<JsonValue> {
     if (this.running.has("online")) {
       console.log("[learning:scheduler] online already running — skip")
-      return null
+      return null as JsonValue
     }
     this.running.add("online")
     try {
@@ -155,16 +170,16 @@ export class LearningScheduler {
         await this.deps.knowledge.storeInsight(ins).catch(() => {})
       }
       this.lastRun.online = Date.now()
-      this.lastResult["online"] = { count: insights.length, at: this.lastRun.online }
-      this.publish("online", { count: insights.length })
-      return insights
+      this.lastResult["online"] = toJsonValue({ count: insights.length, at: this.lastRun.online })
+      this.publish("online", toJsonValue({ count: insights.length }))
+      return toJsonValue(insights)
     } finally {
       this.running.delete("online")
     }
   }
 
-  private async runUsage(): Promise<unknown> {
-    if (this.running.has("usage")) return null
+  private async runUsage(): Promise<JsonValue> {
+    if (this.running.has("usage")) return null as JsonValue
     this.running.add("usage")
     try {
       console.log("[learning:scheduler] → usage analysis")
@@ -177,18 +192,18 @@ export class LearningScheduler {
         sessions: analysis.window.sessions,
         failures: analysis.failurePatterns.length,
         at: this.lastRun.usage,
-      }
+      } as JsonValue
       this.publish("usage", this.lastResult["usage"])
-      return analysis
+      return toJsonValue(analysis)
     } finally {
       this.running.delete("usage")
     }
   }
 
-  private async runImprovement(): Promise<unknown> {
+  private async runImprovement(): Promise<JsonValue> {
     if (this.running.has("improvement")) {
       console.log("[learning:scheduler] improvement already running — skip")
-      return null
+      return null as JsonValue
     }
     this.running.add("improvement")
     try {
@@ -198,25 +213,64 @@ export class LearningScheduler {
       const analysis = await this.deps.usage.analyze().catch(() => null)
       const result = await this.deps.improvement.runCycle(recentInsights, analysis)
       this.lastRun.improvement = Date.now()
-      this.lastResult["improvement"] = { ...result, at: this.lastRun.improvement }
-      this.publish("improvement", result)
-      return result
+      this.lastResult["improvement"] = toJsonValue({ ...result, at: this.lastRun.improvement })
+      this.publish("improvement", toJsonValue(result))
+      // Also trigger patching when improvement succeeds and engine is wired (9 pain points)
+      if (this.deps.patching) {
+        try { await this.runPatching() } catch (e) { console.warn("[learning:scheduler] patching after improvement failed:", String(e)) }
+      }
+      return toJsonValue(result)
     } finally {
       this.running.delete("improvement")
     }
   }
 
-  private async runAll(): Promise<unknown> {
+  private async runPatching(): Promise<JsonValue> {
+    if (!this.deps.patching) return null as JsonValue
+    if (this.running.has("patching")) {
+      console.log("[learning:scheduler] patching already running — skip")
+      return null as JsonValue
+    }
+    this.running.add("patching")
+    try {
+      console.log("[learning:scheduler] → patching cycle (9 pain points)")
+      // Feed current signals: usage + latency + eval (if gate enabled)
+      const analysis = await this.deps.usage.analyze().catch(() => null)
+      const latencySamples = this.deps.gateway ? [{ durationMs: this.deps.gateway.stats().avgLatencyMs }] : undefined
+      // Eval gate: only run pr tier if MIRA_EVAL_GATE=1 (expensive)
+      let evalReport: null | Awaited<ReturnType<typeof import("../eval/index.js").runEval>> = null
+      if (process.env.MIRA_EVAL_GATE === "1") {
+        try {
+          const { runEval } = await import("../eval/index.js")
+          evalReport = await runEval("pr")
+        } catch {}
+      }
+      const result = await this.deps.patching.runCycle({
+        analysis,
+        evalReport,
+        latencySamples,
+      })
+      this.lastRun.patching = Date.now()
+      this.lastResult["patching"] = toJsonValue({ ...result, at: this.lastRun.patching })
+      this.publish("patching", toJsonValue(result))
+      return toJsonValue(result)
+    } finally {
+      this.running.delete("patching")
+    }
+  }
+
+  private async runAll(): Promise<JsonValue> {
     const online = await this.runOnline().catch(err => ({ error: String(err) }))
     const usage = await this.runUsage().catch(err => ({ error: String(err) }))
     const improvement = await this.runImprovement().catch(err => ({ error: String(err) }))
+    const patching = this.deps.patching ? await this.runPatching().catch(err => ({ error: String(err) })) : null
     this.lastRun.all = Date.now()
-    return { online, usage, improvement, at: this.lastRun.all }
+    return toJsonValue({ online, usage, improvement, patching, at: this.lastRun.all })
   }
 
   // ── Helpers ────────────────────────────────────────────────────────
 
-  private schedule(kind: JobKind, intervalMs: number, fn: () => Promise<unknown>): void {
+  private schedule(kind: JobKind, intervalMs: number, fn: () => Promise<JsonValue>): void {
     const jittered = applyJitter(intervalMs, this.config.jitter)
     const timer = setInterval(() => {
       fn().catch(err => console.warn(`[learning:scheduler] ${kind} failed:`, String(err)))
@@ -226,7 +280,7 @@ export class LearningScheduler {
     this.timers.push(timer)
   }
 
-  private publish(kind: JobKind, payload: unknown): void {
+  private publish(kind: JobKind, payload: JsonValue): void {
     this.deps.bus?.publish({
       type: "learning.updated",
       payload: { kind: `learning.scheduler.${kind}`, result: payload },
@@ -235,38 +289,46 @@ export class LearningScheduler {
   }
 
   private async collectRecentInsights(): Promise<Insight[]> {
-    // Pull recent semantic memories that came from online learning
+    // Pull recent semantic memories that came from online learning — preserve full pattern
     try {
       const entries = this.deps.knowledge.list({ source: "online", limit: 12 })
       // Map back to Insight-like shape for the improvement engine
-      return entries.map((e: MemoryEntry) => ({
-        id: e.id,
-        source: (e.metadata as { url?: string }).url ?? e.title,
-        sourceTitle: e.title,
-        category: ((e.metadata as { category?: InsightCategory }).category ?? "other") as InsightCategory,
-        summary: e.title,
-        pattern: e.content?.split("\n")[0]?.replace(/^Pattern:\s*/, "") ?? e.content,
-        relevance: typeof (e.metadata as { relevance?: number }).relevance === "number" ? (e.metadata as { relevance?: number }).relevance as number : 0.6,
-        tags: e.tags ?? [],
-        rawExcerpt: e.content?.slice(0, 500) ?? "",
-        createdAt: e.createdAt,
-      }))
+      return entries.map((e: MemoryEntry) => {
+        const meta = e.metadata as Record<string, JsonValue>
+        return {
+          id: e.id,
+          source: (meta.url as string | undefined) ?? e.title,
+          sourceTitle: e.title,
+          category: ((meta.category as string | undefined) ?? "other") as InsightCategory,
+          summary: e.title,
+          pattern: e.content ?? "",
+          relevance: typeof meta.relevance === "number" ? (meta.relevance as number) : 0.6,
+          tags: e.tags ?? [],
+          rawExcerpt: e.content?.slice(0, 800) ?? "",
+          createdAt: e.createdAt,
+        }
+      })
     } catch { return [] }
   }
 
   /** For health checks / TUI status */
-  status(): Record<string, unknown> {
+  status(): Record<string, JsonValue> {
     return {
-      started: this.started,
-      running: [...this.running],
-      lastRun: this.lastRun,
-      lastResult: this.lastResult,
+      started: this.started as JsonValue,
+      running: [...this.running] as JsonValue,
+      lastRun: toJsonValue(this.lastRun),
+      lastResult: toJsonValue(this.lastResult),
       intervals: {
         onlineMs: this.config.onlineIntervalMs,
         improvementMs: this.config.improvementIntervalMs,
-      },
-    }
+        patchingMs: this.config.patchingIntervalMs,
+      } as JsonValue,
+    } as Record<string, JsonValue>
   }
+}
+
+function toJsonValue(value: object): JsonValue {
+  return JSON.parse(JSON.stringify(value)) as JsonValue
 }
 
 function applyJitter(intervalMs: number, jitter: number): number {

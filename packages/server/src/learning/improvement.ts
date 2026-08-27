@@ -212,10 +212,9 @@ export class ImprovementEngine {
       if (content.length < 10) return { verified: false, reason: "shadow markdown empty" }
     }
 
-    // 2. If bun test exists for this area, run it (best-effort, timeout 30s)
-    // For now, we treat tsc pass as verified for TS; full test run is opt-in
-    // via `MIRA_SHADOW_RUN_TESTS=1`
-    if (process.env.MIRA_SHADOW_RUN_TESTS === "1") {
+    // 2. Targeted test run — runs by default (disable with MIRA_SHADOW_RUN_TESTS=0)
+    // For TS engine/tool patches we run the relevant test suite; MD patches skip
+    if (process.env.MIRA_SHADOW_RUN_TESTS !== "0" && imp.targetFile?.endsWith(".ts")) {
       try {
         const proc = Bun.spawn(["bun", "test", "--timeout", "15000"], {
           cwd: this.config.rootDir,

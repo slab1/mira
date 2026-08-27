@@ -109,6 +109,15 @@ export type MiraConfig = {
   model: string
   smallModel?: string
   permission: Record<string, string | Record<string, string>>
+  guardrails?: {
+    enforce?: boolean
+    allowedRoots?: string[]
+    blockedPaths?: string[]
+    blockedCommands?: string[]
+    allowedCommands?: string[]
+    maxOutputBytes?: number
+    auditLogPath?: string
+  }
   mcp: Record<string, MCPServerConfig>
   provider: Record<string, ProviderConfig>
   agents?: Record<string, { system: string; description?: string; tools?: string[]; permissions?: string }>

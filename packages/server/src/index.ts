@@ -61,6 +61,9 @@ if (!GIT_SHA) {
 // ── Security config ────────────────────────────────────────────────
 // Bearer token gate (HTTP + WS). Empty = auth disabled (dev only).
 const REQUIRED_TOKEN = process.env.MIRA_TOKEN ?? ""
+if (REQUIRED_TOKEN === "change-me-to-a-long-random-secret") {
+  console.warn("[mira] ⚠️  MIRA_TOKEN is placeholder — set a real secret via /root/.mira/mira.env or env")
+}
 // Multi-tenant API keys: MIRA_API_KEYS="key1:alice,key2:bob" → credential→owner map.
 // When set, sessions are stamped with an ownerID and all session routes/WS
 // events enforce ownership. Single-token (MIRA_TOKEN-only) deployments map to
@@ -93,8 +96,22 @@ const CORS_ORIGIN_LIST = (process.env.CORS_ORIGINS ?? "")
   .filter(Boolean)
 function isOriginAllowed(origin: string | null | undefined): boolean {
   if (!origin) return true // non-browser clients (curl, TUI) send no Origin
+  if (origin.startsWith("vscode-webview://") || origin.startsWith("vscode-file://") || origin.startsWith("vscode:")) return true // VS Code webview
   if (CORS_ORIGIN_LIST.length === 0) return true // dev: allow all
-  return CORS_ORIGIN_LIST.includes(origin)
+  if (CORS_ORIGIN_LIST.includes(origin)) return true
+  // Dev convenience: allow localhost:* even when allowlist is prod (slab1.github.io) so TUI (:3001) + web (:5173) + VS Code don't 403
+  if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) return true
+  return false
+}
+
+// Terminal WS config (wired via MIRA_TERMINAL_ENABLED)
+const TERMINAL_ENABLED = process.env.MIRA_TERMINAL_ENABLED !== "0"
+const TERMINAL_SANDBOX = process.env.MIRA_TERMINAL_SANDBOX === "1"
+
+// Expand {env:VAR} placeholders in provider/MCP config strings — lets mira.json keep secrets out of git
+function expandEnv(value: string): string {
+  if (!value) return value
+  return value.replace(/\{env:([^}]+)\}/g, (_, name: string) => process.env[name] ?? "")
 }
 
 async function initOtel() {
@@ -371,31 +388,128 @@ async function main() {
   })
 
   // Landing page — friendly index when opened in a browser
-  app.get("/", c => {
+  // If web build exists (packages/web/dist), serve it; otherwise show API landing
+  app.get("/", async c => {
+    try {
+      const indexFile = Bun.file(`${import.meta.dir}/../../web/dist/index.html`)
+      if (await indexFile.exists()) {
+        const html = await indexFile.text()
+        return c.html(html)
+      }
+    } catch {}
+    try {
+      const altIndex = Bun.file(`${import.meta.dir}/../dist/index.html`)
+      if (await altIndex.exists()) {
+        const html = await altIndex.text()
+        return c.html(html)
+      }
+    } catch {}
     return c.html(`<!doctype html>
 <html><head><meta charset="utf-8"><title>Mira</title>
 <style>
   body{background:#09090b;color:#e4e4e7;font-family:ui-sans-serif,system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
-  .card{max-width:560px;padding:32px;border:1px solid #27272a;border-radius:16px;background:#18181b}
+  .card{max-width:640px;padding:32px;border:1px solid #27272a;border-radius:16px;background:#18181b}
   h1{margin:0 0 8px;font-size:22px}
   p{color:#a1a1aa;font-size:13px;line-height:1.6}
   code{background:#27272a;padding:2px 6px;border-radius:6px;font-size:12px;color:#c4b5fd}
   .live{color:#86efac}
+  .clients{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:12px}
+  .client-card{padding:10px;border:1px solid #27272a;border-radius:10px;background:#27272a}
+  .client-card strong{color:#e4e4e7;font-size:12px}
+  .client-card span{color:#a1a1aa;font-size:11px}
 </style></head>
 <body><div class="card">
   <h1>Mira <span class="live">● live</span></h1>
-  <p>Agent engine v0.1.0 · ${tools.count()} tools · gateway cost-tracked</p>
-  <p>This is the <b>API</b>. For the chat UI run the web client:</p>
-  <p><code>cd packages/web && bun run dev</code> → forward port <b>3000</b></p>
-  <p>API surface: <code>/health</code> · <code>/dev/health</code> · <code>/session</code> · <code>/session/:id/prompt</code> (SSE) · <code>/tools</code> · <code>/mcp</code> · <code>/skills</code></p>
+  <p>Agent engine v0.1.0 · ${tools.count()} tools · gateway cost-tracked · WS / (Bus) · WS /terminal (PTY)</p>
+  <p>API: <code>/health</code> · <code>/session</code> · <code>/terminal</code> · <code>/jobs</code> · <code>/finding</code> · <code>/mcp</code> · <code>/providers</code></p>
+  <div class="clients">
+    <div class="client-card"><strong>Web</strong><br><span>bun run dev in packages/web → :3000 (proxy :4096) or <code>vite build</code> → served here</span></div>
+    <div class="client-card"><strong>TUI</strong><br><span>bun run dev in packages/tui → :3001 (proxy)</span></div>
+    <div class="client-card"><strong>VS Code</strong><br><span>Extension: set <code>mira.apiUrl</code> + <code>mira.token</code> (SecretStorage)</span></div>
+  </div>
+  <p style="margin-top:12px">CORS: <code>CORS_ORIGINS</code> allowlists prod; <code>vscode-webview://</code> + <code>http://localhost:*</code> always allowed. Host: <code>HOST=127.0.0.1</code> (dev) or <code>0.0.0.0</code> (Docker/remote).</p>
 </div></body></html>`)
+  })
+
+  // Static for web build (when `vite build` has run) — serves /assets/*, etc.
+  app.get("/*", async (c, next) => {
+    const path = c.req.path
+    // Don't intercept API routes
+    if (
+      path.startsWith("/health") ||
+      path.startsWith("/dev/") ||
+      path.startsWith("/metrics") ||
+      path.startsWith("/session") ||
+      path.startsWith("/mcp") ||
+      path.startsWith("/config") ||
+      path.startsWith("/providers") ||
+      path.startsWith("/provider") ||
+      path.startsWith("/tools") ||
+      path.startsWith("/agents") ||
+      path.startsWith("/skills") ||
+      path.startsWith("/commands") ||
+      path.startsWith("/finding") ||
+      path.startsWith("/job") ||
+      path.startsWith("/task") ||
+      path.startsWith("/jobs") ||
+      path.startsWith("/terminal") ||
+      path.startsWith("/learning") ||
+      path.startsWith("/permission")
+    ) {
+      return await next()
+    }
+    try {
+      const candidates = [`${import.meta.dir}/../../web/dist${path}`, `${import.meta.dir}/../dist${path}`]
+      for (const fp of candidates) {
+        const f = Bun.file(fp)
+        if (await f.exists()) {
+          const ext = fp.split(".").pop() ?? ""
+          const ct =
+            ext === "html"
+              ? "text/html"
+              : ext === "js"
+                ? "application/javascript"
+                : ext === "css"
+                  ? "text/css"
+                  : ext === "json"
+                    ? "application/json"
+                    : ext === "svg"
+                      ? "image/svg+xml"
+                      : "text/plain"
+          return new Response(f.stream() as BodyInit, { headers: { "Content-Type": ct, "Cache-Control": "max-age=3600" } })
+        }
+      }
+      // SPA fallback: serve index.html for unknown routes when web build exists
+      const index = Bun.file(`${import.meta.dir}/../../web/dist/index.html`)
+      if (await index.exists()) {
+        // Only fallback for non-API GET that looks like a page (no extension)
+        if (!path.includes(".")) {
+          return c.html(await index.text())
+        }
+      }
+    } catch {}
+    return await next()
   })
 
   // Liveness — minimal, no internals, bypasses auth + rate limit (Docker/k8s probes)
   app.get("/healthz", c => c.json({ ok: true, version: "0.1.0", sha: GIT_SHA, startedAt: STARTED_AT, uptime: process.uptime() }))
-  // Health — detailed; stays behind MIRA_TOKEN when set
-  app.get("/health", c => c.json({ ok: true, version: "0.1.0", sha: GIT_SHA, startedAt: STARTED_AT, tools: tools.count(), uptime: process.uptime(), memory: process.memoryUsage() }))
-  app.get("/dev/health", c => c.json({ ok: true, version: "0.1.0", sha: GIT_SHA, startedAt: STARTED_AT, tools: tools.count(), busHistory: bus.recent(5).length, learning: learning.scheduler.status(), gateway: gateway.stats(), uptime: process.uptime() }))
+  // Health — detailed; stays behind MIRA_TOKEN when set — now includes terminal/providers for observability (redacted)
+  app.get("/health", c =>
+    c.json({
+      ok: true,
+      version: "0.1.0",
+      sha: GIT_SHA,
+      startedAt: STARTED_AT,
+      tools: tools.count(),
+      mcp: mcp.count(),
+      providers: Object.keys(config.provider).length,
+      terminal: { enabled: TERMINAL_ENABLED, sandbox: TERMINAL_SANDBOX },
+      ws: { auth: !!(REQUIRED_TOKEN || API_KEY_OWNERS.size), cors: CORS_ORIGIN_LIST.length ? CORS_ORIGIN_LIST : ["*"] },
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+    }),
+  )
+  app.get("/dev/health", c => c.json({ ok: true, version: "0.1.0", sha: GIT_SHA, startedAt: STARTED_AT, tools: tools.count(), mcp: mcp.count(), providers: Object.keys(config.provider).length, terminal: { enabled: TERMINAL_ENABLED, sandbox: TERMINAL_SANDBOX }, busHistory: bus.recent(5).length, learning: learning.scheduler.status(), gateway: gateway.stats(), uptime: process.uptime() }))
   // Metrics
   app.get("/metrics", async c => {
     const gatewayStats = gateway.stats()
@@ -493,6 +607,37 @@ async function main() {
     const cancelled = await cancelJob(db, c.req.param("id"))
     bus.publish({ type: "job.cancelled", payload: { jobID: job.id }, timestamp: Date.now() })
     return c.json(cancelled)
+  })
+  // Aliases for opencode/mira parity — /task and /jobs global
+  app.get("/jobs", async c => {
+    const owner = OWNERSHIP_ENABLED ? resolveOwner(bearerOf(c.req.header("Authorization"))) : undefined
+    const all = await listJobs(db)
+    if (!owner) return c.json(all)
+    // Filter to sessions owned by requester (legacy null rows visible to all)
+    const filtered: typeof all = []
+    for (const j of all) {
+      const o = await ownerOfSession(j.parentSessionID)
+      if (o === null || o === owner) filtered.push(j)
+    }
+    return c.json(filtered)
+  })
+  app.get("/task/:id", async c => {
+    const job = await getJob(db, c.req.param("id"))
+    if (!job || !(await authorizedSession(job.parentSessionID, c))) return c.json({ error: "not found" }, 404)
+    return c.json(job)
+  })
+  app.post("/task/:id/cancel", async c => {
+    const job = await getJob(db, c.req.param("id"))
+    if (!job || !(await authorizedSession(job.parentSessionID, c))) return c.json({ error: "not found" }, 404)
+    const cancelled = await cancelJob(db, c.req.param("id"))
+    bus.publish({ type: "job.cancelled", payload: { jobID: job.id }, timestamp: Date.now() })
+    return c.json(cancelled)
+  })
+  // Plural alias
+  app.get("/jobs/:id", async c => {
+    const job = await getJob(db, c.req.param("id"))
+    if (!job || !(await authorizedSession(job.parentSessionID, c))) return c.json({ error: "not found" }, 404)
+    return c.json(job)
   })
 
   // Findings — structured cross-agent team memory (shared by design across owners)
@@ -721,28 +866,32 @@ async function main() {
     const providers = cfg.provider ?? {}
     const list = Object.entries(providers).map(([id, p]) => {
       const prov = p as { name?: string; options?: { baseURL?: string; apiKey?: string }; models?: Record<string, { name: string; limit: { context: number; output: number } }> }
-      const apiKey = prov.options?.apiKey ?? ""
+      const rawKey = prov.options?.apiKey ?? ""
+      const apiKey = expandEnv(rawKey)
+      const rawBase = prov.options?.baseURL ?? ""
       return {
         id,
         name: prov.name ?? id,
         hasKey: !!apiKey,
         masked: apiKey ? maskApiKey(apiKey) : "",
-        baseURL: prov.options?.baseURL ?? "",
+        baseURL: expandEnv(rawBase),
+        rawBaseURL: rawBase,
         modelCount: prov.models ? Object.keys(prov.models).length : 0,
       }
     })
     return c.json(list)
   })
 
-  // Provider test (mira parity — checks apiKey presence + baseURL reachability)
+  // Provider test (mira parity — checks apiKey presence + baseURL reachability; expands {env:VAR})
   app.post("/providers/:id/test", async c => {
     const id = c.req.param("id")
     const cfg = getConfig()
     const prov = cfg.provider?.[id] as { options?: { apiKey?: string; baseURL?: string } } | undefined
     if (!prov) return c.json({ ok: false, error: "provider not found" }, 404)
-    const hasKey = !!prov.options?.apiKey
-    if (!hasKey) return c.json({ ok: false, error: "missing apiKey" }, 400)
-    const baseURL = prov.options?.baseURL
+    const apiKey = expandEnv(prov.options?.apiKey ?? "")
+    const hasKey = !!apiKey
+    if (!hasKey) return c.json({ ok: false, error: "missing apiKey (check {env:VAR} + mira.env)" }, 400)
+    const baseURL = expandEnv(prov.options?.baseURL ?? "")
     if (baseURL) {
       try {
         const controller = new AbortController()
@@ -751,16 +900,17 @@ async function main() {
         clearTimeout(t)
       } catch {}
     }
-    return c.json({ ok: true, hasKey, baseURL: baseURL ?? "" })
+    return c.json({ ok: true, hasKey, baseURL, expanded: true })
   })
   app.post("/provider/:id/test", async c => {
     const id = c.req.param("id")
     const cfg = getConfig()
     const prov = cfg.provider?.[id] as { options?: { apiKey?: string; baseURL?: string } } | undefined
     if (!prov) return c.json({ ok: false, error: "provider not found" }, 404)
-    const hasKey = !!prov.options?.apiKey
-    if (!hasKey) return c.json({ ok: false, error: "missing apiKey" }, 400)
-    const baseURL = prov.options?.baseURL
+    const apiKey = expandEnv(prov.options?.apiKey ?? "")
+    const hasKey = !!apiKey
+    if (!hasKey) return c.json({ ok: false, error: "missing apiKey (check {env:VAR} + mira.env)" }, 400)
+    const baseURL = expandEnv(prov.options?.baseURL ?? "")
     if (baseURL) {
       try {
         const controller = new AbortController()
@@ -769,7 +919,7 @@ async function main() {
         clearTimeout(t)
       } catch {}
     }
-    return c.json({ ok: true, hasKey, baseURL: baseURL ?? "" })
+    return c.json({ ok: true, hasKey, baseURL, expanded: true })
   })
 
   // Provider delete (mira parity)
@@ -866,18 +1016,27 @@ async function main() {
   // Learning system routes with privacy safeguards and backward compatibility
   mountLearningRoutes(app, learning)
 
+  // Terminal — HTTP status + browser client hint
+  app.get("/terminal", c => {
+    if (!TERMINAL_ENABLED) return c.json({ enabled: false, error: "terminal disabled (MIRA_TERMINAL_ENABLED=0)" }, 403)
+    const host = c.req.header("host") ?? `localhost:${PORT}`
+    const proto = c.req.header("x-forwarded-proto") ?? (host.includes("localhost") ? "ws" : "wss")
+    return c.json({ enabled: true, sandbox: TERMINAL_SANDBOX, ws: `${proto}://${host}/terminal`, auth: "Bearer token or {type:\"auth\",token} first message" })
+  })
+
   // WebSocket upgrade — GlobalBus → Worker → RPC → TUI (no polling)
   //
   // Security model:
   //   • Upgrades are admitted EXPLICITLY in fetch below (a fall-through Response means
   //     Bun never upgrades), so every socket passes the same checks as HTTP.
   //   • Origin validated against CORS_ORIGINS allowlist (empty = allow all for dev).
+  //     vscode-webview:// and http://localhost:* are always allowed for TUI/Web/VS Code dev.
   //   • Auth = same bearer token as HTTP. Preferred: Authorization header on the upgrade
-  //     request. Fallback for clients that cannot set headers (browsers): send
-  //     {"type":"auth","token":"..."} as the FIRST message within 5s of open.
+  //     request. Fallback for clients that cannot set headers (browsers / VS Code webview): send
+  //     {"type":"auth","token":"..."} as the FIRST message within 10s of open.
   //   • Unauthenticated sockets are closed with 1008 (policy violation).
   //   • Query-param tokens (?token=) are NOT accepted anywhere.
-  const WS_AUTH_TIMEOUT_MS = 5_000
+  const WS_AUTH_TIMEOUT_MS = 10_000
 
   // ── Per-owner live event filtering ────────────────────────────────
   // Maps sessionID → ownerID (cached; lazily backfilled from the DB).
@@ -908,6 +1067,7 @@ async function main() {
   interface MiraWSData {
     authenticated?: boolean
     owner?: string
+    isTerminal?: boolean
   }
   interface MiraWS {
     data?: MiraWSData
@@ -915,6 +1075,8 @@ async function main() {
     __authTimer?: ReturnType<typeof setTimeout>
     __unsub?: () => void
     __owner?: string | null
+    __proc?: ReturnType<typeof Bun.spawn>
+    __ac?: AbortController
     send(data: string): void
     close(code: number, reason?: string): void
   }
@@ -942,6 +1104,45 @@ async function main() {
     ws.send(JSON.stringify({ type: "server.heartbeat", payload: { connected: true }, timestamp: Date.now() }))
   }
 
+  function activateTerminalSocket(ws: MiraWS, owner?: string) {
+    if (ws.__active) return
+    ws.__active = true
+    ws.__owner = owner ?? null
+    clearTimeout(ws.__authTimer)
+    ws.send(JSON.stringify({ type: "terminal.connected", payload: { connected: true, owner: ws.__owner, sandbox: TERMINAL_SANDBOX }, timestamp: Date.now() }))
+    // Spawn interactive bash; TERM=xterm-256color for TUI compat
+    const proc = Bun.spawn(["bash"], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, TERM: "xterm-256color" } as Record<string, string>,
+    })
+    const ac = new AbortController()
+    ws.__proc = proc
+    ws.__ac = ac
+    const streamOutput = async (stream: ReadableStream<Uint8Array> | null, name: string) => {
+      if (!stream) return
+      const reader = stream.getReader() as ReadableStreamDefaultReader<Uint8Array>
+      const decoder = new TextDecoder()
+      try {
+        while (true) {
+          if (ac.signal.aborted || !ws.__active) break
+          const { value, done } = await reader.read()
+          if (done) break
+          if (!value?.length) continue
+          const text = decoder.decode(value, { stream: true })
+          try { ws.send(JSON.stringify({ type: "terminal.output", payload: { stream: name, data: text }, timestamp: Date.now() })) } catch { break }
+        }
+      } catch {}
+    }
+    void streamOutput(proc.stdout as ReadableStream<Uint8Array>, "stdout")
+    void streamOutput(proc.stderr as ReadableStream<Uint8Array>, "stderr")
+    void (proc as { exited: Promise<number> }).exited.then((code: number) => {
+      try { ws.send(JSON.stringify({ type: "terminal.exit", payload: { code }, timestamp: Date.now() })) } catch {}
+      try { ws.close(1000, "terminal exit") } catch {}
+    })
+  }
+
   const server = Bun.serve<MiraWSData>({
     port: PORT,
     // Security: loopback by default — remote access requires HOST env override
@@ -953,6 +1154,11 @@ async function main() {
         if (!isOriginAllowed(req.headers.get("origin"))) {
           return new Response(JSON.stringify({ error: "forbidden origin" }), { status: 403, headers: { "content-type": "application/json" } })
         }
+        const url = new URL(req.url)
+        const isTerminal = url.pathname === "/terminal"
+        if (isTerminal && !TERMINAL_ENABLED) {
+          return new Response(JSON.stringify({ error: "terminal disabled" }), { status: 403, headers: { "content-type": "application/json" } })
+        }
         let authenticated = false
         let owner: string | undefined
         if (!REQUIRED_TOKEN && API_KEY_OWNERS.size === 0) {
@@ -962,7 +1168,7 @@ async function main() {
           owner = resolveOwner(bearerOf(auth))
           authenticated = owner !== undefined
         }
-        const upgraded = srv.upgrade(req, { data: { authenticated, owner } })
+        const upgraded = srv.upgrade(req, { data: { authenticated, owner, isTerminal } })
         if (!upgraded) return new Response("WebSocket upgrade failed", { status: 500 })
         return undefined
       }
@@ -973,10 +1179,13 @@ async function main() {
       open(ws) {
         const w = ws as object as MiraWS
         w.__active = false
-        if ((!REQUIRED_TOKEN && API_KEY_OWNERS.size === 0) || w.data?.authenticated === true) {
-          activateSocket(w, w.data?.owner)
+        const isTerminal = (w.data as MiraWSData | undefined)?.isTerminal === true
+        const needsAuth = !!REQUIRED_TOKEN || API_KEY_OWNERS.size > 0
+        if (!needsAuth || w.data?.authenticated === true) {
+          if (isTerminal) activateTerminalSocket(w, w.data?.owner)
+          else activateSocket(w, w.data?.owner)
         } else {
-          // Grace window: client must send {"type":"auth","token":...} within 5s
+          // Grace window: client must send {"type":"auth","token":...} within 10s
           w.__authTimer = setTimeout(() => {
             if (!w.__active) {
               try { w.close(1008, "unauthorized: auth message not received within timeout") } catch {}
@@ -991,15 +1200,65 @@ async function main() {
           try { w.close(1009, "message too large") } catch {}
           return
         }
-        let event: { type?: string; token?: string; sessionID?: string } | null = null
+        let event: { type?: string; token?: string; sessionID?: string; data?: string; cols?: number; rows?: number } | null = null
         try { event = JSON.parse(raw) } catch {}
         if (!w.__active) {
           // Pre-auth: only the auth handshake is accepted; anything else is ignored
-          // (the 5s timer closes unauthenticated sockets with 1008)
+          // (the 10s timer closes unauthenticated sockets with 1008)
           const owner = event?.type === "auth" && typeof event.token === "string"
             ? resolveOwner(event.token)
             : undefined
-          if (owner !== undefined) activateSocket(w, owner)
+          if (owner !== undefined) {
+            const isTerminal = (w.data as MiraWSData | undefined)?.isTerminal === true
+            if (isTerminal) activateTerminalSocket(w, owner)
+            else activateSocket(w, owner)
+          }
+          return
+        }
+        // Terminal input path
+        if ((w.data as MiraWSData | undefined)?.isTerminal) {
+          if (event?.type === "terminal.input" && typeof event.data === "string") {
+            // Sandbox: enforce allowedCommands when enabled
+            if (TERMINAL_SANDBOX) {
+              const raw = event.data.trim()
+              // allow empty, single word commands only at line start; skip control chars
+              if (raw && !raw.startsWith("#")) {
+                const first = raw.split(/[\s;|&]+/)[0] ?? ""
+                const base = first.split("/").pop() ?? first
+                // dynamic allowlist from config if present
+                let allowed: string[] = ["bash","ls","cat","grep","find","git","bun","node","tsc","echo","pwd","head","tail","wc","sort","uniq","date","env","which","whoami","printf","sed","awk"]
+                try {
+                  const cfg = getConfig() as MiraConfig
+                  const t = (cfg.tools as Record<string, JsonValue> | undefined)?.terminal as Record<string, JsonValue> | undefined
+                  const list = t?.allowedCommands as string[] | undefined
+                  if (Array.isArray(list)) allowed = list
+                } catch {}
+                if (base && !allowed.includes(base) && !allowed.includes(first)) {
+                  try { w.send(JSON.stringify({ type: "terminal.output", payload: { stream: "stderr", data: `sandbox: command "${base}" not in allowedCommands [${allowed.join(",")}] — blocked\n` }, timestamp: Date.now() })) } catch {}
+                  // don't forward to shell
+                } else {
+                  try {
+                    const stdin = w.__proc?.stdin
+                    if (stdin && typeof stdin !== "number" && typeof (stdin as Bun.FileSink).write === "function") (stdin as Bun.FileSink).write(event.data)
+                  } catch {}
+                }
+              } else {
+                try {
+                  const stdin = w.__proc?.stdin
+                  if (stdin && typeof stdin !== "number" && typeof (stdin as Bun.FileSink).write === "function") (stdin as Bun.FileSink).write(event.data)
+                } catch {}
+              }
+            } else {
+              try {
+                const stdin = w.__proc?.stdin
+                if (stdin && typeof stdin !== "number" && typeof (stdin as Bun.FileSink).write === "function") (stdin as Bun.FileSink).write(event.data)
+              } catch {}
+            }
+          }
+          // permission/question replies still flow through bus even on terminal sockets
+          if (event?.type === "permission.reply" || event?.type === "question.reply") {
+            bus.publish(event as BusEvent)
+          }
           return
         }
         // Handle permission replies, client pings, etc.
@@ -1010,6 +1269,8 @@ async function main() {
         const w = ws as object as MiraWS
         clearTimeout(w.__authTimer)
         try { w.__unsub?.() } catch {}
+        try { w.__ac?.abort() } catch {}
+        try { w.__proc?.kill() } catch {}
       },
     },
   })
@@ -1017,7 +1278,8 @@ async function main() {
   console.log(`[mira] ✓ listening on http://${server.hostname}:${server.port}`)
   console.log(`[mira]   liveness: GET /healthz (no auth) · detail: GET /health`)
   console.log(`[mira]   prompt:  POST /session/:id/prompt  (SSE)`)
-  console.log(`[mira]   ws:      WS   /  (BusEvent stream)`)
+  console.log(`[mira]   ws:      WS   /  (BusEvent stream)${TERMINAL_ENABLED ? " · WS /terminal (pty)" : " · terminal disabled"}`)
+  console.log(`[mira]   terminal: GET /terminal → {enabled:${TERMINAL_ENABLED}, sandbox:${TERMINAL_SANDBOX}}`)
 
   // Graceful shutdown — handles SIGINT (Ctrl-C) AND SIGTERM (systemd/docker/kill)
   let shuttingDown = false

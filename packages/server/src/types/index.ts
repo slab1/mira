@@ -126,6 +126,13 @@ export interface MiraConfig {
     compactionThreshold?: number
     smallModel?: string
   }
+  /** @deprecated — use `loop`; kept for backward compat with older mira.json */
+  loopLimits?: {
+    maxSteps?: number
+    contextLimit?: number | string
+    compactionThreshold?: number
+    smallModel?: string
+  }
   permission: Record<string, PermissionAction | Record<string, PermissionAction>>
   guardrails?: {
     enforce?: boolean
@@ -140,6 +147,14 @@ export interface MiraConfig {
   provider: Record<string, ProviderConfig>
   /** Custom agent definitions (mira.json "agents") — merged over built-in templates */
   agents?: Record<string, AgentDefinition>
+  /** Roadmap metadata (REVISE) — passthrough, not validated */
+  roadmap?: Record<string, unknown>
+  /** Feature flags for lane contracts etc. */
+  features?: Record<string, boolean>
+  /** Tool-layer settings */
+  tools?: Record<string, JsonValue>
+  /** Skills v2 settings */
+  skills?: Record<string, JsonValue>
 }
 
 /** User-supplied agent definition; missing fields fall back to safe defaults. */
@@ -156,6 +171,7 @@ export interface MCPServerConfig {
   url?: string
   enabled: boolean
   env?: Record<string, string>
+  headers?: Record<string, string>
 }
 
 export interface ProviderConfig {
