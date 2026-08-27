@@ -33,10 +33,12 @@ export interface SecurityIssue {
   detectedAt: number
 }
 
+import type { JsonValue } from "../types/index.js"
+
 /** Narrow untyped tool args to a string-keyed record (JsonValue-tolerant). */
-function argStr(args: unknown, key: string): string | undefined {
+function argStr(args: JsonValue, key: string): string | undefined {
   if (!args || typeof args !== "object") return undefined
-  const v = (args as Record<string, unknown>)[key]
+  const v = (args as Record<string, JsonValue>)[key]
   return typeof v === "string" ? v : undefined
 }
 
@@ -88,7 +90,7 @@ export class SecurityScanner {
   scan(input: {
     text?: string
     tool?: string
-    args?: unknown
+    args?: JsonValue
     fileContent?: string
     route?: string
   }): SecurityScanResult {
@@ -126,7 +128,7 @@ export class SecurityScanner {
   }
 
   /** Scan tool args for traversal / injection */
-  scanToolArgs(tool: string, args: unknown): SecurityIssue[] {
+  scanToolArgs(tool: string, args: JsonValue): SecurityIssue[] {
     const out: SecurityIssue[] = []
     const str = JSON.stringify(args ?? "")
     // Path traversal — read/write/edit/glob

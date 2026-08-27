@@ -10,12 +10,12 @@
  * Design: Non-blocking by default (log + warn), but can be enforced via config.guardrails.enforce
  */
 
-import type { MiraConfig } from "../types/index.js"
+import type { MiraConfig, JsonValue } from "../types/index.js"
 
 /** Narrow untyped tool args to a string-keyed record (JsonValue-tolerant). */
-function argStr(args: unknown, key: string): string | undefined {
+function argStr(args: JsonValue, key: string): string | undefined {
   if (!args || typeof args !== "object") return undefined
-  const v = (args as Record<string, unknown>)[key]
+  const v = (args as Record<string, JsonValue>)[key]
   return typeof v === "string" ? v : undefined
 }
 
@@ -169,11 +169,11 @@ export class AuditLogger {
 export interface AuditEntry {
   sessionID: string
   tool: string
-  args: unknown
+  args: JsonValue
   decision: "allow" | "deny" | "warn"
   reason?: string
-  result?: unknown
-  error?: unknown
+  result?: JsonValue
+  error?: JsonValue
 }
 
 export class GuardrailsManager {
@@ -187,7 +187,7 @@ export class GuardrailsManager {
   }
 
   /** Main check — returns decision */
-  async check(tool: string, args: unknown, ctx: { sessionID: string }) {
+  async check(tool: string, args: JsonValue, ctx: { sessionID: string }) {
     const decision: AuditEntry = { sessionID: ctx.sessionID, tool, args, decision: "allow" }
 
     try {

@@ -148,7 +148,7 @@ export interface MiraConfig {
   /** Custom agent definitions (mira.json "agents") — merged over built-in templates */
   agents?: Record<string, AgentDefinition>
   /** Roadmap metadata (REVISE) — passthrough, not validated */
-  roadmap?: Record<string, unknown>
+  roadmap?: Record<string, JsonValue>
   /** Feature flags for lane contracts etc. */
   features?: Record<string, boolean>
   /** Tool-layer settings */

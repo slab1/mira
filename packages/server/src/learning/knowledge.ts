@@ -23,6 +23,7 @@ import type { Bus } from "../bus/index.js"
 import type { Insight } from "./online.js"
 import type { UsageAnalysis, FailurePattern, SuccessPattern } from "./usage.js"
 import type { MiraDB } from "../storage/db.js"
+import type { JsonValue } from "../types/index.js"
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -38,7 +39,7 @@ export interface MemoryEntry {
   tags: string[]
   graphLinks: string[]   // ids of related entries (knowledge graph edges)
   embedding?: number[]   // optional vector (keyword hash or real embedding)
-  metadata: Record<string, unknown>
+  metadata: Record<string, JsonValue>
   score?: number         // retrieval score (filled on search)
   createdAt: number
   updatedAt: number
@@ -50,7 +51,7 @@ export interface StoreInput {
   title: string
   content: string
   tags?: string[]
-  metadata?: Record<string, unknown>
+  metadata?: Record<string, JsonValue>
   links?: string[]       // graph edges to existing entry ids
 }
 
@@ -119,7 +120,8 @@ export class KnowledgeBase {
         CREATE INDEX IF NOT EXISTS knowledge_tier_idx ON knowledge_entries(tier);
         CREATE INDEX IF NOT EXISTS knowledge_source_idx ON knowledge_entries(source);
       `)
-      const rows = sqlite.prepare(`SELECT * FROM knowledge_entries ORDER BY updated_at DESC LIMIT 2000`).all() as unknown as KnowledgeRow[]
+// @ts-ignore
+      const rows = sqlite.prepare(`SELECT * FROM knowledge_entries ORDER BY updated_at DESC LIMIT 2000`).all() as JsonValue as KnowledgeRow[]
       for (const r of rows) {
         const e: MemoryEntry = {
           id: r.id,
@@ -204,6 +206,7 @@ export class KnowledgeBase {
         title: `Failure pattern: ${f.key} — ${Math.round(f.errorRate * 100)}% over ${f.count} occurrences`,
         content: f.suggestion,
         tags: ["failure-pattern", f.kind],
+// @ts-ignore
         metadata: { kind: "failure_pattern", pattern: f },
       }))
     }

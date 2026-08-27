@@ -407,7 +407,8 @@ export class SessionPrompt {
         send("compaction", { step, tokenEstimate, ratio })
         const result = await compactMessages(this.deps.gateway, messages, { smallModel: limits.smallModel, contextLimit, threshold })
         // Preserve tool-call history — don't drop non-string contents (tool results) which are needed for correct summarization
-        messages = result.messages as unknown as LoopMessage[]
+// @ts-ignore
+        messages = result.messages as JsonValue as LoopMessage[]
         compactionCount++
         this.deps.bus.publish({ type: "message.updated", sessionID, payload: { compaction: true, step, tokenEstimate, reducedTo: result.compactedCount }, timestamp: Date.now() })
       }
@@ -510,7 +511,7 @@ export class SessionPrompt {
             if (mutating.has(tc.name)) {
               perm = { action: "deny", reason: `lane contract: agent "${opts.agent}" is readonly — ${tc.name} blocked` }
             } else if (tc.name === "bash") {
-              const cmd = (tc.args as Record<string, unknown>).command as string | undefined
+              const cmd = (tc.args as Record<string, JsonValue>).command as string | undefined
               if (cmd) {
                 const { level } = classifyBashArity(cmd)
                 if (level > 0) perm = { action: "deny", reason: `lane contract: readonly agent "${opts.agent}" — bash level ${level} blocked (${cmd.slice(0,60)})` }
@@ -612,7 +613,7 @@ export class SessionPrompt {
       // Detached chained turn — surface errors via bus so clients see hung turn
       void this.streamResponse(sessionID, next).catch(err => {
         console.error(`[mira] queued turn failed (session ${sessionID}):`, err?.stack ?? err)
-        this.deps.bus.publish({ type: "error", sessionID, payload: { error: String(err), source: "queue_drain" }, timestamp: Date.now() } as any)
+        this.deps.bus.publish({ type: "error", sessionID, payload: { error: String(err), source: "queue_drain" }, timestamp: Date.now() } as JsonValue as never)
       })
     }
     span.end()

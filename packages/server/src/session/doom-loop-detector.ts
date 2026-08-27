@@ -8,10 +8,12 @@
  * 4. Same tool called with same file/path repeatedly
  */
 
+import type { JsonValue } from "../types/index.js"
+
 export interface ToolCall {
   name: string
-  args: unknown
-  result?: unknown
+  args: JsonValue
+  result?: JsonValue
   filePath?: string
 }
 
@@ -29,15 +31,15 @@ export class DoomLoopDetector {
   private readonly maxIdentical = Number(process.env.MIRA_DOOM_THRESHOLD ?? 3)
   private readonly maxCycleLength = 4
 
-  private fingerprint(tool: string, args: unknown): string {
+  private fingerprint(tool: string, args: JsonValue): string {
     if (!args || typeof args !== 'object') return `${tool}:`
     const normalized = JSON.stringify(args, Object.keys(args as object).sort())
     return `${tool}:${normalized}`
   }
 
-  private extractFilePath(tool: string, args: unknown): string | undefined {
+  private extractFilePath(tool: string, args: JsonValue): string | undefined {
     if (!args || typeof args !== 'object') return undefined
-    const a = args as Record<string, unknown>
+    const a = args as Record<string, JsonValue>
     if (['read', 'edit', 'write'].includes(tool)) {
       return String(a.path ?? a.file ?? a.filename ?? '')
     }
@@ -47,7 +49,7 @@ export class DoomLoopDetector {
     return undefined
   }
 
-  private hashResult(result: unknown): string {
+  private hashResult(result: JsonValue): string {
     try {
       const str = JSON.stringify(result)
       // Simple hash: length + first 100 chars

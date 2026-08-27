@@ -23,12 +23,12 @@
  *   }
  */
 
-import type { PermissionRequest, PermissionAction } from "../types/index.js"
+import type { PermissionRequest, PermissionAction, JsonValue } from "../types/index.js"
 
 /** Narrow untyped tool args to a string-keyed record (JsonValue-tolerant). */
-function argStr(args: unknown, key: string): string | undefined {
+function argStr(args: JsonValue, key: string): string | undefined {
   if (!args || typeof args !== "object") return undefined
-  const v = (args as Record<string, unknown>)[key]
+  const v = (args as Record<string, JsonValue>)[key]
   return typeof v === "string" ? v : undefined
 }
 
@@ -98,7 +98,7 @@ function matchesPattern(pattern: string, value: string): boolean {
 
 function resolveForTool(
   tool: string,
-  args: unknown,
+  args: JsonValue,
   rule: PermRule | undefined
 ): PermissionDecision | null {
   if (rule === undefined) return null

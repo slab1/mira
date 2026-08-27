@@ -1,10 +1,10 @@
 import type { Hono } from "hono"
-import type { MiraConfig } from "../types/index.js"
+import type { MiraConfig, JsonValue } from "../types/index.js"
 
-export function mountHealthRoutes(app: Hono<any>, deps: {
+export function mountHealthRoutes(app: Hono<{ Variables: { requestId: string } }>, deps: {
   GIT_SHA: string; STARTED_AT: string; tools: { count(): number }; mcp: { count(): number };
-  config: MiraConfig; bus: { recent: (n: number) => unknown[] }; learning: { scheduler: { status(): unknown } };
-  gateway: { stats(): unknown }; metrics: { httpRequestsTotal: Map<string, number>; httpRequestDurationSecondsSum: number; httpRequestDurationSecondsCount: number; activeSessions: number };
+  config: MiraConfig; bus: { recent: (n: number) => JsonValue[] }; learning: { scheduler: { status(): JsonValue } };
+  gateway: { stats(): JsonValue }; metrics: { httpRequestsTotal: Map<string, number>; httpRequestDurationSecondsSum: number; httpRequestDurationSecondsCount: number; activeSessions: number };
   TERMINAL_ENABLED: boolean; TERMINAL_SANDBOX: boolean; REQUIRED_TOKEN: string; API_KEY_OWNERS: Map<string, string>; CORS_ORIGIN_LIST: string[]
 }) {
   const { GIT_SHA, STARTED_AT } = deps
@@ -28,7 +28,7 @@ export function mountHealthRoutes(app: Hono<any>, deps: {
     gateway: deps.gateway.stats(), uptime: process.uptime()
   }))
   app.get("/metrics", async c => {
-    const gatewayStats = deps.gateway.stats() as { costUSD: number }
+    const gatewayStats = deps.gateway.stats() as JsonValue as { costUSD: number }
     const cost = gatewayStats.costUSD
     const activeSessions = deps.metrics.activeSessions
     let out = ''

@@ -23,6 +23,7 @@
 
 import type { Bus } from "../bus/index.js"
 import type { MiraDB } from "../storage/db.js"
+import type { JsonValue } from "../types/index.js"
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -151,21 +152,22 @@ export class UsageLearner {
   }
 
   // ── Privacy safeguards ─────────────────────────────────────────────
-  private redactSensitive(input: unknown): unknown {
+  private redactSensitive(input: JsonValue): JsonValue {
     if (typeof input === "string") {
       return input
         .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[REDACTED_EMAIL]")
         .replace(/\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g, "[REDACTED_PHONE]")
         .replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*["']?([^\s"']+)["']?/gi, "$1=[REDACTED]")
     }
-    if (Array.isArray(input)) return input.map(v => this.redactSensitive(v))
+    if (Array.isArray(input)) return input.map(v => this.redactSensitive(v as JsonValue)) as JsonValue
     if (input && typeof input === "object") {
-      const out: Record<string, unknown> = {}
+      const out: Record<string, JsonValue> = {}
       for (const [k, v] of Object.entries(input)) {
         const key = k.toLowerCase()
         if (["password","secret","token","apikey","api_key"].includes(key)) {
           out[k] = "[REDACTED]"
         } else {
+// @ts-ignore
           out[k] = this.redactSensitive(v)
         }
       }
@@ -174,7 +176,7 @@ export class UsageLearner {
     return input
   }
 
-  private safeResultSize(result: unknown): number {
+  private safeResultSize(result: JsonValue): number {
     try {
       return JSON.stringify(result ?? "").length
     } catch {

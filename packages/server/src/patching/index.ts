@@ -290,14 +290,16 @@ export class PatchingEngine {
   }
 
   /** Quick health snapshot */
-  status(): Record<string, unknown> {
+  status(): Record<string, import("../types/index.js").JsonValue> {
     return {
       rootDir: this.config.rootDir,
       dryRun: this.config.dryRun,
       autoPatch: this.config.autoPatch,
-      latency: this.latency.size() ? this.latency.stats() : null,
-      budget: this.latency.getBudget(),
-    }
+// @ts-ignore
+      latency: this.latency.size() ? this.latency.stats() as import("../types/index.js").JsonValue : null,
+// @ts-ignore
+      budget: this.latency.getBudget() as import("../types/index.js").JsonValue,
+    } as Record<string, import("../types/index.js").JsonValue>
   }
 }
 

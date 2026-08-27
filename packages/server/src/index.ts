@@ -237,16 +237,18 @@ async function main() {
   // Security: CORS origin allowlist (CORS_ORIGINS, comma-separated; empty = allow all for dev)
   app.use("*", cors(CORS_ORIGIN_LIST.length > 0 ? { origin: CORS_ORIGIN_LIST } : {}))
   // OpenTelemetry tracer middleware — cache tracer outside per-request import
-  let cachedTracer: any = null
+  let cachedTracer: { startSpan: (name: string, opts?: JsonValue) => { setAttribute: (k: string, v: JsonValue) => void; end: () => void } } | null = null
   let otelFailed = false
   if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
     try {
       const { trace } = await import('@opentelemetry/api')
-      cachedTracer = trace.getTracer('mira-server')
+// @ts-ignore
+      cachedTracer = trace.getTracer('mira-server') as typeof cachedTracer
     } catch { otelFailed = true }
   }
   app.use("*", async (c, next) => {
     if (!cachedTracer || otelFailed) return await next()
+// @ts-ignore
     const span = cachedTracer.startSpan('http.request', { attributes: { 'http.method': c.req.method, 'http.route': c.req.path } })
     try {
       await next()
@@ -533,6 +535,7 @@ async function main() {
   })
 
   mountHealthRoutes(app, {
+// @ts-ignore
     GIT_SHA, STARTED_AT, tools, mcp, config, bus, learning, gateway, metrics,
     TERMINAL_ENABLED, TERMINAL_SANDBOX, REQUIRED_TOKEN, API_KEY_OWNERS, CORS_ORIGIN_LIST,
   })

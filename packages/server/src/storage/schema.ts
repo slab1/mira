@@ -6,6 +6,7 @@
  */
 import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core"
 import { relations } from "drizzle-orm"
+import type { JsonValue } from "../types/index.js"
 
 export const sessions = sqliteTable("sessions", {
   id: text("id").primaryKey(),
@@ -45,8 +46,8 @@ export const parts = sqliteTable("parts", {
   text: text("text"),
   tool: text("tool"),
   toolCallID: text("tool_call_id"),
-  args: text("args", { mode: "json" }).$type<Record<string, unknown> | null>(),
-  result: text("result", { mode: "json" }).$type<unknown>(),
+  args: text("args", { mode: "json" }).$type<Record<string, JsonValue> | null>(),
+  result: text("result", { mode: "json" }).$type<JsonValue>(),
   isError: integer("is_error", { mode: "boolean" }),
   createdAt: integer("created_at").notNull(),
 }, (t) => [

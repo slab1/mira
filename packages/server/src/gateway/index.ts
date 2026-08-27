@@ -222,7 +222,7 @@ export function createGateway(config: MiraConfig): Gateway {
 
       // If API key is set, try live call via fetch (OpenAI-compatible) with retry + fallbackModel
       if (apiKey) {
-        const fallbackModel = (config as unknown as Record<string, unknown>).fallbackModel as string | undefined
+        const fallbackModel = (config as MiraConfig & { fallbackModel?: string }).fallbackModel as string | undefined
         const candidates = [modelID, fallbackModel].filter(Boolean) as string[]
         for (const candModel of candidates.length ? candidates : [modelID]) {
           const candResolved = candidates.length > 1 && candModel !== modelID ? resolveModel(candModel) : { baseURL, apiKey, modelID: candModel }
@@ -460,7 +460,7 @@ async function liveOpenAIStream(ctx: { baseURL: string; apiKey: string; modelID:
           if (json.usage) {
             lastUsage = { inputTokens: json.usage.prompt_tokens ?? 0, outputTokens: json.usage.completion_tokens ?? 0 }
           }
-          const choice = json.choices?.[0] as unknown as { delta?: { content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> }; finish_reason?: string } | undefined
+          const choice = json.choices?.[0] as { delta?: { content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> }; finish_reason?: string } | undefined
           if (!choice) continue
           if (choice.delta?.content) yield { type: "text-delta", text: choice.delta.content }
           if (choice.delta?.tool_calls) {

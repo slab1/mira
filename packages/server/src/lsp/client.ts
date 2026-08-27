@@ -13,7 +13,7 @@ import type { JsonValue } from "../types/index.js"
 
 export interface LSPPosition { line: number; character: number }
 export interface LSPLocation { uri: string; range: { start: LSPPosition; end: LSPPosition } }
-export interface LSPDiagnostic { severity?: number; message: string; range: unknown; source?: string }
+export interface LSPDiagnostic { severity?: number; message: string; range: JsonValue; source?: string }
 
 interface PendingRequest {
   resolve: (v: JsonValue) => void
@@ -33,7 +33,7 @@ export class LSPClient {
   private openDocs = new Map<string, number>()
 
   public readonly serverName: string
-  public capabilities: Record<string, unknown> = {}
+  public capabilities: Record<string, JsonValue> = {}
 
   private constructor(serverName: string, proc: ReturnType<typeof Bun.spawn>) {
     this.serverName = serverName
@@ -62,7 +62,7 @@ export class LSPClient {
         },
       },
     }, 20_000)
-    client.capabilities = ((result as { capabilities?: Record<string, unknown> } | null)?.capabilities) ?? {}
+    client.capabilities = ((result as { capabilities?: Record<string, JsonValue> } | null)?.capabilities) ?? {}
     await client.notify("initialized", {})
     return client
   }
@@ -105,7 +105,7 @@ export class LSPClient {
     })
   }
 
-  async notify(method: string, params: unknown = {}): Promise<void> {
+  async notify(method: string, params: JsonValue = {}): Promise<void> {
     this.write({ jsonrpc: "2.0", method, params })
   }
 

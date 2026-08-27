@@ -31,6 +31,7 @@ interface SnapshotRow {
 
 /** Snapshot a file's current content before a mutation. No-op if path missing entirely. */
 import type { MiraDB } from "./db.js"
+import type { JsonValue } from "../types/index.js"
 
 export function snapshotFile(db: MiraDB, opts: { sessionID: string; messageID?: string; path: string }): Snapshot | null {
   const sqlite = db.sqlite
@@ -83,7 +84,7 @@ export function revertLast(db: MiraDB, sessionID: string): Snapshot | null {
 export function revertToMessage(db: MiraDB, sessionID: string, messageID: string): Snapshot[] {
   const sqlite = db.sqlite
   if (!sqlite) return []
-  const target = sqlite.prepare(`SELECT id FROM messages WHERE id = ? AND session_id = ?`).get(messageID, sessionID) as unknown as { id: string } | undefined
+  const target = sqlite.prepare(`SELECT id FROM messages WHERE id = ? AND session_id = ?`).get(messageID, sessionID) as JsonValue as { id: string } | undefined
   if (!target) throw new Error(`message ${messageID} not found in session ${sessionID}`)
 
   // Message IDs at/after the boundary (conversation order), then matching snapshots
