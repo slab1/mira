@@ -1,9 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Use MIRA_DIR from env (set by serve-local.sh: $HOME/.mira default)
+# Resolve DB — honor MIRA_DB, then MIRA_DIR/data/mira.db, then repo fallbacks
 MIRA_DIR="${MIRA_DIR:-$HOME/.mira}"
-DB_PATH="${MIRA_DIR}/data/mira.db"
+# Source mira.env if present so MIRA_DB/MIRA_TOKEN are available
+[ -f "${MIRA_DIR}/mira.env" ] && . "${MIRA_DIR}/mira.env" || true
+if [[ -n "${MIRA_DB:-}" && -f "${MIRA_DB}" ]]; then
+  DB_PATH="${MIRA_DB}"
+elif [[ -f "${MIRA_DIR}/data/mira.db" ]]; then
+  DB_PATH="${MIRA_DIR}/data/mira.db"
+elif [[ -f "./data/mira.db" ]]; then
+  DB_PATH="./data/mira.db"
+elif [[ -f "./packages/server/data/mira.db" ]]; then
+  DB_PATH="./packages/server/data/mira.db"
+elif [[ -f "$(dirname "$0")/../packages/server/data/mira.db" ]]; then
+  DB_PATH="$(dirname "$0")/../packages/server/data/mira.db"
+else
+  DB_PATH="${MIRA_DIR}/data/mira.db"
+fi
 BACKUP_DIR="${MIRA_DIR}/backups"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 BACKUP_FILE="${BACKUP_DIR}/mira.db.${TIMESTAMP}.sql.gz"
@@ -13,7 +27,7 @@ mkdir -p "${BACKUP_DIR}"
 
 # Check if DB exists
 if [[ ! -f "${DB_PATH}" ]]; then
-  echo "Error: Database not found at ${DB_PATH}" >&2
+  echo "Error: Database not found at ${DB_PATH} (checked MIRA_DB, MIRA_DIR/data, ./data, packages/server/data)" >&2
   exit 1
 fi
 

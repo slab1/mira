@@ -32,6 +32,10 @@ case "${1:-start}" in
       echo "[mira] already running (pid $(cat "$PID_FILE"))"; exit 0
     fi
     if [ -z "${MIRA_TOKEN:-}" ] && [ -z "${MIRA_API_KEYS:-}" ]; then
+      if [ "${NODE_ENV:-}" = "production" ] && [ "${MIRA_STRICT_AUTH:-1}" != "0" ]; then
+        echo "[mira] ❌ MIRA_TOKEN/MIRA_API_KEYS required in production — refusing to start open server" >&2
+        exit 1
+      fi
       echo "[mira] WARNING: no MIRA_TOKEN/MIRA_API_KEYS — server will be open. Set one in $MIRA_ENV"
     fi
     # setsid: own session — survives parent shell/process-group kills (tool runners, SSH drops)

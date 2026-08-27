@@ -4,11 +4,13 @@
 # and re-attaches the reserved zrok share (slab1-mira.shares.zrok.io) if it drops.
 # Launch detached:  setsid nohup scripts/watch-local.sh >/dev/null 2>&1 &
 # Updated: adds nightly SQLite backup (keep 7) + weekly GC (30d sessions / 14d snaps / cap 50).
-set -u
+set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG="${HOME}/.mira/watchdog.log"
 PORT="${PORT:-4096}"
 ZROK_NAME="${ZROK_NAME:-slab1-mira}"
+# Cleanup on exit
+trap 'echo "[watchdog] stopping $(date -Iseconds)" >>"$LOG"' EXIT TERM INT
 BACKUP_INTERVAL=1440  # run backup once per ~24h (60s * 1440 = 86400s)
 BACKUP_COUNT=0
 GC_INTERVAL=10080    # run GC once per ~7d (60s * 10080 = 604800s)
