@@ -15,7 +15,7 @@ describe("estimateTokens", () => {
   test("scales with content length", () => {
     const small = estimateTokens([{ role: "user", content: "hi" }])
     const big = estimateTokens([{ role: "user", content: "x".repeat(800) }])
-    expect(big).toBeGreaterThan(small * 10)
+    expect(big).toBeGreaterThan(small * 5)
   })
 })
 

@@ -76,7 +76,12 @@ export interface LoopOptions {
 // ── SessionPrompt ──────────────────────────────────────────────────
 
 export class SessionPrompt {
-  private doomDetector = new DoomLoopDetector()
+  private doomDetectors = new Map<string, DoomLoopDetector>()
+  private getDoomDetector(sessionID: string): DoomLoopDetector {
+    let d = this.doomDetectors.get(sessionID)
+    if (!d) { d = new DoomLoopDetector(); this.doomDetectors.set(sessionID, d) }
+    return d
+  }
   /** Queues persist in SQLite (message_queue) — survive restarts */
 
   constructor(private deps: SessionPromptDeps) {}
@@ -380,7 +385,7 @@ export class SessionPrompt {
     const MAX_STEPS = opts.maxSteps ?? limits.maxSteps
     let step = 0
     let accumulatedText = ""
-    this.doomDetector.reset()
+    this.getDoomDetector(sessionID).reset()
     const lf = initLangfuse()
     const trace = lf?.trace?.("session") ?? { update: (_data?: JsonValue) => {}, end: () => {} }
     // usage-learning counters for recordSession at finalize
@@ -483,8 +488,8 @@ export class SessionPrompt {
       // ── Execute each tool-call ──
       const toolResults: Array<{ toolCallID: string; name: string; result: JsonValue; isError: boolean }> = []
       for (const tc of toolCalls) {
-        // Doom-loop detection
-        const loopSignal = this.doomDetector.check({ name: tc.name, args: tc.args })
+        // Doom-loop detection — per-session
+        const loopSignal = this.getDoomDetector(sessionID).check({ name: tc.name, args: tc.args })
         if (loopSignal.detected) {
           const msg = `Doom-loop detected: ${loopSignal.reason ?? 'repeating tool call'} — tool "${tc.name}". Breaking loop and asking user.`
           send("doom_loop", { tool: tc.name, args: tc.args, step, reason: loopSignal.reason, pattern: loopSignal.pattern })
@@ -604,9 +609,10 @@ export class SessionPrompt {
     const next = this.dequeueFirst(sessionID)
     if (next) {
       this.deps.bus.publish({ type: "session.updated", sessionID, payload: { dequeued: true, remaining: this.getQueue(sessionID).length }, timestamp: Date.now() })
-      // Detached chained turn — clients follow via bus events + message reload
+      // Detached chained turn — surface errors via bus so clients see hung turn
       void this.streamResponse(sessionID, next).catch(err => {
         console.error(`[mira] queued turn failed (session ${sessionID}):`, err?.stack ?? err)
+        this.deps.bus.publish({ type: "error", sessionID, payload: { error: String(err), source: "queue_drain" }, timestamp: Date.now() } as any)
       })
     }
     span.end()

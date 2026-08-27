@@ -49,7 +49,15 @@ import { mountExtrasRoutes } from "./routes/extras.js"
 type PartialMiraConfig = Partial<MiraConfig>
 
 // ── Bootstrap ──────────────────────────────────────────────────────
-const PORT = Number(process.env.PORT ?? Bun.argv.find(a => a.startsWith("--port="))?.split("=")[1] ?? 4096)
+const PORT_RAW = process.env.PORT ?? Bun.argv.find(a => a.startsWith("--port="))?.split("=")[1] ?? "4096"
+const PORT = (() => {
+  const n = Number(PORT_RAW)
+  if (!Number.isFinite(n) || n <= 0 || n > 65535) {
+    console.error(`[mira] invalid PORT=${PORT_RAW}, falling back to 4096`)
+    return 4096
+  }
+  return Math.floor(n)
+})()
 const STARTED_AT = new Date().toISOString()
 const STARTED_AT_MS = Date.now()
 // Best-effort git SHA for /healthz (helps correlate deploys); falls back to env or "unknown"
@@ -118,8 +126,9 @@ function isOriginAllowed(origin: string | null | undefined): boolean {
   if (origin.startsWith("vscode-webview://") || origin.startsWith("vscode-file://") || origin.startsWith("vscode:")) return true // VS Code webview
   if (CORS_ORIGIN_LIST.length === 0) return true // dev: allow all
   if (CORS_ORIGIN_LIST.includes(origin)) return true
-  // Dev convenience: allow localhost:* even when allowlist is prod (slab1.github.io) so TUI (:3001) + web (:5173) + VS Code don't 403
-  if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) return true
+  // localhost bypass only in dev or when explicitly allowed — prevents prod CORS void
+  const allowLocal = process.env.MIRA_ALLOW_LOCALHOST !== "0" && (process.env.NODE_ENV !== "production" || CORS_ORIGIN_LIST.length === 0)
+  if (allowLocal && (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:"))) return true
   return false
 }
 
@@ -361,7 +370,7 @@ async function main() {
     if (RATE_LIMIT_SKIP.has(path)) return await next()
     const ip = TRUST_PROXY
       ? (c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("cf-connecting-ip") ?? c.req.header("x-real-ip") ?? "unknown")
-      : "unknown"
+      : (bearerOf(c.req.header("Authorization")).slice(0, 12) || c.req.header("x-real-ip") || "unknown")
     const now = Date.now()
     let bucket = rateLimitBuckets.get(ip)
     if (!bucket) {

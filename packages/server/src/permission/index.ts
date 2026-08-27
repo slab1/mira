@@ -86,10 +86,11 @@ export function bashArityDecision(command: string): PermissionDecision {
 // ── Pattern matching (glob-like, Mira-compatible) ──────────────
 
 function matchesPattern(pattern: string, value: string): boolean {
-  // Support: "*", "*.ts", "src/*", "mcp_*", exact
+  // Support: "*", "*.ts", "src/*", "mcp_*", exact — escape regex metas except *
   if (pattern === "*") return true
   if (pattern.includes("*")) {
-    const re = new RegExp("^" + pattern.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$")
+    const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    const re = new RegExp("^" + escaped.replace(/\*/g, ".*") + "$")
     return re.test(value)
   }
   return pattern === value

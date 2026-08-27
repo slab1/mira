@@ -1,7 +1,7 @@
 /** E2E: queue-while-streaming — messages queue during a turn, drain as chained turns */
 import { describe, test, beforeAll, afterAll, expect } from "bun:test"
 
-const PORT = 4789
+const PORT = 4790
 const BASE = `http://localhost:${PORT}`
 let serverProc: ReturnType<typeof Bun.spawn> | null = null
 

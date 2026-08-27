@@ -138,20 +138,31 @@ export function sanitizeCommand(cmd: string): { ok: boolean; reason?: string; sa
   return { ok: true, sanitized: cmd }
 }
 
-/** Simple audit log writer (append-only) */
+/** Audit log writer with rotation (5MB cap) */
 export class AuditLogger {
   private path: string
+  private maxBytes = 5 * 1024 * 1024
   constructor(path: string) {
     this.path = path
   }
   async log(entry: AuditEntry) {
     try {
-      const { appendFile, mkdir } = await import("node:fs/promises")
+      const { appendFile, mkdir, stat, rename, unlink } = await import("node:fs/promises")
       const dir = this.path.split("/").slice(0, -1).join("/")
       if (dir) await mkdir(dir, { recursive: true }).catch(() => {})
+      try {
+        const st = await stat(this.path)
+        if (st.size > this.maxBytes) {
+          const rotated = `${this.path}.1`
+          await unlink(rotated).catch(() => {})
+          await rename(this.path, rotated).catch(() => {})
+        }
+      } catch {}
       const line = JSON.stringify({ ...entry, ts: Date.now() }) + "\n"
       await appendFile(this.path, line, "utf-8")
-    } catch {}
+    } catch (e) {
+      console.warn("[audit] log failed", String(e))
+    }
   }
 }
 
@@ -180,9 +191,9 @@ export class GuardrailsManager {
     const decision: AuditEntry = { sessionID: ctx.sessionID, tool, args, decision: "allow" }
 
     try {
-      // File tools path checks
-      if (["read", "write", "edit", "glob", "grep"].includes(tool)) {
-        const path = argStr(args, "path")
+      // File tools path checks — now includes patch
+      if (["read", "write", "edit", "glob", "grep", "patch"].includes(tool)) {
+        const path = argStr(args, "path") || argStr(args, "file")
         if (typeof path === "string") {
           const s = sanitizePath(path)
           if (!s.ok) {
@@ -193,9 +204,11 @@ export class GuardrailsManager {
             return decision
           }
           if (!isPathAllowed(path, this.config.allowedRoots)) {
-            decision.decision = "warn"
+            decision.decision = this.config.enforce ? "deny" : "warn"
             decision.reason = "path outside allowed roots"
             await this.logger.log(decision)
+            if (this.config.enforce) throw new Error(`Guardrail blocked ${tool}: path outside allowed roots`)
+            return decision
           }
         }
       }
@@ -221,19 +234,34 @@ export class GuardrailsManager {
           }
           // Allowed commands allowlist
           if (this.config.allowedCommands.length > 0 && !this.config.allowedCommands.some(p => cmd.startsWith(p))) {
-            decision.decision = "warn"
+            decision.decision = this.config.enforce ? "deny" : "warn"
             decision.reason = "command not in allowed list"
             await this.logger.log(decision)
+            if (this.config.enforce) throw new Error(`Guardrail blocked bash: not in allowedCommands`)
+            return decision
           }
         }
         // workdir sandbox
         const workdir = argStr(args, "workdir")
         if (typeof workdir === "string") {
           if (!isPathAllowed(workdir, this.config.allowedRoots)) {
-            decision.decision = "warn"
+            decision.decision = this.config.enforce ? "deny" : "warn"
             decision.reason = "bash workdir outside allowed roots"
             await this.logger.log(decision)
+            if (this.config.enforce) throw new Error(`Guardrail blocked bash workdir`)
+            return decision
           }
+        }
+      }
+      // Task/patch tools also spawn bash — check their payloads
+      if (tool === "task" || tool === "patch") {
+        const payload = argStr(args, "prompt") || argStr(args, "patch") || ""
+        if (payload && /rm\s+-rf\s+\/|:\(\)\{\s*:\|\:/i.test(payload)) {
+          decision.decision = this.config.enforce ? "deny" : "warn"
+          decision.reason = "task/patch contains dangerous pattern"
+          await this.logger.log(decision)
+          if (this.config.enforce) throw new Error(`Guardrail blocked ${tool}: dangerous pattern`)
+          return decision
         }
       }
 

@@ -5,7 +5,7 @@
  */
 import type { MiraConfig, JsonValue } from "../types/index.js"
 import { z } from "zod"
-import { DEFAULT_CONFIG as SHARED_DEFAULT } from "../../../shared/src/schemas/config.js"
+import { DEFAULT_CONFIG as SHARED_DEFAULT, applyLayers as sharedApplyLayers } from "../../../shared/src/schemas/config.js"
 
 type PartialMiraConfig = Partial<MiraConfig>
 
