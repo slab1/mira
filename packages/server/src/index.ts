@@ -45,6 +45,7 @@ import { mountSessionRoutes } from "./routes/session.js"
 import { mountConfigRoutes } from "./routes/config.js"
 import { mountMcpRoutes } from "./routes/mcp.js"
 import { mountExtrasRoutes } from "./routes/extras.js"
+import { mountAdminRoutes } from "./routes/admin.js"
 
 type PartialMiraConfig = Partial<MiraConfig>
 
@@ -90,7 +91,7 @@ if (process.env.NODE_ENV === "production" && !REQUIRED_TOKEN && API_KEY_OWNERS.s
   console.error("[mira] ❌ MIRA_TOKEN or MIRA_API_KEYS required in production — refusing to start without auth")
   process.exit(1)
 }
-const OWNERSHIP_ENABLED = API_KEY_OWNERS.size > 0
+let OWNERSHIP_ENABLED = API_KEY_OWNERS.size > 0
 /** Resolve a bearer credential to its owner id (undefined = invalid). */
 function resolveOwner(token: string): string | undefined {
   if (!token) return undefined
@@ -179,6 +180,17 @@ async function main() {
   const db = createDatabase(process.env.MIRA_DB ?? "./data/mira.db")
   await migrate(db)
   console.log(`[mira] storage ready`)
+
+  // Load runtime-issued API keys (persisted in db) into the owner map so they
+  // survive restarts. Env keys were loaded above; these augment that map.
+  try {
+    const rows = db.sqlite.prepare("SELECT key, owner FROM api_keys").all() as { key: string; owner: string }[]
+    for (const r of rows) API_KEY_OWNERS.set(r.key, r.owner)
+    if (rows.length) console.log(`[mira] loaded ${rows.length} issued API key(s) from db`)
+    OWNERSHIP_ENABLED = API_KEY_OWNERS.size > 0
+  } catch (e) {
+    console.warn("[mira] failed to load issued API keys:", String(e))
+  }
 
   // 3. Event Bus (GlobalBus)
   const bus = new Bus()
@@ -501,7 +513,8 @@ async function main() {
       path.startsWith("/jobs") ||
       path.startsWith("/terminal") ||
       path.startsWith("/learning") ||
-      path.startsWith("/permission")
+      path.startsWith("/permission") ||
+      path.startsWith("/admin")
     ) {
       return await next()
     }
@@ -591,6 +604,9 @@ async function main() {
   mountSessionRoutes(app, {
     db, bus, prompt, authorizedSession, ownerOfSession, resolveOwner, bearerOf, OWNERSHIP_ENABLED, sessionOwnerCache,
   })
+
+  // ── Admin: runtime API-key issuance (admin-guarded, persisted) ─────
+  mountAdminRoutes(app, { db, REQUIRED_TOKEN, API_KEY_OWNERS, resolveOwner, bearerOf })
 
   // Findings — structured cross-agent team memory (shared by design across owners)
   app.get("/finding", async c => {
