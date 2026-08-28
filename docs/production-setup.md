@@ -34,6 +34,31 @@ MIRA_API_KEYS=key1:alice,key2:bob
 ```
 Each key maps to an ownerID. Sessions are scoped to the owner.
 
+### Issuing per-user API keys at runtime
+
+Instead of editing `MIRA_API_KEYS` and restarting, an admin can mint scoped keys
+on the fly via the built-in admin endpoint. It requires the **master** `MIRA_TOKEN`
+(owner `default`); in open/dev mode (no `MIRA_TOKEN`) it is reachable without auth.
+
+```bash
+# Mint a key for a user (returns the raw key once)
+curl -X POST https://<your-domain>/admin/api-keys \
+  -H "Authorization: Bearer $MIRA_TOKEN" \
+  -d '{"owner":"alice"}'
+# → {"key":"<96-hex>","owner":"alice"}
+
+# List issued keys (raw keys masked in the response)
+curl https://<your-domain>/admin/api-keys -H "Authorization: Bearer $MIRA_TOKEN"
+
+# Revoke a key
+curl -X DELETE https://<your-domain>/admin/api-keys/<key> \
+  -H "Authorization: Bearer $MIRA_TOKEN"
+```
+
+Issued keys are persisted in the `api_keys` table and reloaded on restart, so they
+survive reboots. Hand the `key` to the user — they paste it into the web UI
+(Settings → token), which stores it in `localStorage.mira_token`.
+
 ## 2. Web UI
 
 **Build**
