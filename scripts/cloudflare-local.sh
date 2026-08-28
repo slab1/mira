@@ -30,9 +30,16 @@ case "$ACTION" in
   status)
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
       echo "[cloudflare:${PORT}] running (pid $(cat "$PID_FILE"))"
-      grep -a -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$LOG_FILE" 2>/dev/null | tail -1 || echo "  no URL yet"
+      URL=$(grep -a -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$LOG_FILE" 2>/dev/null | tail -1 || true)
+      if [ -n "$URL" ]; then echo "  URL: $URL"; else echo "  no URL yet"; fi
+      echo "  recent log:"
+      tail -n 5 "$LOG_FILE" 2>/dev/null | sed 's/^/    /'
     else
       echo "[cloudflare:${PORT}] stopped"
+      if [ -f "$LOG_FILE" ]; then
+        echo "  last log lines:"
+        tail -n 3 "$LOG_FILE" 2>/dev/null | sed 's/^/    /'
+      fi
     fi
     exit 0
     ;;
