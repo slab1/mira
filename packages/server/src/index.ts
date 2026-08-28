@@ -260,11 +260,15 @@ async function main() {
   // Security: optional bearer-token gate (set MIRA_TOKEN to enable).
   // Authorization header ONLY — query-param tokens (?token=) are no longer accepted
   // (they leak into access logs, Referer headers, and browser history).
-  // Public paths bypass the gate so liveness probes and metrics scrapes work unauthenticated.
+  // Public paths bypass the gate so liveness probes, metrics scrapes, and the
+  // static web client (SPA shell + hashed assets) load without a token. The API
+  // itself stays gated — only the HTML/JS/CSS that *render* the login card are open.
   const PUBLIC_PATHS = new Set(["/healthz", "/metrics"])
+  const isPublicUiPath = (p: string) =>
+    p === "/" || p.startsWith("/assets/") || p === "/favicon.ico" || p === "/robots.txt" || p === "/vite.svg"
   if (REQUIRED_TOKEN || API_KEY_OWNERS.size > 0) {
     app.use("*", async (c, next) => {
-      if (PUBLIC_PATHS.has(c.req.path)) return await next()
+      if (PUBLIC_PATHS.has(c.req.path) || isPublicUiPath(c.req.path)) return await next()
       if (!resolveOwner(bearerOf(c.req.header("Authorization")))) return c.json({ error: "unauthorized" }, 401)
       await next()
     })
@@ -773,7 +777,7 @@ async function main() {
   //     {"type":"auth","token":"..."} as the FIRST message within 10s of open.
   //   • Unauthenticated sockets are closed with 1008 (policy violation).
   //   • Query-param tokens (?token=) are NOT accepted anywhere.
-  const WS_AUTH_TIMEOUT_MS = 10_000
+  const WS_AUTH_TIMEOUT_MS = 20_000
 
   // WebSocket sockets carry server-side state beyond Bun's wire data —
   // this structural type describes the extended shape (no `any`).
