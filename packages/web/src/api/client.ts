@@ -203,7 +203,12 @@ function baseUrl(): string {
 const TOKEN_KEY = "mira_token"
 
 export function getToken(): string {
-  try { return localStorage.getItem(TOKEN_KEY) ?? "" } catch { return "" }
+  try {
+    const stored = localStorage.getItem(TOKEN_KEY)
+    if (stored) return stored
+    // dev fallback from Vite env
+    return (import.meta.env.VITE_MIRA_TOKEN as string) ?? ""
+  } catch { return "" }
 }
 
 export function setToken(token: string): void {
