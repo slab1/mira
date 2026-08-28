@@ -9,6 +9,10 @@ export default defineConfig({
   server: {
     port: 3000,
     host: true,
+    strictPort: true,
+    hmr: { host: 'localhost' },
+    cors: true,
+    allowedHosts: true,
     proxy: {
       // Proxy API + WebSocket to Mira server (IPv4 — server binds 127.0.0.1)
       "/session": "http://127.0.0.1:4096",
