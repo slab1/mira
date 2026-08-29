@@ -10,9 +10,10 @@ export function mountAdminRoutes(
     API_KEY_OWNERS: Map<string, string>
     resolveOwner: (t: string) => string | undefined
     bearerOf: (h: string | undefined) => string
+    sessionOwnerCache: Map<string, { owner: string | null; ts: number }>
   },
 ) {
-  const { db, REQUIRED_TOKEN, API_KEY_OWNERS, resolveOwner, bearerOf } = deps
+  const { db, REQUIRED_TOKEN, API_KEY_OWNERS, resolveOwner, bearerOf, sessionOwnerCache } = deps
 
   // Admin = the master MIRA_TOKEN (owner "default"). In open/dev mode (no
   // REQUIRED_TOKEN) the endpoints are reachable without auth, matching the
@@ -23,13 +24,17 @@ export function mountAdminRoutes(
   }
   const deny = (c: { json: (b: unknown, s: number) => Response }) => c.json({ error: "unauthorized" }, 401)
 
-  const ensureTable = () =>
+  let tableEnsured = false
+  const ensureTable = () => {
+    if (tableEnsured) return
     db.sqlite.exec(`CREATE TABLE IF NOT EXISTS api_keys (
       key TEXT PRIMARY KEY,
       owner TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       created_by TEXT NOT NULL DEFAULT 'default'
     );`)
+    tableEnsured = true
+  }
 
   // Mint a scoped API key for a user (admin only). Returns the raw key once.
   app.post("/admin/api-keys", async c => {
@@ -69,6 +74,7 @@ export function mountAdminRoutes(
     ensureTable()
     db.sqlite.prepare("DELETE FROM api_keys WHERE key = ?").run(key)
     API_KEY_OWNERS.delete(key)
+    sessionOwnerCache.clear()
     return c.json({ ok: true, key })
   })
 }

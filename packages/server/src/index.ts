@@ -387,8 +387,8 @@ async function main() {
     const path = new URL(c.req.url).pathname
     if (RATE_LIMIT_SKIP.has(path)) return await next()
     const ip = TRUST_PROXY
-      ? (c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("cf-connecting-ip") ?? c.req.header("x-real-ip") ?? "unknown")
-      : (bearerOf(c.req.header("Authorization")).slice(0, 12) || c.req.header("x-real-ip") || "unknown")
+      ? (c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("x-real-ip") ?? "unknown")
+      : (c.req.header("x-real-ip") ?? "unknown")
     const now = Date.now()
     let bucket = rateLimitBuckets.get(ip)
     if (!bucket) {
@@ -580,17 +580,18 @@ async function main() {
   }
 
   // ── Per-owner live event filtering (moved up for route mounts) ────────
-  const sessionOwnerCache = new Map<string, string | null>()
+  const CACHE_TTL_MS = 5 * 60_000 // 5 minutes — bounded staleness for owner lookups
+  const sessionOwnerCache = new Map<string, { owner: string | null; ts: number }>()
   const pendingOwnerLookups = new Map<string, Promise<string | null>>()
   function ownerOfSession(sessionID: string): Promise<string | null> {
     const cached = sessionOwnerCache.get(sessionID)
-    if (cached !== undefined) return Promise.resolve(cached)
+    if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return Promise.resolve(cached.owner)
     let p = pendingOwnerLookups.get(sessionID) as Promise<string | null> | undefined
     if (!p) {
       const lookup: Promise<string | null> = db.query.sessions.findFirst({ where: (s, { eq }) => eq(s.id, sessionID) })
         .then(s => {
           const o = (s?.ownerID ?? null) as string | null
-          sessionOwnerCache.set(sessionID, o)
+          sessionOwnerCache.set(sessionID, { owner: o, ts: Date.now() })
           pendingOwnerLookups.delete(sessionID)
           return o
         })
@@ -606,7 +607,7 @@ async function main() {
   })
 
   // ── Admin: runtime API-key issuance (admin-guarded, persisted) ─────
-  mountAdminRoutes(app, { db, REQUIRED_TOKEN, API_KEY_OWNERS, resolveOwner, bearerOf })
+  mountAdminRoutes(app, { db, REQUIRED_TOKEN, API_KEY_OWNERS, resolveOwner, bearerOf, sessionOwnerCache })
 
   // Findings — structured cross-agent team memory (shared by design across owners)
   app.get("/finding", async c => {

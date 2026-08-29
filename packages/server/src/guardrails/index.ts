@@ -279,7 +279,13 @@ export class GuardrailsManager {
         }
       }
     } catch (e) {
-      // never block audit
+      // Fail-closed: any guardrail error (sanitizer throw, regex compile error)
+      // defaults to deny — never silently allow on failure.
+      const reason = e instanceof Error ? e.message : String(e)
+      decision.decision = "deny"
+      decision.reason = `guardrail error: ${reason}`
+      await this.logger.log(decision)
+      return decision
     }
 
     await this.logger.log(decision)

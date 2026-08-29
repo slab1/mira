@@ -160,6 +160,11 @@ export class SessionPrompt {
     await this.deps.db.delete(this.deps.db.schema.messages).where(eq(this.deps.db.schema.messages.sessionID, id))
     await this.deps.db.delete(this.deps.db.schema.parts).where(eq(this.deps.db.schema.parts.sessionID, id))
     await this.deps.db.delete(this.deps.db.schema.todos).where(eq(this.deps.db.schema.todos.sessionID, id))
+    await this.deps.db.delete(this.deps.db.schema.fileSnapshots).where(eq(this.deps.db.schema.fileSnapshots.sessionID, id))
+    await this.deps.db.delete(this.deps.db.schema.jobs).where(eq(this.deps.db.schema.jobs.parentSessionID, id))
+    await this.deps.db.delete(this.deps.db.schema.findings).where(eq(this.deps.db.schema.findings.sessionID, id))
+    await this.deps.db.delete(this.deps.db.schema.knowledgeEntries).where(eq(this.deps.db.schema.knowledgeEntries.sessionID, id))
+    this.deps.db.sqlite.prepare("DELETE FROM message_queue WHERE session_id = ?").run(id)
     await this.deps.db.delete(this.deps.db.schema.sessions).where(eq(this.deps.db.schema.sessions.id, id))
   }
 

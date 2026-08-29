@@ -14,7 +14,6 @@ import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
 import * as schema from "./schema.js"
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite"
-import type { JsonValue } from "../types/index.js"
 
 /** Drizzle instance (schema-aware → typed db.query.*) + raw client + schema refs */
 export type MiraDB = BunSQLiteDatabase<typeof schema> & {
@@ -42,8 +41,7 @@ export function createDatabase(path = "./data/mira.db") {
   // Augment the drizzle instance with the raw client + schema (consumers use
   // both: query builder for ORM reads, raw sqlite for ad-hoc SQL like backups).
   const db = drizzle({ client: sqlite, schema })
-// @ts-ignore
-  const mira = db as JsonValue as MiraDB
+  const mira = db as unknown as MiraDB
   mira.sqlite = sqlite
   mira.schema = schema
   return mira

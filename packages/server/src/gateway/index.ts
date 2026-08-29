@@ -539,5 +539,5 @@ async function* stubStream(modelID: string, opts: StreamOptions): AsyncIterable<
   for (const word of response.split(/(\s+)/)) {
     if (word) yield { type: "text-delta", text: word }
   }
-  yield { type: "finish", finishReason: "stop" as const, usage: { inputTokens: 100, outputTokens: 50 } }
+    yield { type: "finish", finishReason: "stop" as const }
 }
