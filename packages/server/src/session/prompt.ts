@@ -621,7 +621,7 @@ export class SessionPrompt {
       // Detached chained turn — surface errors via bus so clients see hung turn
       void this.streamResponse(sessionID, next).catch(err => {
         console.error(`[mira] queued turn failed (session ${sessionID}):`, err?.stack ?? err)
-        this.deps.bus.publish({ type: "error", sessionID, payload: { error: String(err), source: "queue_drain" }, timestamp: Date.now() } as JsonValue as never)
+        this.deps.bus.publish({ type: "server.error", sessionID, payload: { error: String(err), source: "queue_drain" } as JsonValue, timestamp: Date.now() })
       })
     }
     span.end()

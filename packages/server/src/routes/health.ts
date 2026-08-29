@@ -29,7 +29,7 @@ export function mountHealthRoutes(app: Hono<{ Variables: { requestId: string } }
     gateway: deps.gateway.stats(), uptime: process.uptime()
   }))
   app.get("/metrics", async c => {
-    const gatewayStats = deps.gateway.stats() as JsonValue as { costUSD: number }
+    const gatewayStats = deps.gateway.stats() as { costUSD: number }
     const cost = gatewayStats.costUSD
     const activeSessions = deps.metrics.activeSessions
     let out = ''
