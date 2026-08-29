@@ -19,9 +19,7 @@ export interface CompactionOptions {
   contextLimit?: number // tokens
 }
 
-/** Minimal message shape accepted by compaction (superset of GatewayMessage) */
-/** Minimal message shape accepted by compaction (superset of GatewayMessage) */
-/** Minimal message shape accepted by compaction (superset of GatewayMessage) */
+/** Minimal message shape accepted by compaction (superset of GatewayMessage) — mirrors LoopMessage */
 export interface CompactionMessage {
   role: string
   content: string
@@ -63,7 +61,12 @@ export function estimateTokens(messages: CompactionMessage[]): number {
   const enc = getEnc()
   return messages.reduce((total, m) => {
     const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '')
-    const tokens = enc ? enc.encode(content).length : Math.ceil(content.length / 4)
+    let extra = ""
+    if (m.toolCalls?.length) extra += JSON.stringify(m.toolCalls)
+    if (m.toolResults?.length) extra += JSON.stringify(m.toolResults)
+    if (m.toolCallID) extra += m.toolCallID
+    const full = content + extra
+    const tokens = enc ? enc.encode(full).length : Math.ceil(full.length / 4)
     return total + tokens + 10
   }, 0)
 }

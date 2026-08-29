@@ -55,4 +55,30 @@ describe("compactMessages", () => {
     expect(result.summary).toBe("")
     expect(result.messages).toEqual(messages)
   })
+
+  test("preserves toolResults in tail after compaction", async () => {
+    const messages = [
+      { role: "system", content: "sys" },
+      ...Array.from({ length: 8 }, (_, i) => ({ role: "user" as const, content: `msg ${i}` })),
+      { role: "assistant", content: "tool call", toolCalls: [{ id: "c1", name: "read", args: { path: "a.txt" } }] },
+      { role: "tool", content: JSON.stringify({ ok: true }), toolResults: [{ toolCallID: "c1", name: "read", result: "file content", isError: false }], toolCallID: "c1" },
+    ]
+    const result = await compactMessages(fakeGateway, messages, { keepTailRatio: 0.25 })
+    // Tail (25% of 10 conv = 3) should include the tool messages
+    const hasToolCall = result.messages.some(m => m.toolCalls?.some(tc => tc.id === "c1"))
+    const hasToolResult = result.messages.some(m => m.toolResults?.some(tr => tr.toolCallID === "c1"))
+    expect(hasToolCall).toBe(true)
+    expect(hasToolResult).toBe(true)
+  })
+
+  test("threshold logic: 80% triggers, 79% does not", async () => {
+    // 100 tokens limit, 80 threshold → 81 tokens should trigger
+    const mk = (n: number) => Array.from({ length: n }, () => ({ role: "user" as const, content: "x".repeat(40) })) // ~10 tokens each +10 overhead = ~20
+    const justUnder = mk(3) // ~60 tokens, ratio 0.6
+    const justOver = mk(10) // ~200 tokens, ratio 2.0
+    expect((await needsCompaction(justUnder, 100, 0.8)).needed).toBe(false)
+    expect((await needsCompaction(justOver, 100, 0.8)).needed).toBe(true)
+    // Custom threshold 0.5 should trigger earlier
+    expect((await needsCompaction(justUnder, 100, 0.5)).needed).toBe(true)
+  })
 })
