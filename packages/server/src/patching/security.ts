@@ -23,7 +23,7 @@ export type SecurityKind =
   | "ssrf"
   | "xss"
 
-export interface SecurityIssue {
+export interface SecurityIssue extends Record<string, JsonValue> {
   id: string
   kind: SecurityKind
   severity: SecuritySeverity
@@ -42,7 +42,7 @@ function argStr(args: JsonValue, key: string): string | undefined {
   return typeof v === "string" ? v : undefined
 }
 
-export interface SecurityScanResult {
+export interface SecurityScanResult extends Record<string, JsonValue> {
   issues: SecurityIssue[]
   passed: boolean
   scannedAt: number

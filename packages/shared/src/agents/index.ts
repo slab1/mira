@@ -89,8 +89,9 @@ export function selectAgentsMd(
 }
 
 // ── Filesystem loader (Bun/Node agnostic) ──────────────────────────
+type GlobalWithProcess = typeof globalThis & { process?: { cwd(): string } }
 function getDefaultCwd(): string {
-  try { return (globalThis as unknown as { process?: { cwd(): string } }).process?.cwd?.() ?? "." } catch { return "." }
+  try { return (globalThis as GlobalWithProcess).process?.cwd?.() ?? "." } catch { return "." }
 }
 
 export async function loadAgentsContext(
@@ -100,18 +101,18 @@ export async function loadAgentsContext(
   const agentsMd: AgentsContext["agentsMd"] = []
 
   // Use Bun.file if available, fallback to node:fs
+  type GlobalWithBun = typeof globalThis & { Bun?: { file: (p: string) => { exists(): Promise<boolean>; text(): Promise<string> } } }
   const tryRead = async (path: string): Promise<string | null> => {
     try {
       // Prefer Bun.file (works in Bun, no-op in Node with polyfill)
-      const hasBun = typeof (globalThis as unknown as { Bun?: { file: (p: string) => { exists(): Promise<boolean>; text(): Promise<string> } } }).Bun !== "undefined"
+      const hasBun = typeof (globalThis as GlobalWithBun).Bun !== "undefined"
       if (hasBun) {
-        const BunAny = (globalThis as unknown as { Bun: { file: (p: string) => { exists(): Promise<boolean>; text(): Promise<string> } } }).Bun
+        const BunAny = (globalThis as GlobalWithBun).Bun!
         const f = BunAny.file(path)
         if (await f.exists()) return await f.text()
       }
     } catch {}
     try {
-      // @ts-ignore — node:fs/promises is Node/Bun only, not needed for type-check in browser
       const { readFile } = await import("node:fs/promises")
       return await readFile(path, "utf8")
     } catch { return null }
@@ -138,7 +139,6 @@ async function loadSkills(
     const base = `${cwd}/${dir}`
     // List skill dirs — best-effort via fs.readdir
     try {
-      // @ts-ignore — node:fs/promises is Node/Bun only
       const { readdir } = await import("node:fs/promises")
       const entries = await readdir(base, { withFileTypes: true })
       for (const ent of entries) {

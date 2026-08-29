@@ -8,9 +8,10 @@
  * Mira-parity safety net: no agent edit is unrecoverable.
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs"
+import type { JsonValue } from "../types/index.js"
 import { dirname } from "node:path"
 
-export interface Snapshot {
+export interface Snapshot extends Record<string, JsonValue> {
   id: string
   sessionID: string
   messageID: string | null
@@ -31,7 +32,6 @@ interface SnapshotRow {
 
 /** Snapshot a file's current content before a mutation. No-op if path missing entirely. */
 import type { MiraDB } from "./db.js"
-import type { JsonValue } from "../types/index.js"
 
 export function snapshotFile(db: MiraDB, opts: { sessionID: string; messageID?: string; path: string }): Snapshot | null {
   const sqlite = db.sqlite

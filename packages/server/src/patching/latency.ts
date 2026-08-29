@@ -10,6 +10,8 @@
  *  - p99 < 15000
  */
 
+import type { JsonValue } from "../types/index.js"
+
 // ── Types ──────────────────────────────────────────────────────────
 
 export interface LatencySample {
@@ -19,7 +21,7 @@ export interface LatencySample {
   timestamp: number
 }
 
-export interface LatencyStats {
+export interface LatencyStats extends Record<string, JsonValue | undefined> {
   count: number
   p50: number
   p95: number
@@ -30,7 +32,7 @@ export interface LatencyStats {
   windowMs: number
 }
 
-export interface LatencyBudget {
+export interface LatencyBudget extends Record<string, JsonValue | undefined> {
   p50: number
   p95: number
   p99: number

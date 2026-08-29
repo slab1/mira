@@ -41,9 +41,7 @@ export function createDatabase(path = "./data/mira.db") {
   // Augment the drizzle instance with the raw client + schema (consumers use
   // both: query builder for ORM reads, raw sqlite for ad-hoc SQL like backups).
   const db = drizzle({ client: sqlite, schema })
-  const mira = db as unknown as MiraDB
-  mira.sqlite = sqlite
-  mira.schema = schema
+  const mira: MiraDB = Object.assign(db, { sqlite, schema })
   return mira
 }
 

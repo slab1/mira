@@ -47,7 +47,7 @@ export interface Part {
 export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled"
 export type TodoPriority = "high" | "medium" | "low"
 
-export interface Todo {
+export interface Todo extends Record<string, JsonValue> {
   id: string
   sessionID: SessionID
   content: string

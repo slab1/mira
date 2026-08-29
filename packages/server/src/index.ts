@@ -553,7 +553,7 @@ async function main() {
   mountHealthRoutes(app, {
     GIT_SHA, STARTED_AT, tools, mcp, config, bus, learning, gateway, metrics,
     TERMINAL_ENABLED, TERMINAL_SANDBOX, REQUIRED_TOKEN, API_KEY_OWNERS, CORS_ORIGIN_LIST,
-  } as unknown as Parameters<typeof mountHealthRoutes>[1])
+  })
   // Skills
   app.get("/skills", async c => {
     const { loadSkills } = await import("./skills/loader.js")

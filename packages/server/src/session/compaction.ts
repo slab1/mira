@@ -25,7 +25,9 @@ export interface CompactionOptions {
 export interface CompactionMessage {
   role: string
   content: string
-  toolCalls?: Array<{ id?: string; name?: string }>
+  toolCalls?: Array<{ id: string; name: string; args: Record<string, JsonValue> }>
+  toolResults?: Array<{ toolCallID: string; name: string; result: JsonValue; isError: boolean }>
+  toolCallID?: string
   __meta?: { compacted?: true; originalCount?: number }
 }
 

@@ -32,7 +32,7 @@ const createSessionSchema = z.object({
 
 export function mountSessionRoutes(app: Hono<{ Variables: { requestId: string } }>, deps: {
   db: MiraDB; bus: Bus; prompt: SessionPrompt;
-  authorizedSession: (id: string, c: Context) => Promise<JsonValue | null>;
+  authorizedSession: (id: string, c: Context) => Promise<SessionRow | null>;
   ownerOfSession: (id: string) => Promise<string | null>;
   resolveOwner: (t: string) => string | undefined;
   bearerOf: (h?: string) => string;
@@ -52,15 +52,30 @@ export function mountSessionRoutes(app: Hono<{ Variables: { requestId: string } 
       return c.json({ error: "invalid session", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
     }
     const body = parsed.data
-    const session = await prompt.createSession({ ...body, ownerID: deps.OWNERSHIP_ENABLED ? deps.resolveOwner(deps.bearerOf(c.req.header("Authorization"))) ?? "default" : null }) as unknown as SessionRow
+    const rawSession = await prompt.createSession({ ...body, ownerID: deps.OWNERSHIP_ENABLED ? deps.resolveOwner(deps.bearerOf(c.req.header("Authorization"))) ?? "default" : null })
+    // Proper type bridge: prompt.createSession returns Session-like object, narrow to SessionRow via runtime check
+    const session: SessionRow = {
+      id: rawSession.id,
+      title: rawSession.title,
+      model: rawSession.model,
+      provider: rawSession.provider,
+      createdAt: rawSession.createdAt,
+      updatedAt: rawSession.updatedAt,
+      parentID: rawSession.parentID ?? null,
+      agent: rawSession.agent ?? null,
+      ownerID: rawSession.ownerID ?? null,
+      tokensIn: (rawSession as Partial<SessionRow>).tokensIn ?? null,
+      tokensOut: (rawSession as Partial<SessionRow>).tokensOut ?? null,
+      costUsd: (rawSession as Partial<SessionRow>).costUsd ?? null,
+    }
     deps.sessionOwnerCache.set(session.id, { owner: session.ownerID ?? null, ts: Date.now() })
-    bus.publish({ type: "session.created", payload: session, timestamp: Date.now() })
+    bus.publish({ type: "session.created", payload: JSON.parse(JSON.stringify(session)) as JsonValue, timestamp: Date.now() })
     return c.json(session, 201)
   })
   app.get("/session/:id", async (c: Context) => {
     const session = await deps.authorizedSession(c.req.param("id") as string, c)
     if (!session) return c.json({ error: "not found" }, 404)
-    return c.json(session as unknown as SessionRow)
+    return c.json(session)
   })
   app.delete("/session/:id", async (c: Context) => {
     if (!(await deps.authorizedSession(c.req.param("id") as string, c))) return c.json({ error: "not found" }, 404)

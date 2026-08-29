@@ -54,7 +54,7 @@ export interface SessionMetric {
   createdAt: number
 }
 
-export interface FailurePattern {
+export interface FailurePattern extends Record<string, JsonValue | undefined> {
   id: string
   kind: "tool" | "model" | "workflow"
   key: string            // e.g. "bash:timeout" | "edit:validation"
@@ -65,7 +65,7 @@ export interface FailurePattern {
   suggestion: string
 }
 
-export interface SuccessPattern {
+export interface SuccessPattern extends Record<string, JsonValue | undefined> {
   id: string
   key: string            // e.g. "read+edit+bash" (tool sequence)
   count: number
@@ -74,7 +74,7 @@ export interface SuccessPattern {
   suggestion: string
 }
 
-export interface UsageAnalysis {
+export interface UsageAnalysis extends Record<string, JsonValue> {
   window: { from: number; to: number; sessions: number }
   failurePatterns: FailurePattern[]
   successPatterns: SuccessPattern[]

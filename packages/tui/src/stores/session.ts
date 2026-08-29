@@ -405,6 +405,10 @@ export function createSessionStore() {
     replyPermission("deny")
   }
 
+  function clearError() {
+    setState("error", null)
+  }
+
   // ── Question reply (WS → GlobalBus) ───────────────────────────────
 
   function answerQuestion(answers: Array<{ header: string; selections: string[] }>) {
@@ -436,6 +440,7 @@ export function createSessionStore() {
     dismissPermission,
     answerQuestion,
     undoLast,
+    clearError,
   }
 }
 

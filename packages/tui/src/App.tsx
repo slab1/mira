@@ -203,7 +203,7 @@ export default function App() {
         >
           <span>{store.state.error}</span>
           <button
-            onClick={() => store.state.error && (store as unknown as { state: { error: string | null } })}
+            onClick={() => store.clearError()}
             style={{ background: "transparent", border: "none", color: "#fecaca", cursor: "pointer", "font-size": "12px" }}
           >
             ✕

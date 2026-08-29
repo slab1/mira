@@ -33,7 +33,7 @@ export function mountConfigRoutes(app: Hono<{ Variables: { requestId: string } }
     return c.json({ merged: redactConfig(merged), layers: redactLayers(layers as Array<{ source: string; path: string | null; config: MiraConfig }>) })
   })
   app.patch("/config", async (c: Context) => {
-    const body = await c.req.json().catch(() => null) as JsonValue as Record<string, JsonValue>
+    const body = await c.req.json().catch(() => null) as Record<string, JsonValue>
     // Use shared schema validation via saveConfig
     try {
       const layer = (body as Record<string, JsonValue>)?.layer === "local" ? "local" : "project"
@@ -45,17 +45,21 @@ export function mountConfigRoutes(app: Hono<{ Variables: { requestId: string } }
   })
   app.get("/config/schema", async (c: Context) => {
     try {
-      const mod = await import("zod-to-json-schema" as string).catch(() => null) as JsonValue as { zodToJsonSchema?: (s: JsonValue) => JsonValue } | null
+      const mod = await import("zod-to-json-schema" as string).catch(() => null) as { zodToJsonSchema?: (s: JsonValue) => JsonValue } | null
       if (mod?.zodToJsonSchema) {
-        const configModule = await import("../config/index.js").catch(() => ({ miraConfigSchema: null })) as JsonValue as { miraConfigSchema?: JsonValue }
+        const configModule = await import("../config/index.js").catch(() => ({ miraConfigSchema: null })) as { miraConfigSchema?: JsonValue }
         let schema = (configModule as Record<string, JsonValue>).miraConfigSchema ?? null
         if (!schema) {
           try {
-            const shared = await import("../../../shared/src/schemas/config.js") as unknown as Record<string, JsonValue>
-            schema = (shared as Record<string, JsonValue>).miraConfigSchema ?? null
+            // Type bridge: shared config module exports Zod schema (not JsonValue) — use unknown record then narrow
+            const shared = await import("../../../shared/src/schemas/config.js") as Record<string, unknown>
+            const maybeSchema = (shared as Record<string, unknown>).miraConfigSchema as JsonValue | undefined
+            schema = (maybeSchema as Record<string, JsonValue> | null) ?? null
+            if (!schema && maybeSchema) schema = maybeSchema as JsonValue
           } catch {}
         }
-        if (schema) return c.json((mod as { zodToJsonSchema: (s: any) => any }).zodToJsonSchema(schema))
+        // Type bridge: zodToJsonSchema expects ZodType (not JsonValue) — runtime shape is correct
+        if (schema) return c.json((mod as { zodToJsonSchema: (s: unknown) => unknown }).zodToJsonSchema(schema))
       }
     } catch {}
     return c.json({

@@ -42,6 +42,7 @@ import { LatencyTracker, type LatencyStats, type LatencyBudget } from "./latency
 import { SecurityScanner, type SecurityScanResult, type SecurityScannerConfig } from "./security.js"
 import type { MiraDB } from "../storage/db.js"
 import type { Gateway } from "../gateway/index.js"
+import type { JsonValue } from "../types/index.js"
 
 // Re-exports for ergonomic imports
 export * from "./detector.js"
@@ -81,7 +82,7 @@ export interface CycleInput {
   securityText?: string
 }
 
-export interface CycleResult {
+export interface CycleResult extends Record<string, JsonValue> {
   status: "stable" | "cycle_complete"
   detected: number
   active: number
@@ -291,12 +292,13 @@ export class PatchingEngine {
 
   /** Quick health snapshot */
   status(): Record<string, import("../types/index.js").JsonValue> {
+    const toJson = (v: object): import("../types/index.js").JsonValue => JSON.parse(JSON.stringify(v)) as import("../types/index.js").JsonValue
     return {
       rootDir: this.config.rootDir,
       dryRun: this.config.dryRun,
       autoPatch: this.config.autoPatch,
-      latency: this.latency.size() ? this.latency.stats() as unknown as import("../types/index.js").JsonValue : null,
-      budget: this.latency.getBudget() as unknown as import("../types/index.js").JsonValue,
+      latency: this.latency.size() ? toJson(this.latency.stats()) : null,
+      budget: toJson(this.latency.getBudget()),
     } as Record<string, import("../types/index.js").JsonValue>
   }
 }

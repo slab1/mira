@@ -1,10 +1,11 @@
 import type { Hono } from "hono"
 import type { MiraConfig, JsonValue } from "../types/index.js"
+import type { Bus } from "../bus/index.js"
 
 export function mountHealthRoutes(app: Hono<{ Variables: { requestId: string } }>, deps: {
   GIT_SHA: string; STARTED_AT: string; tools: { count(): number }; mcp: { count(): number };
-  config: MiraConfig; bus: { recent: (n: number) => JsonValue[] }; learning: { scheduler: { status(): JsonValue } };
-  gateway: { stats(): JsonValue }; metrics: { httpRequestsTotal: Map<string, number>; httpRequestDurationSecondsSum: number; httpRequestDurationSecondsCount: number; activeSessions: number };
+  config: MiraConfig; bus: Bus; learning: { scheduler: { status(): JsonValue } };
+  gateway: { stats(): Record<string, JsonValue> }; metrics: { httpRequestsTotal: Map<string, number>; httpRequestDurationSecondsSum: number; httpRequestDurationSecondsCount: number; activeSessions: number };
   TERMINAL_ENABLED: boolean; TERMINAL_SANDBOX: boolean; REQUIRED_TOKEN: string; API_KEY_OWNERS: Map<string, string>; CORS_ORIGIN_LIST: string[]
 }) {
   const { GIT_SHA, STARTED_AT } = deps

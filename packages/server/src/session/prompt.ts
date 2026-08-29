@@ -147,6 +147,9 @@ export class SessionPrompt {
       parentID: input.parentID,
       agent: (input.agent && isKnownAgent(input.agent) ? input.agent : null) as string | null,
       ownerID: ownerID as string | null,
+      tokensIn: null as number | null,
+      tokensOut: null as number | null,
+      costUsd: null as number | null,
     }
     await this.deps.db.insert(this.deps.db.schema.sessions).values(session)
     return session
@@ -412,8 +415,7 @@ export class SessionPrompt {
         send("compaction", { step, tokenEstimate, ratio })
         const result = await compactMessages(this.deps.gateway, messages, { smallModel: limits.smallModel, contextLimit, threshold })
         // Preserve tool-call history — don't drop non-string contents (tool results) which are needed for correct summarization
-// @ts-ignore
-        messages = result.messages as JsonValue as LoopMessage[]
+        messages = result.messages
         compactionCount++
         this.deps.bus.publish({ type: "message.updated", sessionID, payload: { compaction: true, step, tokenEstimate, reducedTo: result.compactedCount }, timestamp: Date.now() })
       }

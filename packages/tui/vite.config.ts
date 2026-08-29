@@ -18,8 +18,7 @@ export default defineConfig({
     strictPort: true,
     cors: true,
     hmr: { host: 'localhost' },
-    // Allow Cloudflare tunnel hosts
-    // @ts-ignore
+    // Allow Cloudflare tunnel hosts — Vite ServerOptions allows boolean true
     allowedHosts: true,
     proxy: {
       // Proxy to Mira server (Bun Hono on :4096) — same as web

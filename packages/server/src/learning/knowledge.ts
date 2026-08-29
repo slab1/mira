@@ -205,7 +205,7 @@ export class KnowledgeBase {
         title: `Failure pattern: ${f.key} — ${Math.round(f.errorRate * 100)}% over ${f.count} occurrences`,
         content: f.suggestion,
         tags: ["failure-pattern", f.kind],
-        metadata: { kind: "failure_pattern", pattern: f as unknown as JsonValue },
+        metadata: { kind: "failure_pattern", pattern: f as JsonValue },
       }))
     }
     return out

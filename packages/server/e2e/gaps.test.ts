@@ -100,7 +100,8 @@ describe("gaps: CORS for 3 clients", () => {
     // isOriginAllowed allows vscode-webview:// even when allowlist is prod
     // We test by opening WS with Origin header (Bun WebSocket doesn't send Origin by default, but fetch upgrade check does)
     // Simulate by direct WS with headers (Node ws)
-    const ws = new WebSocket(`ws://localhost:${PORT}/`, { headers: { Origin: "vscode-webview://123" } } as unknown as Record<string, string>)
+    // @ts-expect-error — Bun WebSocket types lack `headers` option, but runtime ws supports it for Origin simulation
+    const ws = new WebSocket(`ws://localhost:${PORT}/`, { headers: { Origin: "vscode-webview://123" } })
     await new Promise<void>((resolve, reject) => {
       const t = setTimeout(() => reject(new Error("timeout")), 3000)
       ws.onopen = () => { clearTimeout(t); ws.close(); resolve() }
