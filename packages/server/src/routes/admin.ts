@@ -71,6 +71,7 @@ export function mountAdminRoutes(
   app.delete("/admin/api-keys/:key", async c => {
     if (!isAdmin(c)) return deny(c)
     const key = c.req.param("key")
+    if (!key) return c.json({ error: "not found" }, 404)
     ensureTable()
     db.sqlite.prepare("DELETE FROM api_keys WHERE key = ?").run(key)
     API_KEY_OWNERS.delete(key)

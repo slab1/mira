@@ -30,6 +30,11 @@ const createSessionSchema = z.object({
   title: z.string().max(200).optional(),
 })
 
+function requireId(c: Context): string | null {
+  const v = c.req.param("id")
+  return v && v.length > 0 ? v : null
+}
+
 export function mountSessionRoutes(app: Hono<{ Variables: { requestId: string } }>, deps: {
   db: MiraDB; bus: Bus; prompt: SessionPrompt;
   authorizedSession: (id: string, c: Context) => Promise<SessionRow | null>;
@@ -73,32 +78,41 @@ export function mountSessionRoutes(app: Hono<{ Variables: { requestId: string } 
     return c.json(session, 201)
   })
   app.get("/session/:id", async (c: Context) => {
-    const session = await deps.authorizedSession(c.req.param("id") as string, c)
+    const id = requireId(c)
+    if (!id) return c.json({ error: "not found" }, 404)
+    const session = await deps.authorizedSession(id, c)
     if (!session) return c.json({ error: "not found" }, 404)
     return c.json(session)
   })
   app.delete("/session/:id", async (c: Context) => {
-    if (!(await deps.authorizedSession(c.req.param("id") as string, c))) return c.json({ error: "not found" }, 404)
-    deps.sessionOwnerCache.delete(c.req.param("id") as string)
-    await prompt.deleteSession(c.req.param("id") as string)
-    bus.publish({ type: "session.deleted", payload: { id: c.req.param("id") as string }, timestamp: Date.now() })
+    const id = requireId(c)
+    if (!id) return c.json({ error: "not found" }, 404)
+    if (!(await deps.authorizedSession(id, c))) return c.json({ error: "not found" }, 404)
+    deps.sessionOwnerCache.delete(id)
+    await prompt.deleteSession(id)
+    bus.publish({ type: "session.deleted", payload: { id }, timestamp: Date.now() })
     return c.json({ ok: true })
   })
 
   app.get("/session/:id/jobs", async (c: Context) => {
-    const id = c.req.param("id") as string
+    const id = requireId(c)
+    if (!id) return c.json({ error: "session not found" }, 404)
     if (!(await deps.authorizedSession(id, c))) return c.json({ error: "session not found" }, 404)
     return c.json(await listJobs(db, id))
   })
   app.get("/job/:id", async (c: Context) => {
-    const job = await getJob(db, c.req.param("id") as string)
+    const id = requireId(c)
+    if (!id) return c.json({ error: "not found" }, 404)
+    const job = await getJob(db, id)
     if (!job || !(await deps.authorizedSession(job.parentSessionID, c))) return c.json({ error: "not found" }, 404)
     return c.json(job)
   })
   app.post("/job/:id/cancel", async (c: Context) => {
-    const job = await getJob(db, c.req.param("id") as string)
+    const id = requireId(c)
+    if (!id) return c.json({ error: "not found" }, 404)
+    const job = await getJob(db, id)
     if (!job || !(await deps.authorizedSession(job.parentSessionID, c))) return c.json({ error: "not found" }, 404)
-    const cancelled = await cancelJob(db, c.req.param("id") as string)
+    const cancelled = await cancelJob(db, id)
     bus.publish({ type: "job.cancelled", payload: { jobID: job.id }, timestamp: Date.now() })
     return c.json(cancelled)
   })
@@ -114,19 +128,25 @@ export function mountSessionRoutes(app: Hono<{ Variables: { requestId: string } 
     return c.json(filtered)
   })
   app.get("/task/:id", async (c: Context) => {
-    const job = await getJob(db, c.req.param("id") as string)
+    const id = requireId(c)
+    if (!id) return c.json({ error: "not found" }, 404)
+    const job = await getJob(db, id)
     if (!job || !(await deps.authorizedSession(job.parentSessionID, c))) return c.json({ error: "not found" }, 404)
     return c.json(job)
   })
   app.post("/task/:id/cancel", async (c: Context) => {
-    const job = await getJob(db, c.req.param("id") as string)
+    const id = requireId(c)
+    if (!id) return c.json({ error: "not found" }, 404)
+    const job = await getJob(db, id)
     if (!job || !(await deps.authorizedSession(job.parentSessionID, c))) return c.json({ error: "not found" }, 404)
-    const cancelled = await cancelJob(db, c.req.param("id") as string)
+    const cancelled = await cancelJob(db, id)
     bus.publish({ type: "job.cancelled", payload: { jobID: job.id }, timestamp: Date.now() })
     return c.json(cancelled)
   })
   app.get("/jobs/:id", async (c: Context) => {
-    const job = await getJob(db, c.req.param("id") as string)
+    const id = requireId(c)
+    if (!id) return c.json({ error: "not found" }, 404)
+    const job = await getJob(db, id)
     if (!job || !(await deps.authorizedSession(job.parentSessionID, c))) return c.json({ error: "not found" }, 404)
     return c.json(job)
   })

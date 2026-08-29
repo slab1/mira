@@ -44,7 +44,6 @@ import { mountHealthRoutes } from "./routes/health.js"
 import { mountSessionRoutes } from "./routes/session.js"
 import { mountConfigRoutes } from "./routes/config.js"
 import { mountMcpRoutes } from "./routes/mcp.js"
-import { mountExtrasRoutes } from "./routes/extras.js"
 import { mountAdminRoutes } from "./routes/admin.js"
 
 type PartialMiraConfig = Partial<MiraConfig>
@@ -577,6 +576,12 @@ async function main() {
     return resolveOwner(bearerOf(c.req.header("Authorization"))) === s.ownerID ? s : null
   }
 
+  // Guard for c.req.param("id"): string|undefined → string|null (404 vs 500)
+  function requireId(c: { req: { param: (k: string) => string | undefined } }): string | null {
+    const v = c.req.param("id")
+    return v && v.length > 0 ? v : null
+  }
+
   // ── Per-owner live event filtering (moved up for route mounts) ────────
   const CACHE_TTL_MS = 5 * 60_000 // 5 minutes — bounded staleness for owner lookups
   const sessionOwnerCache = new Map<string, { owner: string | null; ts: number }>()
@@ -631,7 +636,9 @@ async function main() {
     return c.json(f, 201)
   })
   app.post("/finding/:id/resolve", async c => {
-    const f = await resolveFinding(db, c.req.param("id"))
+    const fid = c.req.param("id")
+    if (!fid) return c.json({ error: "not found" }, 404)
+    const f = await resolveFinding(db, fid)
     if (!f) return c.json({ error: "not found" }, 404)
     bus.publish({ type: "job.updated", payload: { finding: f.id, action: "resolved" }, timestamp: Date.now() })
     return c.json(f)
@@ -639,7 +646,8 @@ async function main() {
 
   // Prompt — the core loop (streamed via SSE)
   app.post("/session/:id/prompt", async c => {
-    const id = c.req.param("id")
+    const id = requireId(c)
+    if (!id) return c.json({ error: "session not found" }, 404)
     const { prompt: text, model, maxSteps } = await c.req.json().catch(() => ({}))
     if (!text?.trim?.()) return c.json({ error: "empty prompt" }, 400)
     // Validate session exists + requester owns it
@@ -653,14 +661,17 @@ async function main() {
 
   // Messages & parts
   app.get("/session/:id/message", async c => {
-    if (!(await authorizedSession(c.req.param("id"), c))) return c.json({ error: "not found" }, 404)
-    const messages = await prompt.getMessages(c.req.param("id"))
+    const id = requireId(c)
+    if (!id) return c.json({ error: "not found" }, 404)
+    if (!(await authorizedSession(id, c))) return c.json({ error: "not found" }, 404)
+    const messages = await prompt.getMessages(id)
     return c.json(messages)
   })
 
   // Session export — shareable transcript (markdown or JSON)
   app.get("/session/:id/export", async c => {
-    const id = c.req.param("id")
+    const id = requireId(c)
+    if (!id) return c.json({ error: "not found" }, 404)
     const session = await authorizedSession(id, c)
     if (!session) return c.json({ error: "not found" }, 404)
     const messages = await prompt.getMessages(id)
@@ -699,23 +710,35 @@ async function main() {
     const parsed = queuePushSchema.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: "invalid queue push", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
     const text = parsed.data.prompt
-    const id = c.req.param("id")
+    const id = requireId(c)
+    if (!id) return c.json({ error: "session not found" }, 404)
     if (!(await authorizedSession(id, c))) return c.json({ error: "session not found" }, 404)
     return c.json(prompt.queueMessage(id, String(text).trim()))
   })
-  app.get("/session/:id/queue", c => c.json(prompt.getQueue(c.req.param("id"))))
-  app.delete("/session/:id/queue", c => c.json({ cleared: prompt.clearQueue(c.req.param("id")) }))
+  app.get("/session/:id/queue", c => {
+    const id = requireId(c)
+    if (!id) return c.json({ error: "not found" }, 404)
+    return c.json(prompt.getQueue(id))
+  })
+  app.delete("/session/:id/queue", c => {
+    const id = requireId(c)
+    if (!id) return c.json({ error: "not found" }, 404)
+    return c.json({ cleared: prompt.clearQueue(id) })
+  })
 
   // File snapshots — undo/rewind agent file mutations
   app.get("/session/:id/snapshots", async c => {
-    if (!(await authorizedSession(c.req.param("id"), c))) return c.json({ error: "not found" }, 404)
+    const id = requireId(c)
+    if (!id) return c.json({ error: "not found" }, 404)
+    if (!(await authorizedSession(id, c))) return c.json({ error: "not found" }, 404)
     const { listSnapshots } = await import("./storage/snapshots.js")
-    return c.json(listSnapshots(db, c.req.param("id")))
+    return c.json(listSnapshots(db, id))
   })
   app.post("/session/:id/revert", async c => {
     const body = await c.req.json().catch(() => ({}))
     const { revertLast, revertToMessage } = await import("./storage/snapshots.js")
-    const id = c.req.param("id")
+    const id = requireId(c)
+    if (!id) return c.json({ error: "not found" }, 404)
     if (!(await authorizedSession(id, c))) return c.json({ error: "not found" }, 404)
     try {
       const reverted = body.messageID
@@ -730,17 +753,21 @@ async function main() {
 
   // Todos
   app.get("/session/:id/todo", async c => {
-    if (!(await authorizedSession(c.req.param("id"), c))) return c.json({ error: "not found" }, 404)
-    const todos = await prompt.getTodos(c.req.param("id"))
+    const id = requireId(c)
+    if (!id) return c.json({ error: "not found" }, 404)
+    if (!(await authorizedSession(id, c))) return c.json({ error: "not found" }, 404)
+    const todos = await prompt.getTodos(id)
     return c.json(todos)
   })
   app.post("/session/:id/todo", async c => {
-    if (!(await authorizedSession(c.req.param("id"), c))) return c.json({ error: "not found" }, 404)
+    const id = requireId(c)
+    if (!id) return c.json({ error: "not found" }, 404)
+    if (!(await authorizedSession(id, c))) return c.json({ error: "not found" }, 404)
     const parsed = todoSchema.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) {
       return c.json({ error: "invalid todos", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
     }
-    const sid = c.req.param("id")
+    const sid = id
     const todos = parsed.data.map(t => ({ ...t, id: crypto.randomUUID(), sessionID: sid, createdAt: Date.now() })) as Parameters<SessionPrompt["setTodos"]>[1]
     const result = await prompt.setTodos(sid, todos)
     bus.publish({ type: "todo.updated", sessionID: sid, payload: result, timestamp: Date.now() })
