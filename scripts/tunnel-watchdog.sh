@@ -34,6 +34,10 @@ start_server() {
 }
 
 start_tunnel() {
+  # 404 fix: remove login artifacts that break quick tunnels (see docs/production-setup.md)
+  if [ -d "${HOME}/.cloudflared" ]; then
+    rm -f "${HOME}/.cloudflared/config.yml" "${HOME}/.cloudflared/"*.json "${HOME}/.cloudflared/cert.pem" 2>/dev/null || true
+  fi
   echo "[watchdog $(date -u +%H:%M:%S)] starting quick tunnel"
   cloudflared tunnel --url "http://localhost:${PORT}" --no-autoupdate >"${CF_LOG}" 2>&1 </dev/null &
   echo $! > "${CF_PID}"

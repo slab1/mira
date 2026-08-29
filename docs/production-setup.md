@@ -75,7 +75,7 @@ Set `CORS_ORIGINS` to your production domain(s). Comma-separated.
 
 ## 3. Public access
 
-### Option A: Cloudflare quick tunnel (no account)
+### Option A: Cloudflare quick tunnel (no account, recommended)
 ```bash
 scripts/cloudflare-local.sh api start   # 4096
 scripts/cloudflare-local.sh web start   # 3000
@@ -83,10 +83,20 @@ scripts/cloudflare-local.sh web start   # 3000
 Or combined:
 ```bash
 scripts/dev-all.sh start
+# Or self-healing watchdog (auto-restarts server + tunnel, syncs VITE_API_URL to Pages):
+scripts/tunnel-watchdog.sh start
 ```
 
+> **⚠️ Quick-tunnel 404 fix:** Never run `cloudflared tunnel login` on this host when using
+> quick tunnels (`trycloudflare.com`). Login artifacts in `~/.cloudflared/{config.yml,<uuid>.json,cert.pem}`
+> cause the quick tunnel to register but return HTTP 404 (no backend). If you see 404,
+> remove them: `rm -rf ~/.cloudflared/{config.yml,*.json,cert.pem}` and restart the
+> tunnel. The watchdog does this automatically. Named tunnels (`mira.yourdomain.com`)
+> require a custom domain and are not used here — `dpdns.org` is not publicly resolvable
+> (ULA `fd10::/8`).
+
 ### Option B: Named tunnel / reverse proxy
-Create a named tunnel and route via DNS:
+Create a named tunnel and route via DNS (requires custom domain):
 ```bash
 cloudflared tunnel login
 cloudflared tunnel create mira

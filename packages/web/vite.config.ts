@@ -12,6 +12,7 @@ export default defineConfig({
     strictPort: true,
     hmr: { host: 'localhost' },
     cors: true,
+    // Allow Cloudflare tunnel hosts — Vite ServerOptions allows boolean true (Vite 6+)
     allowedHosts: true,
     proxy: {
       // Proxy API + WebSocket to Mira server (IPv4 — server binds 127.0.0.1)
