@@ -19,7 +19,7 @@ const mcpCreateSchema = z.object({
 const mcpToggleSchema = z.object({ enabled: z.boolean() })
 
 export function mountMcpRoutes(app: Hono<{ Variables: { requestId: string } }>, mcp: MCPManager) {
-  app.get("/mcp", (c: Context) => c.json(mcp.listServers() as JsonValue))
+  app.get("/mcp", (c: Context) => c.json(mcp.listServers()))
   app.post("/mcp", async (c: Context) => {
     const parsed = mcpCreateSchema.safeParse(await c.req.json().catch(() => null) as JsonValue)
 // @ts-ignore

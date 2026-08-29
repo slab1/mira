@@ -1,6 +1,6 @@
 import type { Hono } from "hono"
 import { getConfig, getConfigLayers, saveConfig, removeProviderFromConfig } from "../config/index.js"
-import type { MiraConfig, JsonValue } from "../types/index.js"
+import type { MiraConfig, JsonValue, ProviderConfig } from "../types/index.js"
 import type { Context } from "hono"
 
 function expandEnv(value: string): string {
@@ -30,8 +30,7 @@ function redactLayers(layers: Array<{ source: string; path: string | null; confi
 export function mountConfigRoutes(app: Hono<{ Variables: { requestId: string } }>) {
   app.get("/config", async (c: Context) => {
     const { merged, layers } = await getConfigLayers()
-// @ts-ignore
-    return c.json({ merged: redactConfig(merged), layers: redactLayers(layers as JsonValue as Array<{ source: string; path: string | null; config: MiraConfig }>) })
+    return c.json({ merged: redactConfig(merged), layers: redactLayers(layers as Array<{ source: string; path: string | null; config: MiraConfig }>) })
   })
   app.patch("/config", async (c: Context) => {
     const body = await c.req.json().catch(() => null) as JsonValue as Record<string, JsonValue>
@@ -52,12 +51,11 @@ export function mountConfigRoutes(app: Hono<{ Variables: { requestId: string } }
         let schema = (configModule as Record<string, JsonValue>).miraConfigSchema ?? null
         if (!schema) {
           try {
-// @ts-ignore
-            const shared = await import("../../../shared/src/schemas/config.js") as JsonValue as Record<string, JsonValue>
+            const shared = await import("../../../shared/src/schemas/config.js") as unknown as Record<string, JsonValue>
             schema = (shared as Record<string, JsonValue>).miraConfigSchema ?? null
           } catch {}
         }
-        if (schema) return c.json(mod.zodToJsonSchema(schema))
+        if (schema) return c.json((mod as { zodToJsonSchema: (s: any) => any }).zodToJsonSchema(schema))
       }
     } catch {}
     return c.json({
@@ -90,9 +88,9 @@ export function mountConfigRoutes(app: Hono<{ Variables: { requestId: string } }
   })
   app.post("/providers/:id/test", async (c: Context) => {
     const id = c.req.param("id")
+    if (!id) return c.json({ ok: false, error: "provider not found" }, 404)
     const cfg = getConfig() as MiraConfig
-// @ts-ignore
-    const prov = (cfg as MiraConfig).provider?.[id] as MiraConfig["provider"][string] | undefined
+    const prov = cfg.provider[id] as ProviderConfig | undefined
     if (!prov) return c.json({ ok: false, error: "provider not found" }, 404)
     const apiKey = expandEnv((prov as { options?: { apiKey?: string } }).options?.apiKey ?? "")
     if (!apiKey) return c.json({ ok: false, error: "missing apiKey (check {env:VAR} + mira.env)" }, 400)
@@ -104,9 +102,9 @@ export function mountConfigRoutes(app: Hono<{ Variables: { requestId: string } }
   })
   app.post("/provider/:id/test", async (c: Context) => {
     const id = c.req.param("id")
+    if (!id) return c.json({ ok: false, error: "provider not found" }, 404)
     const cfg = getConfig() as MiraConfig
-// @ts-ignore
-    const prov = (cfg as MiraConfig).provider?.[id] as MiraConfig["provider"][string] | undefined
+    const prov = cfg.provider[id] as ProviderConfig | undefined
     if (!prov) return c.json({ ok: false, error: "provider not found" }, 404)
     const apiKey = expandEnv((prov as { options?: { apiKey?: string } }).options?.apiKey ?? "")
     if (!apiKey) return c.json({ ok: false, error: "missing apiKey (check {env:VAR} + mira.env)" }, 400)
@@ -118,20 +116,18 @@ export function mountConfigRoutes(app: Hono<{ Variables: { requestId: string } }
   })
   app.delete("/providers/:id", async (c: Context) => {
     const id = c.req.param("id")
+    if (!id) return c.json({ error: "provider not found" }, 404)
     const cfg = getConfig() as MiraConfig
-// @ts-ignore
-    if (!(cfg as MiraConfig).provider?.[id]) return c.json({ error: "provider not found" }, 404)
-// @ts-ignore
-    await removeProviderFromConfig(id)
+    if (!(cfg.provider[id])) return c.json({ error: "provider not found" }, 404)
+    await removeProviderFromConfig(id as string)
     return c.json({ ok: true })
   })
   app.delete("/provider/:id", async (c: Context) => {
     const id = c.req.param("id")
+    if (!id) return c.json({ error: "provider not found" }, 404)
     const cfg = getConfig() as MiraConfig
-// @ts-ignore
-    if (!(cfg as MiraConfig).provider?.[id]) return c.json({ error: "provider not found" }, 404)
-// @ts-ignore
-    await removeProviderFromConfig(id)
+    if (!(cfg.provider[id])) return c.json({ error: "provider not found" }, 404)
+    await removeProviderFromConfig(id as string)
     return c.json({ ok: true })
   })
 }

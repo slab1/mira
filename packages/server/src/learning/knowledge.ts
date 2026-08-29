@@ -120,8 +120,7 @@ export class KnowledgeBase {
         CREATE INDEX IF NOT EXISTS knowledge_tier_idx ON knowledge_entries(tier);
         CREATE INDEX IF NOT EXISTS knowledge_source_idx ON knowledge_entries(source);
       `)
-// @ts-ignore
-      const rows = sqlite.prepare(`SELECT * FROM knowledge_entries ORDER BY updated_at DESC LIMIT 2000`).all() as JsonValue as KnowledgeRow[]
+      const rows = sqlite.prepare(`SELECT * FROM knowledge_entries ORDER BY updated_at DESC LIMIT 2000`).all() as KnowledgeRow[]
       for (const r of rows) {
         const e: MemoryEntry = {
           id: r.id,
@@ -206,8 +205,7 @@ export class KnowledgeBase {
         title: `Failure pattern: ${f.key} — ${Math.round(f.errorRate * 100)}% over ${f.count} occurrences`,
         content: f.suggestion,
         tags: ["failure-pattern", f.kind],
-// @ts-ignore
-        metadata: { kind: "failure_pattern", pattern: f },
+        metadata: { kind: "failure_pattern", pattern: f as unknown as JsonValue },
       }))
     }
     return out

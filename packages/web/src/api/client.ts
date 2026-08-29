@@ -122,6 +122,8 @@ export type MiraConfig = {
   provider: Record<string, ProviderConfig>
   agents?: Record<string, { system: string; description?: string; tools?: string[]; permissions?: string }>
   loop?: { maxSteps?: number; contextLimit?: number; compactionThreshold?: number; smallModel?: string }
+  features?: Record<string, boolean>
+  tools?: Record<string, JsonValue>
 }
 
 export type MCPServerConfig = {

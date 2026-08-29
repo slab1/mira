@@ -254,14 +254,13 @@ async function main() {
   if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
     try {
       const { trace } = await import('@opentelemetry/api')
-// @ts-ignore
-      cachedTracer = trace.getTracer('mira-server') as typeof cachedTracer
+      cachedTracer = trace.getTracer('mira-server') as { startSpan: (name: string, opts?: JsonValue) => { setAttribute: (k: string, v: JsonValue) => void; end: () => void } }
     } catch { otelFailed = true }
   }
   app.use("*", async (c, next) => {
-    if (!cachedTracer || otelFailed) return await next()
-// @ts-ignore
-    const span = cachedTracer.startSpan('http.request', { attributes: { 'http.method': c.req.method, 'http.route': c.req.path } })
+      if (!cachedTracer || otelFailed) return await next()
+      const tracer = cachedTracer
+      const span = tracer.startSpan('http.request', { attributes: { 'http.method': c.req.method, 'http.route': c.req.path } })
     try {
       await next()
       span.setAttribute('http.status_code', c.res.status)
@@ -552,10 +551,9 @@ async function main() {
   })
 
   mountHealthRoutes(app, {
-// @ts-ignore
     GIT_SHA, STARTED_AT, tools, mcp, config, bus, learning, gateway, metrics,
     TERMINAL_ENABLED, TERMINAL_SANDBOX, REQUIRED_TOKEN, API_KEY_OWNERS, CORS_ORIGIN_LIST,
-  })
+  } as unknown as Parameters<typeof mountHealthRoutes>[1])
   // Skills
   app.get("/skills", async c => {
     const { loadSkills } = await import("./skills/loader.js")

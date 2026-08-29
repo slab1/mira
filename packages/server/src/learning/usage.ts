@@ -167,8 +167,7 @@ export class UsageLearner {
         if (["password","secret","token","apikey","api_key"].includes(key)) {
           out[k] = "[REDACTED]"
         } else {
-// @ts-ignore
-          out[k] = this.redactSensitive(v)
+          out[k] = this.redactSensitive(v as JsonValue)
         }
       }
       return out

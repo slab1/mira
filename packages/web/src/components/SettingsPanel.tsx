@@ -86,7 +86,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
       setGuardAllowedRoots((guard.allowedRoots ?? []).join(", "))
       setGuardBlockedPaths((guard.blockedPaths ?? []).join(", "))
       setGuardMaxBytes(guard.maxOutputBytes != null ? String(guard.maxOutputBytes) : "")
-      const tools = (s().config as unknown as { tools?: { terminal?: { enabled?: boolean; sandbox?: boolean; allowedCommands?: string[]; timeoutMs?: number } } })?.tools
+      const tools = (s().config as { tools?: { terminal?: { enabled?: boolean; sandbox?: boolean; allowedCommands?: string[]; timeoutMs?: number } } })?.tools
       const term = tools?.terminal
       if (term) {
         setTermEnabled(term.enabled ?? true)
@@ -94,7 +94,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
         setTermAllowed((term.allowedCommands ?? []).join(", "))
         setTermTimeout(term.timeoutMs != null ? String(term.timeoutMs) : "")
       }
-      const feats = (s().config as unknown as { features?: Record<string, boolean> })?.features ?? {}
+      const feats = s().config?.features ?? {}
       setFeatInject(feats.injectTodosIntoLoadContext ?? true)
       setFeatLane(feats.enforceLaneContracts ?? true)
       setFeatPerAgent(feats.perAgentPermissionProfiles ?? true)
@@ -169,12 +169,12 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     }
     if (Object.keys(guardPatch).length > 0) patch.guardrails = guardPatch as MiraConfig["guardrails"]
     // Features — lane contracts
-    const feats = (s().config as unknown as { features?: Record<string, boolean> })?.features ?? {}
+    const feats = s().config?.features ?? {}
     const featPatch: Record<string, boolean> = {}
     if (featInject() !== (feats.injectTodosIntoLoadContext ?? true)) featPatch.injectTodosIntoLoadContext = featInject()
     if (featLane() !== (feats.enforceLaneContracts ?? true)) featPatch.enforceLaneContracts = featLane()
     if (featPerAgent() !== (feats.perAgentPermissionProfiles ?? true)) featPatch.perAgentPermissionProfiles = featPerAgent()
-    if (Object.keys(featPatch).length > 0) (patch as unknown as { features: Record<string, boolean> }).features = { ...feats, ...featPatch }
+    if (Object.keys(featPatch).length > 0) patch.features = { ...feats, ...featPatch }
     // Allow clearing loop fields when user empties them — send explicit null via delete? keep as-is for now
     if (Object.keys(patch).length > 0) await props.store.saveConfig(patch)
     // Theme is local-only (persisted via store, not server)
@@ -330,7 +330,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     const timeout = parseInt(termTimeout().trim(), 10)
     const patch = {
       tools: {
-        ...(s().config as unknown as { tools?: Record<string, unknown> })?.tools,
+        ...(s().config as { tools?: Record<string, unknown> })?.tools,
         terminal: {
           enabled: termEnabled(),
           sandbox: termSandbox(),

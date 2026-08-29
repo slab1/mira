@@ -44,8 +44,7 @@ function getEnc(): { encode: (s: string) => number[] } | null {
   if (process.env.MIRA_TIKTOKEN !== "1") return null
   if (cachedEnc) return cachedEnc
   try {
-// @ts-ignore
-    const { getEncoding } = (globalThis as JsonValue as { require: (m: string) => JsonValue }).require?.("js-tiktoken") as JsonValue as { getEncoding: (n: string) => { encode: (s: string) => number[] } } | undefined ?? {} as JsonValue
+    const { getEncoding } = (globalThis as { require: (m: string) => { getEncoding?: unknown } }).require?.("js-tiktoken") as { getEncoding: (n: string) => { encode: (s: string) => number[] } } | undefined ?? {}
     if (getEncoding) {
       cachedEnc = getEncoding("cl100k_base")
       return cachedEnc

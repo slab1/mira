@@ -295,10 +295,8 @@ export class PatchingEngine {
       rootDir: this.config.rootDir,
       dryRun: this.config.dryRun,
       autoPatch: this.config.autoPatch,
-// @ts-ignore
-      latency: this.latency.size() ? this.latency.stats() as import("../types/index.js").JsonValue : null,
-// @ts-ignore
-      budget: this.latency.getBudget() as import("../types/index.js").JsonValue,
+      latency: this.latency.size() ? this.latency.stats() as unknown as import("../types/index.js").JsonValue : null,
+      budget: this.latency.getBudget() as unknown as import("../types/index.js").JsonValue,
     } as Record<string, import("../types/index.js").JsonValue>
   }
 }
