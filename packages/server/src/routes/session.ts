@@ -28,6 +28,7 @@ interface SessionRow {
 const createSessionSchema = z.object({
   model: z.string().min(1).optional(),
   title: z.string().max(200).optional(),
+  agent: z.string().min(1).max(100).optional(),
 })
 
 function requireId(c: Context): string | null {
