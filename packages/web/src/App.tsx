@@ -234,6 +234,17 @@ export default function App() {
                   streaming
                 </span>
               </Show>
+              <Show when={currentSession()?.agent}>
+                {(agent) => (
+                  <span
+                    title={`Lane: ${agent()} — ${agent() === "researcher" ? "readonly · web/read only" : agent() === "coder" ? "standard · edit/bash" : agent() === "explorer" ? "readonly · grep/glob" : agent() === "reviewer" ? "standard · read/patch" : "lane contract"}`}
+                    class={`pill ${agent() === "researcher" ? "pill-ok" : agent() === "coder" ? "pill-warn" : agent() === "explorer" ? "pill-ok" : agent() === "reviewer" ? "pill-warn" : "pill-accent"}`}
+                    style={{ "font-family": "var(--font-mono)", "font-size": "var(--fs-2xs)", "text-transform": "lowercase" }}
+                  >
+                    {agent() === "researcher" ? "🔍 researcher" : agent() === "coder" ? "⌨ coder" : agent() === "explorer" ? "🧭 explorer" : agent() === "reviewer" ? "👁 reviewer" : `🤖 ${agent()}`}
+                  </span>
+                )}
+              </Show>
             </div>
 
             <div style={{ display: "flex", gap: "8px", "align-items": "center", "flex-shrink": "0" }}>

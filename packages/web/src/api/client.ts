@@ -305,10 +305,19 @@ export const api = {
   },
 
   checkPermission: (body: Record<string, JsonValue>) =>
-    req<{ allowed: boolean; reason?: string }>("/permission/check", {
+    req<{ action?: string; allowed?: boolean; reason?: string; matchedPattern?: string; arity?: number; lane?: { agent: string; permissions: string; allowed?: string[]; blocked?: boolean } }>("/permission/check", {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  checkGuardrails: (body: { tool: string; args?: Record<string, JsonValue>; sessionID?: string }) =>
+    req<{ decision: "allow" | "deny" | "warn"; reason?: string; tool: string; sessionID: string }>("/guardrails/check", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  previewAgent: (name: string) =>
+    req<{ agent: string; permissions: string; allowed: string[]; blocked: string[]; allowlist: string[] }>(`/agents/${encodeURIComponent(name)}/preview`),
 
   // ── Settings ─────────────────────────────────────────────────────
   getConfig: () => req<MiraConfig>("/config"),

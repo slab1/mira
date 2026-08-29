@@ -512,6 +512,7 @@ async function main() {
       path.startsWith("/terminal") ||
       path.startsWith("/learning") ||
       path.startsWith("/permission") ||
+      path.startsWith("/guardrails") ||
       path.startsWith("/admin")
     ) {
       return await next()
@@ -789,11 +790,64 @@ async function main() {
     })))
   })
 
-  // Permissions check (for TUI preflight)
+  // Permissions check (for TUI preflight + Settings dry-run)
   app.post("/permission/check", async c => {
-    const req = await c.req.json()
-    const decision = await permissions.check(req)
+    const req = await c.req.json() as { tool: string; args?: JsonValue; sessionID?: string; agent?: string }
+    // Lane-contract preview: if agent supplied, also evaluate lane allowlist + readonly posture
+    if (req.agent) {
+      const tpl = getAgentTemplates()[req.agent]
+      if (tpl) {
+        const allow = new Set<string>(tpl.tools ?? [])
+        const isAllowedByLane = tpl.tools?.length ? allow.has(req.tool) : true
+        if (!isAllowedByLane) {
+          return c.json({ action: "deny", reason: `lane contract: agent "${req.agent}" — tool "${req.tool}" not in allowlist [${[...allow].join(", ")}]`, lane: { agent: req.agent, allowed: [...allow], blocked: true, permissions: tpl.permissions } })
+        }
+        if (tpl.permissions === "readonly") {
+          const mutating = new Set(["write", "edit", "patch", "todowrite"])
+          if (mutating.has(req.tool)) {
+            return c.json({ action: "deny", reason: `lane contract: agent "${req.agent}" is readonly — ${req.tool} blocked`, lane: { agent: req.agent, permissions: tpl.permissions, blocked: true } })
+          }
+          if (req.tool === "bash" && req.args && typeof req.args === "object") {
+            const cmd = (req.args as Record<string, JsonValue>).command as string | undefined
+            if (cmd) {
+              const { classifyBashArity } = await import("./permission/index.js")
+              const { level } = classifyBashArity(cmd)
+              if (level > 0) return c.json({ action: "deny", reason: `lane contract: readonly agent "${req.agent}" — bash level ${level} blocked (${cmd.slice(0,60)})`, lane: { agent: req.agent, permissions: tpl.permissions, blocked: true, arity: level } })
+            }
+          }
+        }
+      }
+    }
+    const decision = await permissions.check({ tool: req.tool, args: (req.args as Record<string, JsonValue>) ?? {}, sessionID: req.sessionID ?? "preview" } as import("./types/index.js").PermissionRequest)
+    // Attach lane context when agent was checked and passed
+    if (req.agent) {
+      const tpl = getAgentTemplates()[req.agent]
+      if (tpl) return c.json({ ...decision, lane: { agent: req.agent, permissions: tpl.permissions, allowed: [...(tpl.tools ?? [])] } })
+    }
     return c.json(decision)
+  })
+
+  // Guardrails audit preview (dry-run) — mirrors ToolRegistry guardrails.check without executing
+  // @ts-expect-error — recursive JsonValue causes TS2589 deep instantiation in Hono+JsonValue generic, runtime shape is correct
+  app.post("/guardrails/check", async c => {
+    const body = await c.req.json().catch(() => null) as { tool?: string; args?: JsonValue; sessionID?: string } | null
+    if (!body?.tool) return c.json({ error: "tool required" }, 400)
+    const args: JsonValue = body.args ?? {}
+    const result = await guardrails.check(body.tool, args, { sessionID: body.sessionID ?? "preview" })
+    return c.json(result)
+  })
+
+  // Lane-contract preview: which tools would filterToolsForAgent allow for a given agent?
+  app.get("/agents/:name/preview", c => {
+    const name = c.req.param("name")
+    if (!name) return c.json({ error: "agent required" }, 400)
+    const tpl = getAgentTemplates()[name]
+    if (!tpl) return c.json({ error: `unknown agent "${name}"` }, 404)
+    const allTools = tools.list().map(t => t.name)
+    const allow = tpl.tools?.length ? new Set<string>(tpl.tools) : null
+    const allowed = allow ? allTools.filter(n => allow.has(n)) : allTools
+    const blocked = allow ? allTools.filter(n => !allow.has(n)) : []
+    return c.json({ agent: name, permissions: tpl.permissions, allowed, blocked, allowlist: tpl.tools ?? [] })
   })
 
   // Learning system routes with privacy safeguards and backward compatibility

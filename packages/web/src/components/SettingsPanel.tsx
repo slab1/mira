@@ -1,5 +1,6 @@
 import { createSignal, createEffect, For, Show, onCleanup } from "solid-js"
 import type { SettingsStore } from "../stores/settings"
+import { api } from "../api/client"
 import type { MiraConfig, ThemeChoice } from "../api/client"
 
 type TabId = "general" | "providers" | "permissions" | "connectors" | "agents" | "commands" | "terminal"
@@ -49,11 +50,26 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
   const [permPattern, setPermPattern] = createSignal("")
   const [permAction, setPermAction] = createSignal<"allow" | "deny" | "ask">("allow")
 
+  // Permission dry-run (5-layer preview like providers/mcp Test)
+  const [permTestTool, setPermTestTool] = createSignal("bash")
+  const [permTestArgs, setPermTestArgs] = createSignal('{"command":"ls -la"}')
+  const [permTestAgent, setPermTestAgent] = createSignal("")
+  const [permTesting, setPermTesting] = createSignal(false)
+  const [permTestResult, setPermTestResult] = createSignal("")
+
   // Guardrails (advanced)
   const [guardEnforce, setGuardEnforce] = createSignal(false)
   const [guardAllowedRoots, setGuardAllowedRoots] = createSignal("")
   const [guardBlockedPaths, setGuardBlockedPaths] = createSignal("")
   const [guardMaxBytes, setGuardMaxBytes] = createSignal("")
+  const [guardTestTool, setGuardTestTool] = createSignal("read")
+  const [guardTestPath, setGuardTestPath] = createSignal("/tmp/aether/packages/server/src/index.ts")
+  const [guardTesting, setGuardTesting] = createSignal(false)
+  const [guardResult, setGuardResult] = createSignal("")
+
+  // Lane contract preview (per-agent)
+  const [agentPreview, setAgentPreview] = createSignal<string | null>(null)
+  const [agentPreviewResult, setAgentPreviewResult] = createSignal<Record<string, string>>({})
 
   // Terminal
   const [termEnabled, setTermEnabled] = createSignal(true)
@@ -406,6 +422,66 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     setMcpTesting(null)
   }
 
+  const handleTestPermission = async () => {
+    setPermTesting(true)
+    setPermTestResult("")
+    try {
+      const tool = permTestTool().trim() || "bash"
+      let args: Record<string, unknown> = {}
+      const raw = permTestArgs().trim()
+      if (raw) {
+        try { args = JSON.parse(raw) as Record<string, unknown> } catch { args = { command: raw } }
+      }
+      const agent = permTestAgent().trim() || undefined
+      const body: Record<string, unknown> = { tool, args, sessionID: "preview" }
+      if (agent) body.agent = agent
+      const res = await api.checkPermission(body as Record<string, import("../api/client").JsonValue>)
+      const lane = (res as { lane?: { agent: string; permissions: string } }).lane ? ` · lane:${(res as { lane: { agent: string; permissions: string } }).lane.agent}/${(res as { lane: { agent: string; permissions: string } }).lane.permissions}` : ""
+      const pat = (res as { matchedPattern?: string }).matchedPattern ? ` · pattern:${(res as { matchedPattern: string }).matchedPattern}` : ""
+      const arity = (res as { arity?: number }).arity != null ? ` · arity:${(res as { arity: number }).arity}` : ""
+      const act = (res as { action?: string }).action ?? (res as { allowed?: boolean }).allowed ? "allow" : "deny"
+      const icon = act === "allow" ? "✓" : act === "deny" ? "✗" : "?"
+      setPermTestResult(`${icon} ${act}${lane}${pat}${arity} — ${res.reason ?? ""}`)
+    } catch (err) {
+      setPermTestResult(`✗ ${(err as Error).message}`)
+    } finally {
+      setPermTesting(false)
+    }
+  }
+
+  const handleTestGuardrails = async () => {
+    setGuardTesting(true)
+    setGuardResult("")
+    try {
+      const tool = guardTestTool().trim() || "read"
+      const path = guardTestPath().trim()
+      let args: Record<string, unknown> = {}
+      if (tool === "bash") args = { command: path }
+      else if (["read", "write", "edit", "glob", "grep", "patch"].includes(tool)) args = { path }
+      else if (tool === "webfetch") args = { url: path }
+      else args = { path }
+      const res = await api.checkGuardrails({ tool, args: args as Record<string, import("../api/client").JsonValue>, sessionID: "preview" })
+      const icon = res.decision === "allow" ? "✓" : res.decision === "deny" ? "✗" : "⚠"
+      setGuardResult(`${icon} ${res.decision}${res.reason ? ` — ${res.reason}` : ""}`)
+    } catch (err) {
+      setGuardResult(`✗ ${(err as Error).message}`)
+    } finally {
+      setGuardTesting(false)
+    }
+  }
+
+  const handlePreviewAgent = async (name: string) => {
+    setAgentPreview(name)
+    try {
+      const res = await api.previewAgent(name)
+      setAgentPreviewResult(prev => ({ ...prev, [name]: `✓ ${res.permissions} · ${res.allowed.length} allowed / ${res.blocked.length} blocked — allowed: ${res.allowed.slice(0, 8).join(", ")}${res.allowed.length > 8 ? "…" : ""}` }))
+    } catch (err) {
+      setAgentPreviewResult(prev => ({ ...prev, [name]: `✗ ${(err as Error).message}` }))
+    } finally {
+      setAgentPreview(null)
+    }
+  }
+
   return (
     <Show when={props.open}>
       <div
@@ -650,6 +726,34 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                           autocomplete="off"
                         />
                         <span class="settings-hint">Truncate tool output.</span>
+                      </div>
+
+                      <div class="settings-card" style={{ display: "flex", "flex-direction": "column", gap: "8px", padding: "10px 12px", background: "var(--bg-app)", border: "1px dashed var(--border)" }}>
+                        <div style={{ "font-size": "var(--fs-xs)", "font-weight": "700", color: "var(--fg-muted)", "letter-spacing": "0.04em", "text-transform": "uppercase" }}>Guardrails audit preview</div>
+                        <div style={{ display: "grid", "grid-template-columns": "110px 1fr auto", gap: "8px", "align-items": "end" }}>
+                          <div class="settings-field">
+                            <label class="settings-label" for="guard-test-tool">Tool</label>
+                            <select id="guard-test-tool" class="input" value={guardTestTool()} onChange={(e) => setGuardTestTool(e.currentTarget.value)}>
+                              <option value="read">read</option>
+                              <option value="write">write</option>
+                              <option value="edit">edit</option>
+                              <option value="bash">bash</option>
+                              <option value="glob">glob</option>
+                              <option value="webfetch">webfetch</option>
+                            </select>
+                          </div>
+                          <div class="settings-field">
+                            <label class="settings-label" for="guard-test-path">Path / command / URL</label>
+                            <input id="guard-test-path" class="input" value={guardTestPath()} onInput={(e) => setGuardTestPath(e.currentTarget.value)} placeholder="/tmp/aether/... or rm -rf /" spellcheck={false} autocomplete="off" />
+                          </div>
+                          <button type="button" class="btn btn-outline" disabled={guardTesting()} onClick={() => void handleTestGuardrails()} style={{ padding: "7px 12px", "font-size": "var(--fs-sm)", height: "36px" }}>
+                            {guardTesting() ? "Testing…" : "Test"}
+                          </button>
+                        </div>
+                        <Show when={guardResult()}>
+                          <span style={{ "font-size": "var(--fs-xs)", color: guardResult().startsWith("✓") ? "var(--ok)" : guardResult().startsWith("✗") ? "var(--danger)" : "var(--warn)", "font-family": "var(--font-mono)", "word-break": "break-word" }}>{guardResult()}</span>
+                        </Show>
+                        <span class="settings-hint">Dry-run GuardrailsManager.check — respects enforce + allowedRoots/blockedPaths. Like Test in Providers/MCP.</span>
                       </div>
 
                       <div style={{ "font-size": "var(--fs-xs)", "font-weight": "700", color: "var(--fg-muted)", "letter-spacing": "0.04em", "text-transform": "uppercase", "margin-top": "4px" }}>
@@ -951,6 +1055,47 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                     <span class="settings-hint">Pattern empty = tool-wide rule. With pattern = tool:pattern → action (7-layer).</span>
                   </form>
 
+                  <div class="settings-card" style={{ display: "flex", "flex-direction": "column", gap: "8px", "margin-top": "12px", padding: "10px 12px", background: "var(--bg-app)", border: "1px dashed var(--border)" }}>
+                    <div style={{ "font-size": "var(--fs-xs)", "font-weight": "700", color: "var(--fg-muted)", "letter-spacing": "0.04em", "text-transform": "uppercase" }}>Dry-run permission.check — 5 layers</div>
+                    <div style={{ display: "grid", "grid-template-columns": "110px 1fr 110px auto", gap: "8px", "align-items": "end" }}>
+                      <div class="settings-field">
+                        <label class="settings-label" for="perm-test-tool">Tool</label>
+                        <select id="perm-test-tool" class="input" value={permTestTool()} onChange={(e) => setPermTestTool(e.currentTarget.value)}>
+                          <option value="bash">bash</option>
+                          <option value="read">read</option>
+                          <option value="write">write</option>
+                          <option value="edit">edit</option>
+                          <option value="glob">glob</option>
+                          <option value="grep">grep</option>
+                          <option value="webfetch">webfetch</option>
+                          <option value="task">task</option>
+                        </select>
+                      </div>
+                      <div class="settings-field">
+                        <label class="settings-label" for="perm-test-args">Args (JSON)</label>
+                        <input id="perm-test-args" class="input" value={permTestArgs()} onInput={(e) => setPermTestArgs(e.currentTarget.value)} placeholder='{"command":"ls"} or {"path":"/tmp/x"}' spellcheck={false} autocomplete="off" />
+                      </div>
+                      <div class="settings-field">
+                        <label class="settings-label" for="perm-test-agent">Agent (lane)</label>
+                        <select id="perm-test-agent" class="input" value={permTestAgent()} onChange={(e) => setPermTestAgent(e.currentTarget.value)}>
+                          <option value="">(none)</option>
+                          <option value="researcher">researcher</option>
+                          <option value="coder">coder</option>
+                          <option value="explorer">explorer</option>
+                          <option value="reviewer">reviewer</option>
+                          <option value="general">general</option>
+                        </select>
+                      </div>
+                      <button type="button" class="btn btn-outline" disabled={permTesting()} onClick={() => void handleTestPermission()} style={{ padding: "7px 12px", "font-size": "var(--fs-sm)", height: "36px" }}>
+                        {permTesting() ? "Testing…" : "Test"}
+                      </button>
+                    </div>
+                    <Show when={permTestResult()}>
+                      <span style={{ "font-size": "var(--fs-xs)", color: permTestResult().startsWith("✓") ? "var(--ok)" : permTestResult().startsWith("✗") ? "var(--danger)" : "var(--warn)", "font-family": "var(--font-mono)", "word-break": "break-word" }}>{permTestResult()}</span>
+                    </Show>
+                    <span class="settings-hint">Dry-run POST /permission/check — 5 layers + BashArity + lane contract (if agent set). Like Test in Providers/MCP.</span>
+                  </div>
+
                   <div style={{ "margin-top": "10px", "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "line-height": "1.6" }}>
                     Per-agent overrides live in <code style={{ "font-family": "var(--font-mono)" }}>agents.*.permissions</code> (readonly / standard / elevated). MCP tools surface as{" "}
                     <code style={{ "font-family": "var(--font-mono)" }}>mcp__&lt;server&gt;__*</code>.
@@ -1165,6 +1310,15 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                             <span class={`pill ${a.permissions === "readonly" ? "pill-ok" : a.permissions === "elevated" ? "pill-danger" : "pill-warn"}`} style={{ "font-size": "var(--fs-2xs)" }}>
                               {a.permissions}
                             </span>
+                            <button
+                              type="button"
+                              class="btn btn-outline"
+                              disabled={agentPreview() === a.name}
+                              onClick={() => void handlePreviewAgent(a.name)}
+                              style={{ padding: "3px 8px", "font-size": "var(--fs-2xs)", "margin-left": "auto" }}
+                            >
+                              {agentPreview() === a.name ? "Testing…" : "Test"}
+                            </button>
                           </div>
                           <div style={{ "font-size": "var(--fs-sm)", color: "var(--fg-subtle)", "margin-top": "6px", "line-height": "1.5" }}>{a.description || "No description"}</div>
                           <div style={{ display: "flex", "flex-wrap": "wrap", gap: "4px", "margin-top": "8px" }}>
@@ -1185,6 +1339,14 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                                 </span>
                               )}
                             </For>
+                          </div>
+                          <Show when={agentPreviewResult()[a.name]}>
+                            <div style={{ "margin-top": "8px", padding: "6px 8px", "border-radius": "var(--r-md)", background: "var(--bg-app)", border: "1px solid var(--border)", "font-size": "var(--fs-xs)", "font-family": "var(--font-mono)", color: agentPreviewResult()[a.name].startsWith("✓") ? "var(--ok)" : "var(--danger)", "word-break": "break-word" }}>
+                              {agentPreviewResult()[a.name]}
+                            </div>
+                          </Show>
+                          <div style={{ "margin-top": "6px", "font-size": "var(--fs-2xs)", color: "var(--fg-faint)" }}>
+                            Lane contract: filterToolsForAgent("{a.name}") — Test shows allowed/blocked via GET /agents/{a.name}/preview (like Test in Providers/MCP).
                           </div>
                         </div>
                       )}
