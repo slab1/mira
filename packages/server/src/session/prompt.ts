@@ -501,6 +501,7 @@ export class SessionPrompt {
         if (loopSignal.detected) {
           const msg = `Doom-loop detected: ${loopSignal.reason ?? 'repeating tool call'} — tool "${tc.name}". Breaking loop and asking user.`
           send("doom_loop", { tool: tc.name, args: tc.args, step, reason: loopSignal.reason, pattern: loopSignal.pattern })
+          this.deps.bus.publish({ type: "server.error", sessionID, payload: { error: msg, source: "doom-loop", tool: tc.name, pattern: loopSignal.pattern } as JsonValue, timestamp: Date.now() })
           await this.persistToolResult(assistantMessageID, sessionID, tc, { error: msg }, true)
           doomLoopCount++
           accumulatedText += `\n\n[System: ${msg}]\n`
