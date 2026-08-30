@@ -670,6 +670,91 @@ async function main() {
     return c.json(f)
   })
 
+  // Session import — Sessions Sync (Kilo K7): POST /session/import with exported JSON from GET /session/:id/export?format=json
+  const importSessionSchema = z.object({
+    session: z.object({
+      title: z.string().max(200).optional(),
+      model: z.string().min(1).optional(),
+      agent: z.string().max(100).optional(),
+    }).passthrough().optional(),
+    messages: z.array(z.object({
+      role: z.enum(["user", "assistant", "system"]).or(z.string()),
+      parts: z.array(z.object({
+        type: z.enum(["text", "tool-call", "tool-result", "reasoning", "file"]).or(z.string()),
+        text: z.string().optional(),
+        tool: z.string().optional(),
+        toolCallID: z.string().optional(),
+        args: z.custom<JsonValue>().optional(),
+        result: z.custom<JsonValue>().optional(),
+        isError: z.boolean().optional(),
+      }).passthrough()).optional(),
+      // also support flat parts array from Drizzle query
+    }).passthrough()).optional(),
+    title: z.string().max(200).optional(),
+    model: z.string().min(1).optional(),
+    agent: z.string().max(100).optional(),
+  }).passthrough()
+  app.post("/session/import", async (c) => {
+    const raw = await c.req.json().catch(() => null)
+    const parsed = importSessionSchema.safeParse(raw)
+    if (!parsed.success) return c.json({ error: "invalid import", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
+    const body = parsed.data as { session?: { title?: string; model?: string; agent?: string }; messages?: Array<{ role: string; parts?: Array<{ type: string; text?: string; tool?: string; toolCallID?: string; args?: JsonValue; result?: JsonValue; isError?: boolean }> }>; title?: string; model?: string; agent?: string }
+    const srcSession = body.session
+    const title = body.title ?? srcSession?.title ?? "Imported Session"
+    const model = body.model ?? srcSession?.model
+    const agent = body.agent ?? srcSession?.agent
+    if (agent && !isKnownAgent(agent)) return c.json({ error: `unknown agent "${agent}"` }, 400)
+    const owner = OWNERSHIP_ENABLED ? (resolveOwner(bearerOf(c.req.header("Authorization"))) ?? "default") : null
+    const created = await prompt.createSession({ title, model, agent, ownerID: owner })
+    const msgs = body.messages ?? []
+    let copiedMessages = 0
+    let copiedParts = 0
+    for (const m of msgs) {
+      const mid = crypto.randomUUID()
+      try {
+        await db.insert(db.schema.messages).values({ id: mid, sessionID: created.id, role: m.role as "user" | "assistant" | "system", createdAt: Date.now() })
+        copiedMessages++
+        for (const p of m.parts ?? []) {
+          await db.insert(db.schema.parts).values({
+            id: crypto.randomUUID(),
+            messageID: mid,
+            sessionID: created.id,
+            type: p.type as "text" | "tool-call" | "tool-result" | "reasoning" | "file",
+            text: p.text ?? null,
+            tool: p.tool ?? null,
+            toolCallID: p.toolCallID ?? null,
+            args: (p.args ?? null) as Record<string, JsonValue> | null,
+            result: (p.result ?? null) as JsonValue,
+            isError: p.isError ?? null,
+            createdAt: Date.now(),
+          })
+          copiedParts++
+        }
+      } catch {}
+    }
+    sessionOwnerCache.set(created.id, { owner: (created as { ownerID?: string | null }).ownerID ?? owner, ts: Date.now() })
+    bus.publish({ type: "session.created", payload: { id: created.id, title: created.title, importedFrom: true, copiedMessages, copiedParts } as JsonValue, timestamp: Date.now() })
+    return c.json({ session: created, copiedMessages, copiedParts }, 201)
+  })
+
+  // Agent Manager lite (Kilo K7): GET /manager — active jobs + recent sessions for IDE worktree-style overview
+  app.get("/manager", async (c) => {
+    const owner = OWNERSHIP_ENABLED ? resolveOwner(bearerOf(c.req.header("Authorization"))) : undefined
+    const allJobs = await listJobs(db)
+    const activeJobs = allJobs.filter(j => j.status === "running").slice(0, 20)
+    let jobs = activeJobs
+    if (owner) {
+      jobs = []
+      for (const j of activeJobs) {
+        const o = await ownerOfSession(j.parentSessionID)
+        if (o === null || o === owner) jobs.push(j)
+      }
+    }
+    const sessions = await db.query.sessions.findMany({ orderBy: (s, { desc }) => [desc(s.updatedAt)], limit: 10 }) as Array<Record<string, JsonValue>>
+    const filteredSessions = owner ? (sessions as Array<{ ownerID?: string | null }>).filter(s => !s.ownerID || s.ownerID === owner) : sessions
+    return c.json({ activeJobs: jobs, recentSessions: filteredSessions.slice(0, 10), at: new Date().toISOString() })
+  })
+
   // Prompt — the core loop (streamed via SSE) — supports per-turn agent override (Kilo K1)
   app.post("/session/:id/prompt", async c => {
     const id = requireId(c)

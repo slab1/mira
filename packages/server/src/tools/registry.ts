@@ -113,6 +113,7 @@ export class ToolRegistry {
       () => import("./task.js"),
       () => import("./orchestrate.js"),
       () => import("./mcp_marketplace.js"),
+      () => import("./browser.js"),
       () => import("./findings.js"),
       () => import("./question.js"),
       () => import("./lsp.js"),
