@@ -645,8 +645,10 @@ export class SessionPrompt {
 
   private async loadContext(sessionID: string, systemPrompt: string): Promise<LoopMessage[]> {
     const messages = await this.getMessages(sessionID)
+    // Hierarchical memory: systemPrompt already contains AGENTS.md via buildSystemPrompt (project instructions)
+    // This method wires L1 working (messages) + L2 episodic (todos/findings) + L3 semantic (knowledge) + procedural (skills)
     const context: LoopMessage[] = [{ role: "system", content: systemPrompt }]
-    // Skills injection
+    // Skills injection (procedural memory)
     try {
       const skills = await loadSkills()
       if (Object.keys(skills).length) {
@@ -666,7 +668,7 @@ export class SessionPrompt {
       const fctx = await openFindingsForContext(this.deps.db)
       if (fctx) context.push({ role: "system", content: fctx })
     } catch {}
-    // Memory retrieval: inject relevant knowledge (shared KB if injected, else standalone helper)
+    // Memory retrieval: hierarchical knowledge (L3 semantic) — uses injected KB or shared helper
     const lastUserText = messages.length ? (messages[messages.length - 1].parts?.find(p => p.type === "text")?.text ?? "") : ""
     if (lastUserText) {
       try {

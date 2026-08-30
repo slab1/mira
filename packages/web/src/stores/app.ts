@@ -24,6 +24,8 @@ type AppState = {
   queued: string[]
   /** gateway spend for this server process */
   cost: { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number } | null
+  /** doom-loop detection — set when server publishes server.error source doom-loop */
+  doomLoop: { tool: string; reason: string; pattern?: string[]; sessionID?: string } | null
 }
 
 function uid() {
@@ -44,6 +46,7 @@ export function createAppStore() {
     pendingQuestion: null,
     queued: [],
     cost: null,
+    doomLoop: null,
   })
 
   const [input, setInput] = createSignal("")
@@ -97,6 +100,18 @@ export function createAppStore() {
         if (e.sessionID === state.currentId) void loadMessages(state.currentId!)
         break
       }
+      case "server.error": {
+        const p = e.payload as { source?: string; tool?: string; error?: string; pattern?: string[] } | null
+        if (p?.source === "doom-loop") {
+          setState("doomLoop", { tool: p.tool ?? "unknown", reason: p.error ?? "repeating tool call", pattern: p.pattern, sessionID: e.sessionID })
+        }
+        break
+      }
+      case "doom_loop": {
+        const p = e.payload as { tool?: string; reason?: string; pattern?: string[] } | null
+        setState("doomLoop", { tool: p?.tool ?? "unknown", reason: p?.reason ?? "repeating tool call", pattern: p?.pattern, sessionID: e.sessionID })
+        break
+      }
     }
   }
 
@@ -140,7 +155,7 @@ export function createAppStore() {
   }
 
   async function selectSession(id: string) {
-    setState({ currentId: id, messages: [], todos: [], streamText: "", error: null })
+    setState({ currentId: id, messages: [], todos: [], streamText: "", error: null, doomLoop: null })
     await Promise.all([loadMessages(id), loadTodos(id)])
   }
 
@@ -282,6 +297,15 @@ export function createAppStore() {
     }
   }
 
+  function clearDoomLoop() {
+    setState("doomLoop", null)
+  }
+
+  async function rewindDoomLoop() {
+    await undoLastMutation()
+    clearDoomLoop()
+  }
+
   return {
     state,
     input,
@@ -298,6 +322,8 @@ export function createAppStore() {
     stopStream,
     answerQuestion,
     undoLastMutation,
+    clearDoomLoop,
+    rewindDoomLoop,
   }
 }
 

@@ -67,6 +67,20 @@ sync_pages() {
   fi
 }
 
+check_public_exposure() {
+  local url="$1"
+  [ -z "$url" ] && return 0
+  # Public exposure watchdog: ensure tunnel URL requires auth (401 without token)
+  # If MIRA_TOKEN is set, unauthenticated /session should be 401; if 200, server is exposed
+  local code
+  code=$(curl -s -o /dev/null -w "%{http_code}" "$url/session" 2>/dev/null || echo "000")
+  if [ "$code" = "200" ]; then
+    echo "[watchdog $(date -u +%H:%M:%S)] ⚠️  PUBLIC EXPOSURE: $url/session returned 200 without auth — MIRA_TOKEN may be missing or gate disabled"
+  elif [ "$code" = "401" ]; then
+    echo "[watchdog $(date -u +%H:%M:%S)] public exposure check: $url/session correctly requires auth (401)"
+  fi
+}
+
 loop() {
   local last_url="$(cat "${URL_FILE}" 2>/dev/null)"
   while true; do
@@ -78,6 +92,7 @@ loop() {
     if ! alive "${CF_PID}"; then
       start_tunnel
       last_url="$(cat "${URL_FILE}" 2>/dev/null)"
+      [ -n "$last_url" ] && check_public_exposure "$last_url"
     else
       local cur
       cur=$(grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" "${CF_LOG}" 2>/dev/null | tail -1)
@@ -85,7 +100,12 @@ loop() {
         echo "$cur" > "${URL_FILE}"
         last_url="$cur"
         sync_pages "$cur"
+        check_public_exposure "$cur"
       fi
+    fi
+    # 3. Periodic public exposure watchdog (every 5 min)
+    if [ $(( $(date +%s) % 300 )) -lt 30 ] && [ -n "$last_url" ]; then
+      check_public_exposure "$last_url"
     fi
     sleep "${INTERVAL}"
   done

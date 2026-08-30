@@ -81,4 +81,23 @@ describe("compactMessages", () => {
     // Custom threshold 0.5 should trigger earlier
     expect((await needsCompaction(justUnder, 100, 0.5)).needed).toBe(true)
   })
+
+  test("compact preserves last toolResults even when tail would orphan them", async () => {
+    const messages = [
+      { role: "system", content: "sys" },
+      ...Array.from({ length: 6 }, (_, i) => ({ role: "user" as const, content: `msg ${i}` })),
+      { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "read", args: { path: "a.txt" } }] },
+      { role: "tool", content: "result1", toolResults: [{ toolCallID: "c1", name: "read", result: "content1", isError: false }], toolCallID: "c1" },
+      { role: "assistant", content: "", toolCalls: [{ id: "c2", name: "write", args: { path: "b.txt" } }] },
+      { role: "tool", content: "result2", toolResults: [{ toolCallID: "c2", name: "write", result: "content2", isError: false }], toolCallID: "c2" },
+    ]
+    // 10 conv messages, keepTailRatio 0.1 => keep 1, tail would be just last tool result orphaned
+    const result = await compactMessages(fakeGateway, messages, { keepTailRatio: 0.1 })
+    const hasC2Call = result.messages.some(m => m.toolCalls?.some(tc => tc.id === "c2"))
+    const hasC2Result = result.messages.some(m => m.toolResults?.some(tr => tr.toolCallID === "c2"))
+    expect(hasC2Call).toBe(true)
+    expect(hasC2Result).toBe(true)
+    const lastToolResults = result.messages.filter(m => m.toolResults?.length).pop()
+    expect(lastToolResults?.toolResults?.[0].toolCallID).toBe("c2")
+  })
 })

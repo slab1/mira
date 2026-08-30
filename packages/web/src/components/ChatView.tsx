@@ -678,6 +678,24 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
               </For>
             </div>
           </Show>
+          <Show when={s().doomLoop}>
+            {(dl) => {
+              const d = dl()
+              return (
+              <div role="alert" style={{ display: "flex", "align-items": "center", gap: "8px", padding: "8px 10px", "margin-bottom": "8px", background: "var(--warn-soft)", border: "1px solid var(--warn-border)", "border-radius": "var(--r-md)", "font-size": "var(--fs-xs)", color: "var(--fg)" }}>
+                <span style={{ flex: "1", "min-width": "0" }}>
+                  ⚠ Doom-loop detected: {d.reason} — tool "{d.tool}"{d.pattern ? ` · ${d.pattern.slice(0, 3).join(" → ")}` : ""}
+                </span>
+                <button type="button" class="btn btn-warn-ghost" onClick={() => void props.store.rewindDoomLoop()} style={{ padding: "4px 10px", "font-size": "var(--fs-xs)", "border-radius": "var(--r-md)", flex: "none" }}>
+                  ↩ Rewind
+                </button>
+                <button type="button" class="btn btn-ghost" onClick={() => props.store.clearDoomLoop()} style={{ padding: "4px 8px", "font-size": "var(--fs-xs)", flex: "none" }}>
+                  ✕
+                </button>
+              </div>
+              )
+            }}
+          </Show>
           <Show when={s().queued.length > 0}>
             <div style={{ padding: "0 2px 6px", "font-size": "var(--fs-xs)", color: "var(--warn)" }} role="status">
               ⏳ {s().queued.length} message{s().queued.length === 1 ? "" : "s"} queued — will run after the current turn

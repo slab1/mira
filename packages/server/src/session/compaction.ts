@@ -116,9 +116,19 @@ export async function compactMessages(
   const systemMessages = messages.filter(m => m.role === 'system')
   const conversation = messages.filter(m => m.role !== 'system')
 
-  const keepCount = Math.max(1, Math.ceil(conversation.length * keepTailRatio))
-  const tail = conversation.slice(-keepCount)
-  const head = conversation.slice(0, conversation.length - keepCount)
+  let keepCount = Math.max(1, Math.ceil(conversation.length * keepTailRatio))
+  let tail = conversation.slice(-keepCount)
+  let head = conversation.slice(0, conversation.length - keepCount)
+  // Preserve tool-call boundaries: if tail starts with an orphaned tool result,
+  // expand tail to include its preceding assistant tool-call so the pair stays intact.
+  if (tail.length && tail[0].role === 'tool' && head.length) {
+    const prev = head[head.length - 1]
+    if (prev.role === 'assistant' && prev.toolCalls?.length) {
+      tail = [prev, ...tail]
+      head = head.slice(0, -1)
+      keepCount = tail.length
+    }
+  }
 
   if (head.length === 0) {
     return {
