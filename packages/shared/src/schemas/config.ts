@@ -66,6 +66,8 @@ export const agentDefinitionSchema = z.object({
   description: z.string().optional(),
   tools: z.array(z.string()).optional(),
   permissions: z.enum(["readonly", "standard", "elevated"]).optional(),
+  /** per-agent model override — enables Kilo-style cost routing (e.g. ask=flash, code=opus) */
+  model: z.string().min(1).optional(),
 })
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>
 

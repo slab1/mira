@@ -71,6 +71,7 @@ export interface LoopOptions {
   maxTokens?: number       // per-step
   compactionThreshold?: number // 0.8 = compact at 80% context
   signal?: AbortSignal
+  agent?: string | null    // per-turn agent override (Kilo K1 parity)
 }
 
 // ── SessionPrompt ──────────────────────────────────────────────────
@@ -137,10 +138,13 @@ export class SessionPrompt {
         ownerID = parent?.ownerID ?? null
       } catch {}
     }
+    // Kilo K1: per-agent model routing — agent template model wins over global default when no explicit model
+    const agentTpl = input.agent ? getAgentTemplates()[input.agent] : undefined
+    const effectiveModel = input.model ?? agentTpl?.model ?? "openrouter/anthropic/claude-sonnet-4"
     const session = {
       id,
       title: input.title ?? (input.agent ? `${input.agent} session` : "New Session"),
-      model: input.model ?? "openrouter/anthropic/claude-sonnet-4",
+      model: effectiveModel,
       provider: "openrouter",
       createdAt: now,
       updatedAt: now,
@@ -254,11 +258,14 @@ export class SessionPrompt {
     model?: string
     title?: string
   }): Promise<{ sessionID: string; text: string }> {
+    // Per-agent model routing: explicit model > agent template model > default session model
+    const agentModel = opts.agent ? getAgentTemplates()[opts.agent]?.model : undefined
+    const effectiveModel = opts.model ?? agentModel
     const s = await this.createSession({
       title: opts.title ?? `↳ ${opts.prompt.slice(0, 48)}`,
       parentID: opts.parentID,
       agent: opts.agent,
-      model: opts.model,
+      model: effectiveModel,
     })
     let text = ""
     // No-op sink: collect only the final text (no SSE transport needed)
@@ -267,12 +274,17 @@ export class SessionPrompt {
     }
     const noopWriter = { write: () => {}, close: async () => {} } as object as WritableStreamDefaultWriter<Uint8Array>
     try {
+      const runModel = effectiveModel ?? s.model
+      // Agent persona for subagent loop
+      const persona = opts.agent ? getAgentTemplates()[opts.agent]?.system : undefined
+      const basePrompt = await buildSystemPrompt()
+      const systemPrompt = persona ? `${persona}\n\n${basePrompt}` : basePrompt
       await this.runLoop({
         sessionID: s.id,
         assistantMessageID: crypto.randomUUID(),
         userText: opts.prompt,
-        model: opts.model ?? s.model,
-        systemPrompt: await buildSystemPrompt(),
+        model: runModel,
+        systemPrompt,
         send,
         writer: noopWriter,
         agent: opts.agent ?? s.agent,
@@ -294,10 +306,13 @@ export class SessionPrompt {
     const session = await this.getSession(sessionID)
     if (!session) throw new Error("session not found")
 
-    const model = modelOverride ?? session.model
+    // Model resolution: explicit override > per-turn agent model > session agent model > session model
+    const effectiveAgent = options?.agent ?? session.agent ?? null
+    const agentTpl = effectiveAgent ? getAgentTemplates()[effectiveAgent] : undefined
+    const model = modelOverride ?? agentTpl?.model ?? session.model
     const basePrompt = await buildSystemPrompt()
-    // Agent persona (researcher/coder/reviewer) prepended when set on the session
-    const persona = session.agent ? getAgentTemplates()[session.agent]?.system : undefined
+    // Agent persona (researcher/coder/reviewer) prepended when set on the session or per-turn
+    const persona = effectiveAgent ? getAgentTemplates()[effectiveAgent]?.system : undefined
     const systemPrompt = persona ? `${persona}\n\n${basePrompt}` : basePrompt
 
     // Persist user message + part immediately (so TUI sees it via bus)
@@ -349,7 +364,7 @@ export class SessionPrompt {
     // Run loop in background (don't block response headers)
     this.runLoop({
       sessionID, assistantMessageID, userText, model, systemPrompt, send, writer,
-      agent: session.agent,
+      agent: effectiveAgent,
       maxSteps: options?.maxSteps,
       compactionThreshold: options?.compactionThreshold,
       onStreamClosed: finishStream,
@@ -646,8 +661,13 @@ export class SessionPrompt {
   private async loadContext(sessionID: string, systemPrompt: string): Promise<LoopMessage[]> {
     const messages = await this.getMessages(sessionID)
     // Hierarchical memory: systemPrompt already contains AGENTS.md via buildSystemPrompt (project instructions)
-    // This method wires L1 working (messages) + L2 episodic (todos/findings) + L3 semantic (knowledge) + procedural (skills)
+    // This method wires L1 working (messages) + L2 episodic (todos/findings) + L3 semantic (knowledge) + procedural (skills) + Memory Bank (Kilo K3)
     const context: LoopMessage[] = [{ role: "system", content: systemPrompt }]
+    // Memory Bank (Kilo K3 parity) — flat file notes that survive restarts, injected before other memory
+    try {
+      const bank = await this.loadMemoryBank()
+      if (bank) context.push({ role: "system", content: bank })
+    } catch {}
     // Skills injection (procedural memory)
     try {
       const skills = await loadSkills()
@@ -695,6 +715,42 @@ export class SessionPrompt {
       }
     }
     return context
+  }
+
+  /** Memory Bank loader — reads data/memory_bank/*.md if present (Kilo parity, flat file notes). */
+  private async loadMemoryBank(): Promise<string | null> {
+    // Resolve memory_bank sibling to the SQLite DB (MIRA_DB) or fallback to ./data/memory_bank
+    const candidates: string[] = []
+    const envDB = process.env.MIRA_DB
+    if (envDB) {
+      const slash = envDB.lastIndexOf("/")
+      if (slash >= 0) candidates.push(`${envDB.slice(0, slash)}/memory_bank`)
+    }
+    candidates.push(`${process.cwd()}/data/memory_bank`)
+    candidates.push(`${process.cwd()}/packages/server/data/memory_bank`)
+    // dedupe
+    const seen = new Set<string>()
+    const uniq = candidates.filter(p => !seen.has(p) && seen.add(p))
+    let dir: string | null = null
+    let files: string[] = []
+    for (const cand of uniq) {
+      try {
+        const { readdirSync } = await import("node:fs")
+        files = readdirSync(cand).filter(f => f.endsWith(".md"))
+        if (files.length >= 0) { dir = cand; break }
+      } catch {}
+      // also try Bun.file existence via readdir failure -> try next candidate
+    }
+    if (!dir) return null
+    const parts: string[] = []
+    for (const f of files.sort()) {
+      try {
+        const txt = await Bun.file(`${dir}/${f}`).text()
+        if (txt.trim()) parts.push(`### ${f}\n${txt.slice(0, 4000).trim()}`)
+      } catch {}
+    }
+    if (!parts.length) return null
+    return `Memory Bank (persistent project notes — read first, update via write/edit when you learn something durable):\n${parts.join("\n\n")}`
   }
 
   private async upsertTextPart(messageID: string, sessionID: string, text: string) {

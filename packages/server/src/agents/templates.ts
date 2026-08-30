@@ -21,6 +21,8 @@ export interface AgentTemplate {
   description: string
   tools: readonly string[]
   permissions: PermissionPosture
+  /** per-agent model override — gateway resolves this before session default */
+  model?: string
 }
 
 export const AGENT_TEMPLATES = {
@@ -122,6 +124,36 @@ export const AGENT_TEMPLATES = {
     tools: ["read", "glob", "grep", "websearch"],
     permissions: "readonly",
   },
+
+  // ── Kilo parity agents (K1: code/ask/plan) ──────────────────────────
+  // Kilo's Agent Modes: Code (full), Ask (read-only), Architect/Plan (read+bash no writes), Debug (full with reasoning)
+  // Mira maps them directly — per-agent LLM routing via `model` field enables cost optimization (ask=cheap, code=opus).
+
+  code: {
+    system:
+      "You are a coder. Write, refactor, and ship production-ready code. You have full tool access — read, write, edit, bash, and MCP. Keep diffs minimal, run relevant tests before reporting done, and prefer pragmatic fixes over perfect rewrites.",
+    description:
+      "Kilo Code mode — full access. Delegate implementation, refactoring, and shipping: new features, bug fixes, multi-file edits. Use when writes are expected.",
+    tools: ["read", "write", "edit", "bash", "glob", "grep", "todowrite", "webfetch", "websearch", "task", "question", "lsp", "memory_search", "memory_write"],
+    permissions: "standard",
+  },
+  ask: {
+    system:
+      "You are a knowledgeable technical assistant. Answer questions about the codebase without modifying any files. Cite file:line references, explain reasoning, and suggest next steps — but never call write/edit/bash that mutates state. Read-only.",
+    description:
+      "Kilo Ask mode — read-only. Delegate codebase Q&A, explanations, and orientation. Use when you need answers, not changes. Cheapest to run — route to a cheap model.",
+    tools: ["read", "glob", "grep", "lsp", "websearch", "webfetch", "memory_search"],
+    permissions: "readonly",
+    model: "openrouter/deepseek/deepseek-v3.2-exp",
+  },
+  plan: {
+    system:
+      "You are an architect. Plan complex features and get structured guidance before writing code. Read the codebase, design the architecture, write an implementation plan with steps, risks, and alternatives. Do not mutate files — output the plan for approval.",
+    description:
+      "Kilo Architect/Plan mode — read+bash, no writes. Delegate design, planning, and exploration before implementation. Use when you need a plan, not code yet.",
+    tools: ["read", "glob", "grep", "bash", "websearch", "webfetch", "todowrite", "lsp", "memory_search"],
+    permissions: "standard",
+  },
 } satisfies Record<string, AgentTemplate>
 
 export type AgentTemplateName = keyof typeof AGENT_TEMPLATES
@@ -142,11 +174,13 @@ function materialize(name: string, def: AgentDefinition): AgentTemplate | null {
   if (typeof def?.system !== "string" || def.system.trim().length < 10) return null
   const posture = def.permissions === "readonly" || def.permissions === "elevated" ? def.permissions : "standard"
   const tools = Array.isArray(def.tools) ? def.tools.filter((t): t is string => typeof t === "string" && t.length > 0) : []
+  const model = typeof def.model === "string" && def.model.trim().length > 0 ? def.model.trim() : undefined
   return {
     system: def.system.trim(),
     description: typeof def.description === "string" ? def.description : "",
     tools,
     permissions: posture,
+    ...(model ? { model } : {}),
   }
 }
 

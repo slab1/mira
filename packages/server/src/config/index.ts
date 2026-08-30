@@ -181,6 +181,7 @@ const miraConfigPatchSchema = z.object({
     description: z.string().optional(),
     tools: z.array(z.string()).optional(),
     permissions: z.enum(["readonly", "standard", "elevated"]).optional(),
+    model: z.string().min(1).optional(),
   })).optional(),
   theme: z.enum(["dark", "light", "system"]).optional(),
   debug: z.boolean().optional(),

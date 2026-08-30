@@ -29,7 +29,7 @@ import { createGateway } from "./gateway/index.js"
 import { ToolRegistry } from "./tools/registry.js"
 import { PermissionManager } from "./permission/index.js"
 import { SessionPrompt } from "./session/prompt.js"
-import { getAgentTemplates, AGENT_TEMPLATES } from "./agents/templates.js"
+import { getAgentTemplates, AGENT_TEMPLATES, isKnownAgent } from "./agents/templates.js"
 const BUILTIN_AGENT_KEYS: Record<string, true> = Object.fromEntries(Object.keys(AGENT_TEMPLATES).map(k => [k, true as const]))
 import { MCPManager } from "./mcp/index.js"
 import { loadConfig, saveConfig, removeMcpFromConfig, removeProviderFromConfig, getConfigLayers, getConfig } from "./config/index.js"
@@ -179,6 +179,31 @@ async function main() {
   const db = createDatabase(process.env.MIRA_DB ?? "./data/mira.db")
   await migrate(db)
   console.log(`[mira] storage ready`)
+
+  // 2b. Memory Bank (Kilo K3 parity) — ensure data/memory_bank exists with starter files
+  try {
+    const dbPath = process.env.MIRA_DB ?? "./data/mira.db"
+    const slash = dbPath.lastIndexOf("/")
+    const bankDir = slash >= 0 ? `${dbPath.slice(0, slash)}/memory_bank` : "./data/memory_bank"
+    const { mkdir, readdir } = await import("node:fs/promises")
+    await mkdir(bankDir, { recursive: true })
+    const existing = await readdir(bankDir).catch(() => [] as string[])
+    if (existing.length === 0) {
+      const starters: Record<string, string> = {
+        "decisions.md": "# Decisions\n\nArchitectural decisions and rationale. Update when you choose a pattern, library, or boundary.\n",
+        "conventions.md": "# Conventions\n\nCode style, naming, repo patterns. E.g. repository pattern for DB, Zod for validation.\n",
+        "tech_debt.md": "# Tech Debt\n\nKnown shortcuts, TODOs, and fragility. Mark what not to touch.\n",
+        "active_work.md": "# Active Work\n\nIn-progress branches, mid-migration notes, what the next session should resume.\n",
+        "file_paths.md": "# File Paths\n\nFrequently referenced files and their roles.\n",
+      }
+      for (const [name, content] of Object.entries(starters)) {
+        try { await Bun.write(`${bankDir}/${name}`, content) } catch {}
+      }
+      console.log(`[mira] memory_bank initialized at ${bankDir} (5 files)`)
+    }
+  } catch (e) {
+    console.warn("[mira] memory_bank init failed:", String(e))
+  }
 
   // Load runtime-issued API keys (persisted in db) into the owner map so they
   // survive restarts. Env keys were loaded above; these augment that map.
@@ -645,19 +670,23 @@ async function main() {
     return c.json(f)
   })
 
-  // Prompt — the core loop (streamed via SSE)
+  // Prompt — the core loop (streamed via SSE) — supports per-turn agent override (Kilo K1)
   app.post("/session/:id/prompt", async c => {
     const id = requireId(c)
     if (!id) return c.json({ error: "session not found" }, 404)
-    const { prompt: text, model, maxSteps } = await c.req.json().catch(() => ({}))
+    const { prompt: text, model, agent, maxSteps } = await c.req.json().catch(() => ({} as Record<string, unknown>))
     if (!text?.trim?.()) return c.json({ error: "empty prompt" }, 400)
     // Validate session exists + requester owns it
     if (!(await authorizedSession(id, c))) return c.json({ error: "session not found" }, 404)
+    // Validate agent if supplied (unknown agent → 400, Kilo parity)
+    if (agent !== undefined && agent !== null && typeof agent === "string" && agent.length > 0 && !isKnownAgent(agent)) {
+      return c.json({ error: `unknown agent "${agent}"` }, 400)
+    }
 
     // Stream response as SSE (Vercel AI SDK style); per-request loop options honored
     // Propagate client abort (disconnect) to gateway fetch via AbortSignal
     const signal = (c.req.raw as Request & { signal?: AbortSignal })?.signal
-    return prompt.streamResponse(id, text, model, { maxSteps, signal })
+    return prompt.streamResponse(id, text as string, model as string | undefined, { maxSteps: maxSteps as number | undefined, agent: (agent as string | undefined) ?? null, signal })
   })
 
   // Messages & parts
@@ -778,7 +807,7 @@ async function main() {
   // Tools list (for TUI introspection)
   app.get("/tools", c => c.json(tools.list()))
 
-  // Agent catalog — built-in lane templates + mira.json custom agents
+  // Agent catalog — built-in lane templates + mira.json custom agents (Kilo K1 parity: includes model per agent)
   app.get("/agents", c => {
     const registry = getAgentTemplates()
     return c.json(Object.entries(registry).map(([name, tpl]) => ({
@@ -786,6 +815,7 @@ async function main() {
       description: tpl.description,
       tools: [...tpl.tools],
       permissions: tpl.permissions,
+      model: (tpl as { model?: string }).model ?? null,
       custom: !(name in BUILTIN_AGENT_KEYS),
     })))
   })

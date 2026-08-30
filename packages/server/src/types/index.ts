@@ -163,6 +163,8 @@ export interface AgentDefinition {
   description?: string
   tools?: string[]
   permissions?: "readonly" | "standard" | "elevated"
+  /** per-agent model override (Kilo K1: ask=cheap, code=opus) */
+  model?: string
 }
 
 export interface MCPServerConfig {
