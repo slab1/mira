@@ -9,23 +9,59 @@ import { SkillSelector } from "./components/SkillSelector"
 import { QuestionPrompt } from "./components/QuestionPrompt"
 import { SettingsPanel } from "./components/SettingsPanel"
 import { CommandPalette } from "./components/CommandPalette"
-import { api, getToken, setToken } from "./api/client"
+import { api, getToken, setToken, validateToken } from "./api/client"
 
 /** Token gate: servers with MIRA_TOKEN/MIRA_API_KEYS reject unauthenticated
  *  clients. Show a credential card until a token is stored and the server
- *  accepts it. Dev servers without auth let any (even empty) token pass. */
+ *  accepts it. Dev servers without auth let any (even empty) token pass.
+ *
+ *  Token persistence:
+ *  - Server: ~/.mira/mira.env  →  MIRA_TOKEN=... (32+ hex, `openssl rand -hex 32`)
+ *    sourced + exported by scripts/serve-local.sh:10 (`[ -f "$MIRA_ENV" ] && . "$MIRA_ENV"` + `export MIRA_TOKEN`)
+ *    then `scripts/serve-local.sh start` restarts the server.
+ *  - Web: AuthGate input → localStorage `mira_token` (via setToken/getToken) → Authorization: Bearer
+ *    survives reload; `mira:token-change` keeps tabs in sync.
+ *  - Dev fallback: packages/web/.env  →  VITE_MIRA_TOKEN=... (read by getToken() when localStorage empty)
+ */
 function AuthGate(props: { onReady: () => void }) {
   const [value, setValue] = createSignal(getToken())
   const [error, setError] = createSignal("")
+  const [checking, setChecking] = createSignal(false)
 
-  function connect(e?: Event) {
+  // Keep input in sync if token changes from another tab or Settings
+  onMount(() => {
+    const onTokenChange = (e: Event): void => {
+      const detail = (e as CustomEvent<{ token: string }>).detail
+      if (detail && typeof detail.token === "string") setValue(detail.token)
+    }
+    window.addEventListener("mira:token-change", onTokenChange)
+    window.addEventListener("mira:auth-invalid", onTokenChange)
+    onCleanup(() => {
+      window.removeEventListener("mira:token-change", onTokenChange)
+      window.removeEventListener("mira:auth-invalid", onTokenChange)
+    })
+  })
+
+  async function connect(e?: Event): Promise<void> {
     e?.preventDefault()
+    const trimmed = value().trim()
     setError("")
-    setToken(value().trim())
+    setChecking(true)
+    // Persist candidate so validateToken()/req() can send it as Bearer
+    setToken(trimmed)
     try {
+      const ok = await validateToken()
+      if (!ok) {
+        setError("Invalid token")
+        return
+      }
       props.onReady()
     } catch (err) {
-      setError(String(err))
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg === "unauthorized" || msg.includes("401")) setError("Invalid token")
+      else setError(msg)
+    } finally {
+      setChecking(false)
     }
   }
 
@@ -95,8 +131,14 @@ function AuthGate(props: { onReady: () => void }) {
           </div>
         </Show>
 
-        <button type="submit" class="btn btn-solid" style={{ padding: "9px 12px", "font-size": "var(--fs-base)", "margin-top": "2px" }}>
-          Connect →
+        <button
+          type="submit"
+          class="btn btn-solid"
+          disabled={checking()}
+          aria-busy={checking() ? "true" : "false"}
+          style={{ padding: "9px 12px", "font-size": "var(--fs-base)", "margin-top": "2px", opacity: checking() ? "0.7" : "1" }}
+        >
+          {checking() ? "Checking…" : "Connect →"}
         </button>
 
         <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)" }}>
@@ -117,15 +159,36 @@ export default function App() {
   const [selectedAgent, setSelectedAgent] = createSignal("")
 
   onMount(() => {
-    // Probe with stored credentials; unauthorized → show the gate
-    void store
-      .loadSessions()
-      .then(() => setAuthorized(true))
-      .catch((e: Error) => {
-        if (getToken()) console.warn("[mira] load failed:", e.message)
-        if (e.message !== "unauthorized") setAuthorized(true) // non-auth failure: proceed, banner shows offline
-        else setAuthorized(false)
-      })
+    // Probe stored token without flashing the gate:
+    // - No token → keep gate visible (user must Connect; empty allowed for open dev servers)
+    // - Token present → validate first; only on success load sessions and authorize
+    // - 401 → keep gate; network/other errors → keep gate (don't auto-hide)
+    const probe = async (): Promise<void> => {
+      const token = getToken()
+      if (!token) {
+        setAuthorized(false)
+        return
+      }
+      try {
+        const ok = await validateToken()
+        if (!ok) {
+          setAuthorized(false)
+          return
+        }
+        await store.loadSessions()
+        setAuthorized(true)
+      } catch (e) {
+        const err = e as Error
+        const msg = err.message
+        const isUnauthorized = msg === "unauthorized" || msg.includes("401")
+        if (isUnauthorized) setAuthorized(false)
+        else {
+          console.warn("[mira] probe failed:", msg)
+          setAuthorized(false)
+        }
+      }
+    }
+    void probe()
 
     // Token invalid → clear gate (req() already cleared localStorage + dispatched)
     const onAuthInvalid = () => setAuthorized(false)

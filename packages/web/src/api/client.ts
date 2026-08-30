@@ -218,6 +218,12 @@ function baseUrl(): string {
 }
 
 // ── Auth (bearer token; servers with MIRA_TOKEN/MIRA_API_KEYS require it) ──
+// Token sources (in priority order):
+//  1. localStorage `mira_token` — written by AuthGate via setToken(), survives reload,
+//     dispatched as `mira:token-change` (same-tab) + `storage` event (cross-tab).
+//  2. Vite env `VITE_MIRA_TOKEN` — dev fallback from packages/web/.env (getToken() fallback).
+// Server side: ~/.mira/mira.env  →  MIRA_TOKEN=…  (sourced + exported by scripts/serve-local.sh:10)
+//  then `scripts/serve-local.sh start` restarts the server. req() clears on 401 via clearTokenOn401.
 const TOKEN_KEY = "mira_token"
 
 export class ApiError extends Error {
@@ -296,8 +302,8 @@ function authHeaders(extra?: HeadersInit): HeadersInit {
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const timeoutMs = 10_000
-  const maxRetries = 1
+  const timeoutMs = 100_000
+  const maxRetries = 3
   let lastErr: Error | null = null
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController()

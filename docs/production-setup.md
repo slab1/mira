@@ -61,6 +61,14 @@ survive reboots. Hand the `key` to the user — they paste it into the web UI
 
 ## 2. Web UI
 
+**Where tokens live**
+
+| Layer | File / Store | Key | How it gets there |
+|-------|--------------|-----|-------------------|
+| Server | `~/.mira/mira.env` | `MIRA_TOKEN=…` (32+ hex, `openssl rand -hex 32`) or `MIRA_API_KEYS=key:owner,…` | `scripts/serve-local.sh:10` does `[ -f "$MIRA_ENV" ] && . "$MIRA_ENV"` then `export MIRA_TOKEN/MIRA_API_KEYS`; restart with `scripts/serve-local.sh start` |
+| Web (prod) | Browser `localStorage` | `mira_token` | User pastes token into the AuthGate card (or Settings) → `setToken()` writes `localStorage` + dispatches `mira:token-change`; survives reload; sent as `Authorization: Bearer` |
+| Web (dev fallback) | `packages/web/.env` | `VITE_MIRA_TOKEN=…` | Read by `getToken()` when `localStorage` is empty; Vite injects at build/dev time |
+
 **Build**
 ```bash
 cd packages/web
@@ -68,7 +76,7 @@ npm run build
 ```
 Build output goes to `dist/`. `base` is set from `VITE_BASE`, default `/mira/`.
 
-For production, **do not** embed token in build. Users enter token in Settings UI which stores it in `localStorage.mira_token`.
+For production, **do not** embed token in build. Users enter token in the AuthGate (first load) or Settings UI which stores it in `localStorage.mira_token`. The gate validates via `validateToken()` (`GET /health` / `GET /config`) before hiding; on 401 it shows “Invalid token” and stays visible.
 
 **CORS**
 Set `CORS_ORIGINS` to your production domain(s). Comma-separated.
