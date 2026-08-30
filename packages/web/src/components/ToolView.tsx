@@ -15,7 +15,7 @@ const TABS: { id: Tab; label: string }[] = [
 
 export function ToolView(props: { store: AppStore }) {
   const s = () => props.store.state
-  const [tools] = createResource(() => api.listTools().catch(() => [] as ToolInfo[]))
+  const [tools] = createResource(() => api.listToolsCached().catch(() => [] as ToolInfo[]))
   const [tab, setTab] = createSignal<Tab>("todos")
   const [collapsed, setCollapsed] = createSignal(false)
   const snapshotsSource = () => (tab() === "history" ? s().currentId ?? null : null)
@@ -232,8 +232,22 @@ export function ToolView(props: { store: AppStore }) {
 
           {/* ── Tools ─────────────────────────────────────────────── */}
           <Show when={tab() === "tools"}>
-            <div style={{ "font-size": "var(--fs-xs)", "font-weight": "700", color: "var(--fg-muted)", "letter-spacing": "0.05em", "text-transform": "uppercase", "margin-bottom": "10px" }}>
-              Tools · {tools.loading ? "…" : (tools()?.length ?? 0)}
+            <div style={{ display: "flex", "align-items": "center", gap: "8px", "margin-bottom": "10px" }}>
+              <span style={{ "font-size": "var(--fs-xs)", "font-weight": "700", color: "var(--fg-muted)", "letter-spacing": "0.05em", "text-transform": "uppercase" }}>
+                Tools
+              </span>
+              <span class="pill" style={{ "font-size": "var(--fs-2xs)", padding: "1px 7px", background: "var(--accent-soft)", color: "var(--accent)", border: "1px solid var(--accent-border)" }}>
+                {tools.loading ? "…" : (tools()?.length ?? 0)}
+              </span>
+              <button
+                type="button"
+                class="btn btn-ghost"
+                onClick={() => { api.invalidateToolCache(); location.reload() }}
+                title="Refresh tools (bypass 30s cache)"
+                style={{ padding: "2px 7px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-full)", "margin-left": "auto" }}
+              >
+                ↻
+              </button>
             </div>
             <Show
               when={!tools.loading}

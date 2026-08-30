@@ -17,6 +17,7 @@ import { createStore } from "solid-js/store"
 import { createSignal, onCleanup } from "solid-js"
 import {
   api,
+  ApiError,
   type MiraConfig,
   type ConfigSchema,
   type ProviderEntry,
@@ -171,7 +172,11 @@ export function createSettingsStore() {
       setState("config", cfg)
     } catch (e) {
       // 404 = no config endpoint on older server — keep null, UI shows fallback
-      if (!String((e as Error).message).includes("404")) setState("error", (e as Error).message)
+      // 401 = token invalid — don't surface as error, auth gate handles it
+      const msg = String((e as Error).message)
+      if (e instanceof ApiError && e.status === 401) return
+      if (msg.includes("401") || msg.includes("unauthorized")) return
+      if (!msg.includes("404")) setState("error", (e as Error).message)
     }
   }
 
@@ -188,7 +193,9 @@ export function createSettingsStore() {
     try {
       const raw = await api.listProviders()
       setState("providers", normalizeProviders(raw as ProviderEntry[] | Record<string, ProviderConfig>))
-    } catch {
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) return
+      if (String((e as Error).message).includes("401")) return
       // fallback: derive from config.provider if /providers missing
       if (state.config?.provider) {
         setState("providers", normalizeProviders(state.config.provider as Record<string, ProviderConfig>))
@@ -201,6 +208,8 @@ export function createSettingsStore() {
       const list = await api.listMcp()
       setState("mcp", list)
     } catch (e) {
+      if (e instanceof ApiError && e.status === 401) { setState("mcp", []); return }
+      if (String((e as Error).message).includes("401")) { setState("mcp", []); return }
       if (!String((e as Error).message).includes("404")) setState("error", (e as Error).message)
       setState("mcp", [])
     }
@@ -210,7 +219,8 @@ export function createSettingsStore() {
     try {
       const list = await api.listAgents()
       setState("agents", list)
-    } catch {
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) { setState("agents", []); return }
       setState("agents", [])
     }
   }
@@ -219,7 +229,8 @@ export function createSettingsStore() {
     try {
       const raw = await api.listCommands()
       setState("commands", normalizeCommands(raw as CommandEntry[] | string[]))
-    } catch {
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) { setState("commands", []); return }
       setState("commands", [])
     }
   }
@@ -228,7 +239,8 @@ export function createSettingsStore() {
     try {
       const raw = await api.listSkills()
       setState("skills", normalizeSkills(raw as SkillEntry[] | string[]))
-    } catch {
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) { setState("skills", []); return }
       setState("skills", [])
     }
   }
@@ -237,7 +249,9 @@ export function createSettingsStore() {
     try {
       const perm = await api.getPermission()
       setState("permission", perm)
-    } catch {
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) return
+      if (String((e as Error).message).includes("401")) return
       // fallback to config.permission if endpoint missing
       if (state.config?.permission) setState("permission", state.config.permission as PermissionMatrix)
       else setState("permission", null)

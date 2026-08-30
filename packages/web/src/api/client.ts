@@ -54,10 +54,21 @@ export type Todo = {
   priority?: string
 }
 
+export type JsonSchema = {
+  type?: string
+  description?: string
+  properties?: Record<string, JsonSchema>
+  required?: string[]
+  enum?: string[]
+  items?: JsonSchema
+  default?: JsonValue
+  additionalProperties?: boolean | JsonSchema
+}
+
 export type ToolInfo = {
   name: string
   description: string
-  parameters?: Record<string, JsonValue>
+  parameters?: JsonSchema
 }
 
 export type Snapshot = {
@@ -188,13 +199,18 @@ export type SkillEntry = {
 
 export type PermissionMatrix = Record<string, string | Record<string, string>>
 
-const BASE =
-  (typeof import.meta !== "undefined" &&
-    (import.meta as { env?: Record<string, string> }).env?.VITE_API_URL) ||
-  ""
+function getEnvBase(): string {
+  try {
+    const env = (import.meta as unknown as { env?: Record<string, string> }).env
+    return env?.VITE_API_URL ?? ""
+  } catch {
+    return ""
+  }
+}
 
 function baseUrl(): string {
-  if (BASE) return BASE.replace(/\/$/, "")
+  const raw = getEnvBase()
+  if (raw) return raw.replace(/\/$/, "")
   // dev proxy: relative urls go through Vite proxy to :4096
   // prod: same origin unless VITE_API_URL set
   if (typeof window !== "undefined" && window.location.port === "3000") return ""
@@ -203,6 +219,17 @@ function baseUrl(): string {
 
 // ── Auth (bearer token; servers with MIRA_TOKEN/MIRA_API_KEYS require it) ──
 const TOKEN_KEY = "mira_token"
+
+export class ApiError extends Error {
+  status: number
+  body: string
+  constructor(status: number, message: string, body = "") {
+    super(message)
+    this.name = "ApiError"
+    this.status = status
+    this.body = body
+  }
+}
 
 export function getToken(): string {
   try {
@@ -217,7 +244,50 @@ export function setToken(token: string): void {
   try {
     if (token) localStorage.setItem(TOKEN_KEY, token)
     else localStorage.removeItem(TOKEN_KEY)
+    // notify same-tab listeners (storage event only fires cross-tab)
+    try {
+      window.dispatchEvent(new CustomEvent("mira:token-change", { detail: { token } }))
+    } catch {}
   } catch {}
+}
+
+export function clearTokenOn401(): void {
+  try {
+    localStorage.removeItem(TOKEN_KEY)
+  } catch {}
+  try {
+    window.dispatchEvent(new CustomEvent("mira:auth-invalid"))
+  } catch {}
+}
+
+export async function validateToken(): Promise<boolean> {
+  try {
+    await req<{ ok: boolean }>("/health")
+    return true
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) return false
+    // try /config as fallback (also gated)
+    try {
+      await req<MiraConfig>("/config")
+      return true
+    } catch (e2) {
+      if (e2 instanceof ApiError && e2.status === 401) return false
+      // network or other error — don't treat as invalid
+      return true
+    }
+  }
+}
+
+// cross-tab token sync — storage event only fires in other tabs
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (e) => {
+    if (e.key === TOKEN_KEY) {
+      try {
+        window.dispatchEvent(new CustomEvent("mira:auth-invalid", { detail: { token: e.newValue } }))
+        window.dispatchEvent(new CustomEvent("mira:token-change", { detail: { token: e.newValue ?? "" } }))
+      } catch {}
+    }
+  })
 }
 
 function authHeaders(extra?: HeadersInit): HeadersInit {
@@ -226,19 +296,95 @@ function authHeaders(extra?: HeadersInit): HeadersInit {
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${baseUrl()}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...authHeaders(init?.headers) },
-  })
-  if (res.status === 401) throw new Error("unauthorized")
-  if (!res.ok) {
-    const text = await res.text().catch(() => "")
-    throw new Error(`${res.status} ${res.statusText}${text ? `: ${text}` : ""}`)
+  const timeoutMs = 10_000
+  const maxRetries = 1
+  let lastErr: Error | null = null
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    // combine caller signal + timeout signal
+    let signal: AbortSignal = controller.signal
+    if (init?.signal) {
+      const caller = init.signal as AbortSignal
+      if (caller.aborted) {
+        clearTimeout(timer)
+        controller.abort((caller as AbortSignal & { reason?: string }).reason)
+      } else {
+        try {
+          const anyFn = (AbortSignal as unknown as { any?: (s: AbortSignal[]) => AbortSignal }).any
+          if (typeof anyFn === "function") signal = anyFn([controller.signal, caller])
+          else {
+            caller.addEventListener("abort", () => controller.abort((caller as AbortSignal & { reason?: string }).reason), { once: true })
+          }
+        } catch {
+          caller.addEventListener("abort", () => controller.abort((caller as AbortSignal & { reason?: string }).reason), { once: true })
+        }
+      }
+    }
+    try {
+      const res = await fetch(`${baseUrl()}${path}`, {
+        ...init,
+        mode: "cors",
+        signal,
+        headers: { "Content-Type": "application/json", ...authHeaders(init?.headers) },
+      })
+      clearTimeout(timer)
+      if (res.status === 401) {
+        clearTokenOn401()
+        throw new ApiError(401, "unauthorized")
+      }
+      if (!res.ok) {
+        const text = await res.text().catch(() => "")
+        let msg = `${res.status} ${res.statusText}${text ? `: ${text}` : ""}`
+        try {
+          const j = JSON.parse(text) as { error?: string; message?: string }
+          if (typeof j.error === "string" && j.error) msg = `${res.status} ${j.error}`
+          else if (typeof j.message === "string" && j.message) msg = `${res.status} ${j.message}`
+        } catch {}
+        throw new ApiError(res.status, msg, text)
+      }
+      // 204 / empty
+      const ct = res.headers.get("content-type") || ""
+      if (ct.includes("application/json")) return (await res.json()) as T
+      return (await res.json().catch(() => ({} as T))) as T
+    } catch (e) {
+      clearTimeout(timer)
+      if (e instanceof ApiError) throw e
+      const err = e as Error
+      const callerAborted = init?.signal ? (init.signal as AbortSignal).aborted : false
+      // caller explicitly aborted — don't retry
+      if (callerAborted && err.name === "AbortError") throw e
+      const isAbort = err.name === "AbortError"
+      const shouldRetry = attempt < maxRetries && (isAbort || err instanceof TypeError)
+      if (shouldRetry) {
+        lastErr = err
+        await new Promise((r) => setTimeout(r, 300))
+        continue
+      }
+      if (isAbort) throw new Error(`request timeout after ${timeoutMs}ms: ${path}`)
+      throw e
+    }
   }
-  // 204 / empty
-  const ct = res.headers.get("content-type") || ""
-  if (ct.includes("application/json")) return (await res.json()) as T
-  return (await res.json().catch(() => ({} as T))) as T
+  throw lastErr ?? new Error("request failed")
+}
+
+// ── Tool cache (TTL 30s) ───────────────────────────────────────────
+const TOOL_CACHE_TTL = 30_000
+let toolCache: { data: ToolInfo[]; ts: number } | null = null
+
+async function listToolsRaw(): Promise<ToolInfo[]> {
+  return req<ToolInfo[]>("/tools")
+}
+
+async function listToolsCached(): Promise<ToolInfo[]> {
+  if (toolCache && Date.now() - toolCache.ts < TOOL_CACHE_TTL) return toolCache.data
+  const data = await listToolsRaw()
+  toolCache = { data, ts: Date.now() }
+  return data
+}
+
+function invalidateToolCache(): void {
+  toolCache = null
 }
 
 // ── REST ─────────────────────────────────────────────────────────────
@@ -256,7 +402,9 @@ export const api = {
   setTodos: (id: string, todos: Todo[]) =>
     req<Todo[]>(`/session/${id}/todo`, { method: "POST", body: JSON.stringify(todos) }),
 
-  listTools: () => req<ToolInfo[]>("/tools"),
+  listTools: () => listToolsRaw(),
+  listToolsCached,
+  invalidateToolCache,
 
   /** Gateway cost/latency stats for the process */
   devHealth: () =>
@@ -296,12 +444,35 @@ export const api = {
 
   /** Export session transcript — markdown or JSON (triggers download in caller) */
   exportSession: async (id: string, format: "md" | "json" = "md"): Promise<string> => {
-    const res = await fetch(`${baseUrl()}/session/${id}/export?format=${format}`, {
-      headers: authHeaders(),
-    })
-    if (res.status === 401) throw new Error("unauthorized")
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-    return await res.text()
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 10_000)
+    try {
+      const res = await fetch(`${baseUrl()}/session/${id}/export?format=${format}`, {
+        mode: "cors",
+        signal: controller.signal,
+        headers: authHeaders(),
+      })
+      if (res.status === 401) {
+        clearTokenOn401()
+        throw new ApiError(401, "unauthorized")
+      }
+      if (!res.ok) {
+        const t = await res.text().catch(() => "")
+        let msg = `${res.status} ${res.statusText}`
+        try {
+          const j = JSON.parse(t) as { error?: string }
+          if (j.error) msg = `${res.status} ${j.error}`
+        } catch {}
+        throw new ApiError(res.status, msg, t)
+      }
+      return await res.text()
+    } catch (e) {
+      if (e instanceof ApiError) throw e
+      if ((e as Error).name === "AbortError") throw new Error(`request timeout after 10000ms: /session/${id}/export`)
+      throw e
+    } finally {
+      clearTimeout(timer)
+    }
   },
 
   checkPermission: (body: Record<string, JsonValue>) =>
@@ -354,15 +525,27 @@ export const api = {
     prompt: string,
     opts: { model?: string; onChunk: (chunk: string) => void; signal?: AbortSignal },
   ) => {
+    // fresh token + baseUrl on each call (watchdog may have redeployed)
+    const headers = { ...authHeaders({ "Content-Type": "application/json", Accept: "text/event-stream" }) }
     const res = await fetch(`${baseUrl()}/session/${id}/prompt`, {
       method: "POST",
-      headers: { ...authHeaders({ "Content-Type": "application/json", Accept: "text/event-stream" }) },
+      mode: "cors",
+      headers,
       body: JSON.stringify({ prompt, model: opts.model }),
       signal: opts.signal,
     })
+    if (res.status === 401) {
+      clearTokenOn401()
+      throw new ApiError(401, "unauthorized")
+    }
     if (!res.ok) {
       const t = await res.text().catch(() => "")
-      throw new Error(`prompt failed ${res.status}: ${t}`)
+      let msg = `prompt failed ${res.status}: ${t}`
+      try {
+        const j = JSON.parse(t) as { error?: string }
+        if (j.error) msg = `prompt failed ${res.status}: ${j.error}`
+      } catch {}
+      throw new ApiError(res.status, msg, t)
     }
     if (!res.body) {
       const t = await res.text()
@@ -387,7 +570,7 @@ export const api = {
           if (!data) continue
           // Try JSON unwrap: some servers send JSON per frame
           try {
-            const j = JSON.parse(data)
+            const j = JSON.parse(data) as { textDelta?: string; text?: string; content?: string; delta?: string }
             // Vercel AI SDK style: { type: "text-delta", textDelta: "..." }
             const text = j.textDelta ?? j.text ?? j.content ?? j.delta ?? (typeof j === "string" ? j : "")
             if (text) opts.onChunk(String(text))
@@ -417,6 +600,7 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
   connect: () => WebSocket
   disconnect: () => void
   send: (msg: JsonValue) => void
+  reconnect: () => void
   get ws(): WebSocket | null
 } {
   let ws: WebSocket | null = null
@@ -432,37 +616,67 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
     return `${proto}//${u.host}/`
   }
 
+  function doConnect(): WebSocket {
+    if (ws && ws.readyState === WebSocket.OPEN) return ws
+    // fresh baseUrl + token on each connect (handles VITE_API_URL watchdog redeploy)
+    ws = new WebSocket(wsUrl())
+    ws.onopen = () => {
+      // Servers with auth enabled close unauthenticated sockets after 5s —
+      // browsers cannot set WS headers, so authenticate via first message.
+      const t = getToken()
+      if (t) ws?.send(JSON.stringify({ type: "auth", token: t }))
+      handlers.open?.()
+    }
+    ws.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(String(ev.data)) as BusEvent
+        handlers.event?.(data)
+      } catch {
+        // ignore non-JSON heartbeat
+      }
+    }
+    ws.onclose = () => handlers.close?.()
+    ws.onerror = (e) => handlers.error?.(e as Event)
+    return ws
+  }
+
+  // re-auth on token change (cross-tab or in-tab)
+  if (typeof window !== "undefined") {
+    const onTokenChange = () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const t = getToken()
+        try {
+          if (t) ws.send(JSON.stringify({ type: "auth", token: t }))
+          else {
+            // token cleared — reconnect to trigger 401 handling
+            ws.close()
+          }
+        } catch {}
+      } else if (ws && ws.readyState === WebSocket.CLOSED) {
+        // will reconnect via interval in app store
+      }
+    }
+    window.addEventListener("mira:auth-invalid", onTokenChange)
+    window.addEventListener("mira:token-change", onTokenChange)
+  }
+
   return {
     get ws() {
       return ws
     },
     connect() {
-      if (ws && ws.readyState === WebSocket.OPEN) return ws
-      ws = new WebSocket(wsUrl())
-      ws.onopen = () => {
-        // Servers with auth enabled close unauthenticated sockets after 5s —
-        // browsers cannot set WS headers, so authenticate via first message.
-        const t = getToken()
-        if (t) ws?.send(JSON.stringify({ type: "auth", token: t }))
-        handlers.open?.()
-      }
-      ws.onmessage = (ev) => {
-        try {
-          const data = JSON.parse(String(ev.data)) as BusEvent
-          handlers.event?.(data)
-        } catch {
-          // ignore non-JSON heartbeat
-        }
-      }
-      ws.onclose = () => handlers.close?.()
-      ws.onerror = (e) => handlers.error?.(e as Event)
-      return ws
+      return doConnect()
     },
     disconnect() {
       try {
         ws?.close()
       } catch {}
       ws = null
+    },
+    reconnect() {
+      try { ws?.close() } catch {}
+      ws = null
+      return doConnect()
     },
     send(msg: JsonValue) {
       if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg))

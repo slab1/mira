@@ -124,8 +124,12 @@ export default function App() {
       .catch((e: Error) => {
         if (getToken()) console.warn("[mira] load failed:", e.message)
         if (e.message !== "unauthorized") setAuthorized(true) // non-auth failure: proceed, banner shows offline
-        else if (getToken()) setAuthorized(true) // stale token case — still let UI render; errors surface per-call
+        else setAuthorized(false)
       })
+
+    // Token invalid → clear gate (req() already cleared localStorage + dispatched)
+    const onAuthInvalid = () => setAuthorized(false)
+    window.addEventListener("mira:auth-invalid", onAuthInvalid)
 
     // Global palette shortcut: Ctrl+P / Cmd+P and "/" hint
     const onPaletteEvent = () => setPaletteOpen(true)
@@ -142,6 +146,7 @@ export default function App() {
     }
     window.addEventListener("keydown", onKey)
     onCleanup(() => {
+      window.removeEventListener("mira:auth-invalid", onAuthInvalid)
       window.removeEventListener("mira:open-palette", onPaletteEvent)
       window.removeEventListener("keydown", onKey)
     })
