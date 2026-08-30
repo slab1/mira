@@ -17,7 +17,8 @@ Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observab
 | Message queue while streaming | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ **Durable (SQLite), chained-turn drain** |
 | Inspectable subagents | ❌ (ephemeral) | ❌ | ❌ | ❌ | ❌ | ✅ **Persistent child sessions with full transcripts** |
 | Self-improvement | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **Pain-point detection → verified patches → autopilot PRs** |
-| Cost Control | ✅ Free | $20-200 | $20-200 | $15-35 | Free | ✅ **Free + local, live spend display, prompt caching** |
+| Cost Control | ✅ Free | $20-200 | $20-200 | $15-35 | Free | ✅ **Free + local, live spend display, prompt caching, cost-cap per-task/session** |
+| Kilo Parity (2026-08) | — | — | — | — | — | ✅ **Agents (code/ask/plan, per-agent LLM) · Memory Bank · Orchestrator DAG · MCP Marketplace · Inline Autocomplete · Browser · Sessions Sync** |
 
 ## Architecture
 

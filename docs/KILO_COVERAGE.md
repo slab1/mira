@@ -4,6 +4,8 @@
 **Repo:** `slab1/mira` @ `/tmp/aether`  
 **Purpose:** Freeze what Kilo Code (`Kilo-Org/kilocode`, 27k★, 1.5M installs, $8M seed, successor to Roo/Cline) does well, map every position to Mira's current spine, and define exactly what Mira must ship to be *better than Kilo on every axis* — without losing Mira's existing moats. This doc is the source of truth for Kilo-driven roadmap; `MIRA_CHALLENGES.md` remains the pre-fix challenge registry.
 
+**Status:** ✅ **P0 shipped `91419048` (K1/K3), P1 shipped `ec65507c` (K2/K4/K5/K8), P2 shipped `c36ea4ba` (K6/K7) — verified `tsc` 0/0/0, `bun test` 58 pass (56 pass 2 skip), 21 tools, 15 agents, `data/memory_bank` ignored. Remaining K10 distribution (JetBrains/Slack) is opportunistic, not parity-blocking.
+
 ---
 
 ## 0. Executive Summary
