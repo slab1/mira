@@ -12,6 +12,10 @@ mira.json
 
 # runtime SQLite database (sessions, issued api_keys, WAL/SHM) — never commit
 data/
+**/data/
 *.db
+**/*.db
 *.db-wal
+**/*.db-wal
 *.db-shm
+**/*.db-shm
