@@ -31,17 +31,19 @@ export type {
   AgentsContext,
 }
 
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue | undefined }
+
 // ── Tool call/result (LLM ↔ registry boundary) ─────────────────────
 export interface ToolCall {
   id: string
   name: ToolName | string
-  args: unknown
+  args: JsonValue
 }
 
 export interface ToolResult {
   toolCallID: string
   name: string
-  result: unknown
+  result: JsonValue
   isError?: boolean
 }
 
@@ -69,7 +71,7 @@ export type PartID = string
 export interface PermissionRequest {
   sessionID: SessionID
   tool: string
-  args: unknown
+  args: JsonValue
   pattern?: string // matched pattern, e.g. "bash:rm *"
 }
 

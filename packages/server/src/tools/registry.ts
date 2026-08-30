@@ -111,6 +111,8 @@ export class ToolRegistry {
       () => import("./webfetch.js"),
       () => import("./todowrite.js"),
       () => import("./task.js"),
+      () => import("./orchestrate.js"),
+      () => import("./mcp_marketplace.js"),
       () => import("./findings.js"),
       () => import("./question.js"),
       () => import("./lsp.js"),

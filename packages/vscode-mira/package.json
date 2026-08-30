@@ -14,13 +14,17 @@
       { "command": "mira.createSession", "title": "Mira: Create Session" },
       { "command": "mira.listSessions", "title": "Mira: List Sessions" },
       { "command": "mira.setToken", "title": "Mira: Set API Token" },
-      { "command": "mira.openTerminal", "title": "Mira: Open Terminal (PTY)" }
+      { "command": "mira.openTerminal", "title": "Mira: Open Terminal (PTY)" },
+      { "command": "mira.openChat", "title": "Mira: Open Chat" },
+      { "command": "mira.toggleAutocomplete", "title": "Mira: Toggle Autocomplete" }
     ],
     "configuration": {
       "title": "Mira",
       "properties": {
         "mira.apiUrl": { "type": "string", "default": "http://127.0.0.1:4096", "description": "Mira server URL" },
-        "mira.model": { "type": "string", "default": "openrouter/anthropic/claude-sonnet-4", "description": "Default model for new sessions" }
+        "mira.model": { "type": "string", "default": "openrouter/anthropic/claude-sonnet-4", "description": "Default model for new sessions" },
+        "mira.autocomplete": { "type": "boolean", "default": true, "description": "Enable inline autocomplete (ghost-text) via Mira gateway (Kilo K4)" },
+        "mira.autocompleteModel": { "type": "string", "default": "", "description": "Model for autocomplete (default: server smallModel; e.g. openrouter/deepseek/deepseek-v3.2-exp)" }
       }
     }
   },

@@ -233,6 +233,54 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(hello, openWeb, createSessCmd, listSessCmd, setTokenCmd, termCmd, chatCmd)
 
+  // Inline autocomplete (Kilo K4) — ghost-text via POST /complete
+  let autocompleteEnabled = vscode.workspace.getConfiguration('mira').get<boolean>('autocomplete') ?? true
+  const toggleAutocomplete = vscode.commands.registerCommand('mira.toggleAutocomplete', async () => {
+    autocompleteEnabled = !autocompleteEnabled
+    await vscode.workspace.getConfiguration('mira').update('autocomplete', autocompleteEnabled, vscode.ConfigurationTarget.Global)
+    vscode.window.showInformationMessage(`Mira autocomplete ${autocompleteEnabled ? 'enabled' : 'disabled'}`)
+  })
+  context.subscriptions.push(toggleAutocomplete)
+  vscode.workspace.onDidChangeConfiguration(e => {
+    if (e.affectsConfiguration('mira.autocomplete')) {
+      autocompleteEnabled = vscode.workspace.getConfiguration('mira').get<boolean>('autocomplete') ?? true
+    }
+  })
+
+  const provider: vscode.InlineCompletionItemProvider = {
+    async provideInlineCompletionItems(document: vscode.TextDocument, position: vscode.Position, inlineContext: vscode.InlineCompletionContext, token: vscode.CancellationToken): Promise<vscode.InlineCompletionList | vscode.InlineCompletionItem[]> {
+      if (!autocompleteEnabled) return []
+      if (token.isCancellationRequested) return []
+      // Skip if triggered by explicit request and empty prefix
+      const linePrefix = document.lineAt(position.line).text.slice(0, position.character)
+      if (linePrefix.trim().length === 0 && inlineContext.triggerKind === vscode.InlineCompletionTriggerKind.Automatic) return []
+
+      const prefix = document.getText(new vscode.Range(new vscode.Position(0, 0), position))
+      const suffix = document.getText(new vscode.Range(position, new vscode.Position(document.lineCount, 0)))
+      // Truncate to last 2000 chars of prefix and first 1000 of suffix (server also truncates)
+      const truncatedPrefix = prefix.slice(-2000)
+      const truncatedSuffix = suffix.slice(0, 1000)
+      const cfg = vscode.workspace.getConfiguration('mira')
+      const model = cfg.get<string>('autocompleteModel') || undefined
+      try {
+        const res = await miraFetch(context, '/complete', {
+          method: 'POST',
+          body: JSON.stringify({ prefix: truncatedPrefix, suffix: truncatedSuffix, file: document.fileName, ...(model ? { model } : {}) }),
+        })
+        if (!res.ok) return []
+        const data = (await res.json()) as { text?: string }
+        const text = String(data.text ?? '').trim()
+        if (!text) return []
+        // Return as inline completion — no full-file replacement, just insertion at cursor
+        return [new vscode.InlineCompletionItem(text, new vscode.Range(position, position))]
+      } catch {
+        return []
+      }
+    },
+  }
+  const selector: vscode.DocumentSelector = [{ pattern: '**' }]
+  context.subscriptions.push(vscode.languages.registerInlineCompletionItemProvider(selector, provider))
+
   // Status bar
   const sb = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100)
   sb.text = '$(hubot) Mira'

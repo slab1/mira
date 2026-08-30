@@ -14,6 +14,11 @@
  *   other:      skill, config, diagnose, analyze_image, parse_document
  */
 import { z } from "zod"
+import type { JsonValue } from "../types/index.js"
+
+const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValueSchema), z.record(z.string(), jsonValueSchema)])
+)
 
 // ── File ───────────────────────────────────────────────────────────
 export const readSchema = z.object({
@@ -157,7 +162,7 @@ export const skillSchema = skillToolSchema
 export const configToolSchema = z.object({
   action: z.enum(["get", "set"]).describe("get or set"),
   key: z.string().optional().describe("Config key (dot notation)"),
-  value: z.unknown().optional().describe("Value for set"),
+  value: jsonValueSchema.optional().describe("Value for set"),
 })
 
 export const diagnoseSchema = z.object({

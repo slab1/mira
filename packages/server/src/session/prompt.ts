@@ -26,12 +26,12 @@ import type { Bus } from "../bus/index.js"
 import type { ToolRegistry } from "../tools/registry.js"
 import type { PermissionManager } from "../permission/index.js"
 import type { Gateway } from "../gateway/index.js"
-import { buildSystemPrompt, getLoopLimits } from "../config/index.js"
+import { buildSystemPrompt, getLoopLimits, getConfig } from "../config/index.js"
 import { DoomLoopDetector } from "./doom-loop-detector.js"
 import { needsCompaction, compactMessages, estimateTokens } from "./compaction.js"
 import { searchKnowledge } from "../learning/knowledge.js"
 import { openFindingsForContext } from "../tools/findings.js"
-import type { Todo, JsonValue } from "../types/index.js"
+import type { Todo, JsonValue, MiraConfig } from "../types/index.js"
 import type { MiraDB } from "../storage/db.js"
 import { loadSkills } from "../skills/loader.js"
 import { getAgentTemplates, isKnownAgent } from "../agents/templates.js"
@@ -72,6 +72,48 @@ export interface LoopOptions {
   compactionThreshold?: number // 0.8 = compact at 80% context
   signal?: AbortSignal
   agent?: string | null    // per-turn agent override (Kilo K1 parity)
+}
+
+// ── Auto-Model + Cost Cap helpers (Kilo K8) ──────────────────────────
+
+function tierModel(tier: string | undefined, fallbackSmall?: string): string {
+  switch (tier) {
+    case "cheap": return fallbackSmall ?? "openrouter/deepseek/deepseek-v3.2-exp"
+    case "max": return "openrouter/anthropic/claude-opus-4"
+    case "balanced":
+    default: return "openrouter/anthropic/claude-sonnet-4"
+  }
+}
+function priceForModel(modelID: string): [number, number] {
+  const m = modelID.toLowerCase()
+  if (m.includes("claude-sonnet")) return [3, 15]
+  if (m.includes("claude-opus")) return [15, 75]
+  if (m.includes("claude-haiku")) return [0.8, 4]
+  if (m.includes("gpt-4o")) return [2.5, 10]
+  if (m.includes("gpt-4")) return [10, 30]
+  if (m.includes("deepseek")) return [0.27, 1.1]
+  if (m.includes("llama") || m.includes("mistral")) return [0.5, 0.8]
+  return [1, 2]
+}
+function estimateCostUSD(modelID: string, inputTokens: number, outputTokens: number): number {
+  const [pin, pout] = priceForModel(modelID)
+  return ((inputTokens * pin) + (outputTokens * pout)) / 1_000_000
+}
+function resolveEffectiveModel(input: { explicitModel?: string; agent?: string | null; sessionModel?: string }): string {
+  // Precedence: explicit > agent.template.model > autoModel tier > session default > global default
+  if (input.explicitModel) return input.explicitModel
+  if (input.agent) {
+    const tpl = getAgentTemplates()[input.agent]
+    if (tpl?.model) return tpl.model
+  }
+  try {
+    const cfg = getConfig() as MiraConfig & { autoModel?: { enabled?: boolean; tier?: string }; smallModel?: string }
+    if (cfg.autoModel?.enabled) {
+      return tierModel(cfg.autoModel.tier, cfg.smallModel)
+    }
+  } catch {}
+  if (input.sessionModel) return input.sessionModel
+  try { return getConfig().model } catch { return "openrouter/anthropic/claude-sonnet-4" }
 }
 
 // ── SessionPrompt ──────────────────────────────────────────────────
@@ -138,9 +180,8 @@ export class SessionPrompt {
         ownerID = parent?.ownerID ?? null
       } catch {}
     }
-    // Kilo K1: per-agent model routing — agent template model wins over global default when no explicit model
-    const agentTpl = input.agent ? getAgentTemplates()[input.agent] : undefined
-    const effectiveModel = input.model ?? agentTpl?.model ?? "openrouter/anthropic/claude-sonnet-4"
+    // Kilo K1+K8: explicit > agent.model > autoModel tier > default
+    const effectiveModel = resolveEffectiveModel({ explicitModel: input.model, agent: input.agent ?? null, sessionModel: "openrouter/anthropic/claude-sonnet-4" })
     const session = {
       id,
       title: input.title ?? (input.agent ? `${input.agent} session` : "New Session"),
@@ -258,9 +299,8 @@ export class SessionPrompt {
     model?: string
     title?: string
   }): Promise<{ sessionID: string; text: string }> {
-    // Per-agent model routing: explicit model > agent template model > default session model
-    const agentModel = opts.agent ? getAgentTemplates()[opts.agent]?.model : undefined
-    const effectiveModel = opts.model ?? agentModel
+    // Per-agent model routing: explicit > agent.model > autoModel tier > default (Kilo K1+K8)
+    const effectiveModel = resolveEffectiveModel({ explicitModel: opts.model, agent: opts.agent ?? null, sessionModel: undefined }) || undefined
     const s = await this.createSession({
       title: opts.title ?? `↳ ${opts.prompt.slice(0, 48)}`,
       parentID: opts.parentID,
@@ -306,10 +346,9 @@ export class SessionPrompt {
     const session = await this.getSession(sessionID)
     if (!session) throw new Error("session not found")
 
-    // Model resolution: explicit override > per-turn agent model > session agent model > session model
+    // Model resolution: explicit > agent.model > autoModel tier > session default (Kilo K1+K8)
     const effectiveAgent = options?.agent ?? session.agent ?? null
-    const agentTpl = effectiveAgent ? getAgentTemplates()[effectiveAgent] : undefined
-    const model = modelOverride ?? agentTpl?.model ?? session.model
+    const model = resolveEffectiveModel({ explicitModel: modelOverride, agent: effectiveAgent, sessionModel: session.model })
     const basePrompt = await buildSystemPrompt()
     // Agent persona (researcher/coder/reviewer) prepended when set on the session or per-turn
     const persona = effectiveAgent ? getAgentTemplates()[effectiveAgent]?.system : undefined
@@ -419,8 +458,39 @@ export class SessionPrompt {
     // Load conversation history
     let messages = await this.loadContext(sessionID, systemPrompt)
 
+    // Fetch session base cost for perSession cap (session tokens + current run)
+    let sessionBaseCost = 0
+    try {
+      const s = await this.getSession(sessionID)
+      if (s) sessionBaseCost = estimateCostUSD((s as { model?: string }).model ?? model, (s as { tokensIn?: number | null }).tokensIn ?? 0, (s as { tokensOut?: number | null }).tokensOut ?? 0)
+    } catch {}
     loop: while (step < MAX_STEPS) {
       step++
+
+      // ── Cost cap guard (Kilo K8) — perTask / perSession in USD ───────
+      try {
+        const cfg = getConfig() as MiraConfig & { costCap?: { perTask?: number; perSession?: number } }
+        const curCost = estimateCostUSD(model, totalTokensIn, totalTokensOut)
+        if (cfg.costCap?.perTask !== undefined && curCost > cfg.costCap.perTask) {
+          const msg = `Cost cap exceeded: $${curCost.toFixed(4)} > $${cfg.costCap.perTask.toFixed(4)} per-task limit (model ${model}, step ${step}). Aborting.`
+          send("error", { error: msg })
+          this.deps.bus.publish({ type: "server.error", sessionID, payload: { error: msg, source: "cost-cap", cap: cfg.costCap.perTask } as JsonValue, timestamp: Date.now() })
+          accumulatedText += `\n\n[System: ${msg}]\n`
+          await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
+          break loop
+        }
+        if (cfg.costCap?.perSession !== undefined) {
+          const sessCost = sessionBaseCost + curCost
+          if (sessCost > cfg.costCap.perSession) {
+            const msg = `Cost cap exceeded: $${sessCost.toFixed(4)} > $${cfg.costCap.perSession.toFixed(4)} per-session limit (model ${model}, step ${step}). Aborting.`
+            send("error", { error: msg })
+            this.deps.bus.publish({ type: "server.error", sessionID, payload: { error: msg, source: "cost-cap", cap: cfg.costCap.perSession } as JsonValue, timestamp: Date.now() })
+            accumulatedText += `\n\n[System: ${msg}]\n`
+            await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
+            break loop
+          }
+        }
+      } catch {}
 
       // ── Compaction check ──
       const contextLimit = limits.contextLimit

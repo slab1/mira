@@ -674,7 +674,7 @@ async function main() {
   app.post("/session/:id/prompt", async c => {
     const id = requireId(c)
     if (!id) return c.json({ error: "session not found" }, 404)
-    const { prompt: text, model, agent, maxSteps } = await c.req.json().catch(() => ({} as Record<string, unknown>))
+    const { prompt: text, model, agent, maxSteps } = await c.req.json().catch(() => ({} as Record<string, JsonValue>))
     if (!text?.trim?.()) return c.json({ error: "empty prompt" }, 400)
     // Validate session exists + requester owns it
     if (!(await authorizedSession(id, c))) return c.json({ error: "session not found" }, 404)
@@ -878,6 +878,48 @@ async function main() {
     const allowed = allow ? allTools.filter(n => allow.has(n)) : allTools
     const blocked = allow ? allTools.filter(n => !allow.has(n)) : []
     return c.json({ agent: name, permissions: tpl.permissions, allowed, blocked, allowlist: tpl.tools ?? [] })
+  })
+
+  // Autocomplete (Kilo K4): ghost-text via gateway — POST /complete and POST /autocomplete (alias)
+  const completeSchema = z.object({
+    prefix: z.string().max(4000).optional(),
+    suffix: z.string().max(4000).optional(),
+    prompt: z.string().max(4000).optional(),
+    file: z.string().max(500).optional(),
+    model: z.string().min(1).optional(),
+    maxTokens: z.number().int().positive().max(512).optional(),
+  })
+  app.post("/complete", async (c) => {
+    if (process.env.MIRA_AUTOCOMPLETE === "0") return c.json({ error: "autocomplete disabled (MIRA_AUTOCOMPLETE=0)" }, 403)
+    const parsed = completeSchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: "invalid complete", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
+    const { prefix = "", suffix = "", prompt, file, model, maxTokens = 64 } = parsed.data
+    const effectivePrompt = prompt ?? (prefix || suffix ? `Complete the code. File: ${file ?? "unknown"}\nPrefix:\n${prefix.slice(-2000)}\nSuffix:\n${suffix.slice(0, 1000)}\nProvide only the completion (no explanation, no markdown).` : "")
+    if (!effectivePrompt.trim()) return c.json({ error: "prefix/suffix or prompt required" }, 400)
+    const cfg = getConfig() as MiraConfig & { smallModel?: string }
+    const m = model ?? process.env.MIRA_AUTOCOMPLETE_MODEL ?? cfg.smallModel ?? cfg.model
+    try {
+      const res = await gateway.complete({ model: m, prompt: effectivePrompt, maxTokens })
+      return c.json({ text: res.text, model: m, prefix, suffix })
+    } catch (e) {
+      return c.json({ error: String(e), model: m }, 500)
+    }
+  })
+  app.post("/autocomplete", async (c) => {
+    if (process.env.MIRA_AUTOCOMPLETE === "0") return c.json({ error: "autocomplete disabled (MIRA_AUTOCOMPLETE=0)" }, 403)
+    const parsed = completeSchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: "invalid complete", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
+    const { prefix = "", suffix = "", prompt, file, model, maxTokens = 64 } = parsed.data
+    const effectivePrompt = prompt ?? (prefix || suffix ? `Complete the code. File: ${file ?? "unknown"}\nPrefix:\n${prefix.slice(-2000)}\nSuffix:\n${suffix.slice(0, 1000)}\nProvide only the completion (no explanation, no markdown).` : "")
+    if (!effectivePrompt.trim()) return c.json({ error: "prefix/suffix or prompt required" }, 400)
+    const cfg = getConfig() as MiraConfig & { smallModel?: string }
+    const m = model ?? process.env.MIRA_AUTOCOMPLETE_MODEL ?? cfg.smallModel ?? cfg.model
+    try {
+      const res = await gateway.complete({ model: m, prompt: effectivePrompt, maxTokens })
+      return c.json({ text: res.text, model: m, prefix, suffix })
+    } catch (e) {
+      return c.json({ error: String(e), model: m }, 500)
+    }
   })
 
   // Learning system routes with privacy safeguards and backward compatibility

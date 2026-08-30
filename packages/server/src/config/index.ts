@@ -183,6 +183,14 @@ const miraConfigPatchSchema = z.object({
     permissions: z.enum(["readonly", "standard", "elevated"]).optional(),
     model: z.string().min(1).optional(),
   })).optional(),
+  autoModel: z.object({
+    enabled: z.boolean().optional(),
+    tier: z.enum(["cheap", "balanced", "max"]).optional(),
+  }).optional(),
+  costCap: z.object({
+    perTask: z.number().positive().optional(),
+    perSession: z.number().positive().optional(),
+  }).optional(),
   theme: z.enum(["dark", "light", "system"]).optional(),
   debug: z.boolean().optional(),
 }).passthrough()

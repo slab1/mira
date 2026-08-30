@@ -71,6 +71,18 @@ export const agentDefinitionSchema = z.object({
 })
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>
 
+export const autoModelConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  tier: z.enum(["cheap", "balanced", "max"]).optional(),
+})
+export type AutoModelConfig = z.infer<typeof autoModelConfigSchema>
+
+export const costCapConfigSchema = z.object({
+  perTask: z.number().positive().optional(),
+  perSession: z.number().positive().optional(),
+})
+export type CostCapConfig = z.infer<typeof costCapConfigSchema>
+
 export const guardrailsConfigSchema = z.object({
   enforce: z.boolean().optional(),
   allowedRoots: z.array(z.string()).optional(),
@@ -100,6 +112,10 @@ export const miraConfigSchema = z.object({
   provider: z.record(z.string(), providerConfigSchema).default({}),
   /** Custom agent definitions */
   agents: z.record(z.string(), agentDefinitionSchema).optional(),
+  /** Auto-model routing (Kilo K8: cheap/balanced/max) */
+  autoModel: autoModelConfigSchema.optional(),
+  /** Cost cap per task/session in USD (Kilo K8) */
+  costCap: costCapConfigSchema.optional(),
   /** Optional: theme, debug, etc. */
   theme: z.enum(["dark", "light", "system"]).optional(),
   debug: z.boolean().optional(),

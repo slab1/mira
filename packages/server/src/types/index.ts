@@ -147,6 +147,10 @@ export interface MiraConfig {
   provider: Record<string, ProviderConfig>
   /** Custom agent definitions (mira.json "agents") — merged over built-in templates */
   agents?: Record<string, AgentDefinition>
+  /** Auto-model routing (Kilo K8) */
+  autoModel?: { enabled?: boolean; tier?: "cheap" | "balanced" | "max" }
+  /** Cost cap per task/session in USD (Kilo K8) */
+  costCap?: { perTask?: number; perSession?: number }
   /** Roadmap metadata (REVISE) — passthrough, not validated */
   roadmap?: Record<string, JsonValue>
   /** Feature flags for lane contracts etc. */

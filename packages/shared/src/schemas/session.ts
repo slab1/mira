@@ -5,6 +5,11 @@
  * Used for runtime validation on WS/REST boundaries and for shared TS inference.
  */
 import { z } from "zod"
+import type { JsonValue } from "../types/index.js"
+
+const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValueSchema), z.record(z.string(), jsonValueSchema)])
+)
 
 // ── Enums ──────────────────────────────────────────────────────────
 export const roleSchema = z.enum(["user", "assistant", "system"])
@@ -65,8 +70,8 @@ export const partSchema = z.object({
   text: z.string().optional(),
   tool: z.string().optional().describe("Tool name for tool-call/result"),
   toolCallID: z.string().optional(),
-  args: z.unknown().optional(),
-  result: z.unknown().optional(),
+  args: jsonValueSchema.optional(),
+  result: jsonValueSchema.optional(),
   isError: z.boolean().optional(),
   createdAt: z.number().int(),
 })
@@ -115,10 +120,10 @@ export type BusEventType = z.infer<typeof busEventTypeSchema>
 export const busEventSchema = z.object({
   type: busEventTypeSchema,
   sessionID: z.string().optional(),
-  payload: z.unknown(),
+  payload: jsonValueSchema,
   timestamp: z.number().int(),
 })
-export type BusEvent<T = unknown> = {
+export type BusEvent<T = JsonValue> = {
   type: BusEventType
   sessionID?: string
   payload: T
