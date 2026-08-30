@@ -1,6 +1,10 @@
 import type { Hono } from "hono"
 import { randomBytes } from "node:crypto"
+import { z } from "zod"
 import type { MiraDB } from "../storage/db.js"
+
+const ownerSchema = z.string().trim().min(1).max(64).regex(/^[a-zA-Z0-9._-]+$/, "owner must be alphanumeric, dot, underscore or hyphen")
+const MAX_KEYS = 100
 
 export function mountAdminRoutes(
   app: Hono<{ Variables: { requestId: string } }>,
@@ -32,7 +36,7 @@ export function mountAdminRoutes(
       owner TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       created_by TEXT NOT NULL DEFAULT 'default'
-    );`)
+    ); CREATE INDEX IF NOT EXISTS api_keys_owner_idx ON api_keys(owner);`)
     tableEnsured = true
   }
 
@@ -41,13 +45,18 @@ export function mountAdminRoutes(
     if (!isAdmin(c)) return deny(c)
     let body: { owner?: unknown } = {}
     try { body = (await c.req.json()) as { owner?: unknown } } catch {}
-    const owner = typeof body.owner === "string" && body.owner.trim() ? body.owner.trim() : "user"
-    const key = randomBytes(48).toString("hex")
+    const parsed = ownerSchema.safeParse(typeof body.owner === "string" ? body.owner : "user")
+    if (!parsed.success) return c.json({ error: "invalid owner", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
+    const owner = parsed.data
     ensureTable()
+    const count = (db.sqlite.prepare("SELECT COUNT(*) as n FROM api_keys").get() as { n: number }).n
+    if (count >= MAX_KEYS) return c.json({ error: `key limit reached (${MAX_KEYS}) — revoke unused keys first` }, 429)
+    const key = randomBytes(48).toString("hex")
     db.sqlite
       .prepare("INSERT INTO api_keys (key, owner, created_at, created_by) VALUES (?, ?, ?, ?)")
       .run(key, owner, Date.now(), "default")
     API_KEY_OWNERS.set(key, owner)
+    console.log(`[admin] mint key for owner="${owner}" preview=${key.slice(0,6)}…${key.slice(-4)}`)
     return c.json({ key, owner }, 201)
   })
 
@@ -71,11 +80,13 @@ export function mountAdminRoutes(
   app.delete("/admin/api-keys/:key", async c => {
     if (!isAdmin(c)) return deny(c)
     const key = c.req.param("key")
-    if (!key) return c.json({ error: "not found" }, 404)
+    if (!key || key.length < 32) return c.json({ error: "not found" }, 404)
     ensureTable()
+    const existing = db.sqlite.prepare("SELECT 1 FROM api_keys WHERE key = ?").get(key) as { "1": number } | undefined
     db.sqlite.prepare("DELETE FROM api_keys WHERE key = ?").run(key)
     API_KEY_OWNERS.delete(key)
     sessionOwnerCache.clear()
-    return c.json({ ok: true, key })
+    if (existing) console.log(`[admin] revoke key preview=${key.slice(0,6)}…${key.slice(-4)}`)
+    return c.json({ ok: true, key: existing ? `${key.slice(0,6)}…${key.slice(-4)}` : "not found" })
   })
 }
