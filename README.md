@@ -69,6 +69,13 @@ export OPENROUTER_API_KEY=sk-or-...   # or NVIDIA_API_KEY=nvapi-...
 
 bun run dev            # server :4096 · web :3000 · tui :3001
 curl localhost:4096/health
+
+# CLI (thin, no extra deps) — npx parity with Kilo/OpenCode
+bun run --cwd packages/cli src/cli.ts -- --help
+bun run --cwd packages/cli src/cli.ts -- serve --port 4096
+mira session list                              # via $MIRA_API_URL
+mira agent list
+mira complete --prefix "function add(a,b) {" --file src/math.ts
 ```
 
 Without keys the gateway serves a stub stream — the whole pipeline (tools, permissions, SSE, persistence) still runs.

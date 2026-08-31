@@ -1,0 +1,20 @@
+{
+  "name": "@mira/cli",
+  "version": "0.1.0",
+  "description": "Mira CLI — thin wrapper around @mira/server (serve + session/agent/complete)",
+  "type": "module",
+  "bin": {
+    "mira": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc --noEmit && bun build src/cli.ts --outdir dist --target bun --format esm",
+    "typecheck": "tsc --noEmit",
+    "dev": "bun --watch src/cli.ts -- serve"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "bun-types": "latest",
+    "@types/bun": "latest"
+  }
+}
