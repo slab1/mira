@@ -134,6 +134,7 @@ scripts/watch-local.sh    # watchdog + nightly backup + weekly GC
 - [ ] `NODE_ENV=production` and `MIRA_STRICT_AUTH=1`
 - [ ] `HOST=127.0.0.1` — never bind public; expose via tunnel/reverse proxy
 - [ ] `CORS_ORIGINS` limited to your domain(s)
+- [ ] `MIRA_TRUST_PROXY=1` ONLY if behind a trusted reverse proxy that sanitizes forwarded headers (rate-limiting keys off the real socket peer otherwise — never set this on a direct-exposed host)
 - [ ] Backups run nightly, retained 7 days
 - [ ] `scripts/serve-local.sh` warns if token missing in prod
 

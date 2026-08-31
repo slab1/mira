@@ -18,10 +18,29 @@ Behind a reverse proxy that enforces auth, either route `/metrics` to the app un
 
 | Metric | Type | Labels | Notes |
 |--------|------|--------|-------|
-| `http_requests_total` | counter | method, route, status | per-route request counts |
-| `http_request_duration_seconds_sum` / `_count` | summary | — | mean latency = sum/count; SSE prompt streams dominate averages |
+| `http_requests_total` | counter | method, route, status | per-route request counts (LRU-capped, true-evicted at max cardinality) |
+| `http_request_duration_seconds_bucket` | histogram | method, route, `le` | cumulative per-route latency buckets `[0.05, 0.1, 0.5, 1, 5]` (+Inf) |
+| `http_request_duration_seconds_sum` / `_count` | histogram | method, route | per-route latency sum/count (strict-synced with buckets) |
 | `active_sessions` | gauge | — | in-memory; resets on restart |
 | `gateway_cost_total` | counter | — | cumulative LLM spend USD since process start |
+
+Latency is a **real histogram**: query percentiles with `histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))`. SSE prompt streams dominate the slow end of the distribution.
+
+## Rate limiting
+
+The server applies token-bucket rate limiting per client (default 100 req/min, skip-list
+for `/health`, `/healthz`, `/dev/health`, `/metrics`). Keying is secure by default:
+
+- **Default key = Bun `server.requestIP()`** — the real socket peer address (unforgeable;
+  immune to spoofed `X-Real-IP` / `X-Forwarded-For`).
+- **Proxy headers are only honored when `MIRA_TRUST_PROXY=1`** is set. Only set this when
+  the server is behind a trusted reverse proxy that strips/overwrites client-supplied
+  forwarded headers.
+- **Per-route SSE bucket** for the expensive streaming endpoints (`POST /session/:id/prompt`,
+  `POST /session/:id/queue`) — capped at 30/min independent of the global bucket.
+
+Limits are returned as `Retry-After` + `X-RateLimit-*` headers on 429. Buckets are
+in-memory and single-node (reset on restart; no Redis).
 
 ## Grafana dashboard
 

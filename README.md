@@ -2,7 +2,7 @@
 
 > **Openness + Claude's reasoning + Cursor's polish + Windsurf's autonomy + Cline's transparency, minus weaknesses, plus memory/eval/guardrails as first-class.**
 
-Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observability, tool-layer guardrails, file snapshots with undo, real LSP + MCP integration, HITL questions, and a cost-tracking model gateway — all verified by a 60+ test suite including live-provider E2E gates.**
+Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observability, tool-layer guardrails, file snapshots with undo, real LSP + MCP integration, HITL questions, and a cost-tracking model gateway — all verified by a 119-test suite (0 failing) including live-provider E2E gates and real-wire protocol tests.**
 
 ## Why Mira?
 
@@ -37,7 +37,9 @@ Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observab
    ├─ Storage: SQLite WAL (sessions/messages/parts/todos/snapshots/queue/knowledge)
    ├─ Gateway: OpenRouter + NVIDIA NIM (+25 providers) — cost-tracked
    ├─ LSP: gopls & friends (JSON-RPC stdio) with heuristic fallback
-   ├─ MCP: real stdio protocol (initialize/tools/list/tools/call)
+   ├─ MCP: real stdio + remote HTTP (Streamable HTTP & legacy HTTP+SSE) clients
+   ├─ Observability: Prometheus /metrics (bounded-cardinality + real histograms),
+   │   OTel spans correlated with HTTP access logs via X-Request-Id
    └─ Learning: online learner + usage analysis + knowledge graph
 ```
 
@@ -47,7 +49,7 @@ Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observab
 - **Monorepo:** Turborepo — `packages/{server,web,tui,shared}`, `vscode-mira`
 - **UI:** SolidJS (Web + TUI)
 - **LLM:** Model Gateway (OpenRouter, NVIDIA NIM) — OpenAI-compatible wire
-- **Protocols:** MCP stdio, LSP 3.17
+- **Protocols:** MCP stdio + Streamable HTTP + legacy HTTP+SSE, LSP 3.17
 - **Memory:** SQLite-backed KnowledgeBase with hybrid retrieval (cosine + tag boost + graph expansion)
 - **Instructions:** AGENTS.md + Skills injection
 - **Eval:** 3 tiers (PR → nightly → prod); PR tier blocks CI
@@ -56,7 +58,8 @@ Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observab
 ## Security Defaults
 
 - Server binds **127.0.0.1** — set `HOST=0.0.0.0` explicitly for remote access
-- Optional bearer auth: set `MIRA_TOKEN`; clients pass `Authorization: Bearer …` or `?token=…`
+- Optional bearer auth: set `MIRA_TOKEN`; clients pass `Authorization: Bearer …` (query-param tokens are rejected)
+- Rate limiting per real socket peer (Bun `requestIP`, unforgeable); proxy headers only honored under `MIRA_TRUST_PROXY=1`; per-route SSE bucket for streaming endpoints
 - Every mutating tool call is snapshotted; permission layer gates bash/edit/write/MCP
 
 ## Quick Start

@@ -88,7 +88,7 @@
 - `packages/web/src/api/client.ts` `baseUrl()` reads `VITE_API_URL`, `TOKEN_KEY=mira_token`, `setToken/getToken` + `wsUrl()` first-message auth
 - `scripts/tunnel-watchdog.sh` self-heals quick tunnel; Pages `VITE_API_URL` from `vars` + `allowedHosts:true` (fixed from `@ts-ignore` → `@ts-expect-error` with Vite type note)
 
-**Risk:** `cloudflared login` artifacts → quick tunnel HTTP 404 (registered but no backend) — we remove `~/.cloudflared/{config.yml,<uuid>.json,cert.pem}`; named tunnel blocked (no domain, `dpdns.org` → ULA `fd10::/8`); OTel `trace.getTracer` cast needs explicit shape; rate-limit `c.req.header("x-real-ip")` vs bearer prefix.
+**Risk:** `cloudflared login` artifacts → quick tunnel HTTP 404 (registered but no backend) — we remove `~/.cloudflared/{config.yml,<uuid>.json,cert.pem}`; named tunnel blocked (no domain, `dpdns.org` → ULA `fd10::/8`); OTel `trace.getTracer` cast needs explicit shape; rate-limit key derived from `Bun server.requestIP()` (unforgeable socket peer) — proxy headers only honored under `MIRA_TRUST_PROXY=1`.
 
 **Fix strategy:** Keep watchdog, never `cloudflared login` in this account, document `VITE_MIRA_TOKEN` bake vs paste decision. Verify via `curl /healthz`, `/session` 401→200, `/admin/api-keys` 200 through tunnel, `bunx tsc --noEmit` green.
 
