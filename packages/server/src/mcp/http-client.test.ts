@@ -13,13 +13,14 @@ afterAll(async () => {
 })
 
 /** Spawn the mock HTTP server and return { url, stop } once ready */
-async function startMock(opts: { sse?: boolean; requireSession?: boolean } = {}): Promise<{ url: string; stop: () => void }> {
+async function startMock(opts: { sse?: boolean; requireSession?: boolean; legacy?: boolean } = {}): Promise<{ url: string; stop: () => void }> {
   const env: Record<string, string> = {
     // Preserve PATH so the spawned `bun` binary resolves under the child env
     PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
   }
   if (opts.sse) env.MOCK_MCP_SSE = "1"
   if (opts.requireSession) env.MOCK_MCP_REQUIRE_SESSION = "1"
+  if (opts.legacy) env.MOCK_MCP_LEGACY = "1"
   const proc = Bun.spawn(["bun", "run", MOCK], { env, stdout: "pipe", stderr: "pipe" })
   procs.push(proc)
 
@@ -122,6 +123,48 @@ describe("McpHttpClient (real Streamable HTTP JSON-RPC)", () => {
       let err: Error | null = null
       try { await c.callTool("remote_echo", {}, 60_000, ac.signal) } catch (e) { err = e as Error }
       expect(err?.message).toContain("aborted")
+    } finally { stop() }
+  }, 20_000)
+})
+
+describe("McpHttpClient (legacy HTTP+SSE 2024-11-05 fallback)", () => {
+  test("connect negotiates legacy transport and captures serverInfo + endpoint", async () => {
+    const { url, stop } = await startMock({ legacy: true })
+    try {
+      const c = await McpHttpClient.connect("mock-http", { url }); clients.push(c)
+      expect(c.alive).toBe(true)
+      expect(c.transport).toBe("legacy-sse")
+      expect(c.serverInfo.name).toBe("mock-http-mcp")
+    } finally { stop() }
+  }, 20_000)
+
+  test("tools/list arrives over the GET SSE stream (POST /message returns 202)", async () => {
+    const { url, stop } = await startMock({ legacy: true })
+    try {
+      const c = await McpHttpClient.connect("mock-http", { url }); clients.push(c)
+      const tools = await c.listTools()
+      expect(tools.map(t => t.name)).toEqual(["remote_echo", "remote_add"])
+      expect(tools[0].description).toContain("Echo")
+    } finally { stop() }
+  }, 20_000)
+
+  test("tools/call executes over legacy transport (remote_add: 2+3=5)", async () => {
+    const { url, stop } = await startMock({ legacy: true })
+    try {
+      const c = await McpHttpClient.connect("mock-http", { url }); clients.push(c)
+      const r = await c.callTool("remote_add", { a: 2, b: 3 })
+      expect(r.isError).toBeFalsy()
+      expect(r.content[0].text).toBe("5")
+    } finally { stop() }
+  }, 20_000)
+
+  test("unknown tool surfaces server error over legacy transport", async () => {
+    const { url, stop } = await startMock({ legacy: true })
+    try {
+      const c = await McpHttpClient.connect("mock-http", { url }); clients.push(c)
+      let err: Error | null = null
+      try { await c.callTool("nope", {}) } catch (e) { err = e as Error }
+      expect(err?.message).toContain("Unknown tool")
     } finally { stop() }
   }, 20_000)
 })

@@ -13,15 +13,21 @@
  *
  * Behavior driven by:
  *   MOCK_MCP_SSE=1   → respond with SSE framing instead of JSON
+ *   MOCK_MCP_LEGACY=1→ serve the legacy HTTP+SSE (2024-11-05) transport:
+ *                      GET /mcp streams an `endpoint` event + response messages;
+ *                      POST /message returns 202 and pushes the response to the
+ *                      open GET stream. Modern POST /mcp returns 405 (fallback cue).
  *   MOCK_MCP_PORT=x  → listen on that port (optional; 0 = random, printed to stdout)
  *   MOCK_MCP_REQUIRE_SESSION=1 → reject non-initialize requests without session id
  */
 import { serve } from "bun"
 
+const LEGACY = process.env.MOCK_MCP_LEGACY === "1"
 const USE_SSE = process.env.MOCK_MCP_SSE === "1"
 const REQUIRE_SESSION = process.env.MOCK_MCP_REQUIRE_SESSION === "1"
 const PORT = process.env.MOCK_MCP_PORT ? Number(process.env.MOCK_MCP_PORT) : 0
 const SESSION_ID = "mock-session-abc123"
+const MESSAGE_PATH = "/mcp/message"
 
 interface RpcMsg {
   id?: number
@@ -40,12 +46,17 @@ function sseFrame(msg: object): string {
   return `event: message\ndata: ${JSON.stringify(msg)}\n\n`
 }
 
-function handleMessage(msg: RpcMsg, request: Request): Response {
+/**
+ * Compute the JSON-RPC response object for a request (transport-agnostic).
+ * The modern transport serializes it as JSON or SSE; the legacy transport
+ * pushes it onto the open GET stream as an SSE `message` event.
+ */
+function computeResponse(msg: RpcMsg, request: Request): object {
   const { id, method, params } = msg
 
   switch (method) {
     case "initialize":
-      return jsonResponse(JSON.stringify({
+      return {
         jsonrpc: "2.0",
         id,
         result: {
@@ -53,21 +64,18 @@ function handleMessage(msg: RpcMsg, request: Request): Response {
           capabilities: { tools: {} },
           serverInfo: { name: "mock-http-mcp", version: "1.0.0" },
         },
-      }), 200, { "Mcp-Session-Id": SESSION_ID })
+      }
 
     case "notifications/initialized":
       // Notification: no response body expected
-      return new Response(null, { status: 202 })
+      return { jsonrpc: "2.0", id, result: {} }
 
     case "tools/list": {
       // Non-initialize requests must echo the session id
       if (REQUIRE_SESSION && request.headers.get("mcp-session-id") !== SESSION_ID) {
-        return jsonResponse(JSON.stringify({
-          jsonrpc: "2.0", id,
-          error: { code: -32000, message: "Missing Mcp-Session-Id header" },
-        }), 400)
+        return { jsonrpc: "2.0", id, error: { code: -32000, message: "Missing Mcp-Session-Id header" } }
       }
-      const result = {
+      return {
         jsonrpc: "2.0",
         id,
         result: { tools: [
@@ -75,51 +83,96 @@ function handleMessage(msg: RpcMsg, request: Request): Response {
           { name: "remote_add", description: "Add two numbers", inputSchema: { type: "object" } },
         ] },
       }
-      if (USE_SSE) {
-        return new Response(sseFrame(result), { status: 200, headers: { "Content-Type": "text/event-stream" } })
-      }
-      return jsonResponse(JSON.stringify(result))
     }
 
     case "tools/call": {
       if (REQUIRE_SESSION && request.headers.get("mcp-session-id") !== SESSION_ID) {
-        return jsonResponse(JSON.stringify({
-          jsonrpc: "2.0", id,
-          error: { code: -32000, message: "Missing Mcp-Session-Id header" },
-        }), 400)
+        return { jsonrpc: "2.0", id, error: { code: -32000, message: "Missing Mcp-Session-Id header" } }
       }
       const name = params?.name
       const args = params?.arguments
-      let result: object
       if (name === "remote_echo") {
-        result = { jsonrpc: "2.0", id, result: { content: [{ type: "text", text: `echo: ${JSON.stringify(args)}` }] } }
-      } else if (name === "remote_add") {
+        return { jsonrpc: "2.0", id, result: { content: [{ type: "text", text: `echo: ${JSON.stringify(args)}` }] } }
+      }
+      if (name === "remote_add") {
         const a = Number(args?.a ?? 0), b = Number(args?.b ?? 0)
-        result = { jsonrpc: "2.0", id, result: { content: [{ type: "text", text: String(a + b) }] } }
-      } else {
-        result = { jsonrpc: "2.0", id, error: { code: -32602, message: `Unknown tool: ${name}` } }
+        return { jsonrpc: "2.0", id, result: { content: [{ type: "text", text: String(a + b) }] } }
       }
-      if (USE_SSE) {
-        return new Response(sseFrame(result), { status: 200, headers: { "Content-Type": "text/event-stream" } })
-      }
-      return jsonResponse(JSON.stringify(result))
+      return { jsonrpc: "2.0", id, error: { code: -32602, message: `Unknown tool: ${name}` } }
     }
 
     default:
       if (id !== undefined && method !== "notifications/initialized") {
-        return jsonResponse(JSON.stringify({
-          jsonrpc: "2.0", id,
-          error: { code: -32601, message: `Method not found: ${method}` },
-        }))
+        return { jsonrpc: "2.0", id, error: { code: -32601, message: `Method not found: ${method}` } }
       }
-      return new Response(null, { status: 202 })
+      return { jsonrpc: "2.0", id, result: {} }
   }
 }
+
+function handleMessage(msg: RpcMsg, request: Request): Response {
+  const response = computeResponse(msg, request)
+  const { id, method } = msg
+  if (method === "notifications/initialized") {
+    return new Response(null, { status: 202 })
+  }
+  if (LEGACY) {
+    void response
+    void id
+    // The actual response is pushed onto the GET stream by the caller (which
+    // has access to the stream sink). Here we only acknowledge with 202.
+    return new Response(null, { status: 202 })
+  }
+  if (USE_SSE) {
+    return new Response(sseFrame(response), { status: 200, headers: { "Content-Type": "text/event-stream" } })
+  }
+  // initialize sets the session id header used by require-session mode
+  const extra: Record<string, string> = {}
+  if (method === "initialize") extra["Mcp-Session-Id"] = SESSION_ID
+  return jsonResponse(JSON.stringify(response), 200, extra)
+}
+
+// Legacy HTTP+SSE: the open GET stream sink. POST /message pushes a computed
+// response here as an SSE `message` event.
+let legacyStreamSink: ((chunk: string) => void) | null = null
 
 const server = serve({
   port: PORT,
   fetch(req) {
     const url = new URL(req.url)
+    if (LEGACY) {
+      if (req.method === "GET" && url.pathname === "/mcp") {
+        // Persistent SSE listen stream. Emit the `endpoint` event (the /message
+        // POST url), then stream response `message` events as they are pushed.
+        let sink: ((chunk: string) => void) | null = null
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            sink = (chunk) => controller.enqueue(new TextEncoder().encode(chunk))
+            controller.enqueue(new TextEncoder().encode(`event: endpoint\ndata: ${url.origin}${MESSAGE_PATH}\n\n`))
+            legacyStreamSink = sink
+          },
+          cancel() {
+            legacyStreamSink = null
+            sink = null
+          },
+        })
+        return new Response(stream, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        })
+      }
+      if (req.method === "POST" && url.pathname === MESSAGE_PATH) {
+        return req.text().then((body) => {
+          let msg: RpcMsg
+          try { msg = JSON.parse(body) as RpcMsg } catch { return new Response(null, { status: 400 }) }
+          const response = computeResponse(msg, req)
+          // Notification/initialize-with-id responses both go on the stream.
+          legacyStreamSink?.(sseFrame(response))
+          return new Response(null, { status: 202 })
+        })
+      }
+      return new Response("Not Found", { status: 404 })
+    }
+
     if (url.pathname !== "/mcp") {
       return new Response("Not Found", { status: 404 })
     }
