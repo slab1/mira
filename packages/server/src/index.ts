@@ -53,6 +53,7 @@ import {
   choosePeerIP,
   isSSERoute,
 } from "./rate-limit.js"
+import { MetricsCollector } from "./metrics.js"
 
 type PartialMiraConfig = Partial<MiraConfig>
 
@@ -271,13 +272,8 @@ async function main() {
   // 8. HTTP + WebSocket RPC (Hono)
   const app = new Hono<{ Variables: { requestId: string } }>()
 
-  // Metrics collector
-  const metrics = {
-    httpRequestsTotal: new Map<string, number>(),
-    httpRequestDurationSecondsSum: 0,
-    httpRequestDurationSecondsCount: 0,
-    activeSessions: 0,
-  }
+  // Metrics collector — bounded cardinality (LRU-evicted) + real per-route histograms.
+  const metrics = new MetricsCollector()
 
   // Security: CORS origin allowlist (CORS_ORIGINS, comma-separated; empty = allow all for dev)
   app.use("*", cors(CORS_ORIGIN_LIST.length > 0 ? { origin: CORS_ORIGIN_LIST } : {}))
@@ -482,8 +478,8 @@ async function main() {
   })
 
   // Metrics middleware
-  // Cardinality guard: collapse IDs/UUIDs/long segments to ":id", cap label space.
-  const METRICS_MAX_LABELS = 1000
+  // Cardinality guard: collapse IDs/UUIDs/long segments to ":id" (final cap enforced
+  // inside MetricsCollector via LRU eviction, so active routes are never silently dropped).
   const metricPath = (p: string): string =>
     p.split("/").map(seg => (seg.length > 16 || /^\d+$/.test(seg) || /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(seg)) ? ":id" : seg).join("/")
   app.use('*', async (c, next) => {
@@ -493,12 +489,7 @@ async function main() {
     const method = c.req.method
     const path = metricPath(c.req.path)
     const status = c.res.status
-    const key = `${method} ${path} ${status}`
-    if (metrics.httpRequestsTotal.has(key) || metrics.httpRequestsTotal.size < METRICS_MAX_LABELS) {
-      metrics.httpRequestsTotal.set(key, (metrics.httpRequestsTotal.get(key) ?? 0) + 1)
-    }
-    metrics.httpRequestDurationSecondsSum += durationSec
-    metrics.httpRequestDurationSecondsCount += 1
+    metrics.record(method, path, status, durationSec)
     // Track active sessions in-memory
     if (method === 'POST' && path === '/session' && status === 201) {
       metrics.activeSessions += 1

@@ -1,11 +1,12 @@
 import type { Hono } from "hono"
 import type { MiraConfig, JsonValue } from "../types/index.js"
 import type { Bus } from "../bus/index.js"
+import { DURATION_BUCKETS_SECONDS } from "../metrics.js"
 
 export function mountHealthRoutes(app: Hono<{ Variables: { requestId: string } }>, deps: {
   GIT_SHA: string; STARTED_AT: string; tools: { count(): number }; mcp: { count(): number };
   config: MiraConfig; bus: Bus; learning: { scheduler: { status(): JsonValue } };
-  gateway: { stats(): Record<string, JsonValue> }; metrics: { httpRequestsTotal: Map<string, number>; httpRequestDurationSecondsSum: number; httpRequestDurationSecondsCount: number; activeSessions: number };
+  gateway: { stats(): Record<string, JsonValue> };   metrics: { httpRequestsTotal: Map<string, number>; durationsByRoute: Map<string, number[]>; durationSumByRoute: Map<string, number>; httpRequestDurationSecondsSum: number; httpRequestDurationSecondsCount: number; activeSessions: number };
   TERMINAL_ENABLED: boolean; TERMINAL_SANDBOX: boolean; REQUIRED_TOKEN: string; API_KEY_OWNERS: Map<string, string>; CORS_ORIGIN_LIST: string[]
 }) {
   const { GIT_SHA, STARTED_AT } = deps
@@ -40,14 +41,25 @@ export function mountHealthRoutes(app: Hono<{ Variables: { requestId: string } }
       out += `http_requests_total{method="${method}",route="${route}",status="${status}"} ${val}\n`
     }
     out += '# HELP http_request_duration_seconds HTTP request duration seconds\n# TYPE http_request_duration_seconds histogram\n'
+    // Real per-route histogram: cumulative bucket counts reflect the actual latency
+    // distribution (not a degenerate flat line). +Inf bucket is implicit; emitted
+    // explicitly as `sum`-independent count for Prometheus correctness.
+    for (const [routeKey, buckets] of deps.metrics.durationsByRoute) {
+      const parts = routeKey.split(' ')
+      const method = parts[0]; const route = parts.slice(1).join(' ')
+      let cumulative = 0
+      for (let i = 0; i < DURATION_BUCKETS_SECONDS.length; i++) {
+        cumulative += buckets[i] ?? 0
+        out += `http_request_duration_seconds_bucket{method="${method}",route="${route}",le="${DURATION_BUCKETS_SECONDS[i]}"} ${cumulative}\n`
+      }
+      cumulative += buckets[DURATION_BUCKETS_SECONDS.length] ?? 0
+      out += `http_request_duration_seconds_bucket{method="${method}",route="${route}",le="+Inf"} ${cumulative}\n`
+      const routeSum = deps.metrics.durationSumByRoute.get(routeKey) ?? 0
+      out += `http_request_duration_seconds_sum{method="${method}",route="${route}"} ${routeSum}\n`
+      out += `http_request_duration_seconds_count{method="${method}",route="${route}"} ${cumulative}\n`
+    }
     out += `http_request_duration_seconds_sum ${deps.metrics.httpRequestDurationSecondsSum}\n`
     out += `http_request_duration_seconds_count ${deps.metrics.httpRequestDurationSecondsCount}\n`
-    out += `http_request_duration_seconds_bucket{le="0.05"} ${deps.metrics.httpRequestDurationSecondsCount}\n`
-    out += `http_request_duration_seconds_bucket{le="0.1"} ${deps.metrics.httpRequestDurationSecondsCount}\n`
-    out += `http_request_duration_seconds_bucket{le="0.5"} ${deps.metrics.httpRequestDurationSecondsCount}\n`
-    out += `http_request_duration_seconds_bucket{le="1"} ${deps.metrics.httpRequestDurationSecondsCount}\n`
-    out += `http_request_duration_seconds_bucket{le="5"} ${deps.metrics.httpRequestDurationSecondsCount}\n`
-    out += `http_request_duration_seconds_bucket{le="+Inf"} ${deps.metrics.httpRequestDurationSecondsCount}\n`
     out += '# HELP active_sessions Number of active sessions\n# TYPE active_sessions gauge\n'
     out += `active_sessions ${activeSessions}\n`
     out += '# HELP gateway_cost_total Total gateway cost USD\n# TYPE gateway_cost_total counter\n'
