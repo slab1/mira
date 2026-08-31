@@ -140,7 +140,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          # Publish @mira/cli from its package dir (has its own .releaserc.json).
+          # Publish mira-cli-ts from its package dir (has its own .releaserc.json).
           # NOTE: publishing to npm requires secrets.NPM_TOKEN to be set.
           if [ -z "$NPM_TOKEN" ]; then
             echo "::warning::NPM_TOKEN is not set — skipping npm publish (GitHub release only)"

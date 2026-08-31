@@ -1,4 +1,4 @@
-# @mira/cli
+# mira-cli-ts
 
 Mira CLI — a thin, zero-dependency wrapper around the Mira agent server.
 
@@ -9,10 +9,10 @@ Mira CLI — a thin, zero-dependency wrapper around the Mira agent server.
 
 ```bash
 # npm — the `mira` binary lands on your PATH
-npm install -g @mira/cli
+npm install -g mira-cli-ts
 
 # or run without installing
-npx @mira/cli --help
+npx mira-cli-ts --help
 ```
 
 Requires a running Mira server (`mira serve`). Point the CLI at it with `MIRA_API_URL`

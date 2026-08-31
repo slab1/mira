@@ -1,5 +1,5 @@
 {
-  "name": "@mira/cli",
+  "name": "mira-cli-ts",
   "version": "0.1.0",
   "description": "Mira CLI — thin wrapper around @mira/server (serve + session/agent/complete)",
   "type": "module",

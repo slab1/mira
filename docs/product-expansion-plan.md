@@ -9,14 +9,14 @@ Status legend: `planned` → `in progress` → `done`/`blocked`.
 
 ---
 
-## 1. Publish `@mira/cli` to npm (`npx mira`)
+## 1. Publish `mira-cli-ts` to npm (`npx mira`)
 
 **Why:** README already advertises "npx parity with Kilo/OpenCode" and "thin CLI (no extra
 deps)". Today the CLI is built (`dist/cli.js`) but the package is not publish-ready and the
 npm token isn't wired in CI, so `npx mira` does not actually resolve.
 
 **Current state (verified):**
-- `packages/cli/package.json`: `name: "@mira/cli"`, `version 0.1.0`, `bin: { mira: ./dist/cli.js }`,
+- `packages/cli/package.json`: `name: "mira-cli-ts"`, `version 0.1.0`, `bin: { mira: ./dist/cli.js }`,
   `"type": "module"`, `"dependencies": {}` (thin — good for npm).
 - `dist/cli.js` exists (bun build to `--target bun`).
 - **Missing for publish:** `files` allowlist, `publishConfig.access`, `repository`/`homepage`,
@@ -37,7 +37,7 @@ npm token isn't wired in CI, so `npx mira` does not actually resolve.
       prepared and CI can be made to run the publish job; the push itself needs credentials.
 
 **Success criteria:** `npm pack --dry-run` clean; CI release job attempts publish; running
-`npx @mira/cli --help` / `npx mira session list` works against a local server.
+`npx mira-cli-ts --help` / `npx mira session list` works against a local server.
 
 ---
 
