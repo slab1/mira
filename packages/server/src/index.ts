@@ -976,8 +976,9 @@ async function main() {
   })
 
   // Guardrails audit preview (dry-run) — mirrors ToolRegistry guardrails.check without executing
-  // @ts-expect-error — recursive JsonValue causes TS2589 deep instantiation in Hono+JsonValue generic, runtime shape is correct
-  app.post("/guardrails/check", async c => {
+  // Explicit Promise<Response> return annotation prevents TS2589: recursive JsonValue in the
+  // handler body would otherwise make Hono deeply instantiate the response generic.
+  app.post("/guardrails/check", async (c): Promise<Response> => {
     const body = await c.req.json().catch(() => null) as { tool?: string; args?: JsonValue; sessionID?: string } | null
     if (!body?.tool) return c.json({ error: "tool required" }, 400)
     const args: JsonValue = body.args ?? {}

@@ -250,8 +250,10 @@ export class ToolRegistry {
     return [...this.tools.values()].map(t => ({
       name: t.name,
       description: t.description,
-      // Zod v4: use z.toJSONSchema if available, else placeholder
-      parameters: (z as { toJSONSchema?: (schema: z.ZodTypeAny) => JsonValue }).toJSONSchema ? (z as { toJSONSchema: (schema: z.ZodTypeAny) => JsonValue }).toJSONSchema(t.schema) as JsonValue : { type: "object" } as JsonValue,
+      // Zod v4 exports a top-level z.toJSONSchema(schema): ZodStandardJSONSchemaPayload,
+      // which is structurally a JSON-schema object (JsonValue-compatible). Using the
+      // real typed API instead of a guarded cast keeps this correct if Zod v4 drifts.
+      parameters: z.toJSONSchema(t.schema) as JsonValue,
     }))
   }
 }
