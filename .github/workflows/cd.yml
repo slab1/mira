@@ -12,6 +12,7 @@ concurrency:
 permissions:
   contents: write
   packages: write
+  issues: write
   id-token: write
 
 jobs:

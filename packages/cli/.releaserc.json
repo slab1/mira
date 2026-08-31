@@ -1,5 +1,6 @@
 {
   "branches": ["main"],
+  "tagFormat": "mira-cli-v${version}",
   "plugins": [
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
