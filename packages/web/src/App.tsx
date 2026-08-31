@@ -155,6 +155,8 @@ export default function App() {
   const [authorized, setAuthorized] = createSignal(false)
   const [settingsOpen, setSettingsOpen] = createSignal(false)
   const [paletteOpen, setPaletteOpen] = createSignal(false)
+  // Mobile: session sidebar is an off-canvas drawer; toggled by the hamburger.
+  const [sidebarOpen, setSidebarOpen] = createSignal(false)
   const [agents] = createResource(() => api.listAgents().catch(() => []))
   const [selectedAgent, setSelectedAgent] = createSignal("")
 
@@ -238,7 +240,11 @@ export default function App() {
           color: "var(--fg)",
         }}
       >
-        <SessionList store={store} />
+        <SessionList store={store} open={sidebarOpen()} />
+        {/* Mobile drawer scrim — closes the session sidebar when tapped */}
+        <Show when={sidebarOpen()}>
+          <div class="mira-scrim" aria-hidden="true" onClick={() => setSidebarOpen(false)} />
+        </Show>
 
         <div
           style={{
@@ -265,6 +271,16 @@ export default function App() {
             }}
           >
             <div style={{ display: "flex", "align-items": "center", gap: "10px", "min-width": "0" }}>
+              <button
+                type="button"
+                class="btn btn-ghost mira-menu-btn"
+                onClick={() => setSidebarOpen((v) => !v)}
+                title="Toggle session list"
+                aria-label="Toggle session list"
+                style={{ padding: "4px 8px", "font-size": "var(--fs-base)", border: "1px solid var(--border)", "border-radius": "var(--r-md)", display: "none" }}
+              >
+                ☰
+              </button>
               <span
                 style={{
                   "font-size": "var(--fs-sm)",
@@ -437,7 +453,7 @@ export default function App() {
             </div>
           </Show>
 
-          <div style={{ flex: "1", display: "flex", overflow: "hidden", "min-height": "0" }}>
+          <div class="mira-main" style={{ flex: "1", display: "flex", overflow: "hidden", "min-height": "0" }}>
             <ChatView store={store} settings={settings} onPaletteOpen={() => setPaletteOpen(true)} />
             <ToolView store={store} />
           </div>

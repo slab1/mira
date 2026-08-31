@@ -1,11 +1,12 @@
 import { For, Show } from "solid-js"
 import type { AppStore } from "../stores/app"
 
-export function SessionList(props: { store: AppStore }) {
+export function SessionList(props: { store: AppStore; open?: boolean }) {
   const s = () => props.store.state
 
   return (
     <aside
+      class={`mira-sidebar${props.open ? " mira-sidebar-open" : ""}`}
       style={{
         width: "280px",
         "flex-shrink": "0",

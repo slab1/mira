@@ -1161,3 +1161,52 @@ html {
     min-height: 36px;
   }
 }
+
+/* ── Responsive: session sidebar becomes an off-canvas drawer on phones ── */
+.mira-menu-btn {
+  /* shown only on narrow screens (desktop hides via inline display:none) */
+  line-height: 1;
+}
+@media (max-width: 767px) {
+  .mira-menu-btn {
+    display: inline-flex !important;
+  }
+  .mira-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 40;
+    width: 280px !important;
+    max-width: 85vw;
+    height: 100%;
+    background: var(--bg-app);
+    border-right: 1px solid var(--border);
+    box-shadow: var(--shadow-pop);
+    transform: translateX(-105%);
+    transition: transform 0.25s var(--ease);
+  }
+  .mira-sidebar-open {
+    transform: translateX(0);
+  }
+  .mira-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: rgba(0, 0, 0, 0.45);
+  }
+  /* Let the chat/tool column use the full width and stack tools below chat */
+  .mira-main {
+    flex-direction: column;
+  }
+  .mira-main > .card {
+    margin: 8px;
+  }
+  /* Header: allow the right-side actions to scroll instead of overflowing */
+  header {
+    gap: var(--sp-2);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+}
+
