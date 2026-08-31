@@ -140,11 +140,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          # Publish @mira/cli from its package dir (has its own .releaserc.json).
+          # NOTE: publishing to npm requires secrets.NPM_TOKEN to be set.
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "::warning::NPM_TOKEN is not set — skipping npm publish (GitHub release only)"
+          fi
           if bunx --yes semantic-release --version >/dev/null 2>&1; then
-            bunx semantic-release
+            (cd packages/cli && bunx semantic-release)
           else
             echo "::notice::semantic-release not configured — creating GitHub release from package.json version"
-            VERSION=$(bun -e "console.log(require('./package.json').version)")
+            VERSION=$(bun -e "console.log(require('./packages/cli/package.json').version)")
             TAG="v${VERSION}"
             if git rev-parse "$TAG" >/dev/null 2>&1; then
               echo "Tag $TAG already exists — skipping release"

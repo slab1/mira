@@ -6,10 +6,38 @@
   "bin": {
     "mira": "./dist/cli.js"
   },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/slab1/mira.git"
+  },
+  "homepage": "https://github.com/slab1/mira#readme",
+  "bugs": {
+    "url": "https://github.com/slab1/mira/issues"
+  },
+  "keywords": [
+    "mira",
+    "ai",
+    "agent",
+    "llm",
+    "cli",
+    "terminal",
+    "coding-agent"
+  ],
+  "engines": {
+    "node": ">=18",
+    "bun": ">=1.0"
+  },
   "scripts": {
     "build": "tsc --noEmit && bun build src/cli.ts --outdir dist --target bun --format esm",
     "typecheck": "tsc --noEmit",
-    "dev": "tsc --watch --noEmit"
+    "dev": "tsc --watch --noEmit",
+    "prepublishOnly": "npm run build && npm run typecheck"
   },
   "dependencies": {},
   "devDependencies": {
