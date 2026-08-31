@@ -185,13 +185,27 @@ async function cmdSessionPrompt(opts: Record<string, string | boolean>): Promise
     const frames = buf.split("\n\n")
     buf = frames.pop() ?? ""
     for (const f of frames) {
+      const eventMatch = f.match(/event:\s*(\S+)/)
+      const event = eventMatch ? eventMatch[1] : ""
       const m = f.match(/data:\s*(.*)/)
       if (!m) continue
       try {
         const j = JSON.parse(m[1] ?? "") as Record<string, JsonValue>
-        const d = (j.textDelta ?? j.text ?? j.delta ?? "") as string
-        if (d) process.stdout.write(String(d))
-        if (j.error) console.error(`\n[error] ${String(j.error)}`)
+        if (event === "text_delta") {
+          const d = (j.delta ?? j.textDelta ?? j.text ?? "") as string
+          if (d) process.stdout.write(String(d))
+        } else if (event === "error") {
+          if (j.error) console.error(`\n[error] ${String(j.error)}`)
+        } else if (event === "finish") {
+          // already streamed via text_delta, no duplicate
+        } else if (event === "tool_call" || event === "tool_result" || event === "step_start" || event === "step_finish") {
+          // ignore for CLI stdout — could verbose log if needed
+        } else {
+          // fallback: only print if it looks like text delta
+          const d = (j.delta ?? "") as string
+          if (d && event !== "finish") process.stdout.write(String(d))
+          if (j.error) console.error(`\n[error] ${String(j.error)}`)
+        }
       } catch {
         process.stdout.write(m[1] ?? "")
       }

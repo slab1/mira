@@ -538,7 +538,10 @@ async function main() {
       path.startsWith("/learning") ||
       path.startsWith("/permission") ||
       path.startsWith("/guardrails") ||
-      path.startsWith("/admin")
+      path.startsWith("/admin") ||
+      path.startsWith("/manager") ||
+      path.startsWith("/complete") ||
+      path.startsWith("/autocomplete")
     ) {
       return await next()
     }
@@ -681,12 +684,12 @@ async function main() {
       role: z.enum(["user", "assistant", "system"]).or(z.string()),
       parts: z.array(z.object({
         type: z.enum(["text", "tool-call", "tool-result", "reasoning", "file"]).or(z.string()),
-        text: z.string().optional(),
-        tool: z.string().optional(),
-        toolCallID: z.string().optional(),
-        args: z.custom<JsonValue>().optional(),
-        result: z.custom<JsonValue>().optional(),
-        isError: z.boolean().optional(),
+        text: z.string().nullable().optional(),
+        tool: z.string().nullable().optional(),
+        toolCallID: z.string().nullable().optional(),
+        args: z.custom<JsonValue>().nullable().optional(),
+        result: z.custom<JsonValue>().nullable().optional(),
+        isError: z.boolean().nullable().optional(),
       }).passthrough()).optional(),
       // also support flat parts array from Drizzle query
     }).passthrough()).optional(),

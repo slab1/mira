@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsc --noEmit && bun build src/cli.ts --outdir dist --target bun --format esm",
     "typecheck": "tsc --noEmit",
-    "dev": "bun --watch src/cli.ts -- serve"
+    "dev": "tsc --watch --noEmit"
   },
   "dependencies": {},
   "devDependencies": {
