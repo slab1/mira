@@ -298,6 +298,7 @@ export class SessionPrompt {
     agent?: string
     model?: string
     title?: string
+    signal?: AbortSignal
   }): Promise<{ sessionID: string; text: string }> {
     // Per-agent model routing: explicit > agent.model > autoModel tier > default (Kilo K1+K8)
     const effectiveModel = resolveEffectiveModel({ explicitModel: opts.model, agent: opts.agent ?? null, sessionModel: undefined }) || undefined
@@ -328,9 +329,14 @@ export class SessionPrompt {
         send,
         writer: noopWriter,
         agent: opts.agent ?? s.agent,
+        signal: opts.signal,
       })
     } catch (err) {
-      text = `[subagent error] ${String(err)}`
+      // Prefer a signal-abort over a generic error message so an explicitly
+      // cancelled job reports "cancelled" rather than a misleading stack trace.
+      text = opts.signal?.aborted
+        ? "[subagent cancelled]"
+        : `[subagent error] ${String(err)}`
     }
     return { sessionID: s.id, text }
   }
@@ -466,6 +472,13 @@ export class SessionPrompt {
     } catch {}
     loop: while (step < MAX_STEPS) {
       step++
+
+      // Honour an explicit cancellation (e.g. cancelJob) between steps —
+      // abort the run promptly rather than waiting for the next stream call.
+      if (opts.signal?.aborted) {
+        send("aborted", { step, reason: "cancelled" })
+        break loop
+      }
 
       // ── Cost cap guard (Kilo K8) — perTask / perSession in USD ───────
       try {

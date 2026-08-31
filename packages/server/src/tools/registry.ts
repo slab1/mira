@@ -52,7 +52,7 @@ export interface ToolContext {
   bus?: Bus
   db?: MiraDB
   /** injected by ToolRegistry — spawns an isolated subagent session */
-  subagentRunner?: (opts: { prompt: string; parentID: string; agent?: string; model?: string; title?: string }) => Promise<{ sessionID: string; text: string }>
+  subagentRunner?: (opts: { prompt: string; parentID: string; agent?: string; model?: string; title?: string; signal?: AbortSignal }) => Promise<{ sessionID: string; text: string }>
   /** injected by ToolRegistry — forks a session at a message boundary */
   forkRunner?: (opts: { sourceSessionID: string; messageID?: string; title?: string }) => Promise<{ sessionID: string; copiedMessages: number }>
 }

@@ -255,6 +255,7 @@ async function main() {
     parentID: opts.parentID,
     agent: opts.agent,
     model: opts.model,
+    signal: opts.signal,
   }))
   // Inject db/bus + fork runner so tools like session_list/session_fork work
   tools.setDefaultCtx({ db, bus, forkRunner: (opts) => prompt.forkSession(opts) })

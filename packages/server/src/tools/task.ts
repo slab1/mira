@@ -43,6 +43,14 @@ const taskSchema = z.object({
 
 // ── Job board handlers (for REST/tool layers) ──────────────────────
 
+/**
+ * Live abort controllers for in-flight background subagent jobs.
+ * `cancelJob` aborts the matching controller so the subagent's runLoop stops
+ * promptly (signal is threaded to gateway.stream + checked between steps),
+ * instead of only flipping the DB row while the agent keeps running.
+ */
+const jobAborts = new Map<string, AbortController>()
+
 /** Fetch a single job by ID (undefined if not found). */
 export async function getJob(db: MaybeDB, jobID: string): Promise<Job | undefined> {
   if (!db) return undefined
@@ -59,12 +67,15 @@ export async function listJobs(db: MaybeDB, parentSessionID?: string): Promise<J
 }
 
 /**
- * Cancel a job. Best-effort stop: neither subagentRunner nor forkRunner expose
- * an abort handle today, so cancellation is cooperative — in-flight terminal
- * updates guard on status='running' and will not overwrite 'cancelled'
- * (cancelled-on-poll).
+ * Cancel a job. Flipping the DB row to 'cancelled' AND signalling the live
+ * AbortController so the in-flight subagent actually terminates (rather than
+ * running to completion). Terminal updates guard on status='running' and will
+ * not overwrite 'cancelled' (cancelled-on-poll).
  */
 export async function cancelJob(db: MaybeDB, jobID: string): Promise<Job | undefined> {
+  // Abort the live subagent run, if any (no-op for completed/unknown jobs).
+  jobAborts.get(jobID)?.abort()
+  jobAborts.delete(jobID)
   if (!db) return undefined
   await db.update(jobs)
     .set({ status: "cancelled" as JobStatus, updatedAt: Date.now() })
@@ -132,27 +143,40 @@ export const taskTool = {
     }
 
     if (background) {
-      // Fire-and-forget: run real subagent, persist + publish completion with full result
+      // Fire-and-forget: run real subagent, persist + publish completion with full result.
+      // A per-job AbortController lets cancelJob(jobID) terminate the in-flight run.
+      const ac = new AbortController()
+      jobAborts.set(jobID, ac)
       setImmediate(() => {
-        runner({ prompt: `[${description}] ${prompt}`, parentID: ctx.sessionID, agent })
-          .then(({ sessionID, text }) =>
-            finishJob(db, jobID, { status: "completed", result: text, childSessionID: sessionID })
+        runner({ prompt: `[${description}] ${prompt}`, parentID: ctx.sessionID, agent, signal: ac.signal })
+          .then(({ sessionID, text }) => {
+            const wasCancelled = ac.signal.aborted
+            jobAborts.delete(jobID)
+            return finishJob(db, jobID, wasCancelled
+              ? { status: "cancelled", error: "Subagent cancelled", childSessionID: sessionID }
+              : { status: "completed", result: text, childSessionID: sessionID })
               .then(() => {
                 bus?.publish({
                   type: "message.updated", sessionID: ctx.sessionID,
-                  payload: { taskID, jobID, status: "completed", childSessionID: sessionID, summary: text },
+                  payload: { taskID, jobID, status: wasCancelled ? "cancelled" : "completed", childSessionID: sessionID, summary: text },
                   timestamp: Date.now(),
                 })
-              }))
-          .catch((err) =>
-            finishJob(db, jobID, { status: "failed", error: String(err) })
+              })
+          })
+          .catch((err) => {
+            const wasCancelled = ac.signal.aborted
+            jobAborts.delete(jobID)
+            return finishJob(db, jobID, wasCancelled
+              ? { status: "cancelled", error: "Subagent cancelled" }
+              : { status: "failed", error: String(err) })
               .then(() => {
                 bus?.publish({
                   type: "message.updated", sessionID: ctx.sessionID,
-                  payload: { taskID, jobID, status: "failed", error: String(err) },
+                  payload: { taskID, jobID, status: wasCancelled ? "cancelled" : "failed", error: String(err) },
                   timestamp: Date.now(),
                 })
-              }))
+              })
+          })
       })
       return {
         taskID,

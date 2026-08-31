@@ -22,6 +22,7 @@ import type { ToolRegistry } from "../tools/registry.js"
 import type { JsonValue } from "../types/index.js"
 import { z } from "zod"
 import { McpStdioClient } from "./stdio-client.js"
+import { McpHttpClient } from "./http-client.js"
 
 interface MCPServerConfig {
   type: "local" | "remote"
@@ -51,6 +52,7 @@ export class MCPManager {
   private servers = new Map<string, ConnectedServer>()
   private processes = new Map<string, ReturnType<typeof Bun.spawn>>()
   private clients = new Map<string, McpStdioClient>()
+  private httpClients = new Map<string, McpHttpClient>()
 
   constructor(private deps: MCPManagerDeps) {}
 
@@ -126,9 +128,11 @@ export class MCPManager {
   }
 
   // ── Remote transport (StreamableHTTP / SSE) ──────────────────────
-  // NOTE: Remote MCP is currently EXPERIMENTAL — stub implementation.
-  // Real StreamableHTTP transport (session id, Accept: application/json+text/event-stream, notifications/tools/list_changed) is pending SDK integration.
-  // For production, prefer type:"local" (stdio) or await real remote support.
+  // Real Streamable HTTP: initialize → notifications/initialized → tools/list.
+  // Uses a dependency-free JSON-RPC over HTTP client (http-client.ts) that
+  // handles session id capture, SSE + single-JSON response framing, and
+  // per-request timeouts. Mirrors the stdio flow so remote servers expose the
+  // same mcp__<name>__<tool> surface.
   private async connectRemote(name: string, cfg: MCPServerConfig): Promise<void> {
     if (!cfg.url) throw new Error(`No url for remote MCP server ${name}`)
 
@@ -139,34 +143,36 @@ export class MCPManager {
     // Expand env in url
     const url = cfg.url.replace(/\{env:([^}]+)\}/g, (_, varName) => process.env[varName] ?? "")
 
-    console.warn(`[mcp] ${name} remote transport is EXPERIMENTAL stub — no StreamableHTTP discovery yet`)
-    // Try StreamableHTTP first (POST /mcp with JSON-RPC), fallback to SSE
-    // Stub: register placeholder tool, real impl uses @modelcontextprotocol/sdk StreamableHTTPTransport
-    const stubTools = [`mcp__${name}__remote_tool`]
-    for (const toolName of stubTools) {
+    // Real Streamable HTTP handshake: initialize → initialized → tools/list
+    const client = await McpHttpClient.connect(name, { url, headers })
+    this.httpClients.set(name, client)
+
+    const discovered = await client.listTools()
+    const registered: string[] = []
+    for (const t of discovered) {
+      const toolName = `mcp__${name}__${t.name}`
       this.deps.tools.register({
         name: toolName,
-        description: `[EXPERIMENTAL STUB] MCP remote tool ${toolName} from ${name} (${url}) — StreamableHTTP pending. Use local stdio for real tools.`,
+        description: t.description ?? `MCP tool ${t.name} from ${name}`,
         category: "mcp",
         needsPermission: true,
-        schema: z.object({ input: z.string().optional() }).passthrough(),
-        async execute(args) {
-          // In prod: client.callTool(toolName, args) via StreamableHTTP
-          // Try fetch to remote MCP endpoint
-          try {
-            const res = await fetch(url, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", ...headers },
-              body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: toolName.replace(`mcp__${name}__`, ""), arguments: args } }),
-            })
-            if (res.ok) return await res.json()
-          } catch {}
-          return { mcp: name, tool: toolName, args, url, note: "Remote MCP stub" }
+        // JSON Schema from the server passes through; remote validates its own args
+        schema: z.object({}).passthrough(),
+        async execute(args, ctx) {
+          const signal = (ctx as { signal?: AbortSignal } | undefined)?.signal
+          const result = await client.callTool(t.name, (args as Record<string, JsonValue>) ?? {}, 60_000, signal)
+          const text = (result.content ?? [])
+            .filter(c => c.type === "text")
+            .map(c => c.text)
+            .join("\n")
+          return { ok: !result.isError, text }
         },
       })
+      registered.push(toolName)
     }
-    this.servers.set(name, { name, config: cfg, tools: stubTools, status: "connected" })
-    console.log(`[mcp] ${name} (remote ${url}) → ${stubTools.length} tools`)
+
+    this.servers.set(name, { name, config: cfg, tools: registered, status: "connected" })
+    console.log(`[mcp] ${name} (remote ${url}) → ${registered.length} tools`)
   }
 
   count(): number {
@@ -218,6 +224,11 @@ export class MCPManager {
       try { client.shutdown() } catch {}
       this.clients.delete(name)
     }
+    const httpClient = this.httpClients.get(name)
+    if (httpClient) {
+      try { httpClient.shutdown() } catch {}
+      this.httpClients.delete(name)
+    }
     const proc = this.processes.get(name)
     if (proc) {
       try { proc.kill() } catch {}
@@ -259,6 +270,8 @@ export class MCPManager {
     } else {
       const client = this.clients.get(name)
       if (client) { try { client.shutdown() } catch {} ; this.clients.delete(name) }
+      const httpClient = this.httpClients.get(name)
+      if (httpClient) { try { httpClient.shutdown() } catch {} ; this.httpClients.delete(name) }
       const proc = this.processes.get(name)
       if (proc) { try { proc.kill() } catch {} ; this.processes.delete(name) }
       for (const toolName of entry.tools) {
@@ -275,6 +288,10 @@ export class MCPManager {
       try { client.shutdown() } catch {}
     }
     this.clients.clear()
+    for (const [, client] of this.httpClients) {
+      try { client.shutdown() } catch {}
+    }
+    this.httpClients.clear()
     for (const [name, proc] of this.processes) {
       try { proc.kill() } catch {}
       console.log(`[mcp] ${name} disconnected`)

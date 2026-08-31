@@ -19,3 +19,6 @@ data/
 **/*.db-wal
 *.db-shm
 **/*.db-shm
+
+# TypeScript incremental build cache
+*.tsbuildinfo
