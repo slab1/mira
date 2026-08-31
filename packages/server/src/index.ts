@@ -20,6 +20,7 @@
  */
 
 import { Hono } from "hono"
+import type { Context } from "hono"
 import { cors } from "hono/cors"
 import { z } from "zod"
 import { timingSafeEqual } from "node:crypto"
@@ -46,6 +47,12 @@ import { mountConfigRoutes } from "./routes/config.js"
 import { mountMcpRoutes } from "./routes/mcp.js"
 import { mountAdminRoutes } from "./routes/admin.js"
 import { boundSend, WS_CLOSE_TOO_SLOW } from "./ws-backpressure.js"
+import {
+  RATE_LIMIT_CAPACITY,
+  RATE_LIMIT_SSE_CAPACITY,
+  choosePeerIP,
+  isSSERoute,
+} from "./rate-limit.js"
 
 type PartialMiraConfig = Partial<MiraConfig>
 
@@ -392,8 +399,16 @@ async function main() {
     console.log(JSON.stringify(log))
   })
 
-  // Rate limiting — token bucket per IP, 100 req/min, skip health/metrics probes
-  const RATE_LIMIT_CAPACITY = 100
+  // Rate limiting — token bucket per IP, 100 req/min, skip health/metrics probes.
+  //
+  // Secure peer key: by default we key on the REAL socket peer address via Bun's
+  // server.requestIP() — a client-supplied `x-forwarded-for`/`x-real-ip` header CANNOT
+  // forge it, so a single attacker gets one bucket (not one per spoofed header) and
+  // cannot bypass the limit by churning headers. Proxy headers are only trusted when
+  // MIRA_TRUST_PROXY=1 (operator declares a real reverse proxy that sanitizes them).
+  //
+  // Per-route: costly long-lived SSE routes (prompt/queue streaming) get their own
+  // stricter bucket so a flood of cheap requests can't starve the expensive LLM paths.
   const RATE_LIMIT_WINDOW_MS = 60_000
   const RATE_LIMIT_SKIP = new Set(["/health", "/dev/health", "/healthz", "/metrics"])
   const rateLimitBuckets = new Map<string, { tokens: number; last: number }>()
@@ -408,37 +423,59 @@ async function main() {
   rateLimitCleanup.unref?.()
   // Only trust proxy headers when explicitly enabled (MIRA_TRUST_PROXY=1)
   const TRUST_PROXY = process.env.MIRA_TRUST_PROXY === "1"
+  // Filled by the Bun.serve fetch handler; gives the unspoofable real peer address.
+  let bunServer: ReturnType<typeof Bun.serve<MiraWSData>> | null = null
+  // Resolve the rate-limit key from the socket peer (default) or proxy headers (opt-in).
+  function peerAddress(c: Context): string {
+    return choosePeerIP({
+      trustProxy: TRUST_PROXY,
+      xForwardedFor: c.req.header("x-forwarded-for"),
+      xRealIp: c.req.header("x-real-ip"),
+      socketPeer: (() => {
+        try {
+          const ip = bunServer?.requestIP?.(c.req.raw as Request)
+          return ip?.address ?? null
+        } catch {
+          return null
+        }
+      })(),
+    })
+  }
+  // Routes that stream through a long-lived SSE connection (expensive per turn).
+  function sseRoute(c: Context): boolean {
+    return isSSERoute(c.req.method, c.req.path)
+  }
   app.use("*", async (c, next) => {
     const path = new URL(c.req.url).pathname
     if (RATE_LIMIT_SKIP.has(path)) return await next()
-    const ip = TRUST_PROXY
-      ? (c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("x-real-ip") ?? "unknown")
-      : (c.req.header("x-real-ip") ?? "unknown")
+    const sse = sseRoute(c)
+    const key = (sse ? "sse:" : "") + peerAddress(c)
+    const capacity = sse ? RATE_LIMIT_SSE_CAPACITY : RATE_LIMIT_CAPACITY
     const now = Date.now()
-    let bucket = rateLimitBuckets.get(ip)
+    let bucket = rateLimitBuckets.get(key)
     if (!bucket) {
-      bucket = { tokens: RATE_LIMIT_CAPACITY, last: now }
-      rateLimitBuckets.set(ip, bucket)
+      bucket = { tokens: capacity, last: now }
+      rateLimitBuckets.set(key, bucket)
     }
     const elapsed = now - bucket.last
     if (elapsed > 0) {
-      const refill = (elapsed / RATE_LIMIT_WINDOW_MS) * RATE_LIMIT_CAPACITY
-      bucket.tokens = Math.min(RATE_LIMIT_CAPACITY, bucket.tokens + refill)
+      const refill = (elapsed / RATE_LIMIT_WINDOW_MS) * capacity
+      bucket.tokens = Math.min(capacity, bucket.tokens + refill)
       bucket.last = now
     }
     if (bucket.tokens >= 1) {
       bucket.tokens -= 1
       await next()
       // Standard RateLimit headers on every non-429 response
-      c.res.headers.set("X-RateLimit-Limit", String(RATE_LIMIT_CAPACITY))
+      c.res.headers.set("X-RateLimit-Limit", String(capacity))
       c.res.headers.set("X-RateLimit-Remaining", String(Math.floor(bucket.tokens)))
     } else {
       // Seconds until one token refills (refill rate = capacity/window per ms)
-      const refillPerMs = RATE_LIMIT_CAPACITY / RATE_LIMIT_WINDOW_MS
+      const refillPerMs = capacity / RATE_LIMIT_WINDOW_MS
       const retryAfterSec = Math.max(1, Math.ceil((1 - bucket.tokens) / refillPerMs / 1000))
       const res = c.json({ error: "Too Many Requests" }, 429)
       res.headers.set("Retry-After", String(retryAfterSec))
-      res.headers.set("X-RateLimit-Limit", String(RATE_LIMIT_CAPACITY))
+      res.headers.set("X-RateLimit-Limit", String(capacity))
       res.headers.set("X-RateLimit-Remaining", "0")
       return res
     }
@@ -1149,6 +1186,7 @@ async function main() {
     // Long SSE streams (LLM first-token latency can exceed 10s) need a generous idle timeout
     idleTimeout: 180,
     fetch(req, srv) {
+      bunServer = srv // expose real peer IP to rate-limit middleware (unspoofable)
       if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
         if (!isOriginAllowed(req.headers.get("origin"))) {
           return new Response(JSON.stringify({ error: "forbidden origin" }), { status: 403, headers: { "content-type": "application/json" } })
