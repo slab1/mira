@@ -36,7 +36,7 @@ beforeAll(async () => {
     stderr: "pipe",
   })
   await waitForHealth()
-})
+}, 30_000) // server boot here is slow (~9s); exceed bun's 5s default hook timeout
 
 afterAll(() => proc?.kill())
 
@@ -67,7 +67,9 @@ describe("gaps: terminal", () => {
     const ws = new WebSocket(`ws://localhost:${PORT}/terminal`)
     const out: string[] = []
     await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error("timeout")), 5000)
+      // Full-suite load (parallel server boots) makes the PTY echo roundtrip
+      // blow past the old 5s bound (~3s in isolation, 5.2s under load).
+      const t = setTimeout(() => reject(new Error("timeout")), 15_000)
       ws.onopen = () => {}
       ws.onmessage = (ev) => {
         try {

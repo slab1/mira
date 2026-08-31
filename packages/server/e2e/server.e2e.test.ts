@@ -31,7 +31,7 @@ beforeAll(async () => {
     stderr: "pipe",
   })
   await waitForHealth()
-})
+}, 30_000) // server boot here is slow (~9s); exceed bun's 5s default hook timeout
 
 afterAll(() => {
   serverProc?.kill()

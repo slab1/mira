@@ -16,7 +16,7 @@ beforeAll(async () => {
     try { if ((await fetch(`${BASE}/health`)).ok) break } catch {}
     await Bun.sleep(250)
   }
-})
+}, 30_000) // server boot here is slow (~9s); exceed bun's 5s default hook timeout
 afterAll(() => serverProc?.kill())
 
 describe("message queue", () => {
