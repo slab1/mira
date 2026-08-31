@@ -45,6 +45,7 @@ import { mountSessionRoutes } from "./routes/session.js"
 import { mountConfigRoutes } from "./routes/config.js"
 import { mountMcpRoutes } from "./routes/mcp.js"
 import { mountAdminRoutes } from "./routes/admin.js"
+import { boundSend, WS_CLOSE_TOO_SLOW } from "./ws-backpressure.js"
 
 type PartialMiraConfig = Partial<MiraConfig>
 
@@ -1053,6 +1054,23 @@ async function main() {
     __ac?: AbortController
     send(data: string): void
     close(code: number, reason?: string): void
+    getBufferedAmount?(): number
+  }
+
+  // Evict a socket that can no longer keep up (or already dropped messages).
+  // Unsubscribes the GlobalBus handler, then closes with 1013 so the client can
+  // reconnect; prevents a dead/slow consumer from pinning shared-process memory.
+  function evictSlowSocket(ws: MiraWS, reason = "client too slow") {
+    try { ws.__unsub?.() } catch {}
+    try { ws.__active = false } catch {}
+    try { ws.__proc?.kill() } catch {}
+    try { ws.close(WS_CLOSE_TOO_SLOW, reason) } catch {}
+  }
+
+  // sendToSocket: boundSend, and evict the socket if it fell behind / the
+  // message was dropped — never let one slow consumer OOM the shared process.
+  function sendToSocket(ws: MiraWS, data: string) {
+    if (!boundSend(ws, data)) evictSlowSocket(ws)
   }
 
   function activateSocket(ws: MiraWS, owner?: string) {
@@ -1064,15 +1082,17 @@ async function main() {
     // with multi-tenant keys enabled, events are scoped to the socket's owner.
     ws.__unsub = bus.subscribeAll(event => {
       try {
+        let json: string
         if (!OWNERSHIP_ENABLED || !event.sessionID || event.type.startsWith("server.")) {
-          ws.send(JSON.stringify(event))
-          return
+          json = JSON.stringify(event)
+        } else {
+          return void ownerOfSession(event.sessionID).then(o => {
+            // Fail closed: drop events whose owner is unknown or foreign
+            if (!ws.__active) return
+            if (o === null || o === ws.__owner) sendToSocket(ws, JSON.stringify(event))
+          })
         }
-        void ownerOfSession(event.sessionID).then(o => {
-          // Fail closed: drop events whose owner is unknown or foreign
-          if (!ws.__active) return
-          if (o === null || o === ws.__owner) ws.send(JSON.stringify(event))
-        })
+        sendToSocket(ws, json)
       } catch {}
     })
     ws.send(JSON.stringify({ type: "server.heartbeat", payload: { connected: true }, timestamp: Date.now() }))
@@ -1105,7 +1125,12 @@ async function main() {
           if (done) break
           if (!value?.length) continue
           const text = decoder.decode(value, { stream: true })
-          try { ws.send(JSON.stringify({ type: "terminal.output", payload: { stream: name, data: text }, timestamp: Date.now() })) } catch { break }
+          // Bounded send: if the terminal consumer falls behind, stop streaming
+          // to it and evict rather than buffer unboundedly in shared-process RAM.
+          if (!boundSend(ws, JSON.stringify({ type: "terminal.output", payload: { stream: name, data: text }, timestamp: Date.now() }))) {
+            evictSlowSocket(ws, "terminal client too slow")
+            break
+          }
         }
       } catch {}
     }
