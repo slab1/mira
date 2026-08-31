@@ -277,6 +277,15 @@ async function main() {
 
   // Security: CORS origin allowlist (CORS_ORIGINS, comma-separated; empty = allow all for dev)
   app.use("*", cors(CORS_ORIGIN_LIST.length > 0 ? { origin: CORS_ORIGIN_LIST } : {}))
+  // Assign a stable request id once per request (FIRST middleware, before tracing and
+  // logging) so the access-log line, the OTel span, and the X-Request-Id response header
+  // all share the same id. Correlating logs <-> traces requires one shared id.
+  app.use("*", (c, next) => {
+    const requestId = c.get("requestId") ?? crypto.randomUUID()
+    c.set("requestId", requestId)
+    c.header("X-Request-Id", requestId)
+    return next()
+  })
   // OpenTelemetry tracer middleware — cache tracer outside per-request import
   let cachedTracer: { startSpan: (name: string, opts?: JsonValue) => { setAttribute: (k: string, v: JsonValue) => void; end: () => void } } | null = null
   let otelFailed = false
@@ -289,7 +298,7 @@ async function main() {
   app.use("*", async (c, next) => {
       if (!cachedTracer || otelFailed) return await next()
       const tracer = cachedTracer
-      const span = tracer.startSpan('http.request', { attributes: { 'http.method': c.req.method, 'http.route': c.req.path } })
+      const span = tracer.startSpan('http.request', { attributes: { 'http.method': c.req.method, 'http.route': c.req.path, 'request_id': c.get("requestId") } })
     try {
       await next()
       span.setAttribute('http.status_code', c.res.status)
@@ -365,11 +374,10 @@ async function main() {
   const queuePushSchema = z.object({ prompt: z.string().min(1).max(20000) })
   app.use("*", async (c, next) => {
     const start = Date.now()
-    const requestId = crypto.randomUUID()
-    c.set("requestId", requestId)
-    c.header("X-Request-Id", requestId)
+    // Reuse the request id assigned by the first middleware so the access-log entry
+    // correlates with the OTel span and the X-Request-Id header.
+    const requestId = c.get("requestId") ?? crypto.randomUUID()
     await next()
-    c.header("X-Request-Id", requestId)
     const duration = Date.now() - start
     const status = c.res.status
     // Usage — surface cost/tokens per HTTP line for prompt turns (cumulative gateway stats)
