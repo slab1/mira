@@ -11,13 +11,16 @@ declare const process: { env: Record<string, string | undefined>; argv: string[]
  *
  * Commands:
  *   mira serve [--port 4096] [--host 127.0.0.1]  — start daemon (same as bun src/index.ts)
- *   mira session list
- *   mira session create [--title ...] [--agent ...] [--model ...]
- *   mira session prompt --id <id> --prompt <text> [--agent ...] [--model ...]
- *   mira session import --file <path>          — import exported JSON
- *   mira agent list
+ *   mira session list | create | prompt | import | export | new
+ *   mira agent list | preview <name>
+ *   mira skill list
+ *   mira command list
+ *   mira tool list
+ *   mira mcp list
+ *   mira config get | set <key> <value>
+ *   mira finding list | resolve <id>
  *   mira complete --prefix <text> --suffix <text> [--file <path>]
- *   mira manager
+ *   mira manager | health
  *   mira --help / --version
  *
  * All API commands talk to the running server at MIRA_API_URL (default http://127.0.0.1:4096)
@@ -50,27 +53,39 @@ function printHelp(): void {
 mira — AI agent platform CLI (thin, 0.1.0)
 
 Usage:
-  mira serve [--port 4096] [--host 127.0.0.1] [--daemon]
-  mira session list
-  mira session create [--title "My Session"] [--agent code|ask|plan] [--model openrouter/...]
-  mira session prompt --id <id> --prompt "hello" [--agent ask] [--model ...]
-  mira session import --file ./export.json
-  mira session export --id <id> [--format json|md]
-  mira agent list
-  mira complete --prefix "..." [--suffix "..."] [--file path] [--model ...]
-  mira manager
-  mira --help
-  mira --version
+  mira serve [--port 4096] [--host 127.0.0.1] [--daemon]   Start daemon
+  mira session list                                       List sessions
+  mira session create [--title "My Session"] [--agent code|ask|plan] [--model ...]  Create session
+  mira session prompt --id <id> --prompt "hello" [--agent ask] [--model ...]        Prompt (SSE stream)
+  mira session import --file ./export.json                Import exported JSON
+  mira session export --id <id> [--format json|md]        Export
+  mira session new [--title ...] [--agent ...]            Alias for create
+  mira agent list                                         List 15 agents (code/ask/plan + lane)
+  mira agent preview <name>                               Preview allowlist for agent
+  mira skill list                                         List skills (SKILL.md packs)
+  mira command list                                       List slash commands (/new, /compact, /models...)
+  mira tool list                                          List 21 tools (read, write, orchestrate, browser...)
+  mira mcp list                                           List MCP servers
+  mira config get [key]                                   Get config (or filtered by key)
+  mira config set <key> <value>                            Set config (dot notation, JSON value)
+  mira finding list [--status open] [--limit 20]          List findings
+  mira manager                                            Active jobs + recent sessions
+  mira health                                             Liveness (/healthz)
+  mira complete --prefix "..." [--suffix "..."] [--file path]  Ghost-text completion
+  mira --help | -h                                         Help
+  mira --version | -v                                      Version
 
 Env:
   MIRA_API_URL  server URL (default http://127.0.0.1:4096)
   MIRA_TOKEN    bearer token
-  MIRA_API_URL + MIRA_TOKEN are forwarded to all API calls.
 
 Examples:
-  mira serve                      # start daemon on :4096
+  mira serve
   mira session create --agent ask --title "Q&A"
   mira session prompt --id abc --prompt "explain ./src/index.ts"
+  mira skill list
+  mira command list
+  mira tool list
   mira complete --prefix "function add(a,b) {" --file src/math.ts
 `.trim()
   console.log(help)
@@ -292,8 +307,149 @@ async function cmdManager(): Promise<void> {
   console.log(JSON.stringify(await res.json(), null, 2))
 }
 
+async function cmdSkillList(): Promise<void> {
+  const res = await apiFetch("/skills")
+  if (!res.ok) {
+    console.error(`skill list failed: ${res.status} ${await res.text()}`)
+    process.exit(1)
+  }
+  const data = (await res.json()) as string[]
+  if (data.length === 0) {
+    console.log("No skills")
+    return
+  }
+  for (const s of data) console.log(s)
+}
+
+async function cmdCommandList(): Promise<void> {
+  const res = await apiFetch("/commands")
+  if (!res.ok) {
+    console.error(`command list failed: ${res.status} ${await res.text()}`)
+    process.exit(1)
+  }
+  const data = (await res.json()) as Array<Record<string, JsonValue>>
+  for (const c of data) {
+    console.log(`${String(c.name).padEnd(20)}  ${String(c.description ?? "")}  [${String(c.source ?? "")}]${c.agent ? ` agent:${String(c.agent)}` : ""}`)
+  }
+}
+
+async function cmdToolList(): Promise<void> {
+  const res = await apiFetch("/tools")
+  if (!res.ok) {
+    console.error(`tool list failed: ${res.status} ${await res.text()}`)
+    process.exit(1)
+  }
+  const data = (await res.json()) as Array<Record<string, JsonValue>>
+  for (const t of data) {
+    console.log(`${String(t.name).padEnd(25)}  [${String(t.category)}]  ${String(t.description ?? "").slice(0, 80)}`)
+  }
+}
+
+async function cmdMcpList(): Promise<void> {
+  const res = await apiFetch("/mcp")
+  if (!res.ok) {
+    console.error(`mcp list failed: ${res.status} ${await res.text()}`)
+    process.exit(1)
+  }
+  console.log(JSON.stringify(await res.json(), null, 2))
+}
+
+async function cmdConfigGet(opts: Record<string, string | boolean>): Promise<void> {
+  const key = typeof opts.key === "string" ? String(opts.key) : typeof opts[0] === "string" ? String(opts[0]) : undefined
+  // also allow positional: mira config get <key>
+  const res = await apiFetch("/config")
+  if (!res.ok) {
+    console.error(`config get failed: ${res.status} ${await res.text()}`)
+    process.exit(1)
+  }
+  const data = (await res.json()) as Record<string, JsonValue>
+  if (key) {
+    const parts = key.split(".")
+    let cur: JsonValue | undefined = data as JsonValue
+    for (const p of parts) {
+      if (cur && typeof cur === "object" && !Array.isArray(cur)) cur = (cur as Record<string, JsonValue>)[p] as JsonValue | undefined
+      else cur = undefined
+    }
+    console.log(JSON.stringify(cur ?? null, null, 2))
+  } else {
+    console.log(JSON.stringify(data, null, 2))
+  }
+}
+
+async function cmdConfigSet(opts: Record<string, string | boolean>): Promise<void> {
+  // mira config set <key> <value> — value is JSON-parsed if possible, else string
+  const args = Object.keys(opts).filter(k => !["key", "value"].includes(k)).map(k => String(opts[k])) as string[]
+  // also handle positional parsing: last two args after `config set`
+  const key = typeof opts.key === "string" ? String(opts.key) : args[0]
+  const rawVal = typeof opts.value === "string" ? String(opts.value) : args[1]
+  if (!key || rawVal === undefined) {
+    console.error("config set requires <key> <value> — e.g. mira config set model openrouter/anthropic/claude-sonnet-4")
+    process.exit(1)
+  }
+  let value: JsonValue
+  try {
+    value = JSON.parse(rawVal) as JsonValue
+  } catch {
+    value = rawVal
+  }
+  const res = await apiFetch("/config", { method: "POST", body: JSON.stringify({ patch: { [key]: value } }) })
+  if (!res.ok) {
+    console.error(`config set failed: ${res.status} ${await res.text()}`)
+    process.exit(1)
+  }
+  console.log(JSON.stringify(await res.json(), null, 2))
+}
+
+async function cmdFindingList(opts: Record<string, string | boolean>): Promise<void> {
+  const status = typeof opts.status === "string" ? `?status=${String(opts.status)}` : ""
+  const limit = typeof opts.limit === "string" ? `${status ? "&" : "?"}limit=${String(opts.limit)}` : ""
+  const qs = `${status}${limit}`
+  const res = await apiFetch(`/finding${qs}`)
+  if (!res.ok) {
+    console.error(`finding list failed: ${res.status} ${await res.text()}`)
+    process.exit(1)
+  }
+  console.log(JSON.stringify(await res.json(), null, 2))
+}
+
+async function cmdAgentPreview(opts: Record<string, string | boolean>): Promise<void> {
+  const name = String(opts.name ?? opts[0] ?? "")
+  if (!name) {
+    console.error("agent preview requires <name> — e.g. mira agent preview ask")
+    process.exit(1)
+  }
+  const res = await apiFetch(`/agents/${encodeURIComponent(name)}/preview`)
+  if (!res.ok) {
+    console.error(`agent preview failed: ${res.status} ${await res.text()}`)
+    process.exit(1)
+  }
+  console.log(JSON.stringify(await res.json(), null, 2))
+}
+
+async function cmdHealth(): Promise<void> {
+  const res = await apiFetch("/healthz")
+  if (!res.ok) {
+    console.error(`health failed: ${res.status} ${await res.text()}`)
+    process.exit(1)
+  }
+  console.log(JSON.stringify(await res.json(), null, 2))
+}
+
 async function main(): Promise<void> {
+  const rawCmd = Bun.argv[2] ?? "help"
+  // handle direct slash alias: mira /new etc. or mira help
+  if (rawCmd.startsWith("/")) {
+    console.log(`Slash commands are server-side: use via Web/TUI palette (/new, /help) — CLI maps some as: mira session new, mira skill list, mira command list`)
+    return
+  }
   const { cmd, sub, opts } = parseArgs(Bun.argv)
+  // normalize positional args for commands that need them
+  const positional = Bun.argv.slice(3).filter(a => !a.startsWith("-"))
+  if (positional.length > 0 && !opts["name"] && !opts["key"] && !opts["value"]) {
+    // expose positional as opts[0], opts[1] etc. for preview/config
+    positional.forEach((v, i) => { opts[String(i)] = v })
+    if (!opts["name"] && positional[0]) opts["name"] = positional[0]
+  }
   switch (cmd) {
     case "version":
       console.log(`mira ${VERSION}`)
@@ -305,20 +461,77 @@ async function main(): Promise<void> {
       await cmdServe(opts)
       return
     case "session":
-      if (sub === "list") await cmdSessionList()
-      else if (sub === "create") await cmdSessionCreate(opts)
+      if (sub === "list" || sub === null) await cmdSessionList()
+      else if (sub === "create" || sub === "new") await cmdSessionCreate(opts)
       else if (sub === "prompt") await cmdSessionPrompt(opts)
       else if (sub === "import") await cmdSessionImport(opts)
       else if (sub === "export") await cmdSessionExport(opts)
       else {
-        console.error(`unknown session subcommand: ${sub ?? ""} — try: list, create, prompt, import, export`)
+        console.error(`unknown session subcommand: ${sub ?? ""} — try: list, create, new, prompt, import, export`)
         process.exit(1)
       }
       return
+    case "new":
+      // alias for session create
+      await cmdSessionCreate(opts)
+      return
     case "agent":
       if (sub === "list" || sub === null) await cmdAgentList()
+      else if (sub === "preview") await cmdAgentPreview(opts)
       else {
+        // allow `mira agent <name>` as preview shorthand
+        if (sub) {
+          opts["name"] = sub
+          await cmdAgentPreview(opts)
+          return
+        }
         console.error(`unknown agent subcommand: ${sub}`)
+        process.exit(1)
+      }
+      return
+    case "skill":
+      if (sub === "list" || sub === null) await cmdSkillList()
+      else {
+        console.error(`unknown skill subcommand: ${sub}`)
+        process.exit(1)
+      }
+      return
+    case "command":
+      if (sub === "list" || sub === null) await cmdCommandList()
+      else {
+        console.error(`unknown command subcommand: ${sub}`)
+        process.exit(1)
+      }
+      return
+    case "commands":
+      await cmdCommandList()
+      return
+    case "tool":
+    case "tools":
+      await cmdToolList()
+      return
+    case "mcp":
+      await cmdMcpList()
+      return
+    case "config":
+      if (sub === "get" || sub === null) await cmdConfigGet(opts)
+      else if (sub === "set") await cmdConfigSet(opts)
+      else {
+        // allow `mira config <key>` as get
+        if (sub) {
+          opts["key"] = sub
+          await cmdConfigGet(opts)
+          return
+        }
+        console.error(`unknown config subcommand: ${sub}`)
+        process.exit(1)
+      }
+      return
+    case "finding":
+    case "findings":
+      if (sub === "list" || sub === null) await cmdFindingList(opts)
+      else {
+        console.error(`unknown finding subcommand: ${sub}`)
         process.exit(1)
       }
       return
@@ -328,6 +541,9 @@ async function main(): Promise<void> {
       return
     case "manager":
       await cmdManager()
+      return
+    case "health":
+      await cmdHealth()
       return
     default:
       console.error(`unknown command: ${cmd}`)
