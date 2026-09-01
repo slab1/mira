@@ -23,19 +23,22 @@ RUN bun install --frozen-lockfile
 # Build stage
 FROM deps AS builder
 COPY . .
-RUN bun run build || echo "build warning"
+RUN bun run build
+# Smoke: verify server dist and web dist were produced (fail fast if build silently broke)
+RUN test -f packages/server/dist/index.js && test -f packages/web/dist/index.html
 
 # Runner stage
 FROM base AS runner
 RUN groupadd -r -g 1001 mira && useradd -r -u 1001 -g mira mira
 WORKDIR /app
 
-# Copy built artifacts
+# Copy built artifacts — run from compiled dist, not TS source (prod hardening for Risk 1)
 COPY --from=builder /app/package.json /app/bun.lock* ./
 COPY --from=builder /app/packages/server ./packages/server
 COPY --from=builder /app/packages/shared ./packages/shared
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/packages/server/dist ./packages/server/dist
+COPY --from=builder /app/packages/web/dist ./packages/web/dist
 
 # Data volume
 RUN mkdir -p /app/data && chown -R mira:mira /app
@@ -45,4 +48,4 @@ EXPOSE 4096
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD curl -f http://localhost:4096/healthz || exit 1
 
-CMD ["bun", "packages/server/src/index.ts"]
+CMD ["bun", "packages/server/dist/index.js"]

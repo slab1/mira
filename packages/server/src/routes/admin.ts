@@ -89,4 +89,38 @@ export function mountAdminRoutes(
     if (existing) console.log(`[admin] revoke key preview=${key.slice(0,6)}…${key.slice(-4)}`)
     return c.json({ ok: true, key: existing ? `${key.slice(0,6)}…${key.slice(-4)}` : "not found" })
   })
+
+  // Queryable audit log (admin only) — DB mirror of file audit (Risk 2)
+  app.get("/admin/audit", async c => {
+    if (!isAdmin(c)) return deny(c)
+    const tool = c.req.query("tool")
+    const decision = c.req.query("decision") as "allow" | "deny" | "warn" | undefined
+    const sessionID = c.req.query("sessionID") ?? c.req.query("session_id")
+    const limit = Math.min(200, Math.max(1, Number(c.req.query("limit") ?? "50") || 50))
+    // Ensure table exists (migrate may not have run on older DB)
+    try {
+      db.sqlite.exec(
+        "CREATE TABLE IF NOT EXISTS audit_entries (id TEXT PRIMARY KEY, session_id TEXT, tool TEXT NOT NULL, decision TEXT NOT NULL, reason TEXT, args TEXT, result TEXT, created_at INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS audit_entries_session_idx ON audit_entries(session_id); CREATE INDEX IF NOT EXISTS audit_entries_tool_idx ON audit_entries(tool); CREATE INDEX IF NOT EXISTS audit_entries_decision_idx ON audit_entries(decision); CREATE INDEX IF NOT EXISTS audit_entries_created_idx ON audit_entries(created_at);"
+      )
+    } catch {}
+    let sql = "SELECT id, session_id as sessionID, tool, decision, reason, args, result, created_at as createdAt FROM audit_entries WHERE 1=1"
+    const params: unknown[] = []
+    if (tool) { sql += " AND tool = ?"; params.push(tool) }
+    if (decision && ["allow", "deny", "warn"].includes(decision)) { sql += " AND decision = ?"; params.push(decision) }
+    if (sessionID) { sql += " AND session_id = ?"; params.push(sessionID) }
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    params.push(limit)
+    try {
+      const rows = db.sqlite.prepare(sql).all(...(params as string[])) as Array<Record<string, unknown>>
+      // Parse JSON fields for convenience
+      const entries = rows.map(r => ({
+        ...r,
+        args: (() => { try { return r.args ? JSON.parse(r.args as string) : null } catch { return r.args } })(),
+        result: (() => { try { return r.result ? JSON.parse(r.result as string) : null } catch { return r.result } })(),
+      }))
+      return c.json({ count: entries.length, entries })
+    } catch (e) {
+      return c.json({ error: String(e) }, 500)
+    }
+  })
 }

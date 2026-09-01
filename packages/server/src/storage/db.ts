@@ -167,6 +167,21 @@ export async function migrate(db: MiraDB) {
       created_by TEXT NOT NULL DEFAULT 'default'
     );
     CREATE INDEX IF NOT EXISTS api_keys_owner_idx ON api_keys(owner);
+
+    CREATE TABLE IF NOT EXISTS audit_entries (
+      id TEXT PRIMARY KEY,
+      session_id TEXT,
+      tool TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      reason TEXT,
+      args TEXT,
+      result TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS audit_entries_session_idx ON audit_entries(session_id);
+    CREATE INDEX IF NOT EXISTS audit_entries_tool_idx ON audit_entries(tool);
+    CREATE INDEX IF NOT EXISTS audit_entries_decision_idx ON audit_entries(decision);
+    CREATE INDEX IF NOT EXISTS audit_entries_created_idx ON audit_entries(created_at);
   `)
   // Idempotent column adds (SQLite lacks IF NOT EXISTS for columns)
   // Log real errors but ignore duplicate column

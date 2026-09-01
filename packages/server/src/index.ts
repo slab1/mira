@@ -233,9 +233,9 @@ async function main() {
   const permissions = new PermissionManager(config.permission)
   console.log(`[mira] permissions: ${Object.keys(config.permission).length} rules`)
 
-  // 4b. Guardrails (tool-layer security)
-  const guardrails = new GuardrailsManager(undefined, config)
-  console.log(`[mira] guardrails: enforce=${guardrails ? "enabled" : "disabled"}`)
+  // 4b. Guardrails (tool-layer security) — wired to DB for queryable audit (Risk 2), enforce embraces HOST=0.0.0.0
+  const guardrails = new GuardrailsManager(undefined, config, db)
+  console.log(`[mira] guardrails: enforce=${(config.guardrails?.enforce ?? (process.env.NODE_ENV === "production" || process.env.HOST === "0.0.0.0")) ? "enabled" : "disabled"} (DB mirror: audit_entries)`)
 
   // 5. Model Gateway (Vercel AI SDK v5 → OpenRouter → 25+ providers)
   const gateway = createGateway(config)
@@ -639,7 +639,8 @@ async function main() {
   async function authorizedSession(id: string, c: { req: { header: (n: string) => string | undefined } }) {
     const s = await prompt.getSession(id)
     if (!s) return null
-    if (!OWNERSHIP_ENABLED || !s.ownerID) return s
+    // Live check against API_KEY_OWNERS size (Risk 3: avoid stale OWNERSHIP_ENABLED captured at mount)
+    if (API_KEY_OWNERS.size === 0 || !s.ownerID) return s
     return resolveOwner(bearerOf(c.req.header("Authorization"))) === s.ownerID ? s : null
   }
 
@@ -673,7 +674,7 @@ async function main() {
   }
 
   mountSessionRoutes(app, {
-    db, bus, prompt, authorizedSession, ownerOfSession, resolveOwner, bearerOf, OWNERSHIP_ENABLED, sessionOwnerCache,
+    db, bus, prompt, authorizedSession, ownerOfSession, resolveOwner, bearerOf, OWNERSHIP_ENABLED: () => API_KEY_OWNERS.size > 0, sessionOwnerCache,
   })
 
   // ── Admin: runtime API-key issuance (admin-guarded, persisted) ─────
@@ -745,7 +746,7 @@ async function main() {
     const model = body.model ?? srcSession?.model
     const agent = body.agent ?? srcSession?.agent
     if (agent && !isKnownAgent(agent)) return c.json({ error: `unknown agent "${agent}"` }, 400)
-    const owner = OWNERSHIP_ENABLED ? (resolveOwner(bearerOf(c.req.header("Authorization"))) ?? "default") : null
+    const owner = API_KEY_OWNERS.size > 0 ? (resolveOwner(bearerOf(c.req.header("Authorization"))) ?? "default") : null
     const created = await prompt.createSession({ title, model, agent, ownerID: owner })
     const msgs = body.messages ?? []
     let copiedMessages = 0
@@ -780,7 +781,7 @@ async function main() {
 
   // Agent Manager lite (Kilo K7): GET /manager — active jobs + recent sessions for IDE worktree-style overview
   app.get("/manager", async (c) => {
-    const owner = OWNERSHIP_ENABLED ? resolveOwner(bearerOf(c.req.header("Authorization"))) : undefined
+    const owner = API_KEY_OWNERS.size > 0 ? resolveOwner(bearerOf(c.req.header("Authorization"))) : undefined
     const allJobs = await listJobs(db)
     const activeJobs = allJobs.filter(j => j.status === "running").slice(0, 20)
     let jobs = activeJobs
@@ -1120,7 +1121,7 @@ async function main() {
     ws.__unsub = bus.subscribeAll(event => {
       try {
         let json: string
-        if (!OWNERSHIP_ENABLED || !event.sessionID || event.type.startsWith("server.")) {
+        if (API_KEY_OWNERS.size === 0 || !event.sessionID || event.type.startsWith("server.")) {
           json = JSON.stringify(event)
         } else {
           return void ownerOfSession(event.sessionID).then(o => {

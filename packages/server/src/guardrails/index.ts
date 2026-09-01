@@ -30,8 +30,8 @@ export interface GuardrailConfig {
 }
 
 const DEFAULT_GUARDRAILS: Required<GuardrailConfig> = {
-  enforce: process.env.NODE_ENV === "production",
-  allowedRoots: process.env.NODE_ENV === "production" ? ["./data", "./packages", "./src"] : [],
+  enforce: process.env.NODE_ENV === "production" || process.env.HOST === "0.0.0.0",
+  allowedRoots: (process.env.NODE_ENV === "production" || process.env.HOST === "0.0.0.0") ? ["./data", "./packages", "./src"] : [],
   blockedPaths: ["/etc", "/root", "/sys", "/proc", "/dev", "~/.ssh", "mira.db", ".env", ".env.local", ".aws", ".pem", ".key"],
   blockedCommands: ["rm -rf /", "mkfs", ":(){ :|: & };:"],
   allowedCommands: [],
@@ -103,8 +103,8 @@ export function sanitizePath(path: string): { ok: boolean; reason?: string; sani
 /** Check if path is within any allowed root — resolved via realpath when possible */
 export function isPathAllowed(path: string, roots: string[]): boolean {
   if (roots.length === 0) {
-    // In production, require explicit roots — fail-closed
-    if (process.env.NODE_ENV === "production") return false
+    // In production or when exposed on 0.0.0.0, require explicit roots — fail-closed (Risk 2)
+    if (process.env.NODE_ENV === "production" || process.env.HOST === "0.0.0.0") return false
     return true
   }
   // Normalize both sides
@@ -138,14 +138,20 @@ export function sanitizeCommand(cmd: string): { ok: boolean; reason?: string; sa
   return { ok: true, sanitized: cmd }
 }
 
-/** Audit log writer with rotation (5MB cap) */
+/** Audit log writer with rotation (5MB cap) + optional DB mirror */
 export class AuditLogger {
   private path: string
   private maxBytes = 5 * 1024 * 1024
-  constructor(path: string) {
+  private db?: { sqlite: { prepare: (sql: string) => { run: (...args: any[]) => any } } }
+  constructor(path: string, db?: { sqlite: { prepare: (sql: string) => { run: (...args: any[]) => any } } }) {
     this.path = path
+    this.db = db
+  }
+  attachDB(db: { sqlite: { prepare: (sql: string) => { run: (...args: any[]) => any } } }) {
+    this.db = db
   }
   async log(entry: AuditEntry) {
+    // Dual-write: file (rotation) + DB (queryable) — best-effort, never throw
     try {
       const { appendFile, mkdir, stat, rename, unlink } = await import("node:fs/promises")
       const dir = this.path.split("/").slice(0, -1).join("/")
@@ -163,6 +169,24 @@ export class AuditLogger {
     } catch (e) {
       console.warn("[audit] log failed", String(e))
     }
+    // DB mirror (Risk 2: queryable audit) — ignore if table not yet migrated
+    if (this.db) {
+      try {
+        const id = crypto.randomUUID()
+        this.db.sqlite.prepare(
+          "INSERT INTO audit_entries (id, session_id, tool, decision, reason, args, result, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        ).run(
+          id,
+          entry.sessionID ?? null,
+          entry.tool,
+          entry.decision,
+          entry.reason ?? null,
+          entry.args ? JSON.stringify(entry.args) : null,
+          entry.result ? JSON.stringify(entry.result) : null,
+          Date.now()
+        )
+      } catch {}
+    }
   }
 }
 
@@ -179,11 +203,19 @@ export interface AuditEntry {
 export class GuardrailsManager {
   private config: Required<GuardrailConfig>
   private logger: AuditLogger
+  private db?: { sqlite: { prepare: (sql: string) => { run: (...args: any[]) => any } } }
 
-  constructor(cfg?: Partial<GuardrailConfig>, config?: MiraConfig) {
+  constructor(cfg?: Partial<GuardrailConfig>, config?: MiraConfig, db?: { sqlite: { prepare: (sql: string) => { run: (...args: any[]) => any } } }) {
     const guardCfg = config?.guardrails ?? {}
     this.config = { ...DEFAULT_GUARDRAILS, ...guardCfg, ...cfg }
-    this.logger = new AuditLogger(this.config.auditLogPath)
+    this.logger = new AuditLogger(this.config.auditLogPath, db)
+    this.db = db
+  }
+
+  /** Wire DB after construction (for circular init where db is created before guardrails) */
+  attachDB(db: { sqlite: { prepare: (sql: string) => { run: (...args: any[]) => any } } }) {
+    this.db = db
+    this.logger.attachDB(db)
   }
 
   /** Main check — returns decision */

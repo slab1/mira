@@ -51,7 +51,7 @@ jobs:
           key: turbo-${{ github.sha }}
           restore-keys: turbo-
       - name: Build
-        run: bunx turbo run build --cache-dir=.turbo || echo "build warning - non-blocking"
+        run: bunx turbo run build --cache-dir=.turbo
 
   test:
     name: test

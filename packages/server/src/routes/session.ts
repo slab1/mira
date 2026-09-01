@@ -42,13 +42,14 @@ export function mountSessionRoutes(app: Hono<{ Variables: { requestId: string } 
   ownerOfSession: (id: string) => Promise<string | null>;
   resolveOwner: (t: string) => string | undefined;
   bearerOf: (h?: string) => string;
-  OWNERSHIP_ENABLED: boolean;
+  OWNERSHIP_ENABLED: boolean | (() => boolean);
   sessionOwnerCache: Map<string, { owner: string | null; ts: number }>;
 }) {
   const { db, bus, prompt } = deps
+  const isOwnershipEnabled = () => typeof deps.OWNERSHIP_ENABLED === "function" ? (deps.OWNERSHIP_ENABLED as () => boolean)() : !!deps.OWNERSHIP_ENABLED
 
   app.get("/session", async (c: Context) => {
-    const owner = deps.OWNERSHIP_ENABLED ? deps.resolveOwner(deps.bearerOf(c.req.header("Authorization"))) : undefined
+    const owner = isOwnershipEnabled() ? deps.resolveOwner(deps.bearerOf(c.req.header("Authorization"))) : undefined
     const all = await db.query.sessions.findMany({ orderBy: desc(sessions.updatedAt) }) as SessionRow[]
     return c.json(owner ? all.filter((s) => !s.ownerID || s.ownerID === owner) : all)
   })
@@ -58,7 +59,7 @@ export function mountSessionRoutes(app: Hono<{ Variables: { requestId: string } 
       return c.json({ error: "invalid session", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
     }
     const body = parsed.data
-    const rawSession = await prompt.createSession({ ...body, ownerID: deps.OWNERSHIP_ENABLED ? deps.resolveOwner(deps.bearerOf(c.req.header("Authorization"))) ?? "default" : null })
+    const rawSession = await prompt.createSession({ ...body, ownerID: isOwnershipEnabled() ? deps.resolveOwner(deps.bearerOf(c.req.header("Authorization"))) ?? "default" : null })
     // Proper type bridge: prompt.createSession returns Session-like object, narrow to SessionRow via runtime check
     const session: SessionRow = {
       id: rawSession.id,
@@ -118,7 +119,7 @@ export function mountSessionRoutes(app: Hono<{ Variables: { requestId: string } 
     return c.json(cancelled)
   })
   app.get("/jobs", async (c: Context) => {
-    const owner = deps.OWNERSHIP_ENABLED ? deps.resolveOwner(deps.bearerOf(c.req.header("Authorization"))) : undefined
+    const owner = isOwnershipEnabled() ? deps.resolveOwner(deps.bearerOf(c.req.header("Authorization"))) : undefined
     const all = await listJobs(db)
     if (!owner) return c.json(all)
     const filtered: typeof all = []

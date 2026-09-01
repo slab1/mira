@@ -155,4 +155,21 @@ export const knowledgeEntries = sqliteTable("knowledge_entries", {
   index("knowledge_entries_kind_idx").on(t.kind),
 ])
 
-export const schema = { sessions, messages, parts, todos, fileSnapshots, jobs, findings, knowledgeEntries, sessionsRelations, messagesRelations, partsRelations, todosRelations, jobsRelations, findingsRelations }
+// Audit log — queryable DB mirror of file audit log (Risk 2: file-only audit not queryable)
+export const auditEntries = sqliteTable("audit_entries", {
+  id: text("id").primaryKey(),
+  sessionID: text("session_id"),
+  tool: text("tool").notNull(),
+  decision: text("decision", { enum: ["allow", "deny", "warn"] }).notNull(),
+  reason: text("reason"),
+  args: text("args", { mode: "json" }).$type<JsonValue>(),
+  result: text("result", { mode: "json" }).$type<JsonValue>(),
+  createdAt: integer("created_at").notNull(),
+}, (t) => [
+  index("audit_entries_session_idx").on(t.sessionID),
+  index("audit_entries_tool_idx").on(t.tool),
+  index("audit_entries_decision_idx").on(t.decision),
+  index("audit_entries_created_idx").on(t.createdAt),
+])
+
+export const schema = { sessions, messages, parts, todos, fileSnapshots, jobs, findings, knowledgeEntries, auditEntries, sessionsRelations, messagesRelations, partsRelations, todosRelations, jobsRelations, findingsRelations }
