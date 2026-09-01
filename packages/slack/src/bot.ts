@@ -17,7 +17,8 @@
  */
 
 import { App, LogLevel } from "@slack/bolt"
-import { createSession, streamPrompt, checkHealth } from "./mira.js"
+import type { SlackCommandMiddlewareArgs, SlackEventMiddlewareArgs, AllMiddlewareArgs } from "@slack/bolt"
+import { createSession, streamPrompt, checkHealth, truncateForSlack } from "./mira.js"
 
 declare const process: { env: Record<string, string | undefined>; exit(code?: number): never }
 
@@ -30,8 +31,6 @@ const DEFAULT_AGENT = process.env.MIRA_SLACK_AGENT ?? "code"
 function miraOpts() {
   return { apiUrl: MIRA_API_URL, apiKey: MIRA_API_KEY }
 }
-
-import { truncateForSlack } from "./mira.js"
 
 function isMissingCreds(): string | null {
   if (!SLACK_BOT_TOKEN) return "SLACK_BOT_TOKEN is not set"
@@ -71,7 +70,7 @@ async function start() {
 
   // ── Slash command: /mira <prompt> ────────────────────────────────────
   // In Slack: create a slash command named "mira" pointing at this bot (Socket Mode needs no Request URL).
-  app.command("/mira", async ({ command, ack, respond, client }: any) => {
+  app.command("/mira", async ({ command, ack, respond, client }: SlackCommandMiddlewareArgs & AllMiddlewareArgs) => {
     await ack()
     const prompt = (command.text ?? "").trim()
     if (!prompt) {
@@ -122,7 +121,7 @@ async function start() {
   })
 
   // ── app_mention fallback ─────────────────────────────────────────────
-  app.event("app_mention", async ({ event, say, client }: any) => {
+  app.event("app_mention", async ({ event, say, client }: SlackEventMiddlewareArgs<"app_mention"> & AllMiddlewareArgs) => {
     // Strip the bot mention (<@U...>) to get the prompt
     const raw = (event as { text?: string }).text ?? ""
     const prompt = raw.replace(/<@[A-Z0-9]+>/g, "").trim()
@@ -167,7 +166,7 @@ async function start() {
   })
 
   // ── Global error handler ─────────────────────────────────────────────
-  app.error(async (error: any) => {
+  app.error(async (error: Error) => {
     console.error("[mira-slack] bolt error:", error)
   })
 

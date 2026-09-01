@@ -11,6 +11,7 @@
  */
 
 import type { MiraConfig, JsonValue } from "../types/index.js"
+import type { Database } from "bun:sqlite"
 
 /** Narrow untyped tool args to a string-keyed record (JsonValue-tolerant). */
 function argStr(args: JsonValue, key: string): string | undefined {
@@ -142,12 +143,12 @@ export function sanitizeCommand(cmd: string): { ok: boolean; reason?: string; sa
 export class AuditLogger {
   private path: string
   private maxBytes = 5 * 1024 * 1024
-  private db?: { sqlite: { prepare: (sql: string) => { run: (...args: any[]) => any } } }
-  constructor(path: string, db?: { sqlite: { prepare: (sql: string) => { run: (...args: any[]) => any } } }) {
+  private db?: { sqlite: Database }
+  constructor(path: string, db?: { sqlite: Database }) {
     this.path = path
     this.db = db
   }
-  attachDB(db: { sqlite: { prepare: (sql: string) => { run: (...args: any[]) => any } } }) {
+  attachDB(db: { sqlite: Database }) {
     this.db = db
   }
   async log(entry: AuditEntry) {
@@ -203,9 +204,9 @@ export interface AuditEntry {
 export class GuardrailsManager {
   private config: Required<GuardrailConfig>
   private logger: AuditLogger
-  private db?: { sqlite: { prepare: (sql: string) => { run: (...args: any[]) => any } } }
+  private db?: { sqlite: Database }
 
-  constructor(cfg?: Partial<GuardrailConfig>, config?: MiraConfig, db?: { sqlite: { prepare: (sql: string) => { run: (...args: any[]) => any } } }) {
+  constructor(cfg?: Partial<GuardrailConfig>, config?: MiraConfig, db?: { sqlite: Database }) {
     const guardCfg = config?.guardrails ?? {}
     this.config = { ...DEFAULT_GUARDRAILS, ...guardCfg, ...cfg }
     this.logger = new AuditLogger(this.config.auditLogPath, db)
@@ -213,7 +214,7 @@ export class GuardrailsManager {
   }
 
   /** Wire DB after construction (for circular init where db is created before guardrails) */
-  attachDB(db: { sqlite: { prepare: (sql: string) => { run: (...args: any[]) => any } } }) {
+  attachDB(db: { sqlite: Database }) {
     this.db = db
     this.logger.attachDB(db)
   }

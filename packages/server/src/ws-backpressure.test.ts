@@ -56,7 +56,7 @@ describe("boundSend (WS fan-out backpressure)", () => {
 
   test("socket without getBufferedAmount is never refused on backlog (legacy compat)", () => {
     const s = fakeSink()
-    delete (s as { getBufferedAmount?: unknown }).getBufferedAmount
+    delete (s as { getBufferedAmount?: () => number }).getBufferedAmount
     expect(boundSend(s, "hello")).toBe(true)
     expect(s.sent).toEqual(["hello"])
   })

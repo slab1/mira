@@ -46,20 +46,19 @@ export function mountConfigRoutes(app: Hono<{ Variables: { requestId: string } }
   app.get("/config/schema", async (c: Context) => {
     try {
       const mod = await import("zod-to-json-schema" as string).catch(() => null) as { zodToJsonSchema?: (s: JsonValue) => JsonValue } | null
-      if (mod?.zodToJsonSchema) {
+        if (mod?.zodToJsonSchema) {
         const configModule = await import("../config/index.js").catch(() => ({ miraConfigSchema: null })) as { miraConfigSchema?: JsonValue }
-        let schema = (configModule as Record<string, JsonValue>).miraConfigSchema ?? null
+        let schema = configModule.miraConfigSchema ?? null
         if (!schema) {
           try {
-            // Type bridge: shared config module exports Zod schema (not JsonValue) — use unknown record then narrow
-            const shared = await import("../../../shared/src/schemas/config.js") as Record<string, unknown>
-            const maybeSchema = (shared as Record<string, unknown>).miraConfigSchema as JsonValue | undefined
-            schema = (maybeSchema as Record<string, JsonValue> | null) ?? null
-            if (!schema && maybeSchema) schema = maybeSchema as JsonValue
+            // @ts-expect-error — Zod schema is not JsonValue; runtime shape is JSON-serializable
+            const shared = await import("../../../shared/src/schemas/config.js") as { miraConfigSchema?: JsonValue }
+            const maybeSchema = shared.miraConfigSchema as JsonValue | undefined
+            schema = maybeSchema ?? null
           } catch {}
         }
-        // Type bridge: zodToJsonSchema expects ZodType (not JsonValue) — runtime shape is correct
-        if (schema) return c.json((mod as { zodToJsonSchema: (s: unknown) => unknown }).zodToJsonSchema(schema))
+        // @ts-expect-error — zodToJsonSchema expects ZodType, not JsonValue; runtime call is correct
+        if (schema) return c.json((mod as { zodToJsonSchema: (s: JsonValue) => JsonValue }).zodToJsonSchema(schema))
       }
     } catch {}
     return c.json({

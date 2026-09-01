@@ -2,6 +2,7 @@ import type { Hono } from "hono"
 import { randomBytes } from "node:crypto"
 import { z } from "zod"
 import type { MiraDB } from "../storage/db.js"
+import type { JsonValue } from "../types/index.js"
 
 const ownerSchema = z.string().trim().min(1).max(64).regex(/^[a-zA-Z0-9._-]+$/, "owner must be alphanumeric, dot, underscore or hyphen")
 const MAX_KEYS = 100
@@ -26,7 +27,7 @@ export function mountAdminRoutes(
     if (!REQUIRED_TOKEN) return true
     return resolveOwner(bearerOf(c.req.header("Authorization"))) === "default"
   }
-  const deny = (c: { json: (b: unknown, s: number) => Response }) => c.json({ error: "unauthorized" }, 401)
+  const deny = (c: { json: (b: JsonValue, s: number) => Response }) => c.json({ error: "unauthorized" }, 401)
 
   let tableEnsured = false
   const ensureTable = () => {
@@ -43,8 +44,8 @@ export function mountAdminRoutes(
   // Mint a scoped API key for a user (admin only). Returns the raw key once.
   app.post("/admin/api-keys", async c => {
     if (!isAdmin(c)) return deny(c)
-    let body: { owner?: unknown } = {}
-    try { body = (await c.req.json()) as { owner?: unknown } } catch {}
+    let body: { owner?: JsonValue } = {}
+    try { body = (await c.req.json()) as { owner?: JsonValue } } catch {}
     const parsed = ownerSchema.safeParse(typeof body.owner === "string" ? body.owner : "user")
     if (!parsed.success) return c.json({ error: "invalid owner", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
     const owner = parsed.data
@@ -104,14 +105,14 @@ export function mountAdminRoutes(
       )
     } catch {}
     let sql = "SELECT id, session_id as sessionID, tool, decision, reason, args, result, created_at as createdAt FROM audit_entries WHERE 1=1"
-    const params: unknown[] = []
+    const params: Array<string | number> = []
     if (tool) { sql += " AND tool = ?"; params.push(tool) }
     if (decision && ["allow", "deny", "warn"].includes(decision)) { sql += " AND decision = ?"; params.push(decision) }
     if (sessionID) { sql += " AND session_id = ?"; params.push(sessionID) }
     sql += " ORDER BY created_at DESC LIMIT ?"
     params.push(limit)
     try {
-      const rows = db.sqlite.prepare(sql).all(...(params as string[])) as Array<Record<string, unknown>>
+      const rows = db.sqlite.prepare(sql).all(...params) as Array<Record<string, JsonValue>>
       // Parse JSON fields for convenience
       const entries = rows.map(r => ({
         ...r,

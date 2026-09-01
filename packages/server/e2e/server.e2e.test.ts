@@ -197,7 +197,7 @@ describe("Mira server E2E", () => {
     // Provider latency from CI sandboxes varies wildly (6s–60s+ first byte).
     // Retry the prompt up to 3× so one network hiccup doesn't fail the suite.
     let body = ""
-    let lastErr: unknown = null
+    let lastErr: string | null = null
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const res = await fetch(`${BASE}/session/${session.id}/prompt`, {
@@ -208,7 +208,7 @@ describe("Mira server E2E", () => {
         body = await res.text()
         if (body.includes("event: finish") && /"delta":"/.test(body)) break
       } catch (e) {
-        lastErr = e
+        lastErr = String(e)
       }
       if (attempt < 3) await Bun.sleep(2000)
     }

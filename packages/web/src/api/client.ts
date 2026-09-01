@@ -201,7 +201,7 @@ export type PermissionMatrix = Record<string, string | Record<string, string>>
 
 function getEnvBase(): string {
   try {
-    const env = (import.meta as unknown as { env?: Record<string, string> }).env
+    const env = (import.meta as { env?: Record<string, string> }).env
     return env?.VITE_API_URL ?? ""
   } catch {
     return ""
@@ -317,7 +317,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
         controller.abort((caller as AbortSignal & { reason?: string }).reason)
       } else {
         try {
-          const anyFn = (AbortSignal as unknown as { any?: (s: AbortSignal[]) => AbortSignal }).any
+          const anyFn = (AbortSignal as { any?: (s: AbortSignal[]) => AbortSignal }).any
           if (typeof anyFn === "function") signal = anyFn([controller.signal, caller])
           else {
             caller.addEventListener("abort", () => controller.abort((caller as AbortSignal & { reason?: string }).reason), { once: true })

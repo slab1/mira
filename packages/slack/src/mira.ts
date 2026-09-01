@@ -9,9 +9,11 @@ export interface MiraClientOpts {
   apiKey: string
 }
 
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
+
 export interface PromptStreamCallbacks {
   onTextDelta?: (delta: string) => void
-  onTool?: (name: string, args: unknown) => void
+  onTool?: (name: string, args: JsonValue) => void
   onDone?: (fullText: string) => void
 }
 
@@ -41,7 +43,7 @@ export function parseSseFrames(raw: string): { eventType: string; data: string }
   return frames
 }
 
-export function extractTextDelta(payload: Record<string, unknown>, eventType: string): string | null {
+export function extractTextDelta(payload: Record<string, JsonValue>, eventType: string): string | null {
   const t = (payload.type as string | undefined) ?? eventType
   if (t === "text-delta" || t === "text_delta") {
     return (payload.textDelta as string) ?? (payload.delta as string) ?? (payload.text as string) ?? null
@@ -131,7 +133,7 @@ export async function streamPrompt(
         if (!dataLine) continue
         if (dataLine === "[DONE]") continue
         try {
-          const payload = JSON.parse(dataLine) as Record<string, unknown>
+          const payload = JSON.parse(dataLine) as Record<string, JsonValue>
           // Vercel AI SDK style: {type:"text-delta", textDelta:"..."} or {type:"finish", finishReason:"stop"}
           const t = (payload.type as string | undefined) ?? eventType
           if (t === "text-delta" || t === "text_delta") {
@@ -142,7 +144,7 @@ export async function streamPrompt(
             }
           } else if (t === "tool-call" || t === "tool_call") {
             const tool = (payload.toolName as string) ?? (payload.tool as string) ?? "tool"
-            cbs.onTool?.(tool, payload.args ?? payload.toolCall ?? null)
+            cbs.onTool?.(tool, (payload.args as JsonValue) ?? (payload.toolCall as JsonValue) ?? null)
           } else if (t === "finish" || t === "done" || t === "finish_step") {
             // no-op, drain remaining
           } else if (typeof payload.text === "string" && payload.text) {

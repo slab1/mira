@@ -37,7 +37,7 @@ function baseCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     sessionID: "session-abc",
     messageID: "msg-1",
     ...overrides,
-  } as unknown as ToolContext
+  } as ToolContext
 }
 
 describe("task cancelJob → abort signal (abortable background subagents)", () => {
