@@ -22,3 +22,6 @@ data/
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+
+# npm auth written transiently by .releaserc-publish.sh
+.npmrc
