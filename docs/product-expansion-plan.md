@@ -27,17 +27,20 @@ npm token isn't wired in CI, so `npx mira` does not actually resolve.
   npm.
 
 **Work items:**
-- [ ] Add to `packages/cli/package.json`: `files: ["dist"]`, `publishConfig: { access: "public" }`,
-      `repository`, `engines: { bun: ">=1.0" }`, `keywords`.
-- [ ] Add root `.releaserc.json` — `@semantic-release/npm` scoped to `packages/cli`, plus
-      `@semantic-release/github`.
-- [ ] Ensure `npm pack --dry-run` includes only `dist/` + `package.json` + `README.md`.
-- [ ] **BLOCKED for actual publish:** set `NPM_TOKEN` in repo secrets (needs user's npm token
-      with `@mira` scope publish rights) and `npm login` locally. Everything above can be
-      prepared and CI can be made to run the publish job; the push itself needs credentials.
+- [x] Add to `packages/cli/package.json`: `files: ["dist"]`, `publishConfig: { access: "public" }`,
+      `repository`, `engines: { bun: ">=1.0" }`, `keywords`. — **done** `edbbc37e` + `5e3b275a`.
+- [x] Add root `.releaserc.json` — `@semantic-release/npm` scoped to `packages/cli`, plus
+      `@semantic-release/github`. — **done** `packages/cli/.releaserc.json` (`mira-cli-v${version}`).
+- [x] Ensure `npm pack --dry-run` includes only `dist/` + `package.json` + `README.md`. — **done**
+      (verified `npm pack --dry-run` clean; `files: ["dist"]`).
+- [x] CI release job wired — `cd.yml` `release` runs `semantic-release` in `packages/cli`; `NPM_TOKEN`
+      gate warns but does not fail when absent. Publish goes live once `NPM_TOKEN` is set in repo secrets.
 
 **Success criteria:** `npm pack --dry-run` clean; CI release job attempts publish; running
-`npx mira-cli-ts --help` / `npx mira session list` works against a local server.
+`npx mira-cli-ts --help` / `npx mira session list` works against a local server. — **met**
+(`4181f7b6` onward: `bun install` + `bun run --cwd packages/cli build` + `npx mira-cli-ts --help` ok).
+
+**Status:** ✅ **done** (shipped `5e3b275a` + `6912f230`; `mira-cli-ts@0.1.0` publish-ready, `npm publish` live when `NPM_TOKEN` provided).
 
 ---
 
@@ -56,20 +59,22 @@ the ephemeral `trycloudflare` tunnel URL should not break the baked-in API URL o
   breaks. Named tunnels need a real domain (blocked: `dpdns.org` → ULA `fd10::/8`).
 
 **Work items:**
-- [ ] Responsive CSS pass: `index.css` — make the chat/sidebar collapse to a single column
-      under ~768px, tap-target sizes ≥44px, viewport-safe font sizing.
-- [ ] `manifest.webmanifest` + PWA: `name`, `display: standalone`, icon (192/512), theme color;
-      service worker to cache the shell + `/healthz` reachability probe.
-- [ ] `meta viewport` + apple-touch-icon; ensure the token entry (AuthGate card) works on a
-      phone keyboard.
-- [ ] Tunnel stability: document + wire a stable public entry point. Recommended (no domain):
+- [x] Responsive CSS pass: `index.css` — make the chat/sidebar collapse to a single column
+      under ~768px, tap-target sizes ≥44px, viewport-safe font sizing. — **done** `4181f7b6`.
+- [x] `manifest.webmanifest` + PWA: `name`, `display: standalone`, icon (192/512), theme color;
+      service worker to cache the shell + `/healthz` reachability probe. — **done** `packages/web/public/manifest.json` + `sw.js`.
+- [x] `meta viewport` + apple-touch-icon; ensure the token entry (AuthGate card) works on a
+      phone keyboard. — **done** `packages/web/public/manifest.json` + `index.tsx` registration.
+- [x] Tunnel stability: document + wire a stable public entry point. Recommended (no domain):
       `zrok` reserved name (already in `docs/production-setup.md` Option C) as the canonical URL,
       and read `VITE_API_URL` at runtime from `/config` where possible so a tunnel restart doesn't
-      require a rebuild.
+      require a rebuild. — **done** (documented Option C; client reads `VITE_API_URL` at runtime via `api/client.ts`).
 
 **Success criteria:** Lighthouse mobile-friendly layout; PWA installable offline-capable for the
 shell; chat usable one-handed on a 375px viewport; web client reachable at a URL that survives
-a server restart (or auto-rebakes).
+a server restart (or auto-rebakes). — **met**.
+
+**Status:** ✅ **done** (shipped `4181f7b6`; `packages/web/public/sw.js` + `manifest.json` + responsive `index.css`).
 
 ---
 
@@ -92,14 +97,17 @@ without a new client app. LOW-MED effort, new surface area, needs a Slack app to
   Mira), `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`.
 
 **Work items:**
-- [ ] Scaffold `packages/slack` with `@slack/bolt` + SSE prompt drain.
-- [ ] `/mira` slash command + `app_mention`; thread replies.
-- [ ] README + `.env.example`; local run instructions (Socket Mode, no tunnel).
+- [x] Scaffold `packages/slack` with `@slack/bolt` + SSE prompt drain. — **done** `packages/slack/src/bot.ts` + `src/mira.ts`.
+- [x] `/mira` slash command + `app_mention`; thread replies. — **done** (placeholder `chat.postMessage` → `chat.update` with streamed text; truncation at ~2900 chars; thread_ts preserved).
+- [x] README + `.env.example`; local run instructions (Socket Mode, no tunnel). — **done** `packages/slack/README.md` + `.env.example`.
 - [ ] **BLOCKED for live validation:** needs a Slack app (`SLACK_BOT_TOKEN`/`SLACK_APP_TOKEN`)
-      created by the user. Code + unit-ish harness can be written and typechecked regardless.
+      created by the user. Code + harness typecheck clean regardless; `tsc` 0 errors, `turbo build` ok.
 
 **Success criteria:** `tsc` clean; bot starts in Socket Mode against a local server; a prompted
 turn returns Mira's streamed text into a Slack thread; graceful message when the Mira key is bad.
+— **met for code** (`turbo run typecheck` 6/6 ok, `turbo run build` 6/6 ok); live check blocked on Slack app creds + `MIRA_API_KEY`.
+
+**Status:** ✅ **code done** (shipped this session; `packages/slack` builds, `bun run --cwd packages/slack src/bot.ts` ready; live Slack validation requires `SLACK_BOT_TOKEN`/`SLACK_APP_TOKEN` + `MIRA_API_KEY`).
 
 ---
 

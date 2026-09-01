@@ -1,0 +1,21 @@
+{
+  "name": "@mira/slack",
+  "version": "0.1.0",
+  "description": "Mira Slack bot — Socket Mode bridge to Mira HTTP API (thin client, no server changes)",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/bot.ts",
+    "build": "tsc --noEmit && bun build src/bot.ts --outdir dist --target bun",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "start": "bun src/bot.ts"
+  },
+  "dependencies": {
+    "@slack/bolt": "^3.22.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "bun-types": "latest",
+    "@types/bun": "latest"
+  }
+}
