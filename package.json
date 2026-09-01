@@ -13,7 +13,7 @@
     "eval": "turbo run eval"
   },
   "devDependencies": {
-    "turbo": "latest",
+    "turbo": "2.10.11",
     "typescript": "5.9.3"
   },
   "packageManager": "bun@1.2.0"

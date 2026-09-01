@@ -19,6 +19,8 @@
 import { App, LogLevel } from "@slack/bolt"
 import { createSession, streamPrompt, checkHealth } from "./mira.js"
 
+declare const process: { env: Record<string, string | undefined>; exit(code?: number): never }
+
 const MIRA_API_URL = process.env.MIRA_API_URL ?? "http://127.0.0.1:4096"
 const MIRA_API_KEY = process.env.MIRA_API_KEY ?? process.env.MIRA_TOKEN ?? ""
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN ?? ""
@@ -69,7 +71,7 @@ async function start() {
 
   // ── Slash command: /mira <prompt> ────────────────────────────────────
   // In Slack: create a slash command named "mira" pointing at this bot (Socket Mode needs no Request URL).
-  app.command("/mira", async ({ command, ack, respond, client }) => {
+  app.command("/mira", async ({ command, ack, respond, client }: any) => {
     await ack()
     const prompt = (command.text ?? "").trim()
     if (!prompt) {
@@ -120,7 +122,7 @@ async function start() {
   })
 
   // ── app_mention fallback ─────────────────────────────────────────────
-  app.event("app_mention", async ({ event, say, client }) => {
+  app.event("app_mention", async ({ event, say, client }: any) => {
     // Strip the bot mention (<@U...>) to get the prompt
     const raw = (event as { text?: string }).text ?? ""
     const prompt = raw.replace(/<@[A-Z0-9]+>/g, "").trim()
@@ -165,7 +167,7 @@ async function start() {
   })
 
   // ── Global error handler ─────────────────────────────────────────────
-  app.error(async (error) => {
+  app.error(async (error: any) => {
     console.error("[mira-slack] bolt error:", error)
   })
 
