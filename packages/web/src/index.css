@@ -434,7 +434,8 @@ input:focus-visible,
   border-radius: var(--r-md);
 }
 .seg-tab {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   padding: 5px 8px;
   border: none;
   border-radius: 7px;
@@ -443,6 +444,9 @@ input:focus-visible,
   font-size: var(--fs-sm);
   font-weight: 500;
   cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition:
     background var(--dur-fast) var(--ease),
     color var(--dur-fast) var(--ease);
@@ -1098,6 +1102,38 @@ input:focus-visible,
   border-color: var(--accent-border);
 }
 
+/* ── Header chrome ─────────────────────────────────────────────────────── */
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+  flex: 1;
+  min-width: 0;
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.header-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  flex: none;
+  margin: 0 2px;
+}
+/* Inspector tab overflow: horizontal scroll when 6 tabs don't fit */
+.seg-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.seg-scroll::-webkit-scrollbar {
+  display: none;
+}
+
 /* ── 5. Motion ─────────────────────────────────────────────────────────── */
 @keyframes fade-up {
   from {
@@ -1202,11 +1238,17 @@ html {
   .mira-main > .card {
     margin: 8px;
   }
-  /* Header: allow the right-side actions to scroll instead of overflowing */
+  /* Header: keep fixed height, allow the right-side actions to scroll */
   header {
     gap: var(--sp-2);
+  }
+  .header-right {
     overflow-x: auto;
     overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .header-right::-webkit-scrollbar {
+    display: none;
   }
 }
 

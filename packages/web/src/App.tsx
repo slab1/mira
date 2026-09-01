@@ -282,7 +282,7 @@ export default function App() {
           {/* top bar */}
           <header
             style={{
-              height: "46px",
+              height: "48px",
               "flex-shrink": "0",
               display: "flex",
               "align-items": "center",
@@ -290,10 +290,11 @@ export default function App() {
               padding: "0 var(--sp-4)",
               "border-bottom": "1px solid var(--border)",
               background: "var(--bg-app)",
-              gap: "var(--sp-3)",
+              gap: "var(--sp-2)",
             }}
           >
-            <div style={{ display: "flex", "align-items": "center", gap: "10px", "min-width": "0" }}>
+            {/* left: session identity */}
+            <div class="header-left">
               <button
                 type="button"
                 class="btn btn-ghost mira-menu-btn"
@@ -317,24 +318,8 @@ export default function App() {
               >
                 {store.state.currentId
                   ? currentSession()?.title || `Session ${store.state.currentId.slice(0, 8)}`
-                  : "No session selected"}
+                  : "Mira"}
               </span>
-              <Show when={store.state.currentId}>
-                <span
-                  title={store.state.currentId ?? undefined}
-                  style={{
-                    "font-size": "var(--fs-2xs)",
-                    color: "var(--fg-faint)",
-                    "font-family": "var(--font-mono)",
-                    overflow: "hidden",
-                    "text-overflow": "ellipsis",
-                    "white-space": "nowrap",
-                    "max-width": "120px",
-                  }}
-                >
-                  {store.state.currentId}
-                </span>
-              </Show>
               <Show when={store.state.streaming}>
                 <span class="pill pill-warn">
                   <span class="dot dot-pulse" style={{ background: "var(--warn)" }} />
@@ -348,46 +333,28 @@ export default function App() {
                     class={`pill ${agent() === "researcher" ? "pill-ok" : agent() === "coder" ? "pill-warn" : agent() === "explorer" ? "pill-ok" : agent() === "reviewer" ? "pill-warn" : "pill-accent"}`}
                     style={{ "font-family": "var(--font-mono)", "font-size": "var(--fs-2xs)", "text-transform": "lowercase" }}
                   >
-                    {agent() === "researcher" ? "🔍 researcher" : agent() === "coder" ? "⌨ coder" : agent() === "explorer" ? "🧭 explorer" : agent() === "reviewer" ? "👁 reviewer" : `🤖 ${agent()}`}
+                    {agent() === "researcher" ? "researcher" : agent() === "coder" ? "coder" : agent() === "explorer" ? "explorer" : agent() === "reviewer" ? "reviewer" : agent()}
                   </span>
                 )}
               </Show>
             </div>
 
-            <div style={{ display: "flex", gap: "8px", "align-items": "center", "flex-shrink": "0" }}>
-              <button
-                type="button"
-                class="btn btn-ghost"
-                onClick={() => setPaletteOpen(true)}
-                title="Command palette (Ctrl+P)"
-                aria-label="Open command palette"
-                style={{ padding: "5px 9px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-md)" }}
-              >
-                ⌘ <span style={{ "font-family": "var(--font-mono)", "margin-left": "2px" }}>P</span>
-              </button>
-              <button
-                type="button"
-                class="btn btn-ghost"
-                onClick={() => setSettingsOpen(true)}
-                title="Settings (Ctrl+,)"
-                aria-label="Open settings"
-                style={{ padding: "5px 9px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-md)" }}
-              >
-                ⚙ Settings
-              </button>
+            {/* right: actions */}
+            <div class="header-right">
+              {/* session actions — only when a session is open */}
               <Show when={store.state.currentId}>
                 <button
                   type="button"
+                  class="btn btn-ghost"
                   onClick={() => void store.undoLastMutation()}
                   title="Undo the agent's last file change (snapshot restore)"
-                  class="pill pill-warn pill-btn"
+                  style={{ padding: "4px 9px", "font-size": "var(--fs-xs)", "border-radius": "var(--r-md)" }}
                 >
                   ↩ undo
                 </button>
-              </Show>
-              <Show when={store.state.currentId}>
                 <button
                   type="button"
+                  class="btn btn-ghost"
                   onClick={() =>
                     void (async () => {
                       const id = store.state.currentId
@@ -407,11 +374,12 @@ export default function App() {
                     })()
                   }
                   title="Export conversation transcript as Markdown"
-                  class="pill pill-btn"
+                  style={{ padding: "4px 9px", "font-size": "var(--fs-xs)", "border-radius": "var(--r-md)" }}
                 >
                   ⤓ export
                 </button>
               </Show>
+
               <Show when={store.state.cost}>
                 {(c) => (
                   <span
@@ -422,6 +390,37 @@ export default function App() {
                   </span>
                 )}
               </Show>
+
+              {/* divider between session actions and global actions */}
+              <Show when={store.state.currentId}>
+                <span class="header-divider" aria-hidden="true" />
+              </Show>
+
+              {/* global actions */}
+              <button
+                type="button"
+                class="btn btn-ghost"
+                onClick={() => setPaletteOpen(true)}
+                title="Command palette (Ctrl+P)"
+                aria-label="Open command palette"
+                style={{ padding: "4px 9px", "font-size": "var(--fs-xs)", "border-radius": "var(--r-md)" }}
+              >
+                ⌘ <span style={{ "font-family": "var(--font-mono)" }}>P</span>
+              </button>
+              <button
+                type="button"
+                class="btn btn-ghost"
+                onClick={() => setSettingsOpen(true)}
+                title="Settings (Ctrl+,)"
+                aria-label="Open settings"
+                style={{ padding: "4px 9px", "font-size": "var(--fs-xs)", "border-radius": "var(--r-md)" }}
+              >
+                ⚙
+              </button>
+
+              {/* divider before new session / agent controls */}
+              <span class="header-divider" aria-hidden="true" />
+
               <Show when={(agents() ?? []).length > 0}>
                 <select
                   value={selectedAgent()}
@@ -429,7 +428,7 @@ export default function App() {
                   title="Agent lane — session template (tools + posture)"
                   aria-label="Agent lane"
                   class="btn btn-ghost"
-                  style={{ padding: "4px 8px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-md)", background: "var(--bg-surface)", color: "var(--fg)" }}
+                  style={{ padding: "4px 8px", "font-size": "var(--fs-xs)", "border-radius": "var(--r-md)", background: "var(--bg-surface)", color: "var(--fg)" }}
                 >
                   <option value="">general</option>
                   <For each={agents() ?? []}>{(a) => <option value={a.name}>{a.name}{a.custom ? " *" : ""}</option>}</For>
@@ -440,11 +439,13 @@ export default function App() {
                 class="btn btn-ghost"
                 onClick={() => void store.createSession(selectedAgent() ? `${selectedAgent()} session` : undefined, { agent: selectedAgent() || undefined }).catch(() => {})}
                 title={selectedAgent() ? `New ${selectedAgent()} session` : "New session"}
-                style={{ padding: "4px 9px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-md)" }}
+                style={{ padding: "4px 9px", "font-size": "var(--fs-xs)", "border-radius": "var(--r-md)" }}
               >
                 ＋ {selectedAgent() || "new"}
               </button>
               <SkillSelector onSelect={(skill) => { if (skill) void store.createSession(`${skill} session`).catch(() => {}) }} />
+
+              {/* connection status — always visible, rightmost */}
               <span
                 title="Mira server health"
                 class={`pill ${store.state.connected ? "pill-ok" : "pill-danger"}`}
@@ -455,15 +456,6 @@ export default function App() {
                 />
                 {store.state.connected ? "live" : "offline"}
               </span>
-              <a
-                href="http://127.0.0.1:4096/health"
-                target="_blank"
-                rel="noreferrer"
-                title="Open server health endpoint"
-                class="pill pill-btn"
-              >
-                health ↗
-              </a>
             </div>
           </header>
 

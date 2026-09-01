@@ -19,6 +19,8 @@ type AppState = {
    connected: boolean
   error: string | null
   loading: boolean
+  /** true while switching sessions / fetching messages — avoids flashing empty state */
+  messagesLoading: boolean
   pendingQuestion: { questionID: string; questions: Array<{ question: string; header: string; options: Array<{ label: string; description: string }>; multiple?: boolean }> } | null
   /** messages queued while agent streams — mirrored from server */
   queued: string[]
@@ -43,6 +45,7 @@ export function createAppStore() {
     connected: false,
     error: null,
     loading: false,
+    messagesLoading: false,
     pendingQuestion: null,
     queued: [],
     cost: null,
@@ -155,8 +158,12 @@ export function createAppStore() {
   }
 
   async function selectSession(id: string) {
-    setState({ currentId: id, messages: [], todos: [], streamText: "", error: null, doomLoop: null })
-    await Promise.all([loadMessages(id), loadTodos(id)])
+    setState({ currentId: id, messages: [], todos: [], streamText: "", error: null, doomLoop: null, messagesLoading: true })
+    try {
+      await Promise.all([loadMessages(id), loadTodos(id)])
+    } finally {
+      setState("messagesLoading", false)
+    }
   }
 
   async function deleteSession(id: string) {

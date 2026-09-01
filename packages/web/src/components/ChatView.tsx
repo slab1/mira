@@ -420,6 +420,9 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
               <Show
                 when={s().messages.length > 0}
                 fallback={
+                  <Show
+                    when={s().messagesLoading}
+                    fallback={
                   /* empty conversation — offer concrete first steps */
                   <div
                     style={{
@@ -464,6 +467,35 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
                       </div>
                     </div>
                   </div>
+                    }
+                  >
+                  {/* loading skeleton while switching sessions / fetching messages */}
+                  <div
+                    aria-label="Loading conversation"
+                    role="status"
+                    style={{
+                      flex: "1",
+                      display: "flex",
+                      "flex-direction": "column",
+                      "justify-content": "center",
+                      gap: "var(--sp-4)",
+                      padding: "var(--sp-2) 0",
+                      "max-width": "60ch",
+                      margin: "0 auto",
+                    }}
+                  >
+                    {[0, 1, 2, 3].map((i) => (
+                      <div style={{ display: "flex", gap: "10px", "align-items": "flex-start" }}>
+                        <div class="skeleton" style={{ width: "28px", height: "28px", "border-radius": "var(--r-md)", "flex-shrink": "0" }} />
+                        <div style={{ flex: "1", display: "flex", "flex-direction": "column", gap: "6px" }}>
+                          <div class="skeleton" style={{ height: "12px", width: "38%", "border-radius": "var(--r-sm)" }} />
+                          <div class="skeleton" style={{ height: "12px", width: "72%", "border-radius": "var(--r-sm)" }} />
+                          <div class="skeleton" style={{ height: "12px", width: "54%", "border-radius": "var(--r-sm)" }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  </Show>
                 }
               >
                 <For each={s().messages}>

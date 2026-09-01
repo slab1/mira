@@ -85,7 +85,7 @@ export function ToolView(props: { store: AppStore }) {
         }
       >
         <div style={{ display: "flex", "align-items": "center", gap: "8px", padding: "10px 10px 0" }}>
-          <div class="seg" role="tablist" aria-label="Inspector panels" style={{ flex: "1" }}>
+          <div class="seg seg-scroll" role="tablist" aria-label="Inspector panels" style={{ flex: "1" }}>
             <For each={TABS}>
               {(t) => (
                 <button

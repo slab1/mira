@@ -1,6 +1,21 @@
 import { For, Show } from "solid-js"
 import type { AppStore } from "../stores/app"
 
+/** Compact, human-friendly relative timestamp ("just now", "5m ago", "3h ago"). */
+function relativeTime(iso: string): string {
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t)) return ""
+  const diff = Date.now() - t
+  const min = Math.floor(diff / 60_000)
+  if (min < 1) return "just now"
+  if (min < 60) return `${min}m ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h ago`
+  const day = Math.floor(hr / 24)
+  if (day < 7) return `${day}d ago`
+  return new Date(t).toLocaleDateString()
+}
+
 export function SessionList(props: { store: AppStore; open?: boolean }) {
   const s = () => props.store.state
 
@@ -34,21 +49,6 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
           <span style={{ "font-weight": "700", "font-size": "var(--fs-md)", "letter-spacing": "-0.02em" }}>Mira</span>
           <span class="pill">web</span>
         </div>
-        <span
-          title={s().connected ? "WebSocket connected" : "Disconnected — retrying"}
-          aria-label={s().connected ? "Connected" : "Disconnected"}
-          style={{ display: "inline-flex" }}
-        >
-          <span
-            class={`dot ${s().connected ? "dot-pulse" : ""}`}
-            style={{
-              width: "8px",
-              height: "8px",
-              background: s().connected ? "var(--ok)" : "var(--danger)",
-              "box-shadow": s().connected ? "0 0 8px var(--ok-soft)" : "none",
-            }}
-          />
-        </span>
       </div>
 
       {/* actions */}
@@ -176,21 +176,7 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                             color: "var(--fg-subtle)",
                           }}
                         >
-                          {sess.model || "default"} · {new Date(sess.updatedAt || sess.createdAt).toLocaleString()}
-                        </span>
-                        <span
-                          style={{
-                            display: "block",
-                            "margin-top": "2px",
-                            "font-family": "var(--font-mono)",
-                            "font-size": "var(--fs-2xs)",
-                            color: "var(--fg-faint)",
-                            overflow: "hidden",
-                            "text-overflow": "ellipsis",
-                            "white-space": "nowrap",
-                          }}
-                        >
-                          {sess.id}
+                          {sess.model || "default"} · {relativeTime(sess.updatedAt || sess.createdAt)}
                         </span>
                       </button>
                       <button
@@ -228,11 +214,20 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
           "font-size": "var(--fs-2xs)",
           display: "flex",
           "justify-content": "space-between",
-          "font-family": "var(--font-mono)",
         }}
       >
-        <span>Mira Web · SolidJS</span>
-        <span>server :4096</span>
+        <span>Mira</span>
+        <span
+          title={s().connected ? "Connected to server" : "Disconnected"}
+          role="status"
+          style={{ display: "inline-flex", "align-items": "center", gap: "6px" }}
+        >
+          <span
+            class={`dot ${s().connected ? "dot-pulse" : ""}`}
+            style={{ width: "7px", height: "7px", background: s().connected ? "var(--ok)" : "var(--danger)" }}
+          />
+          {s().connected ? "Connected" : "Offline"}
+        </span>
       </div>
     </aside>
   )
