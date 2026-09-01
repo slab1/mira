@@ -18,12 +18,12 @@ Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observab
 | Inspectable subagents | ❌ (ephemeral) | ❌ | ❌ | ❌ | ❌ | ✅ **Persistent child sessions with full transcripts** |
 | Self-improvement | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **Pain-point detection → verified patches → autopilot PRs** |
 | Cost Control | ✅ Free | $20-200 | $20-200 | $15-35 | Free | ✅ **Free + local, live spend display, prompt caching, cost-cap per-task/session** |
-| Kilo Parity (2026-08) | — | — | — | — | — | ✅ **Agents (code/ask/plan, per-agent LLM) · Memory Bank · Orchestrator DAG · MCP Marketplace · Inline Autocomplete · Browser · Sessions Sync** |
+| Kilo Parity (2026-08) | — | — | — | — | — | ✅ **Agents (code/ask/plan, per-agent LLM) · Memory Bank · Orchestrator DAG · MCP Marketplace · Inline Autocomplete · Browser · Sessions Sync · Slack (Socket Mode)** |
 
 ## Architecture
 
 ```
-[Clients] TUI (SolidJS) | Web (SolidJS/Vite) | VS Code
+[Clients] TUI (SolidJS) | Web (SolidJS/Vite + PWA) | VS Code | Slack (Socket Mode) | CLI (`mira-cli-ts` via npx)
          ↕ REST / SSE / WebSocket (+ optional MIRA_TOKEN auth)
 [Server :4096 — binds 127.0.0.1 by default]
    SessionPrompt.loop
@@ -46,7 +46,7 @@ Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observab
 ## Stack
 
 - **Runtime:** Bun (native SQLite, WAL)
-- **Monorepo:** Turborepo — `packages/{server,web,tui,shared}`, `vscode-mira`
+- **Monorepo:** Turborepo — `packages/{server,web,tui,shared,cli,slack}`, `vscode-mira`
 - **UI:** SolidJS (Web + TUI)
 - **LLM:** Model Gateway (OpenRouter, NVIDIA NIM) — OpenAI-compatible wire
 - **Protocols:** MCP stdio + Streamable HTTP + legacy HTTP+SSE, LSP 3.17
@@ -82,6 +82,15 @@ mira complete --prefix "function add(a,b) {" --file src/math.ts
 ```
 
 Without keys the gateway serves a stub stream — the whole pipeline (tools, permissions, SSE, persistence) still runs.
+
+Slack bot (no tunnel, Socket Mode):
+
+```bash
+# Mint an owner-scoped key for the Slack team, then run the bot
+curl -X POST http://127.0.0.1:4096/admin/api-keys -H "Authorization: Bearer $MIRA_TOKEN" -d '{"owner":"slack-team"}'
+MIRA_API_URL=http://127.0.0.1:4096 MIRA_API_KEY=<key> SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-... bun run --cwd packages/slack src/bot.ts
+# in Slack: /mira explain ./src/index.ts  or  @Mira refactor this
+```
 
 ## Environment Reference
 

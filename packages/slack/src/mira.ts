@@ -15,6 +15,42 @@ export interface PromptStreamCallbacks {
   onDone?: (fullText: string) => void
 }
 
+export function truncateForSlack(text: string, max = 2900): string {
+  if (text.length <= max) return text
+  const head = text.slice(0, max - 200)
+  const tail = text.slice(-150)
+  return `${head}\n\n…(truncated ${text.length - max} chars)…\n\n${tail}`
+}
+
+export function parseSseFrames(raw: string): { eventType: string; data: string }[] {
+  const frames: { eventType: string; data: string }[] = []
+  let buf = raw
+  let idx: number
+  while ((idx = buf.indexOf("\n\n")) !== -1) {
+    const frame = buf.slice(0, idx)
+    buf = buf.slice(idx + 2)
+    const lines = frame.split("\n")
+    let dataLine = ""
+    let eventType = ""
+    for (const l of lines) {
+      if (l.startsWith("data:")) dataLine += l.slice(5).trimStart()
+      else if (l.startsWith("event:")) eventType = l.slice(6).trim()
+    }
+    if (dataLine && dataLine !== "[DONE]") frames.push({ eventType, data: dataLine })
+  }
+  return frames
+}
+
+export function extractTextDelta(payload: Record<string, unknown>, eventType: string): string | null {
+  const t = (payload.type as string | undefined) ?? eventType
+  if (t === "text-delta" || t === "text_delta") {
+    return (payload.textDelta as string) ?? (payload.delta as string) ?? (payload.text as string) ?? null
+  }
+  if (typeof payload.text === "string" && payload.text) return payload.text
+  if (typeof payload.content === "string" && payload.content) return payload.content
+  return null
+}
+
 function sseHeaders(apiKey: string): Record<string, string> {
   return {
     "Content-Type": "application/json",

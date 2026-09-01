@@ -29,13 +29,7 @@ function miraOpts() {
   return { apiUrl: MIRA_API_URL, apiKey: MIRA_API_KEY }
 }
 
-function truncateForSlack(text: string, max = 2900): string {
-  // Slack block text limit ~3000 chars; keep head + tail when truncating
-  if (text.length <= max) return text
-  const head = text.slice(0, max - 200)
-  const tail = text.slice(-150)
-  return `${head}\n\n…(truncated ${text.length - max} chars)…\n\n${tail}`
-}
+import { truncateForSlack } from "./mira.js"
 
 function isMissingCreds(): string | null {
   if (!SLACK_BOT_TOKEN) return "SLACK_BOT_TOKEN is not set"
