@@ -14,9 +14,10 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${PORT:-4096}"
 
 mkdir -p "$MIRA_DIR/data"
+# Auto-export all vars from mira.env (so provider keys like NVIDIA_API_KEY, OPENROUTER_API_KEY are inherited)
+set -a
 [ -f "$MIRA_ENV" ] && . "$MIRA_ENV"
-# Sourcing alone does NOT export — without this, MIRA_TOKEN etc. stay shell-local
-# and bun boots an OPEN server. Re-export everything the env file may define.
+set +a
 export MIRA_TOKEN="${MIRA_TOKEN:-}"
 export MIRA_API_KEYS="${MIRA_API_KEYS:-}"
 
@@ -25,6 +26,11 @@ export HOST="${HOST:-127.0.0.1}"          # loopback only — expose via cloudfl
 export PORT
 # Browser clients on GitHub Pages need CORS; tunnels are same-origin for curl/API users.
 export CORS_ORIGINS="${CORS_ORIGINS:-https://slab1.github.io}"
+# Re-export provider keys that may have been set via mira.env (auto-export via set -a handles this, but be explicit for clarity)
+export NVIDIA_API_KEY="${NVIDIA_API_KEY:-}"
+export OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
+export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
+export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
 
 case "${1:-start}" in
   start)
