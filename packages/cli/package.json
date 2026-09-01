@@ -1,6 +1,6 @@
 {
   "name": "mira-cli-ts",
-  "version": "0.6.1",
+  "version": "0.2.3",
   "description": "Mira CLI — thin wrapper around @mira/server (serve + session/agent/complete)",
   "type": "module",
   "bin": {
