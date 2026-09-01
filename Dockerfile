@@ -18,7 +18,6 @@ COPY packages/tui/package.json ./packages/tui/
 COPY packages/cli/package.json ./packages/cli/
 COPY packages/slack/package.json ./packages/slack/
 COPY packages/vscode-mira/package.json ./packages/vscode-mira/
-COPY .opencode/package.json ./.opencode/
 RUN bun install --frozen-lockfile
 
 # Build stage
