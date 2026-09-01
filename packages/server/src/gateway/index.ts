@@ -104,10 +104,6 @@ interface ChatCompletionResponse {
   usage?: { prompt_tokens?: number; completion_tokens?: number }
 }
 
-interface OpenRouterModelsResponse {
-  data?: Array<{ id?: string; name?: string; context_length?: number }>
-}
-
 export interface Gateway {
   /** Stream LLM response (async iterable of chunks) — Vercel AI SDK v5 style */
   stream(opts: StreamOptions): Promise<AsyncIterable<GatewayChunk>>
@@ -125,6 +121,8 @@ export interface Gateway {
   listModels(): Promise<Array<{ id: string; name: string; context: number }>>
   /** Cumulative cost/latency/token stats for this process */
   stats(): { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number; byModel: Record<string, { requests: number; inputTokens: number; outputTokens: number; costUSD: number }> }
+  /** Provider wiring status — active provider (first keyed) and whether a key is set */
+  providerStatus(): { provider: string | null; hasKey: boolean; hasOpenRouterKey: boolean; providerCount: number }
 }
 
 /** Wrap an async iterable, invoking onUsage when usage info appears (finish chunk or trailing report) */
@@ -191,28 +189,48 @@ export function createGateway(config: MiraConfig): Gateway {
     stats.byModel.set(modelID, cur)
   }
 
-  // Resolve provider + model from "openrouter/anthropic/claude-sonnet-4" style string
-  function resolveModel(modelStr: string): { baseURL: string; apiKey: string; modelID: string } {
-    // Strip prefix if present: "openrouter/anthropic/claude..." → "anthropic/claude..."
-    let modelID = modelStr
-    let providerKey = "openrouter"
+  /** First configured provider with a non-empty (env-expanded) key — the "active" provider */
+  function activeProvider(): { key: string; cfg: (typeof config.provider)[string] } | null {
+    for (const [key, cfg] of Object.entries(config.provider ?? {})) {
+      if (expandEnv(cfg.options.apiKey ?? "") !== "") return { key, cfg }
+    }
+    return null
+  }
 
+  // Resolve provider + model from "anthropic/claude-sonnet-4" or bare "claude-sonnet-4" style string
+  function resolveModel(modelStr: string): { baseURL: string; apiKey: string; modelID: string } {
+    // Explicit provider prefix: "openrouter/anthropic/claude..." → provider=openrouter, model="anthropic/claude..."
     if (modelStr.includes("/")) {
       const firstSlash = modelStr.indexOf("/")
       const maybeProvider = modelStr.slice(0, firstSlash)
-      if (config.provider[maybeProvider]) {
-        providerKey = maybeProvider
-        modelID = modelStr.slice(firstSlash + 1)
+      const provider = config.provider[maybeProvider]
+      if (provider) {
+        return {
+          baseURL: expandEnv(provider.options.baseURL),
+          apiKey: expandEnv(provider.options.apiKey ?? ""),
+          modelID: modelStr.slice(firstSlash + 1),
+        }
       }
     }
 
-    const provider = config.provider[providerKey]
-    if (!provider) {
-      // Fallback to openrouter
-      const or = config.provider["openrouter"]
-      return { baseURL: expandEnv(or.options.baseURL), apiKey: expandEnv(or.options.apiKey), modelID }
+    // No explicit prefix: route to the ACTIVE (first keyed) provider — never hardcode openrouter
+    const active = activeProvider()
+    if (active) {
+      return {
+        baseURL: expandEnv(active.cfg.options.baseURL),
+        apiKey: expandEnv(active.cfg.options.apiKey ?? ""),
+        modelID: modelStr,
+      }
     }
-    return { baseURL: expandEnv(provider.options.baseURL), apiKey: expandEnv(provider.options.apiKey), modelID }
+
+    // No provider has a key: keep the FIRST configured provider as target so we
+    // degrade to the streaming stub (empty apiKey) instead of throwing.
+    const first = Object.entries(config.provider ?? {})[0]
+    if (first) {
+      const provider = first[1]
+      return { baseURL: expandEnv(provider.options.baseURL), apiKey: "", modelID: modelStr }
+    }
+    throw new Error(`no provider configured for model "${modelStr}"`)
   }
 
   return {
@@ -338,20 +356,48 @@ export function createGateway(config: MiraConfig): Gateway {
       return lines.join("\n")
     },
 
-    async listModels() {
-      const or = config.provider["openrouter"]
-      const orKey = or ? expandEnv(or.options.apiKey) : ""
-      const orBase = or ? expandEnv(or.options.baseURL) : ""
-      if (!orKey) return [{ id: "openrouter/anthropic/claude-sonnet-4", name: "Claude Sonnet 4 (stub)", context: 200_000 }]
+    async listModels(): Promise<Array<{ id: string; name: string; context: number }>> {
+      const active = activeProvider()
+      if (!active) return [] // no keyed provider — UI shows onboarding state, not a fake model
+      const { key, cfg } = active
+      const base = expandEnv(cfg.options.baseURL)
+      const apiKey = expandEnv(cfg.options.apiKey ?? "")
+      if (!apiKey) return []
+
+      // Anthropic direct: x-api-key + version header, different response shape (no context_length)
+      if (key === "anthropic") {
+        try {
+          const res = await fetch(`${base}/models`, {
+            headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+          })
+          if (!res.ok) return []
+          const data = (await res.json()) as { data?: Array<{ id: string; display_name?: string }> }
+          return (data.data ?? []).slice(0, 50).map(m => ({ id: `${key}/${m.id}`, name: m.display_name ?? m.id, context: 200_000 }))
+        } catch {
+          return []
+        }
+      }
+
+      // OpenAI-compatible (openrouter, openai, nvidia, ...): GET /models with Bearer
       try {
-        const res = await fetch(`${orBase}/models`, {
-          headers: { Authorization: `Bearer ${orKey}` },
-        })
-        if (!res.ok) throw new Error(String(res.status))
-        const data = (await res.json()) as OpenRouterModelsResponse
-        return (data.data ?? []).slice(0, 50).map(m => ({ id: `openrouter/${m.id}`, name: m.name ?? "", context: m.context_length ?? 128_000 }))
+        const res = await fetch(`${base}/models`, { headers: { Authorization: `Bearer ${apiKey}` } })
+        if (!res.ok) return []
+        const data = (await res.json()) as { data?: Array<{ id: string; name?: string; context_length?: number }> }
+        return (data.data ?? []).slice(0, 50).map(m => ({ id: `${key}/${m.id}`, name: m.name ?? m.id, context: m.context_length ?? 128_000 }))
       } catch {
-        return [{ id: "openrouter/anthropic/claude-sonnet-4", name: "Claude Sonnet 4", context: 200_000 }]
+        return []
+      }
+    },
+
+    providerStatus() {
+      const entries = Object.entries(config.provider ?? {})
+      const active = activeProvider()
+      const or = config.provider?.["openrouter"]
+      return {
+        provider: active?.key ?? entries[0]?.[0] ?? null,
+        hasKey: Boolean(active),
+        hasOpenRouterKey: Boolean(or && expandEnv(or.options.apiKey ?? "") !== ""),
+        providerCount: entries.length,
       }
     },
 
@@ -365,6 +411,7 @@ export function createGateway(config: MiraConfig): Gateway {
         costUSD: Math.round(stats.costUSD * 1e6) / 1e6,
         avgLatencyMs: stats.requests ? Math.round(stats.totalLatencyMs / stats.requests) : 0,
         byModel,
+        providerCount: Object.keys(config.provider ?? {}).length,
       }
     },
   }

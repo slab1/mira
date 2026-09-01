@@ -45,6 +45,7 @@ import { mountHealthRoutes } from "./routes/health.js"
 import { mountSessionRoutes } from "./routes/session.js"
 import { mountConfigRoutes } from "./routes/config.js"
 import { mountMcpRoutes } from "./routes/mcp.js"
+import { listWorkspaceTree } from "./workspace/tree.js"
 import { mountAdminRoutes } from "./routes/admin.js"
 import { boundSend, WS_CLOSE_TOO_SLOW } from "./ws-backpressure.js"
 import {
@@ -579,7 +580,9 @@ async function main() {
       path.startsWith("/admin") ||
       path.startsWith("/manager") ||
       path.startsWith("/complete") ||
-      path.startsWith("/autocomplete")
+      path.startsWith("/autocomplete") ||
+      path.startsWith("/models") ||
+      path.startsWith("/workspace")
     ) {
       return await next()
     }
@@ -1059,6 +1062,30 @@ async function main() {
     const host = c.req.header("host") ?? `localhost:${PORT}`
     const proto = c.req.header("x-forwarded-proto") ?? (host.includes("localhost") ? "ws" : "wss")
     return c.json({ enabled: true, sandbox: TERMINAL_SANDBOX, ws: `${proto}://${host}/terminal`, auth: "Bearer token or {type:\"auth\",token} first message" })
+  })
+
+  // Models — model picker backbone (60s cache; passthrough to gateway.listModels())
+  let modelsCache: { at: number; body: unknown } | null = null
+  app.get("/models", async c => {
+    if (modelsCache && Date.now() - modelsCache.at < 60_000) return c.json(modelsCache.body)
+    let models
+    try {
+      models = await gateway.listModels()
+    } catch (e) {
+      return c.json({ error: String(e) }, 500)
+    }
+    const st = gateway.providerStatus()
+    const body = { provider: st.provider, hasKey: st.hasKey, models }
+    modelsCache = { at: Date.now(), body }
+    return c.json(body)
+  })
+
+  // Workspace tree — read-only file listing for @files mentions (sandbox-safe)
+  app.get("/workspace/tree", async c => {
+    const limitRaw = Number(c.req.query("limit") ?? "nan")
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(500, Math.round(limitRaw))) : 200
+    const files = await listWorkspaceTree(process.cwd(), { limit })
+    return c.json({ root: process.cwd(), count: files.length, files })
   })
 
   // WebSocket upgrade — GlobalBus → Worker → RPC → TUI (no polling)

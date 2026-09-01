@@ -78,10 +78,10 @@ export interface LoopOptions {
 
 function tierModel(tier: string | undefined, fallbackSmall?: string): string {
   switch (tier) {
-    case "cheap": return fallbackSmall ?? "openrouter/deepseek/deepseek-v3.2-exp"
-    case "max": return "openrouter/anthropic/claude-opus-4"
+    case "cheap": return fallbackSmall ?? "deepseek/deepseek-v3.2-exp"
+    case "max": return "claude-opus-4"
     case "balanced":
-    default: return "openrouter/anthropic/claude-sonnet-4"
+    default: return "claude-sonnet-4"
   }
 }
 function priceForModel(modelID: string): [number, number] {
@@ -113,7 +113,16 @@ function resolveEffectiveModel(input: { explicitModel?: string; agent?: string |
     }
   } catch {}
   if (input.sessionModel) return input.sessionModel
-  try { return getConfig().model } catch { return "openrouter/anthropic/claude-sonnet-4" }
+  try { return getConfig().model } catch { return "claude-sonnet-4" }
+}
+
+/** Derive the display provider for a model string: explicit configured prefix, else "system" (auto-routed). */
+function providerOf(model: string, cfg: MiraConfig): string {
+  if (model.includes("/")) {
+    const prefix = model.slice(0, model.indexOf("/"))
+    if (cfg.provider?.[prefix]) return prefix
+  }
+  return "system"
 }
 
 // ── SessionPrompt ──────────────────────────────────────────────────
@@ -181,12 +190,12 @@ export class SessionPrompt {
       } catch {}
     }
     // Kilo K1+K8: explicit > agent.model > autoModel tier > default
-    const effectiveModel = resolveEffectiveModel({ explicitModel: input.model, agent: input.agent ?? null, sessionModel: "openrouter/anthropic/claude-sonnet-4" })
+    const effectiveModel = resolveEffectiveModel({ explicitModel: input.model, agent: input.agent ?? null, sessionModel: getConfig().model })
     const session = {
       id,
       title: input.title ?? (input.agent ? `${input.agent} session` : "New Session"),
       model: effectiveModel,
-      provider: "openrouter",
+      provider: providerOf(effectiveModel, getConfig()),
       createdAt: now,
       updatedAt: now,
       parentID: input.parentID,

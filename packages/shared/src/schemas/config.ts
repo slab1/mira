@@ -96,8 +96,8 @@ export type GuardrailsConfig = z.infer<typeof guardrailsConfigSchema>
 
 // ── MiraConfig (layer payload) ─────────────────────────────────────
 export const miraConfigSchema = z.object({
-  /** Primary model ref: "provider/model-id" or "openrouter/anthropic/claude-sonnet-4" */
-  model: z.string().min(1).default("openrouter/anthropic/claude-sonnet-4"),
+  /** Primary model ref: "provider/model-id" (prefixed) or bare id (routed to active provider) */
+  model: z.string().min(1).default("claude-sonnet-4"),
   /** Cheap/fast model for subtasks */
   smallModel: z.string().optional(),
   /** Agentic loop limits */
@@ -220,8 +220,8 @@ export function applyLayers(layers: PartialMiraConfig[]): MiraConfig {
 
 // ── Default config (layer 1) ───────────────────────────────────────
 export const DEFAULT_CONFIG: MiraConfig = miraConfigSchema.parse({
-  model: "openrouter/anthropic/claude-sonnet-4",
-  smallModel: "openrouter/deepseek/deepseek-v3.2-exp",
+  model: "claude-sonnet-4",
+  smallModel: "deepseek/deepseek-v3.2-exp",
   permission: {
     bash: "ask",
     read: "allow",
