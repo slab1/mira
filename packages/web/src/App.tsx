@@ -9,7 +9,7 @@ import { SkillSelector } from "./components/SkillSelector"
 import { QuestionPrompt } from "./components/QuestionPrompt"
 import { SettingsPanel } from "./components/SettingsPanel"
 import { CommandPalette } from "./components/CommandPalette"
-import { api, getToken, setToken, validateToken } from "./api/client"
+import { api, getToken, setToken, validateToken, getApiUrl, setApiUrl } from "./api/client"
 
 /** Token gate: servers with MIRA_TOKEN/MIRA_API_KEYS reject unauthenticated
  *  clients. Show a credential card until a token is stored and the server
@@ -25,6 +25,7 @@ import { api, getToken, setToken, validateToken } from "./api/client"
  */
 function AuthGate(props: { onReady: () => void }) {
   const [value, setValue] = createSignal(getToken())
+  const [apiUrl, setApiUrlValue] = createSignal(getApiUrl())
   const [error, setError] = createSignal("")
   const [checking, setChecking] = createSignal(false)
 
@@ -45,8 +46,11 @@ function AuthGate(props: { onReady: () => void }) {
   async function connect(e?: Event): Promise<void> {
     e?.preventDefault()
     const trimmed = value().trim()
+    const urlTrimmed = apiUrl().trim().replace(/\/$/, "")
     setError("")
     setChecking(true)
+    // Persist API URL override so next req() uses it (fixes ephemeral trycloudflare without rebuild)
+    setApiUrl(urlTrimmed)
     // Persist candidate so validateToken()/req() can send it as Bearer
     setToken(trimmed)
     try {
@@ -59,6 +63,8 @@ function AuthGate(props: { onReady: () => void }) {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (msg === "unauthorized" || msg.includes("401")) setError("Invalid token")
+      else if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("timeout"))
+        setError(`Cannot reach server at ${urlTrimmed || getApiUrl() || "http://127.0.0.1:4096"} — check API URL / tunnel`)
       else setError(msg)
     } finally {
       setChecking(false)
@@ -107,6 +113,23 @@ function AuthGate(props: { onReady: () => void }) {
             Paste the access token for your Mira server — ask your admin for a key. Open dev servers let you connect
             without one.
           </div>
+        </div>
+
+        <label for="mira-api-url" style={{ "font-size": "var(--fs-xs)", "font-weight": "600", color: "var(--fg-subtle)" }}>
+          Server URL
+        </label>
+        <input
+          id="mira-api-url"
+          type="url"
+          class="input"
+          value={apiUrl()}
+          placeholder="https://...trycloudflare.com or http://127.0.0.1:4096 (blank = baked default)"
+          autocomplete="off"
+          spellcheck={false}
+          onInput={(e) => setApiUrlValue(e.currentTarget.value)}
+        />
+        <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "line-height": "1.4" }}>
+          Overrides VITE_API_URL without rebuild — fixes ephemeral tunnel. Add <code>?api=https://...</code> to share.
         </div>
 
         <label for="mira-token" style={{ "font-size": "var(--fs-xs)", "font-weight": "600", color: "var(--fg-subtle)" }}>

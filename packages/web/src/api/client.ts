@@ -199,6 +199,8 @@ export type SkillEntry = {
 
 export type PermissionMatrix = Record<string, string | Record<string, string>>
 
+const API_URL_KEY = "mira_api_url"
+
 function getEnvBase(): string {
   try {
     const env = (import.meta as { env?: Record<string, string> }).env
@@ -208,7 +210,44 @@ function getEnvBase(): string {
   }
 }
 
+function getRuntimeApiUrl(): string {
+  try {
+    // 1. Explicit user override (survives rebuilds, fixes ephemeral trycloudflare URL without redeploy)
+    const stored = typeof window !== "undefined" ? window.localStorage.getItem(API_URL_KEY) : null
+    if (stored && stored.trim()) return stored.trim().replace(/\/$/, "")
+    // 2. URL query param ?api=https://... (shareable link)
+    if (typeof window !== "undefined") {
+      const q = new URLSearchParams(window.location.search).get("api")
+      if (q && q.trim()) return q.trim().replace(/\/$/, "")
+      // 3. Window-injected (for runtime-config.json or watchdog)
+      const w = window as { __MIRA_API_URL?: string }
+      if (w.__MIRA_API_URL && w.__MIRA_API_URL.trim()) return w.__MIRA_API_URL.trim().replace(/\/$/, "")
+    }
+  } catch {}
+  return ""
+}
+
+export function getApiUrl(): string {
+  return getRuntimeApiUrl() || getEnvBase()
+}
+
+export function setApiUrl(url: string): void {
+  try {
+    const trimmed = url.trim().replace(/\/$/, "")
+    if (trimmed) window.localStorage.setItem(API_URL_KEY, trimmed)
+    else window.localStorage.removeItem(API_URL_KEY)
+    try { window.dispatchEvent(new CustomEvent("mira:api-url-change", { detail: { url: trimmed } })) } catch {}
+  } catch {}
+}
+
+export function clearApiUrl(): void {
+  try { window.localStorage.removeItem(API_URL_KEY) } catch {}
+  try { window.dispatchEvent(new CustomEvent("mira:api-url-change", { detail: { url: "" } })) } catch {}
+}
+
 function baseUrl(): string {
+  const runtime = getRuntimeApiUrl()
+  if (runtime) return runtime
   const raw = getEnvBase()
   if (raw) return raw.replace(/\/$/, "")
   // dev proxy: relative urls go through Vite proxy to :4096
