@@ -2,12 +2,14 @@ import { createSignal, createEffect, For, Show, onCleanup } from "solid-js"
 import type { SettingsStore } from "../stores/settings"
 import { api } from "../api/client"
 import type { MiraConfig, ThemeChoice } from "../api/client"
+import { AdminModelsPanel } from "./AdminModelsPanel"
 
-type TabId = "general" | "providers" | "permissions" | "connectors" | "agents" | "commands" | "terminal"
+type TabId = "general" | "providers" | "permissions" | "connectors" | "agents" | "commands" | "terminal" | "models"
 
 const TABS: Array<{ id: TabId; label: string; icon: string; desc: string }> = [
   { id: "general", label: "General", icon: "⚙", desc: "Model & appearance" },
   { id: "providers", label: "Providers", icon: "🔑", desc: "API keys" },
+  { id: "models", label: "Models", icon: "🗂", desc: "Curated catalog (admin)" },
   { id: "permissions", label: "Permissions", icon: "🛡", desc: "Tool access" },
   { id: "connectors", label: "Connectors", icon: "🔌", desc: "MCP servers" },
   { id: "agents", label: "Agents", icon: "🤖", desc: "Lane personas" },
@@ -934,6 +936,11 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                     </div>
                   </form>
                 </div>
+              </Show>
+
+              {/* ── Models (admin curated catalog) ────────────────── */}
+              <Show when={tab() === "models"}>
+                <AdminModelsPanel store={props.store} />
               </Show>
 
               {/* ── Permissions ─────────────────────────────────────── */}

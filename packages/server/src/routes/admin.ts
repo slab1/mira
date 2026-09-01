@@ -55,6 +55,13 @@ export function mountAdminRoutes(
   }
   const deny = (c: { json: (b: JsonValue, s: number) => Response }) => c.json({ error: "unauthorized" }, 401)
 
+  // Identity probe for admin surfaces — never 401s (admin-ness isn't secret; the
+  // mutation endpoints are gated separately). The web UI calls this to show/hide
+  // the admin sections (model catalog, audit, keys).
+  app.get("/admin/whoami", c =>
+    c.json({ ok: true, isAdmin: isAdmin(c), mode: REQUIRED_TOKEN ? "token" : "open" }),
+  )
+
   let tableEnsured = false
   const ensureTable = () => {
     if (tableEnsured) return

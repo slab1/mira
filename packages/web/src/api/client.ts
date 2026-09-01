@@ -146,11 +146,21 @@ export type MCPServerConfig = {
   headers?: Record<string, string>
 }
 
+/** Curated catalog entry (mirror of server ProviderModelConfig) */
+export type ProviderModelConfig = {
+  name: string
+  limit?: { context: number; output: number }
+  enabled?: boolean
+  deprecated?: boolean
+  pricing?: { prompt: number; completion: number }
+  capabilities?: string[]
+}
+
 export type ProviderConfig = {
   npm?: string
   name: string
   options: { baseURL: string; apiKey: string }
-  models: Record<string, { name: string; limit: { context: number; output: number } }>
+  models: Record<string, ProviderModelConfig>
 }
 
 export type ConfigSchema = {
@@ -559,6 +569,24 @@ export const api = {
   listCommands: () => req<CommandEntry[] | string[]>("/commands"),
   listSkills: () => req<SkillEntry[] | string[]>("/skills"),
   getPermission: () => req<PermissionMatrix>("/permission"),
+
+  // ── Admin (curated model catalog; master-token owners or open dev servers) ──
+  whoami: () => req<{ ok: boolean; isAdmin: boolean; mode: "open" | "token" }>("/admin/whoami"),
+  syncProviderModels: (id: string, models?: unknown[]) =>
+    req<{ ok: boolean; provider: string; added: string[]; updated: string[]; total: number }>(
+      `/admin/providers/${encodeURIComponent(id)}/models/sync`,
+      { method: "POST", body: JSON.stringify(models ? { models } : {}) },
+    ),
+  patchProviderModel: (id: string, modelId: string, patch: Partial<ProviderModelConfig>) =>
+    req<{ ok: boolean; model: ProviderModelConfig }>(
+      `/admin/providers/${encodeURIComponent(id)}/models/${encodeURIComponent(modelId)}`,
+      { method: "PATCH", body: JSON.stringify(patch) },
+    ),
+  deleteProviderModel: (id: string, modelId: string) =>
+    req<{ ok: boolean }>(
+      `/admin/providers/${encodeURIComponent(id)}/models/${encodeURIComponent(modelId)}`,
+      { method: "DELETE" },
+    ),
 
   /**
    * Stream prompt response via SSE (POST /session/:id/prompt).

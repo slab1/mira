@@ -135,6 +135,47 @@ describe("admin model catalog routes (open dev mode = admin)", () => {
   })
 })
 
+describe("GET /admin/whoami (identity probe for admin surfaces)", () => {
+  test("open mode: always admin", async () => {
+    const res = await app.request("/admin/whoami")
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { ok: boolean; isAdmin: boolean; mode: string }
+    expect(body.isAdmin).toBe(true)
+    expect(body.mode).toBe("open")
+  })
+
+  test("token mode: master-token owner is admin, scoped owner is not", async () => {
+    const dir2 = mkdtempSync(join(tmpdir(), "mira-admin-whoami-"))
+    const scopedOwners = new Map([["scoped-key", "alice"]])
+    const app2 = new Hono<{ Variables: { requestId: string } }>()
+    mountAdminRoutes(app2, {
+      db: createDatabase(join(dir2, "whoami.db")),
+      REQUIRED_TOKEN: "master-secret",
+      API_KEY_OWNERS: scopedOwners,
+      resolveOwner: (b: string) => (b === "master-secret" ? "default" : scopedOwners.get(b)),
+      bearerOf: (h: string | undefined) => (h?.startsWith("Bearer ") ? h.slice(7) : ""),
+      sessionOwnerCache: new Map(),
+      cwd: dir2,
+    })
+    try {
+      const master = await app2.request("/admin/whoami", { headers: { authorization: "Bearer master-secret" } })
+      const masterBody = (await master.json()) as { isAdmin: boolean; mode: string }
+      expect(masterBody.isAdmin).toBe(true)
+      expect(masterBody.mode).toBe("token")
+      const scoped = await app2.request("/admin/whoami", { headers: { authorization: "Bearer scoped-key" } })
+      const scopedBody = (await scoped.json()) as { isAdmin: boolean; mode: string }
+      expect(scopedBody.isAdmin).toBe(false)
+      // no token → 200, not admin (probe never 401s)
+      const anon = await app2.request("/admin/whoami")
+      const anonBody = (await anon.json()) as { isAdmin: boolean }
+      expect(anon.status).toBe(200)
+      expect(anonBody.isAdmin).toBe(false)
+    } finally {
+      try { rmSync(dir2, { recursive: true, force: true }) } catch {}
+    }
+  })
+})
+
 afterAll(() => {
   try { db.sqlite.close() } catch {}
   try { rmSync(dir, { recursive: true, force: true }) } catch {}

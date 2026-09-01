@@ -118,6 +118,9 @@ export type SettingsState = {
   error: string | null
   theme: ThemeChoice
   resolvedTheme: "light" | "dark"
+  /** admin capability (curated model catalog etc.) — probe from GET /admin/whoami */
+  isAdmin: boolean
+  adminMode: "open" | "token"
 }
 
 export function createSettingsStore() {
@@ -134,6 +137,8 @@ export function createSettingsStore() {
     error: null,
     theme: getInitialTheme(),
     resolvedTheme: resolveTheme(getInitialTheme()),
+    isAdmin: false,
+    adminMode: "open",
   })
 
   const [saving, setSaving] = createSignal(false)
@@ -258,11 +263,20 @@ export function createSettingsStore() {
     }
   }
 
+  async function loadAdmin(): Promise<void> {
+    try {
+      const w = await api.whoami()
+      setState({ isAdmin: w.isAdmin, adminMode: w.mode })
+    } catch {
+      setState({ isAdmin: false, adminMode: "open" })
+    }
+  }
+
   async function loadAll(): Promise<void> {
     setState({ loading: true, error: null })
     await Promise.all([loadConfig(), loadSchema(), loadMcp(), loadAgents(), loadCommands(), loadSkills()])
     // providers & permission may depend on config, load after
-    await Promise.all([loadProviders(), loadPermission()])
+    await Promise.all([loadProviders(), loadPermission(), loadAdmin()])
     setState("loading", false)
   }
 
@@ -322,6 +336,53 @@ export function createSettingsStore() {
         delete next[id]
         setState("config", (prev) => (prev ? { ...prev, provider: next } : prev))
       }
+      return true
+    } catch (e) {
+      setState("error", (e as Error).message)
+      return false
+    }
+  }
+
+  // ── Admin: curated model catalog ──────────────────────────────────
+
+  /** Sync the provider's curated catalog (live auto-fetch when models omitted). */
+  async function syncModels(
+    providerId: string,
+    models?: unknown[],
+  ): Promise<{ added?: string[]; updated?: string[]; total?: number; error?: string } | null> {
+    try {
+      const r = await api.syncProviderModels(providerId, models)
+      await loadConfig()
+      await loadProviders()
+      return r
+    } catch (e) {
+      setState("error", (e as Error).message)
+      return null
+    }
+  }
+
+  /** Patch one catalog entry's flags/metadata (enabled/deprecated/name/limit/pricing). */
+  async function patchModel(
+    providerId: string,
+    modelId: string,
+    patch: Partial<{ name: string; limit: { context: number; output: number }; enabled: boolean; deprecated: boolean; pricing: { prompt: number; completion: number } }>,
+  ): Promise<boolean> {
+    try {
+      await api.patchProviderModel(providerId, modelId, patch)
+      await loadConfig()
+      return true
+    } catch (e) {
+      setState("error", (e as Error).message)
+      return false
+    }
+  }
+
+  /** Permanently remove a curated model from the provider's registry. */
+  async function deleteModel(providerId: string, modelId: string): Promise<boolean> {
+    try {
+      await api.deleteProviderModel(providerId, modelId)
+      await loadConfig()
+      await loadProviders()
       return true
     } catch (e) {
       setState("error", (e as Error).message)
@@ -405,11 +466,16 @@ export function createSettingsStore() {
     loadCommands,
     loadSkills,
     loadPermission,
+    loadAdmin,
     // mutations
     saveConfig,
     patchConfigField,
     testProvider,
     removeProvider,
+    // admin catalog
+    syncModels,
+    patchModel,
+    deleteModel,
     addMcp,
     toggleMcp,
     testMcp,
