@@ -119,6 +119,8 @@ export interface Gateway {
   summarize(messages: GatewayMessage[], smallModel?: string): Promise<string>
   /** List available models (from OpenRouter /api/models) */
   listModels(): Promise<Array<{ id: string; name: string; context: number }>>
+  /** List models for ONE named provider (used by admin catalog sync/auto-seed) */
+  listProviderModels(providerId: string): Promise<Array<{ id: string; name: string; context: number }>>
   /** Cumulative cost/latency/token stats for this process */
   stats(): { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number; byModel: Record<string, { requests: number; inputTokens: number; outputTokens: number; costUSD: number }> }
   /** Provider wiring status — active provider (first keyed) and whether a key is set */
@@ -356,23 +358,23 @@ export function createGateway(config: MiraConfig): Gateway {
       return lines.join("\n")
     },
 
-    async listModels(): Promise<Array<{ id: string; name: string; context: number }>> {
-      const active = activeProvider()
-      if (!active) return [] // no keyed provider — UI shows onboarding state, not a fake model
-      const { key, cfg } = active
-      const base = expandEnv(cfg.options.baseURL)
+    /** Live /models fetch for ONE provider (honest empty on no-key/failure — no stubs). */
+    async listProviderModels(providerId: string): Promise<Array<{ id: string; name: string; context: number }>> {
+      const cfg = config.provider?.[providerId]
+      if (!cfg) return []
       const apiKey = expandEnv(cfg.options.apiKey ?? "")
       if (!apiKey) return []
 
+      const base = expandEnv(cfg.options.baseURL)
       // Anthropic direct: x-api-key + version header, different response shape (no context_length)
-      if (key === "anthropic") {
+      if (providerId === "anthropic") {
         try {
           const res = await fetch(`${base}/models`, {
             headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
           })
           if (!res.ok) return []
           const data = (await res.json()) as { data?: Array<{ id: string; display_name?: string }> }
-          return (data.data ?? []).slice(0, 50).map(m => ({ id: `${key}/${m.id}`, name: m.display_name ?? m.id, context: 200_000 }))
+          return (data.data ?? []).slice(0, 50).map(m => ({ id: `${providerId}/${m.id}`, name: m.display_name ?? m.id, context: 200_000 }))
         } catch {
           return []
         }
@@ -383,10 +385,16 @@ export function createGateway(config: MiraConfig): Gateway {
         const res = await fetch(`${base}/models`, { headers: { Authorization: `Bearer ${apiKey}` } })
         if (!res.ok) return []
         const data = (await res.json()) as { data?: Array<{ id: string; name?: string; context_length?: number }> }
-        return (data.data ?? []).slice(0, 50).map(m => ({ id: `${key}/${m.id}`, name: m.name ?? m.id, context: m.context_length ?? 128_000 }))
+        return (data.data ?? []).slice(0, 50).map(m => ({ id: `${providerId}/${m.id}`, name: m.name ?? m.id, context: m.context_length ?? 128_000 }))
       } catch {
         return []
       }
+    },
+
+    async listModels(): Promise<Array<{ id: string; name: string; context: number }>> {
+      const active = activeProvider()
+      if (!active) return [] // no keyed provider — UI shows onboarding state, not a fake model
+      return this.listProviderModels(active.key)
     },
 
     providerStatus() {

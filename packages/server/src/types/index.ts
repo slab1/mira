@@ -180,6 +180,21 @@ export interface MCPServerConfig {
   headers?: Record<string, string>
 }
 
+/** Curated-catalog entry for a provider model (mirrors shared providerModelSchema) */
+export interface ProviderModelConfig {
+  name: string
+  /** Context/output token limits if known */
+  limit?: { context: number; output: number }
+  /** false → hidden from the model picker (still callable by ref) */
+  enabled?: boolean
+  /** Deprecated badge in picker; never auto-deleted */
+  deprecated?: boolean
+  /** USD per 1M tokens (prompt/completion) */
+  pricing?: { prompt: number; completion: number }
+  /** Feature flags, e.g. ["tools", "vision", "reasoning"] */
+  capabilities?: string[]
+}
+
 export interface ProviderConfig {
   npm?: string
   name: string
@@ -187,5 +202,5 @@ export interface ProviderConfig {
     baseURL: string
     apiKey: string
   }
-  models: Record<string, { name: string; limit: { context: number; output: number } }>
+  models: Record<string, ProviderModelConfig>
 }

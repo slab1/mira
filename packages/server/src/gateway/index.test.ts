@@ -66,6 +66,20 @@ describe("gateway provider routing (provider-neutral, NOT openrouter-default)", 
     expect(models).toEqual([])
   })
 
+  test("listProviderModels with NO key returns empty (honest, no stub)", async () => {
+    const g = createGateway(minimalConfig({
+      openrouter: { baseURL: "https://openrouter.ai/api/v1", apiKey: "" },
+    }))
+    expect(await g.listProviderModels("openrouter")).toEqual([])
+  })
+
+  test("listProviderModels for an unknown provider returns empty", async () => {
+    const g = createGateway(minimalConfig({
+      openrouter: { baseURL: "https://openrouter.ai/api/v1", apiKey: "sk-or-test" },
+    }))
+    expect(await g.listProviderModels("does-not-exist")).toEqual([])
+  })
+
   test("expandEnv resolves {env:VAR} placeholders before key detection", () => {
     process.env.MIRA_TEST_KEY = "sk-env-expanded"
     const g = createGateway(minimalConfig({

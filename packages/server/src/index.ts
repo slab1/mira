@@ -680,8 +680,8 @@ async function main() {
     db, bus, prompt, authorizedSession, ownerOfSession, resolveOwner, bearerOf, OWNERSHIP_ENABLED: () => API_KEY_OWNERS.size > 0, sessionOwnerCache,
   })
 
-  // ── Admin: runtime API-key issuance (admin-guarded, persisted) ─────
-  mountAdminRoutes(app, { db, REQUIRED_TOKEN, API_KEY_OWNERS, resolveOwner, bearerOf, sessionOwnerCache })
+  // ── Admin: runtime API-key issuance + curated model catalog (admin-guarded) ──
+  mountAdminRoutes(app, { db, REQUIRED_TOKEN, API_KEY_OWNERS, resolveOwner, bearerOf, sessionOwnerCache, gateway })
 
   // Findings — structured cross-agent team memory (shared by design across owners)
   app.get("/finding", async c => {
@@ -863,7 +863,7 @@ async function main() {
 
   mountMcpRoutes(app, mcp)
 
-  mountConfigRoutes(app)
+  mountConfigRoutes(app, { gateway })
 
   // Message queue — type while the agent streams (Mira-parity UX)
   app.post("/session/:id/queue", async c => {
@@ -1064,17 +1064,27 @@ async function main() {
     return c.json({ enabled: true, sandbox: TERMINAL_SANDBOX, ws: `${proto}://${host}/terminal`, auth: "Bearer token or {type:\"auth\",token} first message" })
   })
 
-  // Models — model picker backbone (60s cache; passthrough to gateway.listModels())
+  // Models — model picker backbone (60s cache; curated registry — NO live gateway fetch.
+  // Single source of truth: config registry, synced on connect + admin sync route.
+  // `enabled:false` models stay callable by ref but are hidden from the picker.) 
   let modelsCache: { at: number; body: unknown } | null = null
   app.get("/models", async c => {
     if (modelsCache && Date.now() - modelsCache.at < 60_000) return c.json(modelsCache.body)
-    let models
-    try {
-      models = await gateway.listModels()
-    } catch (e) {
-      return c.json({ error: String(e) }, 500)
-    }
+    const cfg = getConfig() as MiraConfig
     const st = gateway.providerStatus()
+    const active = st.provider
+    const models: Array<{ id: string; name: string; context: number; deprecated?: boolean }> = []
+    if (active && cfg.provider?.[active]) {
+      for (const [mid, m] of Object.entries(cfg.provider[active].models ?? {})) {
+        if (m.enabled === false) continue // hidden from picker (still callable by ref)
+        models.push({
+          id: `${active}/${mid}`,
+          name: m.name ?? mid,
+          context: m.limit?.context ?? 128_000,
+          ...(m.deprecated ? { deprecated: true } : {}),
+        })
+      }
+    }
     const body = { provider: st.provider, hasKey: st.hasKey, models }
     modelsCache = { at: Date.now(), body }
     return c.json(body)

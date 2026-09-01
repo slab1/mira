@@ -1,6 +1,7 @@
 import type { Hono } from "hono"
-import { getConfig, getConfigLayers, saveConfig, removeProviderFromConfig } from "../config/index.js"
+import { getConfig, getConfigLayers, saveConfig, removeProviderFromConfig, mergeModelCatalog } from "../config/index.js"
 import type { MiraConfig, JsonValue, ProviderConfig } from "../types/index.js"
+import type { Gateway } from "../gateway/index.js"
 import type { Context } from "hono"
 
 function expandEnv(value: string): string {
@@ -27,7 +28,38 @@ function redactLayers(layers: Array<{ source: string; path: string | null; confi
   return layers.map(l => ({ ...l, config: redactConfig(l.config as MiraConfig) }))
 }
 
-export function mountConfigRoutes(app: Hono<{ Variables: { requestId: string } }>) {
+export function mountConfigRoutes(app: Hono<{ Variables: { requestId: string } }>, deps: { gateway?: Gateway } = {}) {
+  /**
+   * One-time curated-catalog import on connect: when a provider first gets a key and
+   * its registry is still empty, pull the live catalog (~top-50) into config.
+   * Curated defaults (anthropic/openai) are never overwritten. Never deletes.
+   */
+  async function maybeSeedCatalog(id: string): Promise<void> {
+    try {
+      const cfg = getConfig() as MiraConfig
+      const prov = cfg.provider?.[id]
+      if (!prov) return
+      if (prov.models && Object.keys(prov.models).length > 0) return
+      if (!deps.gateway?.listProviderModels) return
+      // Bounded: never let a hung provider /models fetch stall a connect
+      const live = await Promise.race([
+        deps.gateway.listProviderModels(id),
+        new Promise<null>(resolve => setTimeout(() => resolve(null), 2000)),
+      ])
+      if (!live || !live.length) return
+      const incoming = live.map(m => ({
+        // registry keys are BARE ids — strip the `provider/` prefix live fetches add
+        id: m.id.startsWith(`${id}/`) ? m.id.slice(id.length + 1) : m.id,
+        name: m.name,
+        limit: m.context ? { context: m.context, output: 4096 } : undefined,
+      }))
+      const { models, result } = mergeModelCatalog(prov.models ?? {}, incoming)
+      await saveConfig({ provider: { [id]: { models } } } as Partial<MiraConfig>, "project")
+      console.log(`[config] auto-seed ${id}: added=${result.added.length} updated=${result.updated.length}`)
+    } catch (e) {
+      console.warn(`[config] auto-seed ${id} skipped:`, String(e))
+    }
+  }
   app.get("/config", async (c: Context) => {
     const { merged, layers } = await getConfigLayers()
     return c.json({ merged: redactConfig(merged), layers: redactLayers(layers as Array<{ source: string; path: string | null; config: MiraConfig }>) })
@@ -85,7 +117,7 @@ export function mountConfigRoutes(app: Hono<{ Variables: { requestId: string } }
       const rawKey = (prov as { options?: { apiKey?: string } }).options?.apiKey ?? ""
       const apiKey = expandEnv(rawKey)
       const rawBase = (prov as { options?: { baseURL?: string } }).options?.baseURL ?? ""
-      return { id, name: (prov as { name?: string }).name ?? id, hasKey: !!apiKey, masked: apiKey ? maskApiKey(apiKey) : "", baseURL: expandEnv(rawBase), rawBaseURL: rawBase, modelCount: (prov as { models?: Record<string, JsonValue> }).models ? Object.keys((prov as { models: Record<string, JsonValue> }).models).length : 0 }
+      return { id, name: (prov as { name?: string }).name ?? id, hasKey: !!apiKey, masked: apiKey ? maskApiKey(apiKey) : "", baseURL: expandEnv(rawBase), rawBaseURL: rawBase, modelCount: (prov as ProviderConfig).models ? Object.keys((prov as ProviderConfig).models).length : 0 }
     })
     return c.json(list)
   })
@@ -98,10 +130,13 @@ export function mountConfigRoutes(app: Hono<{ Variables: { requestId: string } }
     const apiKey = expandEnv((prov as { options?: { apiKey?: string } }).options?.apiKey ?? "")
     if (!apiKey) return c.json({ ok: false, error: "missing apiKey (check {env:VAR} + mira.env)" }, 400)
     const baseURL = expandEnv((prov as { options?: { baseURL?: string } }).options?.baseURL ?? "")
-    if (baseURL) {
-      try { const controller = new AbortController(); const t = setTimeout(() => controller.abort(), 3000); await fetch(baseURL, { method: "HEAD", signal: controller.signal }).catch(() => {}); clearTimeout(t) } catch {}
-    }
-    return c.json({ ok: true, hasKey: !!apiKey, baseURL, expanded: true })
+if (baseURL) {
+    try { const controller = new AbortController(); const t = setTimeout(() => controller.abort(), 3000); await fetch(baseURL, { method: "HEAD", signal: controller.signal }).catch(() => {}); clearTimeout(t) } catch {}
+  }
+  // First connect with a key → import the curated catalog in the background
+  // (bounded internally; never blocks or fails the connect response)
+  void maybeSeedCatalog(id)
+  return c.json({ ok: true, hasKey: !!apiKey, baseURL, expanded: true })
   })
   app.post("/provider/:id/test", async (c: Context) => {
     const id = c.req.param("id")
@@ -112,10 +147,13 @@ export function mountConfigRoutes(app: Hono<{ Variables: { requestId: string } }
     const apiKey = expandEnv((prov as { options?: { apiKey?: string } }).options?.apiKey ?? "")
     if (!apiKey) return c.json({ ok: false, error: "missing apiKey (check {env:VAR} + mira.env)" }, 400)
     const baseURL = expandEnv((prov as { options?: { baseURL?: string } }).options?.baseURL ?? "")
-    if (baseURL) {
-      try { const controller = new AbortController(); const t = setTimeout(() => controller.abort(), 3000); await fetch(baseURL, { method: "HEAD", signal: controller.signal }).catch(() => {}); clearTimeout(t) } catch {}
-    }
-    return c.json({ ok: true, hasKey: !!apiKey, baseURL, expanded: true })
+if (baseURL) {
+    try { const controller = new AbortController(); const t = setTimeout(() => controller.abort(), 3000); await fetch(baseURL, { method: "HEAD", signal: controller.signal }).catch(() => {}); clearTimeout(t) } catch {}
+  }
+  // First connect with a key → import the curated catalog in the background
+  // (bounded internally; never blocks or fails the connect response)
+  void maybeSeedCatalog(id)
+  return c.json({ ok: true, hasKey: !!apiKey, baseURL, expanded: true })
   })
   app.delete("/providers/:id", async (c: Context) => {
     const id = c.req.param("id")

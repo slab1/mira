@@ -15,6 +15,7 @@ const stubGateway: Gateway = {
   complete: async () => ({ text: "" }),
   summarize: async () => "",
   listModels: async () => [],
+  listProviderModels: async () => [],
   providerStatus: () => ({ provider: "anthropic", hasKey: true, hasOpenRouterKey: false, providerCount: 1 }),
   stats: () => ({ requests: 0, inputTokens: 0, outputTokens: 0, costUSD: 0, avgLatencyMs: 0, byModel: {} }),
 }

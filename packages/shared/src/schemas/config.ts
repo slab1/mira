@@ -39,7 +39,14 @@ export const providerModelLimitSchema = z.object({
 
 export const providerModelSchema = z.object({
   name: z.string(),
-  limit: providerModelLimitSchema,
+  limit: providerModelLimitSchema.optional().describe("Context/output token limits if known"),
+  enabled: z.boolean().default(true).describe("false → hidden from the model picker (still callable by ref)"),
+  deprecated: z.boolean().default(false).describe("Deprecated badge in picker (from provider expiration or admin-set); never auto-deleted"),
+  pricing: z.object({
+    prompt: z.number().nonnegative().describe("USD per 1M input tokens"),
+    completion: z.number().nonnegative().describe("USD per 1M output tokens"),
+  }).optional(),
+  capabilities: z.array(z.string()).optional().describe("Feature flags, e.g. [\"tools\", \"vision\", \"reasoning\"]"),
 })
 
 export const providerConfigSchema = z.object({

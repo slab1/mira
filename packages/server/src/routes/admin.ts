@@ -2,10 +2,31 @@ import type { Hono } from "hono"
 import { randomBytes } from "node:crypto"
 import { z } from "zod"
 import type { MiraDB } from "../storage/db.js"
-import type { JsonValue } from "../types/index.js"
+import type { JsonValue, MiraConfig } from "../types/index.js"
+import { getConfig, saveConfig, mergeModelCatalog, removeProviderModelFromConfig, type ModelCatalogEntry } from "../config/index.js"
 
 const ownerSchema = z.string().trim().min(1).max(64).regex(/^[a-zA-Z0-9._-]+$/, "owner must be alphanumeric, dot, underscore or hyphen")
 const MAX_KEYS = 100
+
+// ── Curated model catalog payloads ────────────────────────────────
+const modelEntrySchema = z.object({
+  id: z.string().min(1),
+  name: z.string().optional(),
+  limit: z.object({ context: z.number().positive(), output: z.number().positive() }).optional(),
+  enabled: z.boolean().optional(),
+  deprecated: z.boolean().optional(),
+  pricing: z.object({ prompt: z.number().nonnegative(), completion: z.number().nonnegative() }).optional(),
+  capabilities: z.array(z.string()).optional(),
+}).passthrough()
+const modelEntriesSchema = z.array(modelEntrySchema)
+const modelPatchSchema = z.object({
+  name: z.string().optional(),
+  limit: z.object({ context: z.number().positive(), output: z.number().positive() }).optional(),
+  enabled: z.boolean().optional(),
+  deprecated: z.boolean().optional(),
+  pricing: z.object({ prompt: z.number().nonnegative(), completion: z.number().nonnegative() }).optional(),
+  capabilities: z.array(z.string()).optional(),
+}).passthrough()
 
 export function mountAdminRoutes(
   app: Hono<{ Variables: { requestId: string } }>,
@@ -16,9 +37,14 @@ export function mountAdminRoutes(
     resolveOwner: (t: string) => string | undefined
     bearerOf: (h: string | undefined) => string
     sessionOwnerCache: Map<string, { owner: string | null; ts: number }>
+    /** Live model source for catalog sync (auto-fetch when payload omits models) */
+    gateway?: { listProviderModels?: (providerId: string) => Promise<Array<{ id: string; name: string; context: number }>> }
+    /** Config write target dir — tests pass a tmpdir; default is process.cwd() */
+    cwd?: string
   },
 ) {
   const { db, REQUIRED_TOKEN, API_KEY_OWNERS, resolveOwner, bearerOf, sessionOwnerCache } = deps
+  const cfgDir = deps.cwd ?? process.cwd()
 
   // Admin = the master MIRA_TOKEN (owner "default"). In open/dev mode (no
   // REQUIRED_TOKEN) the endpoints are reachable without auth, matching the
@@ -123,5 +149,79 @@ export function mountAdminRoutes(
     } catch (e) {
       return c.json({ error: String(e) }, 500)
     }
+  })
+
+  // ── Curated model catalog (single source of truth; admin only) ────
+
+  // Sync the provider's catalog into the config registry (upsert, NEVER deletes).
+  // Body: { models: [...] } — or empty/auto to fetch the live catalog from the provider.
+  // Existing admin flags (enabled/deprecated/pricing/capabilities) are preserved unless
+  // the payload explicitly overrides them. Models absent from the payload are kept.
+  app.post("/admin/providers/:id/models/sync", async c => {
+    if (!isAdmin(c)) return deny(c)
+    const id = c.req.param("id")
+    const cfg = getConfig()
+    const prov = cfg.provider?.[id]
+    if (!prov) return c.json({ error: "provider not found" }, 404)
+    const body = (await c.req.json().catch(() => null)) as { models?: unknown; auto?: unknown } | null
+    let incoming: Array<ModelCatalogEntry & { id: string }> = []
+    if (body && Array.isArray(body.models)) {
+      const parsed = modelEntriesSchema.safeParse(body.models)
+      if (parsed.success) incoming = parsed.data as Array<ModelCatalogEntry & { id: string }>
+    }
+    // Auto-fetch: payload omitted models (or auto:true) → pull live catalog from the provider
+    if (incoming.length === 0 && deps.gateway?.listProviderModels) {
+      const live = await deps.gateway.listProviderModels(id)
+      incoming = live.map(m => ({
+        // registry keys are BARE ids — strip the `provider/` prefix live fetches add
+        id: m.id.startsWith(`${id}/`) ? m.id.slice(id.length + 1) : m.id,
+        name: m.name,
+        limit: m.context ? { context: m.context, output: 4096 } : undefined,
+      }))
+      console.log(`[admin] sync ${id}: fetched ${live.length} live models`)
+    }
+    const { models, result } = mergeModelCatalog(prov.models ?? {}, incoming)
+    if (incoming.length > 0) {
+      await saveConfig({ provider: { [id]: { models } } } as Partial<MiraConfig>, "project", cfgDir)
+      console.log(`[admin] sync ${id}: result=${JSON.stringify(result)}`)
+    }
+    return c.json({ ok: true, provider: id, ...result })
+  })
+
+  // Update one catalog entry's flags/metadata (hide-before-delete: enabled:false keeps
+  // the model callable by ref but removes it from the picker).
+  app.patch("/admin/providers/:id/models/:modelId", async c => {
+    if (!isAdmin(c)) return deny(c)
+    const id = c.req.param("id")
+    const modelId = c.req.param("modelId")
+    const cfg = getConfig()
+    const prov = cfg.provider?.[id]
+    if (!prov) return c.json({ error: "provider not found" }, 404)
+    const existing = prov.models?.[modelId]
+    if (!existing) return c.json({ error: "model not found" }, 404)
+    const body = (await c.req.json().catch(() => null)) as Record<string, JsonValue> | null
+    const parsed = modelPatchSchema.safeParse(body ?? {})
+    if (!parsed.success) {
+      return c.json({ error: "invalid model patch", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }, 400)
+    }
+    const { models } = mergeModelCatalog(prov.models ?? {}, [{ id: modelId, name: existing.name, ...parsed.data }] as Array<ModelCatalogEntry & { id: string }>)
+    await saveConfig({ provider: { [id]: { models } } } as Partial<MiraConfig>, "project", cfgDir)
+    const updated = getConfig().provider?.[id]?.models?.[modelId]
+    return c.json({ ok: true, model: updated })
+  })
+
+  // Permanent delete (admin only) — removes the stored definition outright. This is the
+  // final step after hide/deprecate; deleted models degrade gracefully in existing sessions.
+  app.delete("/admin/providers/:id/models/:modelId", async c => {
+    if (!isAdmin(c)) return deny(c)
+    const id = c.req.param("id")
+    const modelId = c.req.param("modelId")
+    const cfg = getConfig()
+    const prov = cfg.provider?.[id]
+    if (!prov) return c.json({ error: "provider not found" }, 404)
+    if (!prov.models?.[modelId]) return c.json({ error: "model not found" }, 404)
+    const removed = await removeProviderModelFromConfig(id, modelId, cfgDir)
+    console.log(`[admin] delete ${id}/${modelId}: removed=${removed}`)
+    return c.json({ ok: removed })
   })
 }

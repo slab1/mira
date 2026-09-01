@@ -173,7 +173,11 @@ const miraConfigPatchSchema = z.object({
     }).optional(),
     models: z.record(z.string(), z.object({
       name: z.string(),
-      limit: z.object({ context: z.number(), output: z.number() }),
+      limit: z.object({ context: z.number(), output: z.number() }).optional(),
+      enabled: z.boolean().optional(),
+      deprecated: z.boolean().optional(),
+      pricing: z.object({ prompt: z.number().nonnegative(), completion: z.number().nonnegative() }).optional(),
+      capabilities: z.array(z.string()).optional(),
     })).optional(),
   })).optional(),
   agents: z.record(z.string(), z.object({
@@ -252,6 +256,78 @@ export async function removeProviderFromConfig(name: string, cwd = process.cwd()
     cached = null
     await loadConfig(cwd)
   }
+}
+
+// ── Curated model catalog (single source of truth) ─────────────────
+
+export interface ModelCatalogEntry {
+  name: string
+  limit?: { context: number; output: number }
+  enabled?: boolean
+  deprecated?: boolean
+  pricing?: { prompt: number; completion: number }
+  capabilities?: string[]
+}
+
+export interface ModelSyncResult {
+  added: string[]
+  updated: string[]
+  total: number
+}
+
+/**
+ * Curated-catalog upsert (never-delete).
+ * - New entries: defaults applied (enabled:true, deprecated:false) unless the payload overrides.
+ * - Existing entries: name/limit refreshed from `incoming`; admin flags
+ *   (enabled/deprecated/pricing/capabilities) are PRESERVED unless `incoming`
+ *   explicitly provides them — a re-sync can never re-enable a hidden model.
+ * - Entries absent from `incoming` are never removed. Removal is an explicit
+ *   admin action (hide → deprecated → manual delete).
+ */
+export function mergeModelCatalog(
+  existing: Record<string, ModelCatalogEntry>,
+  incoming: Array<{ id: string; name?: string } & Partial<ModelCatalogEntry>>,
+): { models: Record<string, ModelCatalogEntry>; result: ModelSyncResult } {
+  const models: Record<string, ModelCatalogEntry> = { ...existing }
+  const added: string[] = []
+  const updated: string[] = []
+  for (const m of incoming) {
+    if (!m.id) continue
+    const prev = models[m.id]
+    const next: ModelCatalogEntry = { ...prev, name: m.name ?? prev?.name ?? m.id }
+    // limit: refresh only when the payload carries one (some provider /models omit it)
+    if (m.limit) next.limit = m.limit
+    // flags: preserve admin-set values unless the payload explicitly overrides them
+    if (m.enabled !== undefined) next.enabled = m.enabled
+    else if (!prev) next.enabled = true
+    if (m.deprecated !== undefined) next.deprecated = m.deprecated
+    else if (!prev) next.deprecated = false
+    if (m.pricing !== undefined) next.pricing = m.pricing
+    if (m.capabilities !== undefined) next.capabilities = m.capabilities
+    if (prev) updated.push(m.id)
+    else added.push(m.id)
+    models[m.id] = next
+  }
+  return { models, result: { added, updated, total: Object.keys(models).length } }
+}
+
+/** Remove one model from a provider's curated catalog (DELETE /admin/providers/:id/models/:modelId). */
+export async function removeProviderModelFromConfig(providerId: string, modelId: string, cwd = process.cwd()): Promise<boolean> {
+  const targetPath = `${cwd}/mira.json`
+  let existing: PartialMiraConfig = {}
+  try {
+    const f = Bun.file(targetPath)
+    if (await f.exists()) existing = (await f.json()) as PartialMiraConfig
+  } catch {}
+  const prov = existing.provider?.[providerId] as { models?: Record<string, unknown> } | undefined
+  if (prov?.models && prov.models[modelId]) {
+    delete prov.models[modelId]
+    await Bun.write(targetPath, JSON.stringify(existing, null, 2) + "\n")
+    cached = null
+    await loadConfig(cwd)
+    return true
+  }
+  return false
 }
 
 /** Return merged config + per-layer breakdown for debugging. */
