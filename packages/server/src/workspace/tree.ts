@@ -90,5 +90,9 @@ export async function listWorkspaceTree(rawRoot: string, opts: WorkspaceTreeOpti
   }
 
   await walk(root, 1)
+  // Global newest-first: the per-level sort alone leaves directory-boundary
+  // inversions (old files under a fresh dir vs. new files under an old dir),
+  // which violates the documented "newest-first" ordering — sort once here.
+  out.sort((a, b) => b.mtimeMs - a.mtimeMs || a.path.localeCompare(b.path))
   return out
 }
