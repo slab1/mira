@@ -236,6 +236,17 @@ export type WorkspaceTreeResponse = {
   files: WorkspaceEntry[]
 }
 
+export type LearningScore = {
+  sessionID: string
+  score: number
+  cost: number
+  doomLoops: number
+  toolErrors: number
+  memoryHits: number
+  messageCount: number
+  createdAt: string
+}
+
 export type PermissionMatrix = Record<string, string | Record<string, string>>
 
 const API_URL_KEY = "mira_api_url"
@@ -603,6 +614,10 @@ export const api = {
   listModels: () => req<ModelsResponse>("/models"),
   /** Workspace file tree (newest-first) — @mention file suggestions */
   getWorkspaceTree: () => req<WorkspaceTreeResponse>("/workspace/tree"),
+
+  /** Per-session learning score — cost, errors, doom-loops, memory hits */
+  getLearningScore: (sessionID: string) =>
+    req<LearningScore>(`/learning/score?sessionID=${encodeURIComponent(sessionID)}`),
 
   // ── Admin (curated model catalog; master-token owners or open dev servers) ──
   whoami: () => req<{ ok: boolean; isAdmin: boolean; mode: "open" | "token" }>("/admin/whoami"),

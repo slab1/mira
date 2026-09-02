@@ -1,4 +1,4 @@
-import { createSignal, onMount, Show, onCleanup, createResource, For } from "solid-js"
+import { createSignal, onMount, Show, onCleanup, createResource, createEffect, For } from "solid-js"
 import "./index.css"
 import { createAppStore } from "./stores/app"
 import { createSettingsStore } from "./stores/settings"
@@ -187,6 +187,16 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = createSignal(false)
   const [agents] = createResource(() => api.listAgents().catch(() => []))
   const [selectedAgent, setSelectedAgent] = createSignal("")
+  // Learning score — fetched per session, shown next to pill-cost
+  const [score, setScore] = createSignal<import("./api/client").LearningScore | null>(null)
+  createEffect(() => {
+    const id = store.state.currentId
+    if (!id) {
+      setScore(null)
+      return
+    }
+    api.getLearningScore(id).then(setScore).catch(() => setScore(null))
+  })
 
   onMount(() => {
     // Probe stored token without flashing the gate:
@@ -393,6 +403,22 @@ export default function App() {
                     class="pill pill-cost"
                   >
                     ${c().costUSD.toFixed(4)}
+                  </span>
+                )}
+              </Show>
+              <Show when={score()}>
+                {(s) => (
+                  <span
+                    title={`Score ${s().score}/10 · cost $${s().cost} · ${s().toolErrors} tool errors · ${s().doomLoops} doom-loops · ${s().memoryHits} memory hits · ${s().messageCount} msgs`}
+                    class="pill"
+                    style={{
+                      background: "var(--accent-soft)",
+                      color: "var(--fg-muted)",
+                      border: "1px solid var(--accent-border)",
+                      "font-size": "var(--fs-xs)",
+                    }}
+                  >
+                    Score: {s().score.toFixed(1)}/10
                   </span>
                 )}
               </Show>

@@ -60,6 +60,7 @@ export interface LearningSystem {
   improvement: ImprovementEngine
   patching: PatchingEngine
   scheduler: LearningScheduler
+  db?: MiraDB
 }
 
 /**
@@ -87,7 +88,7 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
     { online, usage, improvement, knowledge, bus: deps.bus, db: deps.db, patching, gateway: deps.gateway },
   )
 
-  return { online, usage, knowledge, improvement, patching, scheduler }
+  return { online, usage, knowledge, improvement, patching, scheduler, db: deps.db }
 }
 
 /** Convenience: wire learning REST routes onto a Hono app */
@@ -120,5 +121,112 @@ export function mountLearningRoutes(
       return c.json(results)
     }
     return c.json(system.knowledge.list({ tier: tier ?? undefined, source: source ?? undefined, limit: 50 }))
+  })
+
+  app.get("/learning/score", async (c) => {
+    const url = new URL(c.req.url)
+    const sessionID =
+      url.searchParams.get("sessionID") ??
+      url.searchParams.get("sessionId") ??
+      url.searchParams.get("session_id") ??
+      url.searchParams.get("id") ??
+      ""
+    if (!sessionID) return c.json({ error: "sessionID required" }, 400)
+    const sqlite = system.db?.sqlite
+    if (!sqlite) return c.json({ error: "no db" }, 500)
+    try {
+      // Session row — cost, tokens, createdAt
+      let row: {
+        id: string
+        model: string | null
+        cost_usd: number | null
+        tokens_in: number | null
+        tokens_out: number | null
+        created_at: number | null
+      } | undefined
+      try {
+        row = sqlite
+          .prepare("SELECT id, model, cost_usd, tokens_in, tokens_out, created_at FROM sessions WHERE id = ?")
+          .get(sessionID) as typeof row
+      } catch {
+        return c.json({ error: "session not found" }, 404)
+      }
+      if (!row) return c.json({ error: "session not found" }, 404)
+
+      // Cost — prefer sessions.cost_usd, else estimate from tokens via priceFor
+      let cost = row.cost_usd ?? 0
+      if ((cost === null || cost === 0) && (row.tokens_in || row.tokens_out)) {
+        try {
+          const { priceFor } = await import("../gateway/pricing.js")
+          const [pin, pout] = priceFor(row.model ?? "claude-sonnet-4")
+          cost = ((row.tokens_in ?? 0) * pin + (row.tokens_out ?? 0) * pout) / 1_000_000
+        } catch {}
+      }
+      cost = Number(cost ?? 0)
+
+      // Usage metrics — toolErrors, doomLoops
+      let toolErrors = 0
+      let doomLoops = 0
+      try {
+        const u = sqlite
+          .prepare("SELECT tool_errors, doom_loops FROM usage_sessions WHERE session_id = ?")
+          .get(sessionID) as { tool_errors?: number; doom_loops?: number } | undefined
+        if (u) {
+          toolErrors = u.tool_errors ?? 0
+          doomLoops = u.doom_loops ?? 0
+        } else {
+          // Fallback: count tool-result errors from parts
+          try {
+            const cnt = sqlite
+              .prepare("SELECT COUNT(*) as c FROM parts WHERE session_id = ? AND type = 'tool-result' AND is_error = 1")
+              .get(sessionID) as { c?: number } | undefined
+            toolErrors = cnt?.c ?? 0
+          } catch {}
+        }
+      } catch {}
+
+      // Memory hits — count knowledge_entries for this session (if column exists)
+      let memoryHits = 0
+      try {
+        const kh = sqlite
+          .prepare("SELECT COUNT(*) as c FROM knowledge_entries WHERE session_id = ?")
+          .get(sessionID) as { c?: number } | undefined
+        memoryHits = kh?.c ?? 0
+      } catch {
+        // Table may have different schema (knowledge.ts tier/source) — try total count as fallback, but keep per-session 0
+        memoryHits = 0
+      }
+      // Also consider in-memory knowledge size as global hits if per-session is 0 and knowledge has entries
+      // Keep per-session semantics: don't inflate with global count
+
+      // Message count
+      let messageCount = 0
+      try {
+        const mc = sqlite
+          .prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?")
+          .get(sessionID) as { c?: number } | undefined
+        messageCount = mc?.c ?? 0
+      } catch {}
+
+      const createdAt = row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString()
+
+      // Score heuristic: 10 - (toolErrors*0.5 + doomLoops*1.5 + cost*0.1) + memoryHits*0.05, clamped 0-10
+      let score = 10 - (toolErrors * 0.5 + doomLoops * 1.5 + cost * 0.1) + memoryHits * 0.05
+      score = Math.max(0, Math.min(10, score))
+      score = Math.round(score * 10) / 10
+
+      return c.json({
+        sessionID,
+        score,
+        cost: Number(cost.toFixed(4)),
+        doomLoops,
+        toolErrors,
+        memoryHits,
+        messageCount,
+        createdAt,
+      })
+    } catch (e) {
+      return c.json({ error: String(e) }, 500)
+    }
   })
 }
