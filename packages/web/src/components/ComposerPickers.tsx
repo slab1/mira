@@ -17,7 +17,7 @@ import { api, type AgentEntry, type WorkspaceEntry } from "../api/client"
 
 // ── Model picker ───────────────────────────────────────────────────
 
-export function ModelPicker(props: { settings: SettingsStore }) {
+export function ModelPicker(props: { settings: SettingsStore; onOpenSettings?: () => void }) {
   const [open, setOpen] = createSignal(false)
   const [query, setQuery] = createSignal("")
   const [models] = createResource(() => (open() ? api.listModels().catch(() => null) : null))
@@ -92,29 +92,50 @@ export function ModelPicker(props: { settings: SettingsStore }) {
           </div>
           <div class="picker-list">
             <Show when={!models.loading} fallback={<div class="picker-empty">Loading models…</div>}>
-              <Show when={filtered().length > 0} fallback={<div class="picker-empty">No models match.</div>}>
-                <For each={filtered()}>
-                  {(m) => (
+              <Show
+                when={(models()?.models.length ?? 0) > 0}
+                fallback={
+                  <div class="picker-empty" style={{ display: "flex", "flex-direction": "column", gap: "8px", "align-items": "center" }}>
+                    <span>No models configured.</span>
                     <button
                       type="button"
-                      role="option"
-                      aria-selected={m.id === active() ? "true" : "false"}
-                      class="picker-item"
-                      onClick={() => pick(m.id)}
+                      class="btn btn-ghost"
+                      onClick={() => {
+                        setOpen(false)
+                        props.onOpenSettings?.()
+                      }}
+                      style={{ "font-size": "var(--fs-xs)", "border-radius": "var(--r-md)" }}
                     >
-                      <span style={{ display: "flex", "flex-direction": "column", gap: "1px", "min-width": "0", "text-align": "left" }}>
-                        <span class="picker-item-name">{m.name || m.id}</span>
-                        <span class="picker-item-desc">
-                          {m.id}
-                          {m.deprecated ? " · deprecated" : ""}
-                        </span>
-                      </span>
-                      <Show when={m.id === active()}>
-                        <span class="pill pill-ok" style={{ "font-size": "var(--fs-2xs)", "flex-shrink": "0" }}>active</span>
-                      </Show>
+                      Add provider key →
                     </button>
-                  )}
-                </For>
+                  </div>
+                }
+              >
+                <div class="picker-section">{models()?.provider ?? "Models"}</div>
+                <Show when={filtered().length > 0} fallback={<div class="picker-empty">No models match.</div>}>
+                  <For each={filtered()}>
+                    {(m) => (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={m.id === active() ? "true" : "false"}
+                        class="picker-item"
+                        onClick={() => pick(m.id)}
+                      >
+                        <span style={{ display: "flex", "flex-direction": "column", gap: "1px", "min-width": "0", "text-align": "left" }}>
+                          <span class="picker-item-name">{m.name || m.id}</span>
+                          <span class="picker-item-desc">
+                            {m.id}
+                            {m.deprecated ? " · deprecated" : ""}
+                          </span>
+                        </span>
+                        <Show when={m.id === active()}>
+                          <span class="pill pill-ok" style={{ "font-size": "var(--fs-2xs)", "flex-shrink": "0" }}>active</span>
+                        </Show>
+                      </button>
+                    )}
+                  </For>
+                </Show>
               </Show>
             </Show>
           </div>

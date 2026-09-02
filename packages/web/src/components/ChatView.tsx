@@ -241,6 +241,7 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
   }
   const [mentionIndex, setMentionIndex] = createSignal(0)
   const [mentionDismissed, setMentionDismissed] = createSignal(false)
+  const [showHints, setShowHints] = createSignal(false)
   let lastMentionQ = ""
   createEffect(() => {
     const m = mentionQuery()
@@ -857,7 +858,7 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
                   </span>
                   <span style={{ display: "flex", gap: "8px", "align-items": "center", "min-width": "0" }}>
                     <Show when={props.settings}>
-                      {(settings) => <ModelPicker settings={settings()} />}
+                      {(settings) => <ModelPicker settings={settings()} onOpenSettings={props.onOpenSettings} />}
                     </Show>
                     <span aria-hidden="true" style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", display: "flex", gap: "5px", "align-items": "center" }}>
                       <span class="kbd">Enter</span> send
@@ -904,21 +905,56 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
             }
           >
             {/* No provider keys yet — onboarding card instead of the composer */}
-            <div class="card" style={{ padding: "14px 16px", display: "flex", "align-items": "center", gap: "12px", background: "var(--accent-soft)", border: "1px solid var(--accent-border)" }}>
-              <div style={{ flex: "1", "min-width": "0" }}>
-                <div style={{ "font-size": "var(--fs-sm)", "font-weight": "600", color: "var(--fg)" }}>Add an API key to start chatting</div>
-                <div style={{ "font-size": "var(--fs-xs)", color: "var(--fg-muted)", "margin-top": "2px", "line-height": "1.5" }}>
-                  Mira needs at least one provider key (OpenRouter, Anthropic, …) to run models. Keys stay on your server.
+            <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
+              <div class="card" style={{ padding: "14px 16px", display: "flex", "align-items": "center", gap: "12px", background: "var(--accent-soft)", border: "1px solid var(--accent-border)" }}>
+                <div style={{ flex: "1", "min-width": "0" }}>
+                  <div style={{ "font-size": "var(--fs-sm)", "font-weight": "600", color: "var(--fg)" }}>Add an API key to start chatting</div>
+                  <div style={{ "font-size": "var(--fs-xs)", color: "var(--fg-muted)", "margin-top": "2px", "line-height": "1.5" }}>
+                    Mira works with any OpenAI-compatible provider. Keys stay on your server.
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  class="btn btn-solid"
+                  onClick={() => props.onOpenSettings?.()}
+                  style={{ padding: "7px 14px", "font-size": "var(--fs-sm)", "border-radius": "var(--r-md)", flex: "none" }}
+                >
+                  Add key →
+                </button>
               </div>
-              <button
-                type="button"
-                class="btn btn-solid"
-                onClick={() => props.onOpenSettings?.()}
-                style={{ padding: "7px 14px", "font-size": "var(--fs-sm)", "border-radius": "var(--r-md)", flex: "none" }}
-              >
-                Add key →
-              </button>
+              <div style={{ display: "flex", gap: "8px", "flex-wrap": "wrap" }}>
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  onClick={() => setShowHints((v) => !v)}
+                  aria-expanded={showHints() ? "true" : "false"}
+                  style={{ padding: "6px 12px", "font-size": "var(--fs-xs)", "border-radius": "var(--r-md)" }}
+                >
+                  {showHints() ? "Hide shortcuts" : "Explore shortcuts"}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  title="Placeholder — coming soon"
+                  style={{ padding: "6px 12px", "font-size": "var(--fs-xs)", "border-radius": "var(--r-md)", opacity: 0.7 }}
+                >
+                  Load example session
+                </button>
+              </div>
+              <Show when={showHints()}>
+                <div class="card" style={{ padding: "12px 14px", "font-size": "var(--fs-xs)", color: "var(--fg-muted)", "line-height": "1.8", "max-height": "150px", overflow: "auto" }}>
+                  <div style={{ "font-weight": "600", color: "var(--fg)", "margin-bottom": "4px" }}>Shortcuts</div>
+                  <div>
+                    <span class="kbd">/</span> commands — run built-in actions
+                  </div>
+                  <div>
+                    <span class="kbd">@</span> files / agents — reference workspace files or agent lanes
+                  </div>
+                  <div>
+                    <span class="kbd">Ctrl+P</span> palette — jump anywhere
+                  </div>
+                </div>
+              </Show>
             </div>
           </Show>
         </div>
