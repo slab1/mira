@@ -48,7 +48,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .turbo
-          key: turbo-${{ github.sha }}
+          key: turbo-${{ hashFiles('bun.lock') }}-${{ hashFiles('**/package.json') }}
           restore-keys: turbo-
       - name: Build
         run: bunx turbo run build --cache-dir=.turbo
@@ -71,7 +71,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .turbo
-          key: turbo-${{ github.sha }}
+          key: turbo-${{ hashFiles('bun.lock') }}-${{ hashFiles('**/package.json') }}
           restore-keys: turbo-
       - name: Test
         run: bunx turbo run test --cache-dir=.turbo
@@ -95,7 +95,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .turbo
-          key: turbo-${{ github.sha }}
+          key: turbo-${{ hashFiles('bun.lock') }}-${{ hashFiles('**/package.json') }}
           restore-keys: turbo-
       - name: Eval — fast tier (PR)
         run: bunx turbo run eval --cache-dir=.turbo -- --tier=fast

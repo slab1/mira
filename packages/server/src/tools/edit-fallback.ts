@@ -230,12 +230,50 @@ export async function applyEditWithFallback(
   }
 
   // Layer 7: Block Hash Anchor (allow minor drift)
-  // For now, degrade to trimmed + whitespace collapse combo
   {
     const blockOld = normalizeLineEndings(normalizeWhitespaceLines(collapseWhitespace(oldString)))
     const blockContent = normalizeLineEndings(normalizeWhitespaceLines(collapseWhitespace(original)))
     if (blockContent.includes(blockOld)) {
-      const updated = blockContent.replace(blockOld, collapseWhitespace(newString))
+      // Reconstruct from original offsets to preserve formatting (like Layer 5)
+      const normalizedOriginal = normalizeLineEndings(original)
+      const origLines = normalizedOriginal.split("\n")
+      const collapsedLines = origLines.map(l => l.replace(/[ \t]+/g, " ").trimEnd())
+      const oldCollapsedLines = blockOld.split("\n")
+      let startLine = -1
+      for (let i = 0; i <= collapsedLines.length - oldCollapsedLines.length; i++) {
+        if (collapsedLines.slice(i, i + oldCollapsedLines.length).join("\n") === blockOld) {
+          startLine = i
+          break
+        }
+      }
+      let updated: string
+      if (startLine !== -1) {
+        let normStart = 0
+        for (let i = 0; i < startLine; i++) normStart += origLines[i].length + 1
+        let normEnd = normStart
+        for (let i = startLine; i < startLine + oldCollapsedLines.length; i++) {
+          normEnd += origLines[i].length
+          if (i < startLine + oldCollapsedLines.length - 1) normEnd += 1
+        }
+        const normalizedNew = normalizeLineEndings(newString)
+        const updatedNormalized = normalizedOriginal.slice(0, normStart) + normalizedNew + normalizedOriginal.slice(normEnd)
+        updated = original.includes("\r\n") ? updatedNormalized.replace(/\n/g, "\r\n") : updatedNormalized
+      } else {
+        // Fallback: use collapsed index with line-level approximation
+        const collapsedIndex = blockContent.indexOf(blockOld)
+        const prefixCollapsed = blockContent.slice(0, collapsedIndex)
+        const startLineFallback = prefixCollapsed.split("\n").length - 1
+        let normStart = 0
+        for (let i = 0; i < startLineFallback; i++) normStart += origLines[i].length + 1
+        let normEnd = normStart
+        for (let i = startLineFallback; i < startLineFallback + oldCollapsedLines.length && i < origLines.length; i++) {
+          normEnd += origLines[i].length
+          if (i < startLineFallback + oldCollapsedLines.length - 1) normEnd += 1
+        }
+        const normalizedNew = normalizeLineEndings(newString)
+        const updatedNormalized = normalizedOriginal.slice(0, normStart) + normalizedNew + normalizedOriginal.slice(normEnd)
+        updated = original.includes("\r\n") ? updatedNormalized.replace(/\n/g, "\r\n") : updatedNormalized
+      }
       await Bun.write(absPath, updated)
       const postHash = hashContent(await Bun.file(absPath).text())
       return {

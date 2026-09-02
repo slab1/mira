@@ -21,6 +21,7 @@
 
 import type { JsonValue, MiraConfig } from "../types/index.js"
 import type { z } from "zod"
+import { priceFor } from "./pricing.js"
 
 // ── Wire types ────────────────────────────────────────────────────────
 
@@ -162,19 +163,6 @@ export function createGateway(config: MiraConfig): Gateway {
     costUSD: 0,
     totalLatencyMs: 0,
     byModel: new Map<string, { requests: number; inputTokens: number; outputTokens: number; costUSD: number }>(),
-  }
-
-  // Rough per-1M-token pricing (input/output USD) for known model families
-  function priceFor(modelID: string): [number, number] {
-    const m = modelID.toLowerCase()
-    if (m.includes("claude-sonnet")) return [3, 15]
-    if (m.includes("claude-opus")) return [15, 75]
-    if (m.includes("claude-haiku")) return [0.8, 4]
-    if (m.includes("gpt-4o")) return [2.5, 10]
-    if (m.includes("gpt-4")) return [10, 30]
-    if (m.includes("deepseek")) return [0.27, 1.1]
-    if (m.includes("llama") || m.includes("mistral")) return [0.5, 0.8]
-    return [1, 2] // conservative default
   }
 
   /** Record token usage + latency for one request */

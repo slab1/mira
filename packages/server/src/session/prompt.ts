@@ -39,6 +39,7 @@ import { initLangfuse } from "../telemetry/langfuse.js"
 import { eq } from "drizzle-orm"
 import { trace as otelTrace } from "@opentelemetry/api"
 import { classifyBashArity } from "../permission/index.js"
+import { priceFor } from "../gateway/pricing.js"
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -84,19 +85,8 @@ function tierModel(tier: string | undefined, fallbackSmall?: string): string {
     default: return "claude-sonnet-4"
   }
 }
-function priceForModel(modelID: string): [number, number] {
-  const m = modelID.toLowerCase()
-  if (m.includes("claude-sonnet")) return [3, 15]
-  if (m.includes("claude-opus")) return [15, 75]
-  if (m.includes("claude-haiku")) return [0.8, 4]
-  if (m.includes("gpt-4o")) return [2.5, 10]
-  if (m.includes("gpt-4")) return [10, 30]
-  if (m.includes("deepseek")) return [0.27, 1.1]
-  if (m.includes("llama") || m.includes("mistral")) return [0.5, 0.8]
-  return [1, 2]
-}
 function estimateCostUSD(modelID: string, inputTokens: number, outputTokens: number): number {
-  const [pin, pout] = priceForModel(modelID)
+  const [pin, pout] = priceFor(modelID)
   return ((inputTokens * pin) + (outputTokens * pout)) / 1_000_000
 }
 function resolveEffectiveModel(input: { explicitModel?: string; agent?: string | null; sessionModel?: string }): string {

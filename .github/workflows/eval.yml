@@ -39,7 +39,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .turbo
-          key: turbo-${{ github.sha }}
+          key: turbo-${{ hashFiles('bun.lock') }}-${{ hashFiles('**/package.json') }}
           restore-keys: turbo-
       - name: Build
         run: bunx turbo run build --cache-dir=.turbo
