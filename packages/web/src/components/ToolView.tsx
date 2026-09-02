@@ -148,7 +148,17 @@ export function ToolView(props: { store: AppStore }) {
             <Show
               when={s().currentId}
               fallback={
-                <div style={{ color: "var(--fg-faint)", "font-size": "var(--fs-sm)", padding: "4px 0" }}>
+                <div
+                  style={{
+                    padding: "14px",
+                    border: "1px dashed var(--border-strong)",
+                    "border-radius": "var(--r-md)",
+                    color: "var(--fg-faint)",
+                    "font-size": "var(--fs-xs)",
+                    "text-align": "center",
+                    "line-height": "1.5",
+                  }}
+                >
                   Select a session to see its todos.
                 </div>
               }
@@ -350,7 +360,21 @@ export function ToolView(props: { store: AppStore }) {
             </div>
             <Show
               when={s().currentId}
-              fallback={<div style={{ color: "var(--fg-faint)", "font-size": "var(--fs-sm)", padding: "4px 0" }}>Select a session to see its file history.</div>}
+              fallback={
+                <div
+                  style={{
+                    padding: "14px",
+                    border: "1px dashed var(--border-strong)",
+                    "border-radius": "var(--r-md)",
+                    color: "var(--fg-faint)",
+                    "font-size": "var(--fs-xs)",
+                    "text-align": "center",
+                    "line-height": "1.5",
+                  }}
+                >
+                  Select a session to see its file history.
+                </div>
+              }
             >
               <Show
                 when={!snapshots.loading}
@@ -572,7 +596,21 @@ export function ToolView(props: { store: AppStore }) {
             </div>
             <Show
               when={s().currentId}
-              fallback={<div style={{ color: "var(--fg-faint)", "font-size": "var(--fs-sm)", padding: "4px 0" }}>Select a session to see its jobs.</div>}
+              fallback={
+                <div
+                  style={{
+                    padding: "14px",
+                    border: "1px dashed var(--border-strong)",
+                    "border-radius": "var(--r-md)",
+                    color: "var(--fg-faint)",
+                    "font-size": "var(--fs-xs)",
+                    "text-align": "center",
+                    "line-height": "1.5",
+                  }}
+                >
+                  Select a session to see its jobs.
+                </div>
+              }
             >
               <Show
                 when={!jobs.loading}

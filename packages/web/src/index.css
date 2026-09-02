@@ -1102,6 +1102,107 @@ input:focus-visible,
   border-color: var(--accent-border);
 }
 
+/* Composer pickers (model picker / @mention picker) — popover above the composer */
+.picker-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+}
+.picker-filter {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.picker-filter input {
+  width: 100%;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 5px 8px;
+  font-size: var(--fs-xs);
+  color: var(--fg);
+  outline: none;
+}
+.picker-filter input:focus {
+  border-color: var(--accent-border);
+}
+.picker-list {
+  overflow: auto;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+}
+.picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+.picker-item:hover,
+.picker-item[aria-selected="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+.picker-item-name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.picker-item-desc {
+  font-size: var(--fs-2xs);
+  color: var(--fg-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 30ch;
+}
+.picker-section {
+  padding: 6px 9px 3px;
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+.picker-empty {
+  padding: 14px;
+  color: var(--fg-faint);
+  font-size: var(--fs-xs);
+  text-align: center;
+}
+.picker-footer {
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-2xs);
+  color: var(--fg-faint);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
 /* ── Header chrome ─────────────────────────────────────────────────────── */
 .header-left {
   display: flex;

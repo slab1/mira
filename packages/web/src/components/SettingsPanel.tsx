@@ -4,7 +4,7 @@ import { api } from "../api/client"
 import type { MiraConfig, ThemeChoice } from "../api/client"
 import { AdminModelsPanel } from "./AdminModelsPanel"
 
-type TabId = "general" | "providers" | "permissions" | "connectors" | "agents" | "commands" | "terminal" | "models"
+export type TabId = "general" | "providers" | "permissions" | "connectors" | "agents" | "commands" | "terminal" | "models"
 
 const TABS: Array<{ id: TabId; label: string; icon: string; desc: string }> = [
   { id: "general", label: "General", icon: "⚙", desc: "Model & appearance" },
@@ -17,9 +17,14 @@ const TABS: Array<{ id: TabId; label: string; icon: string; desc: string }> = [
   { id: "terminal", label: "Terminal", icon: "▣", desc: "PTY & sandbox" },
 ]
 
-export function SettingsPanel(props: { store: SettingsStore; open: boolean; onClose: () => void }) {
-  const [tab, setTab] = createSignal<TabId>("general")
+export function SettingsPanel(props: { store: SettingsStore; open: boolean; onClose: () => void; initialTab?: TabId }) {
+  const [tab, setTab] = createSignal<TabId>(props.initialTab ?? "general")
   const s = () => props.store.state
+
+  // Deep-link: when opened with an explicit target tab (e.g. onboarding "Add key"), jump to it
+  createEffect(() => {
+    if (props.open && props.initialTab) setTab(props.initialTab)
+  })
 
   // Form state for General
   const [model, setModel] = createSignal("")

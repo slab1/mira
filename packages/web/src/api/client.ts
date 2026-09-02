@@ -207,6 +207,33 @@ export type SkillEntry = {
   description: string
 }
 
+/** Curated model entry from GET /models (active provider only, enabled models). */
+export type CatalogModel = {
+  id: string
+  name: string
+  context?: number
+  deprecated?: boolean
+}
+
+export type ModelsResponse = {
+  provider: string | null
+  hasKey: boolean
+  models: CatalogModel[]
+}
+
+export type WorkspaceEntry = {
+  path: string
+  dir: string
+  size: number
+  mtimeMs: number
+}
+
+export type WorkspaceTreeResponse = {
+  root: string
+  count: number
+  files: WorkspaceEntry[]
+}
+
 export type PermissionMatrix = Record<string, string | Record<string, string>>
 
 const API_URL_KEY = "mira_api_url"
@@ -569,6 +596,11 @@ export const api = {
   listCommands: () => req<CommandEntry[] | string[]>("/commands"),
   listSkills: () => req<SkillEntry[] | string[]>("/skills"),
   getPermission: () => req<PermissionMatrix>("/permission"),
+
+  /** Active provider's curated model list (60s server cache) — composer model picker */
+  listModels: () => req<ModelsResponse>("/models"),
+  /** Workspace file tree (newest-first) — @mention file suggestions */
+  getWorkspaceTree: () => req<WorkspaceTreeResponse>("/workspace/tree"),
 
   // ── Admin (curated model catalog; master-token owners or open dev servers) ──
   whoami: () => req<{ ok: boolean; isAdmin: boolean; mode: "open" | "token" }>("/admin/whoami"),

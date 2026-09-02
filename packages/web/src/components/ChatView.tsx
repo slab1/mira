@@ -4,6 +4,7 @@ import type { SettingsStore } from "../stores/settings"
 import type { Message, Part, Job } from "../api/client"
 import { api } from "../api/client"
 import { SlashAutocomplete, filterCommands } from "./CommandPalette"
+import { ModelPicker, MentionPicker, mentionFlat } from "./ComposerPickers"
 
 const EXAMPLE_PROMPTS = [
   "Explain this repo's architecture",
@@ -195,7 +196,7 @@ function ToolChip(props: { part: Part }) {
   )
 }
 
-export function ChatView(props: { store: AppStore; settings?: SettingsStore; onPaletteOpen?: () => void }) {
+export function ChatView(props: { store: AppStore; settings?: SettingsStore; onPaletteOpen?: () => void; onOpenSettings?: () => void }) {
   const s = () => props.store.state
   let scrollRef: HTMLDivElement | undefined
   let inputRef: HTMLTextAreaElement | undefined
@@ -208,15 +209,69 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
   const slashCommands = () => props.settings?.allCommands() ?? []
   const slashFiltered = () => filterCommands(slashQuery(), slashCommands())
   const [slashIndex, setSlashIndex] = createSignal(0)
+  const [slashDismissed, setSlashDismissed] = createSignal(false)
+  let lastSlashQ = ""
   createEffect(() => {
-    void slashQuery()
-    setSlashIndex(0)
+    const q = slashQuery()
+    if (q !== lastSlashQ) {
+      lastSlashQ = q
+      setSlashIndex(0)
+      setSlashDismissed(false)
+    }
   })
+  const slashActive = () => !mentionActive() && !slashDismissed() && slashQuery().startsWith("/") && slashFiltered().length > 0
   const handleSlashSelect = (name: string) => {
     props.store.setInput(name + " ")
     inputRef?.focus()
     autoGrow()
   }
+
+  // @mention autocomplete state — "@" at the start of a token (start or after whitespace)
+  const mentionQuery = (): { at: number; q: string } | null => {
+    const v = props.store.input()
+    const el = inputRef
+    const pos = el?.selectionStart ?? v.length
+    const before = v.slice(0, pos)
+    const at = before.lastIndexOf("@")
+    if (at === -1) return null
+    if (at > 0 && !/\s/.test(before[at - 1])) return null
+    const q = before.slice(at + 1)
+    if (/\s/.test(q)) return null
+    return { at, q }
+  }
+  const [mentionIndex, setMentionIndex] = createSignal(0)
+  const [mentionDismissed, setMentionDismissed] = createSignal(false)
+  let lastMentionQ = ""
+  createEffect(() => {
+    const m = mentionQuery()
+    const q = m?.q ?? ""
+    if (q !== lastMentionQ) {
+      lastMentionQ = q
+      setMentionIndex(0)
+      setMentionDismissed(false)
+    }
+  })
+  const mentionActive = () => !mentionDismissed() && mentionQuery() !== null
+  const [tree] = createResource(() => (mentionActive() ? api.getWorkspaceTree().catch(() => null) : null))
+  const mentionAgents = () => props.settings?.state.agents ?? []
+  const mentionFiles = () => tree()?.files ?? []
+  const mentionItems = () => {
+    const m = mentionQuery()
+    if (!m) return []
+    return mentionFlat(mentionAgents(), mentionFiles(), m.q)
+  }
+  const insertMention = (token: string) => {
+    const m = mentionQuery()
+    if (!m) return
+    const v = props.store.input()
+    const next = v.slice(0, m.at) + "@" + token + " " + v.slice(m.at + 1 + m.q.length)
+    props.store.setInput(next)
+    inputRef?.focus()
+    autoGrow()
+  }
+
+  // No provider keys configured yet (loaded once, still empty) → onboarding card
+  const noProviders = () => props.settings?.state.loaded === true && props.settings.state.providers.length === 0
 
   // pinned = stick to bottom; unpins the moment the user scrolls up to read,
   // and a "jump to latest" pill appears instead of yanking them down.
@@ -276,10 +331,39 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
   }
 
   const onKeyDown = (e: KeyboardEvent) => {
+    // @mention autocomplete navigation (takes priority over slash)
+    const mq = mentionQuery()
+    const mItems = mq ? mentionFlat(mentionAgents(), mentionFiles(), mq.q) : []
+    const hasMention = !mentionDismissed() && mq !== null && mItems.length > 0
+    if (hasMention) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault()
+        setMentionIndex((i) => Math.min(i + 1, mItems.length - 1))
+        return
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault()
+        setMentionIndex((i) => Math.max(i - 1, 0))
+        return
+      }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+        const pick = mItems[mentionIndex()]
+        if (pick) {
+          e.preventDefault()
+          insertMention(pick.token)
+          return
+        }
+      }
+      if (e.key === "Escape") {
+        e.preventDefault()
+        setMentionDismissed(true)
+        return
+      }
+    }
     // Slash autocomplete navigation
     const q = slashQuery()
     const filtered = slashFiltered()
-    const hasSlash = q.startsWith("/") && filtered.length > 0
+    const hasSlash = slashActive()
     if (hasSlash) {
       if (e.key === "ArrowDown") {
         e.preventDefault()
@@ -307,12 +391,7 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
       }
       if (e.key === "Escape") {
         e.preventDefault()
-        // Clear slash query by resetting to empty or keeping text without slash?
-        // Just blur the dropdown: set input to current without triggering
-        // We close by clearing the "/" prefix handling — user can press Esc to dismiss
-        // For now, do nothing but prevent bubbling; dropdown hides when query cleared
-        // So we clear the slash by not doing anything — parent will hide on next render if we clear?
-        // Instead, just keep input but hide dropdown via a flag — simplest: do nothing, user can continue typing
+        setSlashDismissed(true)
         return
       }
     }
@@ -738,72 +817,110 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
               ⚠ {s().error}
             </div>
           </Show>
-          <form onSubmit={handleSubmit} class="composer" style={{ display: "flex", "flex-direction": "column", padding: "10px 12px 9px", gap: "8px", position: "relative" }}>
-            <Show when={slashQuery().startsWith("/") && slashFiltered().length > 0}>
-              <SlashAutocomplete query={slashQuery()} commands={slashCommands()} selected={slashIndex()} onSelect={handleSlashSelect} onClose={() => {}} />
-            </Show>
-            <textarea
-              ref={inputRef}
-              value={props.store.input()}
-              onKeyDown={onKeyDown}
-              onInput={(e) => {
-                props.store.setInput(e.currentTarget.value)
-                autoGrow()
-                // Lazy load commands when user types "/"
-                if (e.currentTarget.value.startsWith("/")) void props.settings?.loadAll()
-              }}
-              placeholder="Message Mira…  ( / for commands · Ctrl+P palette )"
-              aria-label="Message Mira"
-              aria-autocomplete="list"
-              aria-expanded={slashQuery().startsWith("/") && slashFiltered().length > 0 ? "true" : "false"}
-              rows={1}
-              style={{ "min-height": "24px", "max-height": "160px" }}
-            />
-            <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", gap: "10px" }}>
-              <span class="sr-only">
-                Press Enter to send, Shift+Enter for a newline.
-              </span>
-              <span aria-hidden="true" style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", display: "flex", gap: "5px", "align-items": "center" }}>
-                <span class="kbd">Enter</span> send
-                <span style={{ opacity: 0.5 }}>·</span>
-                <span class="kbd">Shift+Enter</span> newline
-              </span>
-              <Show
-                when={!s().streaming}
-                fallback={
-                  <div style={{ display: "flex", gap: "8px", flex: "none" }}>
+          <Show
+            when={noProviders()}
+            fallback={
+              <form onSubmit={handleSubmit} class="composer" style={{ display: "flex", "flex-direction": "column", padding: "10px 12px 9px", gap: "8px", position: "relative" }}>
+                <Show when={mentionActive()}>
+                  <MentionPicker
+                    query={mentionQuery()?.q ?? ""}
+                    agents={mentionAgents()}
+                    files={mentionFiles()}
+                    selected={mentionIndex()}
+                    onSelect={insertMention}
+                    onClose={() => setMentionDismissed(true)}
+                  />
+                </Show>
+                <Show when={slashActive()}>
+                  <SlashAutocomplete query={slashQuery()} commands={slashCommands()} selected={slashIndex()} onSelect={handleSlashSelect} onClose={() => setSlashDismissed(true)} />
+                </Show>
+                <textarea
+                  ref={inputRef}
+                  value={props.store.input()}
+                  onKeyDown={onKeyDown}
+                  onInput={(e) => {
+                    props.store.setInput(e.currentTarget.value)
+                    autoGrow()
+                    // Lazy load commands when user types "/"
+                    if (e.currentTarget.value.startsWith("/")) void props.settings?.loadAll()
+                  }}
+                  placeholder="Message Mira…  ( / for commands · @ to mention · Ctrl+P palette )"
+                  aria-label="Message Mira"
+                  aria-autocomplete="list"
+                  aria-expanded={slashActive() || mentionActive() ? "true" : "false"}
+                  rows={1}
+                  style={{ "min-height": "24px", "max-height": "160px" }}
+                />
+                <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", gap: "10px" }}>
+                  <span class="sr-only">
+                    Press Enter to send, Shift+Enter for a newline.
+                  </span>
+                  <span style={{ display: "flex", gap: "8px", "align-items": "center", "min-width": "0" }}>
+                    <Show when={props.settings}>
+                      {(settings) => <ModelPicker settings={settings()} />}
+                    </Show>
+                    <span aria-hidden="true" style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", display: "flex", gap: "5px", "align-items": "center" }}>
+                      <span class="kbd">Enter</span> send
+                      <span style={{ opacity: 0.5 }}>·</span>
+                      <span class="kbd">Shift+Enter</span> newline
+                    </span>
+                  </span>
+                  <Show
+                    when={!s().streaming}
+                    fallback={
+                      <div style={{ display: "flex", gap: "8px", flex: "none" }}>
+                        <button
+                          type="submit"
+                          class="btn btn-warn-ghost"
+                          disabled={!props.store.input().trim()}
+                          title="Queue this message — it runs after the current turn"
+                          style={{ padding: "7px 12px", "font-size": "var(--fs-sm)", "border-radius": "var(--r-md)" }}
+                        >
+                          Queue ↵
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-danger-ghost"
+                          onClick={() => props.store.stopStream()}
+                          title="Stop the current response"
+                          style={{ padding: "7px 12px", "font-size": "var(--fs-sm)", "border-radius": "var(--r-md)" }}
+                        >
+                          ■ Stop
+                        </button>
+                      </div>
+                    }
+                  >
                     <button
                       type="submit"
-                      class="btn btn-warn-ghost"
+                      class="btn btn-solid"
                       disabled={!props.store.input().trim()}
-                      title="Queue this message — it runs after the current turn"
-                      style={{ padding: "7px 12px", "font-size": "var(--fs-sm)", "border-radius": "var(--r-md)" }}
+                      style={{ padding: "7px 16px", "font-size": "var(--fs-sm)", flex: "none" }}
                     >
-                      Queue ↵
+                      Send ↵
                     </button>
-                    <button
-                      type="button"
-                      class="btn btn-danger-ghost"
-                      onClick={() => props.store.stopStream()}
-                      title="Stop the current response"
-                      style={{ padding: "7px 12px", "font-size": "var(--fs-sm)", "border-radius": "var(--r-md)" }}
-                    >
-                      ■ Stop
-                    </button>
-                  </div>
-                }
+                  </Show>
+                </div>
+              </form>
+            }
+          >
+            {/* No provider keys yet — onboarding card instead of the composer */}
+            <div class="card" style={{ padding: "14px 16px", display: "flex", "align-items": "center", gap: "12px", background: "var(--accent-soft)", border: "1px solid var(--accent-border)" }}>
+              <div style={{ flex: "1", "min-width": "0" }}>
+                <div style={{ "font-size": "var(--fs-sm)", "font-weight": "600", color: "var(--fg)" }}>Add an API key to start chatting</div>
+                <div style={{ "font-size": "var(--fs-xs)", color: "var(--fg-muted)", "margin-top": "2px", "line-height": "1.5" }}>
+                  Mira needs at least one provider key (OpenRouter, Anthropic, …) to run models. Keys stay on your server.
+                </div>
+              </div>
+              <button
+                type="button"
+                class="btn btn-solid"
+                onClick={() => props.onOpenSettings?.()}
+                style={{ padding: "7px 14px", "font-size": "var(--fs-sm)", "border-radius": "var(--r-md)", flex: "none" }}
               >
-                <button
-                  type="submit"
-                  class="btn btn-solid"
-                  disabled={!props.store.input().trim()}
-                  style={{ padding: "7px 16px", "font-size": "var(--fs-sm)", flex: "none" }}
-                >
-                  Send ↵
-                </button>
-              </Show>
+                Add key →
+              </button>
             </div>
-          </form>
+          </Show>
         </div>
       </Show>
     </section>

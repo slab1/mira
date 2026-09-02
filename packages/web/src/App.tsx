@@ -7,7 +7,7 @@ import { ChatView } from "./components/ChatView"
 import { ToolView } from "./components/ToolView"
 import { SkillSelector } from "./components/SkillSelector"
 import { QuestionPrompt } from "./components/QuestionPrompt"
-import { SettingsPanel } from "./components/SettingsPanel"
+import { SettingsPanel, type TabId as SettingsTabId } from "./components/SettingsPanel"
 import { CommandPalette } from "./components/CommandPalette"
 import { api, getToken, setToken, validateToken, getApiUrl, setApiUrl } from "./api/client"
 
@@ -177,6 +177,11 @@ export default function App() {
   const settings = createSettingsStore()
   const [authorized, setAuthorized] = createSignal(false)
   const [settingsOpen, setSettingsOpen] = createSignal(false)
+  const [settingsTab, setSettingsTab] = createSignal<SettingsTabId | undefined>(undefined)
+  const openSettings = (tab?: SettingsTabId) => {
+    setSettingsTab(tab)
+    setSettingsOpen(true)
+  }
   const [paletteOpen, setPaletteOpen] = createSignal(false)
   // Mobile: session sidebar is an off-canvas drawer; toggled by the hamburger.
   const [sidebarOpen, setSidebarOpen] = createSignal(false)
@@ -201,6 +206,7 @@ export default function App() {
           return
         }
         await store.loadSessions()
+        void settings.loadAll()
         setAuthorized(true)
       } catch (e) {
         const err = e as Error
@@ -229,7 +235,7 @@ export default function App() {
       }
       if (e.key === "," && (e.ctrlKey || e.metaKey)) {
         e.preventDefault()
-        setSettingsOpen(true)
+        openSettings()
       }
     }
     window.addEventListener("keydown", onKey)
@@ -252,7 +258,7 @@ export default function App() {
   }
 
   return (
-    <Show when={authorized()} fallback={<AuthGate onReady={() => { setAuthorized(true); void store.loadSessions() }} />}>
+    <Show when={authorized()} fallback={<AuthGate onReady={() => { setAuthorized(true); void store.loadSessions(); void settings.loadAll() }} />}>
       <div
         style={{
           display: "flex",
@@ -410,7 +416,7 @@ export default function App() {
               <button
                 type="button"
                 class="btn btn-ghost"
-                onClick={() => setSettingsOpen(true)}
+                onClick={() => openSettings()}
                 title="Settings (Ctrl+,)"
                 aria-label="Open settings"
                 style={{ padding: "4px 9px", "font-size": "var(--fs-xs)", "border-radius": "var(--r-md)" }}
@@ -446,6 +452,18 @@ export default function App() {
               <SkillSelector onSelect={(skill) => { if (skill) void store.createSession(`${skill} session`).catch(() => {}) }} />
 
               {/* connection status — always visible, rightmost */}
+              <Show when={settings.state.loaded && settings.state.providers.length === 0}>
+                <button
+                  type="button"
+                  class="pill pill-warn"
+                  onClick={() => openSettings("providers")}
+                  title="No provider API keys configured — open Settings → Providers"
+                  style={{ cursor: "pointer", border: "1px solid var(--warn-border)" }}
+                >
+                  <span class="dot dot-pulse" style={{ background: "var(--warn)" }} />
+                  no API key
+                </button>
+              </Show>
               <span
                 title="Mira server health"
                 class={`pill ${store.state.connected ? "pill-ok" : "pill-danger"}`}
@@ -469,13 +487,13 @@ export default function App() {
           </Show>
 
           <div class="mira-main" style={{ flex: "1", display: "flex", overflow: "hidden", "min-height": "0" }}>
-            <ChatView store={store} settings={settings} onPaletteOpen={() => setPaletteOpen(true)} />
+            <ChatView store={store} settings={settings} onPaletteOpen={() => setPaletteOpen(true)} onOpenSettings={() => openSettings("providers")} />
             <ToolView store={store} />
           </div>
           <QuestionPrompt store={store} />
         </div>
       </div>
-      <SettingsPanel store={settings} open={settingsOpen()} onClose={() => setSettingsOpen(false)} />
+      <SettingsPanel store={settings} open={settingsOpen()} onClose={() => setSettingsOpen(false)} initialTab={settingsTab()} />
       <CommandPalette settings={settings} open={paletteOpen()} onClose={() => setPaletteOpen(false)} onInsert={handlePaletteInsert} />
     </Show>
   )

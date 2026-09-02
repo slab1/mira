@@ -115,6 +115,8 @@ export type SettingsState = {
   skills: SkillEntry[]
   permission: PermissionMatrix | null
   loading: boolean
+  /** true once loadAll() has completed at least once — distinguishes "not loaded yet" from "loaded and empty" */
+  loaded: boolean
   error: string | null
   theme: ThemeChoice
   resolvedTheme: "light" | "dark"
@@ -134,6 +136,7 @@ export function createSettingsStore() {
     skills: [],
     permission: null,
     loading: false,
+    loaded: false,
     error: null,
     theme: getInitialTheme(),
     resolvedTheme: resolveTheme(getInitialTheme()),
@@ -274,10 +277,13 @@ export function createSettingsStore() {
 
   async function loadAll(): Promise<void> {
     setState({ loading: true, error: null })
-    await Promise.all([loadConfig(), loadSchema(), loadMcp(), loadAgents(), loadCommands(), loadSkills()])
-    // providers & permission may depend on config, load after
-    await Promise.all([loadProviders(), loadPermission(), loadAdmin()])
-    setState("loading", false)
+    try {
+      await Promise.all([loadConfig(), loadSchema(), loadMcp(), loadAgents(), loadCommands(), loadSkills()])
+      // providers & permission may depend on config, load after
+      await Promise.all([loadProviders(), loadPermission(), loadAdmin()])
+    } finally {
+      setState({ loading: false, loaded: true })
+    }
   }
 
   async function saveConfig(patch: Partial<MiraConfig>): Promise<MiraConfig | null> {
