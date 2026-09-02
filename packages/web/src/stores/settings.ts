@@ -458,6 +458,14 @@ export function createSettingsStore() {
     return merged
   }
 
+  /** True when no provider has a usable key — drives onboarding card + header banner.
+   *  Reactive: reads state.providers (store reads are tracked). */
+  const noKeys = (): boolean => {
+    const ps = state.providers
+    if (ps.length === 0) return true
+    return !ps.some((p) => p.hasKey === true || (p.maskedKey && p.maskedKey !== "— not set —"))
+  }
+
   return {
     state,
     saving,
@@ -488,6 +496,7 @@ export function createSettingsStore() {
     removeMcp,
     // derived
     allCommands,
+    noKeys,
   }
 }
 

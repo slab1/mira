@@ -950,6 +950,9 @@ async function main() {
     })))
   })
 
+  // Permission matrix (for Settings UI — mirrors config.permission)
+  app.get("/permission", c => c.json(permissions.listRules()))
+
   // Permissions check (for TUI preflight + Settings dry-run)
   app.post("/permission/check", async c => {
     const req = await c.req.json() as { tool: string; args?: JsonValue; sessionID?: string; agent?: string }

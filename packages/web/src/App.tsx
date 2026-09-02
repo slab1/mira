@@ -235,7 +235,7 @@ export default function App() {
       }
       if (e.key === "," && (e.ctrlKey || e.metaKey)) {
         e.preventDefault()
-        openSettings()
+        openSettings("general")
       }
     }
     window.addEventListener("keydown", onKey)
@@ -416,7 +416,7 @@ export default function App() {
               <button
                 type="button"
                 class="btn btn-ghost"
-                onClick={() => openSettings()}
+                onClick={() => openSettings("general")}
                 title="Settings (Ctrl+,)"
                 aria-label="Open settings"
                 style={{ padding: "4px 9px", "font-size": "var(--fs-xs)", "border-radius": "var(--r-md)" }}
@@ -452,7 +452,7 @@ export default function App() {
               <SkillSelector onSelect={(skill) => { if (skill) void store.createSession(`${skill} session`).catch(() => {}) }} />
 
               {/* connection status — always visible, rightmost */}
-              <Show when={settings.state.loaded && settings.state.providers.length === 0}>
+              <Show when={settings.state.loaded && settings.noKeys()}>
                 <button
                   type="button"
                   class="pill pill-warn"

@@ -272,7 +272,7 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
   }
 
   // No provider keys configured yet (loaded once, still empty) → onboarding card
-  const noProviders = () => props.settings?.state.loaded === true && props.settings.state.providers.length === 0
+  const noProviders = () => props.settings?.state.loaded === true && props.settings.noKeys()
 
   // pinned = stick to bottom; unpins the moment the user scrolls up to read,
   // and a "jump to latest" pill appears instead of yanking them down.

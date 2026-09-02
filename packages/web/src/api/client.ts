@@ -175,6 +175,8 @@ export type ProviderEntry = {
   baseURL?: string
   status?: "ok" | "error" | "unknown"
   models?: string[]
+  /** true when the provider has a usable (expanded) API key — from GET /providers */
+  hasKey?: boolean
 }
 
 export type MCPServerEntry = {

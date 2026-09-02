@@ -857,7 +857,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                     API keys are masked. Add a provider to PATCH /config — keys never leave your server.
                   </div>
 
-                  <Show when={s().providers.length === 0 && !s().loading}>
+                  <Show when={props.store.noKeys() && !s().loading}>
                     <div
                       style={{
                         padding: "14px",
@@ -869,7 +869,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                         "margin-bottom": "12px",
                       }}
                     >
-                      No providers configured. Add one below or set keys in <code style={{ "font-family": "var(--font-mono)" }}>mira.json</code>.
+                      No provider keys configured. Add one below or set keys in <code style={{ "font-family": "var(--font-mono)" }}>mira.json</code>.
                     </div>
                   </Show>
 
