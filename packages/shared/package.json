@@ -13,7 +13,7 @@
     "./types": "./src/types/index.ts"
   },
   "scripts": {
-    "build": "tsc --noEmit || echo 'shared build warning'",
+    "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },

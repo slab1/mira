@@ -1,0 +1,6 @@
+[install]
+backend = "copy"
+exact = false
+
+[install.cache]
+disable = false
