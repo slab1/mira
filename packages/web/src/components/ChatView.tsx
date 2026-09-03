@@ -278,6 +278,48 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
   // and a "jump to latest" pill appears instead of yanking them down.
   const [pinned, setPinned] = createSignal(true)
 
+  // ── windowing: only render last N messages to avoid jank at 1k+ ──
+  const DEFAULT_VISIBLE = 100
+  const PAGE_SIZE = 100
+  const [visibleCount, setVisibleCount] = createSignal(DEFAULT_VISIBLE)
+  const visibleMessages = () => {
+    const msgs = s().messages
+    if (msgs.length <= visibleCount()) return msgs
+    return msgs.slice(msgs.length - visibleCount())
+  }
+  const hiddenCount = () => Math.max(0, s().messages.length - visibleCount())
+  // reset when switching sessions
+  createEffect(() => {
+    void s().currentId
+    setVisibleCount(DEFAULT_VISIBLE)
+  })
+  // if messages shrink, clamp back to default
+  createEffect(() => {
+    const len = s().messages.length
+    if (len <= DEFAULT_VISIBLE && visibleCount() !== DEFAULT_VISIBLE) setVisibleCount(DEFAULT_VISIBLE)
+  })
+  const loadMore = () => {
+    const el = scrollRef
+    const prevHeight = el?.scrollHeight ?? 0
+    const prevTop = el?.scrollTop ?? 0
+    setVisibleCount((c) => Math.min(c + PAGE_SIZE, s().messages.length))
+    queueMicrotask(() => {
+      if (!el) return
+      const newHeight = el.scrollHeight
+      el.scrollTop = prevTop + (newHeight - prevHeight)
+    })
+  }
+  const showAll = () => {
+    const el = scrollRef
+    const prevHeight = el?.scrollHeight ?? 0
+    const prevTop = el?.scrollTop ?? 0
+    setVisibleCount(s().messages.length)
+    queueMicrotask(() => {
+      if (!el) return
+      el.scrollTop = prevTop + (el.scrollHeight - prevHeight)
+    })
+  }
+
   // background jobs — poll while session active, show spinner cards in chat
   const [jobs, { refetch: refetchJobs }] = createResource(() => s().currentId, (id) => api.listJobs(id).catch(() => [] as Job[]))
   let jobsTimer: number | undefined
@@ -578,10 +620,25 @@ export function ChatView(props: { store: AppStore; settings?: SettingsStore; onP
                   </Show>
                 }
               >
-                <For each={s().messages}>
+                <Show when={hiddenCount() > 0}>
+                  <div style={{ display: "flex", "align-items": "center", gap: "8px", "justify-content": "center", padding: "4px 0" }}>
+                    <span style={{ "font-size": "var(--fs-xs)", color: "var(--fg-faint)" }}>
+                      {hiddenCount()} older message{hiddenCount() === 1 ? "" : "s"} hidden
+                    </span>
+                    <button type="button" class="btn btn-ghost" onClick={loadMore} style={{ padding: "4px 10px", "font-size": "var(--fs-xs)", "border-radius": "var(--r-full)", border: "1px solid var(--border)" }}>
+                      Load {Math.min(PAGE_SIZE, hiddenCount())} more
+                    </button>
+                    <Show when={hiddenCount() > PAGE_SIZE}>
+                      <button type="button" class="btn btn-ghost" onClick={showAll} style={{ padding: "4px 10px", "font-size": "var(--fs-xs)", "border-radius": "var(--r-full)", border: "1px solid var(--border)" }}>
+                        Show all ({s().messages.length})
+                      </button>
+                    </Show>
+                  </div>
+                </Show>
+                <For each={visibleMessages()}>
                   {(m, i) => {
                     const isUser = m.role === "user"
-                    const isLast = () => i() === s().messages.length - 1
+                    const isLast = () => i() === visibleMessages().length - 1
                     const showCaretHere = () => showCaret() && isLast()
 
                     // system / tool roles get compact treatments; user and

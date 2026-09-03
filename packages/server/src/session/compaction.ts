@@ -39,9 +39,9 @@ export interface CompactionResult {
 
 let cachedEnc: { encode: (s: string) => number[] } | null = null
 function getEnc(): { encode: (s: string) => number[] } | null {
-  // js-tiktoken disabled for test stability — fallback to heuristic (len/4)
-  // Enable by setting MIRA_TIKTOKEN=1 and ensuring js-tiktoken is installed
-  if (process.env.MIRA_TIKTOKEN !== "1") return null
+  // js-tiktoken enabled by default — fallback to heuristic (len/4) only when
+  // explicitly disabled via MIRA_TIKTOKEN=0 or if the module is unavailable
+  if (process.env.MIRA_TIKTOKEN === "0") return null
   if (cachedEnc) return cachedEnc
   try {
     const { getEncoding } = (globalThis as { require: (m: string) => { getEncoding?: () => { encode: (s: string) => number[] } } }).require?.("js-tiktoken") as { getEncoding: (n: string) => { encode: (s: string) => number[] } } | undefined ?? {}

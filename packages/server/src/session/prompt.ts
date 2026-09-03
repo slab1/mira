@@ -118,11 +118,42 @@ function providerOf(model: string, cfg: MiraConfig): string {
 // ── SessionPrompt ──────────────────────────────────────────────────
 
 export class SessionPrompt {
-  private doomDetectors = new Map<string, DoomLoopDetector>()
+  private static readonly DOOM_DETECTOR_MAX = 500
+  private static readonly DOOM_DETECTOR_TTL_MS = 30 * 60_000 // 30m idle eviction
+  private doomDetectors = new Map<string, { detector: DoomLoopDetector; lastAccess: number }>()
+  private doomDetectorCleanup?: ReturnType<typeof setInterval>
+  private ensureDoomDetectorCleanup() {
+    if (this.doomDetectorCleanup) return
+    this.doomDetectorCleanup = setInterval(() => this.evictIdleDoomDetectors(), 60_000)
+    this.doomDetectorCleanup.unref?.()
+  }
+  private evictIdleDoomDetectors(now = Date.now()) {
+    const cutoff = now - SessionPrompt.DOOM_DETECTOR_TTL_MS
+    for (const [id, entry] of this.doomDetectors) {
+      if (entry.lastAccess < cutoff) this.doomDetectors.delete(id)
+    }
+  }
   private getDoomDetector(sessionID: string): DoomLoopDetector {
-    let d = this.doomDetectors.get(sessionID)
-    if (!d) { d = new DoomLoopDetector(); this.doomDetectors.set(sessionID, d) }
-    return d
+    this.ensureDoomDetectorCleanup()
+    const now = Date.now()
+    const existing = this.doomDetectors.get(sessionID)
+    if (existing) {
+      existing.lastAccess = now
+      // Move to end for LRU ordering
+      this.doomDetectors.delete(sessionID)
+      this.doomDetectors.set(sessionID, existing)
+      return existing.detector
+    }
+    // Evict idle entries before inserting
+    this.evictIdleDoomDetectors(now)
+    // Cap at 500 — evict oldest (LRU) when over cap
+    if (this.doomDetectors.size >= SessionPrompt.DOOM_DETECTOR_MAX) {
+      const oldest = this.doomDetectors.keys().next().value as string | undefined
+      if (oldest) this.doomDetectors.delete(oldest)
+    }
+    const detector = new DoomLoopDetector()
+    this.doomDetectors.set(sessionID, { detector, lastAccess: now })
+    return detector
   }
   /** Queues persist in SQLite (message_queue) — survive restarts */
 
@@ -221,6 +252,115 @@ export class SessionPrompt {
       with: { parts: true },
       orderBy: (m, { asc }) => [asc(m.createdAt)],
     })
+  }
+
+  /**
+   * Paginated message fetch — cursor pagination (not offset) to avoid OOM at 10k msgs.
+   * Cursor = last message ID from previous page; limit default 50, max 100.
+   * Returns {messages, nextCursor} ordered by created_at DESC (newest first) for pagination.
+   */
+  async getMessagesPaginated(sessionID: string, opts: { cursor?: string; limit?: number } = {}): Promise<{ messages: Awaited<ReturnType<SessionPrompt["getMessages"]>>; nextCursor: string | null }> {
+    const rawLimit = opts.limit ?? 50
+    const limit = Math.max(1, Math.min(100, Math.floor(rawLimit)))
+    const cursor = opts.cursor
+
+    // Resolve cursor's created_at for pagination (cursor = message ID)
+    let cursorCreatedAt: number | null = null
+    let cursorId: string | null = null
+    if (cursor) {
+      try {
+        const row = this.deps.db.sqlite
+          .prepare(`SELECT created_at, id FROM messages WHERE id = ? AND session_id = ? LIMIT 1`)
+          .get(cursor, sessionID) as { created_at: number; id: string } | undefined
+        if (row) {
+          cursorCreatedAt = row.created_at
+          cursorId = row.id
+        } else {
+          cursorCreatedAt = null
+          cursorId = null
+        }
+      } catch {
+        cursorCreatedAt = null
+        cursorId = null
+      }
+    }
+
+    // Fetch limit+1 to determine nextCursor
+    const fetchLimit = limit + 1
+    let rows: Array<{ id: string; sessionID: string; role: string; createdAt: number }>
+    try {
+      if (cursorCreatedAt !== null && cursorId !== null) {
+        rows = this.deps.db.sqlite
+          .prepare(
+            `SELECT id, session_id as sessionID, role, created_at as createdAt FROM messages
+             WHERE session_id = ? AND (created_at < ? OR (created_at = ? AND id < ?))
+             ORDER BY created_at DESC, id DESC LIMIT ?`
+          )
+          .all(sessionID, cursorCreatedAt, cursorCreatedAt, cursorId, fetchLimit) as typeof rows
+      } else {
+        rows = this.deps.db.sqlite
+          .prepare(
+            `SELECT id, session_id as sessionID, role, created_at as createdAt FROM messages
+             WHERE session_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`
+          )
+          .all(sessionID, fetchLimit) as typeof rows
+      }
+    } catch {
+      const fallback = await this.deps.db.query.messages.findMany({
+        where: (m, { eq }) => eq(m.sessionID, sessionID),
+        orderBy: (m, { desc }) => [desc(m.createdAt)],
+        limit: fetchLimit,
+      })
+      rows = fallback.map(r => ({ id: r.id, sessionID: r.sessionID, role: r.role, createdAt: r.createdAt }))
+    }
+
+    const hasMore = rows.length > limit
+    const pageRows = hasMore ? rows.slice(0, limit) : rows
+    const nextCursor = hasMore ? pageRows[pageRows.length - 1].id : null
+
+    const messages = await Promise.all(
+      pageRows.map(async r => {
+        const parts = await this.deps.db.query.parts.findMany({
+          where: (p, { eq }) => eq(p.messageID, r.id),
+          orderBy: (p, { asc }) => [asc(p.createdAt)],
+        })
+        return { id: r.id, sessionID: r.sessionID, role: r.role as "user" | "assistant" | "system", createdAt: r.createdAt, parts }
+      })
+    )
+
+    return { messages, nextCursor }
+  }
+
+  /** Fetch last N messages efficiently (for loadContext cap) — avoids full scan OOM */
+  async getRecentMessages(sessionID: string, limit = 200) {
+    const capped = Math.max(1, Math.min(500, Math.floor(limit)))
+    try {
+      const rows = this.deps.db.sqlite
+        .prepare(
+          `SELECT id, session_id as sessionID, role, created_at as createdAt FROM messages
+           WHERE session_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`
+        )
+        .all(sessionID, capped) as Array<{ id: string; sessionID: string; role: string; createdAt: number }>
+      rows.reverse()
+      const messages = await Promise.all(
+        rows.map(async r => {
+          const parts = await this.deps.db.query.parts.findMany({
+            where: (p, { eq }) => eq(p.messageID, r.id),
+            orderBy: (p, { asc }) => [asc(p.createdAt)],
+          })
+          return { id: r.id, sessionID: r.sessionID, role: r.role as "user" | "assistant" | "system", createdAt: r.createdAt, parts }
+        })
+      )
+      return messages
+    } catch {
+      const fallback = await this.deps.db.query.messages.findMany({
+        where: (m, { eq }) => eq(m.sessionID, sessionID),
+        with: { parts: true },
+        orderBy: (m, { desc }) => [desc(m.createdAt)],
+        limit: capped,
+      })
+      return fallback.reverse()
+    }
   }
 
   async getTodos(sessionID: string) {
@@ -741,7 +881,35 @@ export class SessionPrompt {
   }
 
   private async loadContext(sessionID: string, systemPrompt: string): Promise<LoopMessage[]> {
-    const messages = await this.getMessages(sessionID)
+    // Cap to last 200 messages to avoid OOM at 10k msgs — use efficient LIMIT query, not full scan
+    const CONTEXT_CAP = 200
+    let messages: Awaited<ReturnType<SessionPrompt["getMessages"]>>
+    let totalCount = 0
+    try {
+      const cnt = this.deps.db.sqlite
+        .prepare(`SELECT COUNT(*) as c FROM messages WHERE session_id = ?`)
+        .get(sessionID) as { c: number } | undefined
+      totalCount = cnt?.c ?? 0
+    } catch {}
+    if (totalCount > CONTEXT_CAP) {
+      messages = await this.getRecentMessages(sessionID, CONTEXT_CAP)
+    } else {
+      try {
+        messages = totalCount > 0 ? await this.getRecentMessages(sessionID, CONTEXT_CAP) : await this.getMessages(sessionID)
+        if (!totalCount && messages.length > CONTEXT_CAP) {
+          messages = messages.slice(-CONTEXT_CAP)
+          totalCount = messages.length + 1
+        } else if (totalCount === 0) {
+          totalCount = messages.length
+        }
+      } catch {
+        messages = await this.getMessages(sessionID)
+        totalCount = messages.length
+        if (messages.length > CONTEXT_CAP) {
+          messages = messages.slice(-CONTEXT_CAP)
+        }
+      }
+    }
     // Hierarchical memory: systemPrompt already contains AGENTS.md via buildSystemPrompt (project instructions)
     // This method wires L1 working (messages) + L2 episodic (todos/findings) + L3 semantic (knowledge) + procedural (skills) + Memory Bank (Kilo K3)
     const context: LoopMessage[] = [{ role: "system", content: systemPrompt }]
@@ -781,6 +949,14 @@ export class SessionPrompt {
           context.push({ role: "system", content: `Relevant memory:\n${docs.map(d => `- ${d.title}: ${d.content.slice(0, 300)}`).join("\n")}` })
         }
       } catch {}
+    }
+    // Compaction summary when history was truncated (cap 200) — prevents OOM and gives LLM context that earlier history exists
+    if (totalCount > CONTEXT_CAP) {
+      const omitted = totalCount - messages.length
+      context.push({
+        role: "system",
+        content: `## Conversation Summary (compacted)\nEarlier history truncated for context window: showing last ${messages.length} of ${totalCount} messages (${omitted} earlier messages omitted). If you need earlier context, it is available via paginated history.`,
+      })
     }
     for (const m of messages) {
       const parts = m.parts ?? []

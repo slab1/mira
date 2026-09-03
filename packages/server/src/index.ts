@@ -419,10 +419,17 @@ async function main() {
   const rateLimitBuckets = new Map<string, { tokens: number; last: number }>()
   // Hygiene: evict idle buckets (>10min) so the map can't grow unbounded under IP churn
   const RATE_LIMIT_BUCKET_TTL_MS = 10 * 60_000
+  const RATE_LIMIT_MAX_BUCKETS = 1000
   const rateLimitCleanup = setInterval(() => {
     const cutoff = Date.now() - RATE_LIMIT_BUCKET_TTL_MS
     for (const [ip, bucket] of rateLimitBuckets) {
       if (bucket.last < cutoff) rateLimitBuckets.delete(ip)
+    }
+    // Enforce cap even after TTL eviction — evict oldest (LRU) until under cap
+    while (rateLimitBuckets.size > RATE_LIMIT_MAX_BUCKETS) {
+      const oldest = rateLimitBuckets.keys().next().value as string | undefined
+      if (!oldest) break
+      rateLimitBuckets.delete(oldest)
     }
   }, 60_000)
   rateLimitCleanup.unref?.()
@@ -459,7 +466,16 @@ async function main() {
     const now = Date.now()
     let bucket = rateLimitBuckets.get(key)
     if (!bucket) {
+      // Enforce cap at 1000 — evict oldest (LRU) when over cap
+      if (rateLimitBuckets.size >= RATE_LIMIT_MAX_BUCKETS) {
+        const oldest = rateLimitBuckets.keys().next().value as string | undefined
+        if (oldest) rateLimitBuckets.delete(oldest)
+      }
       bucket = { tokens: capacity, last: now }
+      rateLimitBuckets.set(key, bucket)
+    } else {
+      // Move to end for LRU ordering
+      rateLimitBuckets.delete(key)
       rateLimitBuckets.set(key, bucket)
     }
     const elapsed = now - bucket.last
@@ -819,11 +835,24 @@ async function main() {
     return prompt.streamResponse(id, text as string, model as string | undefined, { maxSteps: maxSteps as number | undefined, agent: (agent as string | undefined) ?? null, signal })
   })
 
-  // Messages & parts
+  // Messages & parts — paginated (cursor pagination, not offset) to avoid OOM at 10k msgs
+  // Query: ?cursor=<messageId>&limit=50 (cursor = last message ID, limit default 50, max 100)
+  // Returns {messages, nextCursor} when paginated; array for backward compat when no params
   app.get("/session/:id/message", async c => {
     const id = requireId(c)
     if (!id) return c.json({ error: "not found" }, 404)
     if (!(await authorizedSession(id, c))) return c.json({ error: "not found" }, 404)
+    const cursor = c.req.query("cursor")
+    const limitRaw = c.req.query("limit")
+    const hasPagination = cursor !== undefined || limitRaw !== undefined
+    if (hasPagination) {
+      const parsedLimit = limitRaw ? Number(limitRaw) : 50
+      const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(100, Math.floor(parsedLimit))) : 50
+      const cleanCursor = cursor && cursor.trim().length > 0 ? cursor.trim() : undefined
+      const { messages, nextCursor } = await prompt.getMessagesPaginated(id, { cursor: cleanCursor, limit })
+      return c.json({ messages, nextCursor })
+    }
+    // Backward compat: no pagination params → return all messages (existing web/TUI behavior)
     const messages = await prompt.getMessages(id)
     return c.json(messages)
   })
