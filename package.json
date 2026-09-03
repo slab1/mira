@@ -16,5 +16,8 @@
     "turbo": "2.10.11",
     "typescript": "5.9.3"
   },
-  "packageManager": "bun@1.2.0"
+  "packageManager": "bun@1.2.0",
+  "dependencies": {
+    "symlink": "^2.1.0"
+  }
 }
