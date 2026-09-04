@@ -13,7 +13,59 @@ concurrency:
 permissions:
   contents: read
 
+# H3-C Fix 3 — Vercel Remote Cache passthrough (verdict §5.4 / §7.4).
+# Empty when secrets/vars are absent (forks) — turbo treats unset as
+# "no remote cache" and still uses the local .turbo cache. Never fails.
+env:
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+
 jobs:
+  # H3-C Fix 3 — path-filtered gating (verdict §5.5 / §7.4). Keeps one
+  # workflow; docs-only PRs skip build/test as "skipped" (never a vacuous
+  # green pass). No `paths:` at top level — that would skip CI entirely.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      server: ${{ steps.filter.outputs.server }}
+      web: ${{ steps.filter.outputs.web }}
+      slack: ${{ steps.filter.outputs.slack }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'packages/**'
+              - 'turbo.json'
+              - 'package.json'
+              - 'bun.lock'
+              - 'bunfig.toml'
+            server:
+              - 'packages/server/**'
+              - 'packages/shared/**'
+              - 'turbo.json'
+              - 'bun.lock'
+              - 'package.json'
+              - 'bunfig.toml'
+            web:
+              - 'packages/web/**'
+              - 'packages/shared/**'
+              - 'turbo.json'
+              - 'bun.lock'
+              - 'package.json'
+              - 'bunfig.toml'
+            slack:
+              - 'packages/slack/**'
+              - 'packages/shared/**'
+              - 'turbo.json'
+              - 'bun.lock'
+              - 'package.json'
+              - 'bunfig.toml'
+
   typecheck:
     name: typecheck
     runs-on: ubuntu-latest
@@ -26,16 +78,23 @@ jobs:
         with:
           node-version: 22
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
       - name: Typecheck
-        run: bunx turbo run typecheck --cache-dir=.turbo
+        # NOTE: --continue is a CLI flag (turbo.json must NOT get a `continue`
+        # key — reverted in c49d8d2a). Tri-state mode for typecheck is
+        # `dependencies-successful` (see scripts/ci/turbo-tri-state.js --list).
+        run: bunx turbo run typecheck --continue --cache-dir=.turbo
 
   build:
     name: build
     runs-on: ubuntu-latest
-    needs: typecheck
+    needs: [changes, typecheck]
+    # Docs-only PRs skip (status "skipped", never green-on-empty).
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.code == 'true' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # required for the ...[base...HEAD] affected filter
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -43,22 +102,64 @@ jobs:
         with:
           node-version: 22
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
       - name: Turborepo remote cache
         uses: actions/cache@v4
         with:
           path: .turbo
           key: turbo-${{ github.sha }}
           restore-keys: turbo-
-      - name: Build
-        run: bunx turbo run build --cache-dir=.turbo
+      - name: Turborepo remote cache login (optional)
+        # Guarded: forks without TURBO_TOKEN skip gracefully instead of
+        # failing. Actual auth is env passthrough (top-level TURBO_TOKEN /
+        # TURBO_TEAM); this step only records intent.
+        if: ${{ secrets.TURBO_TOKEN != '' }}
+        run: |
+          echo "Remote cache enabled (team: ${{ vars.TURBO_TEAM }})."
+          bunx turbo --version
+      - name: Build (affected on PRs, full otherwise)
+        # H3-C Fix 3 — affected-only PR builds (verdict §5.2 / §7.4), ~40-60%
+        # PR CI cut with zero lockfile migration. --dry=json plans without
+        # executing; an empty task list or a graph error falls back to a FULL
+        # build — never green on empty. Push-to-main always builds full.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+            git fetch --no-tags --depth=50 origin "${{ github.base_ref }}" || true
+            FILTER="...[$BASE...HEAD]"
+            if bunx turbo run build --filter="$FILTER" --dry=json > /tmp/turbo-plan.json 2>/tmp/turbo-plan.err; then
+              TASKS=$(node -e 'const p=require("/tmp/turbo-plan.json"); console.log(((p&&(p.tasks||[]))||[]).length);')
+              if [ "$TASKS" -gt 0 ]; then
+                echo "Affected build: $TASKS task(s) for filter $FILTER"
+                bunx turbo run build --filter="$FILTER" --continue --cache-dir=.turbo
+              else
+                echo "Affected filter resolved 0 tasks — falling back to FULL build (never green on empty)."
+                bunx turbo run build --continue --cache-dir=.turbo
+              fi
+            else
+              echo "Affected graph failed — falling back to FULL build."
+              cat /tmp/turbo-plan.err || true
+              bunx turbo run build --continue --cache-dir=.turbo
+            fi
+          else
+            bunx turbo run build --continue --cache-dir=.turbo
+          fi
+      - name: Check blocking failures (tri-state)
+        if: always()
+        # Usage: node scripts/ci/turbo-tri-state.js --require=@mira/server,@mira/shared
+        # Tri-state: blocking pkg failed → exit 1 (never); only non-blocking
+        # failed → warning, exit 0 (dependencies-successful); none → exit 0 (always).
+        run: node scripts/ci/turbo-tri-state.js --require=@mira/server,@mira/shared
 
   test:
     name: test
     runs-on: ubuntu-latest
-    needs: build
+    needs: [changes, build]
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.code == 'true' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # required for the ...[base...HEAD] affected filter
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -66,15 +167,40 @@ jobs:
         with:
           node-version: 22
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
       - name: Turborepo cache
         uses: actions/cache@v4
         with:
           path: .turbo
           key: turbo-${{ github.sha }}
           restore-keys: turbo-
-      - name: Test
-        run: bunx turbo run test --cache-dir=.turbo
+      - name: Test (affected on PRs, full otherwise)
+        # Same affected + full-build-fallback contract as the build job above.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+            git fetch --no-tags --depth=50 origin "${{ github.base_ref }}" || true
+            FILTER="...[$BASE...HEAD]"
+            if bunx turbo run test --filter="$FILTER" --dry=json > /tmp/turbo-plan.json 2>/tmp/turbo-plan.err; then
+              TASKS=$(node -e 'const p=require("/tmp/turbo-plan.json"); console.log(((p&&(p.tasks||[]))||[]).length);')
+              if [ "$TASKS" -gt 0 ]; then
+                echo "Affected test: $TASKS task(s) for filter $FILTER"
+                bunx turbo run test --filter="$FILTER" --continue --cache-dir=.turbo
+              else
+                echo "Affected filter resolved 0 tasks — falling back to FULL test (never green on empty)."
+                bunx turbo run test --continue --cache-dir=.turbo
+              fi
+            else
+              echo "Affected graph failed — falling back to FULL test."
+              cat /tmp/turbo-plan.err || true
+              bunx turbo run test --continue --cache-dir=.turbo
+            fi
+          else
+            bunx turbo run test --continue --cache-dir=.turbo
+          fi
+      - name: Check blocking failures (tri-state)
+        if: always()
+        run: node scripts/ci/turbo-tri-state.js --require=@mira/server,@mira/shared
 
   eval:
     name: eval (PR fast)
@@ -90,7 +216,7 @@ jobs:
         with:
           node-version: 22
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
       - name: Turborepo cache
         uses: actions/cache@v4
         with:
@@ -98,7 +224,7 @@ jobs:
           key: turbo-${{ github.sha }}
           restore-keys: turbo-
       - name: Eval — fast tier (PR)
-        run: bunx turbo run eval --cache-dir=.turbo -- --tier=fast
+        run: bunx turbo run eval --continue --cache-dir=.turbo -- --tier=fast
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

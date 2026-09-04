@@ -1,4 +1,10 @@
 [install]
+# H3-C Fix 2 (docs/monorepo-alternatives-2026-09-03.md §7.3): frozen-lockfile
+# discipline. Bun 1.3 supports this key (mirrors --frozen-lockfile CLI flag):
+# `bun install` fails fast on bun.lock drift instead of silently rewriting it.
+frozenLockfile = true
+# proot/aarch64 EPERM fix: "copy" backend avoids symlink/hardlink failures in
+# the Bun store (matches existing resilience recipe from fedd1138).
 backend = "copy"
 exact = false
 
