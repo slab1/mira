@@ -11,6 +11,9 @@
  *   GET    /session/:id/message → Message[]
  *   GET    /session/:id/todo   → Todo[]
  *   POST   /session/:id/todo
+ *   GET    /session/:id/jobs   → Job[] (task UI + TraceViewer DAG poll)
+ *   GET    /job/:id            → Job (TraceViewer DAG poll)
+ *   POST   /job/:id/cancel     → Job (TraceViewer per-node / cancel-all)
  *   GET    /tools
  *   POST   /permission/check
  *   WS     /                   → BusEvent stream

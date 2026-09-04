@@ -25,13 +25,17 @@ import { z } from "zod"
 import { and, eq } from "drizzle-orm"
 import type { ToolDef } from "./registry.js"
 import type { MiraDB } from "../storage/db.js"
+import type { Bus } from "../bus/index.js"
 import { isKnownAgent } from "../agents/templates.js"
 import { jobs, findings } from "../storage/schema.js"
 import type { JsonValue } from "../types/index.js"
 import { mergeStrategySchema, type MergeStrategy } from "./orchestrate-planner.js"
+import { getJob } from "./task.js"
+import type { Job } from "./task.js"
 
 // Re-export the job board from task.ts so callers have one surface for
-// polling/cancelling orchestrate-spawned jobs.
+// polling/cancelling orchestrate-spawned jobs. Orchestrate rows live in the
+// same `jobs` table, so getJob/listJobs cover them with no extra wiring.
 export { getJob, listJobs, cancelJob } from "./task.js"
 
 export const orchestrateTaskSchema = z.object({
@@ -62,6 +66,45 @@ export const ORCHESTRATE_CONCURRENCY_CAP = 8
 export const orchestrateJobAborts = new Map<string, AbortController>()
 
 type MaybeDB = MiraDB | null | undefined
+
+/**
+ * H3-A: cancel an orchestrate-spawned job. Mirrors tools/task.ts cancelJob:
+ * abort the live wave node's AbortController (so the in-flight subagent
+ * actually terminates instead of running to completion) + flip the DB row
+ * to 'cancelled' guarded on status='running' (cancel wins races; terminal
+ * states are never overwritten) + publish a Bus job.cancelled event.
+ * No-op for unknown jobs (returns undefined, still publishes the event
+ * when a bus is provided so UI subscribers converge).
+ */
+export async function cancelOrchestrateJob(
+  db: MaybeDB,
+  jobID: string,
+  opts?: { bus?: Bus; sessionID?: string },
+): Promise<Job | undefined> {
+  // Abort the live wave node, if any (no-op for completed/unknown jobs).
+  orchestrateJobAborts.get(jobID)?.abort()
+  orchestrateJobAborts.delete(jobID)
+  if (!db) {
+    opts?.bus?.publish({
+      type: "job.cancelled",
+      sessionID: opts.sessionID ?? "",
+      payload: { jobID, status: "cancelled" } as JsonValue,
+      timestamp: Date.now(),
+    })
+    return undefined
+  }
+  await db.update(jobs)
+    .set({ status: "cancelled", updatedAt: Date.now() })
+    .where(and(eq(jobs.id, jobID), eq(jobs.status, "running")))
+  const cancelled = await getJob(db, jobID)
+  opts?.bus?.publish({
+    type: "job.cancelled",
+    sessionID: opts.sessionID ?? cancelled?.parentSessionID ?? "",
+    payload: { jobID, taskID: cancelled?.id, status: cancelled?.status ?? "cancelled" } as JsonValue,
+    timestamp: Date.now(),
+  })
+  return cancelled
+}
 
 export function topologicalWaves(tasks: OrchestrateTask[]): { waves: OrchestrateTask[][]; error?: string } {
   const byId = new Map(tasks.map(t => [t.id, t] as const))

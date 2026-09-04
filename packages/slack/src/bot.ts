@@ -20,7 +20,11 @@ import { App, LogLevel } from "@slack/bolt"
 import type { SlackCommandMiddlewareArgs, SlackEventMiddlewareArgs, AllMiddlewareArgs } from "@slack/bolt"
 import { createSession, streamPrompt, checkHealth, truncateForSlack } from "./mira.js"
 
-declare const process: { env: Record<string, string | undefined>; exit(code?: number): never }
+declare const process: {
+  env: Record<string, string | undefined>
+  exit(code?: number): never
+  on(event: string, listener: (...args: never[]) => void): void
+}
 
 const MIRA_API_URL = process.env.MIRA_API_URL ?? "http://127.0.0.1:4096"
 const MIRA_API_KEY = process.env.MIRA_API_KEY ?? process.env.MIRA_TOKEN ?? ""
@@ -44,6 +48,29 @@ async function runTurn(prompt: string, threadHint?: string): Promise<string> {
   // Pass agent via session (created with agent); stream uses session's agent by default
   return text || "_Mira returned no text — check server logs._"
 }
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function isSocketDisconnect(e: unknown): boolean {
+  const msg = String((e as { stack?: string; message?: string })?.stack ?? e)
+  return msg.includes("server explicit disconnect") || msg.includes("token_expired") || msg.includes("invalid_auth")
+}
+
+// Socket Mode disconnects surface as unhandled rejections deep inside
+// @slack/socket-mode's state machine — translate them into actionable
+// guidance instead of a raw finity stack trace.
+process.on("unhandledRejection", (reason) => {
+  if (isSocketDisconnect(reason)) {
+    console.error("[mira-slack] Socket Mode connection rejected by Slack.")
+    console.error("[mira-slack] Check SLACK_APP_TOKEN (xapp-…, needs connections:write) and that Socket Mode is enabled on the app.")
+    console.error("[mira-slack] The bot token was accepted — only the socket handshake failed. Retrying will not help until the app token is fixed.")
+    process.exit(1)
+  }
+  console.error("[mira-slack] unhandled rejection:", reason)
+  process.exit(1)
+})
 
 async function start() {
   const missing = isMissingCreds()
@@ -179,7 +206,20 @@ async function start() {
     console.error("[mira-slack] bolt error:", error)
   })
 
-  await app.start()
+  // Retry the socket handshake a few times — transient network blips
+  // recover, but a bad/expired SLACK_APP_TOKEN fails fast with guidance.
+  const MAX_ATTEMPTS = 5
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      await app.start()
+      break
+    } catch (e) {
+      const last = attempt === MAX_ATTEMPTS
+      console.error(`[mira-slack] Socket Mode connect attempt ${attempt}/${MAX_ATTEMPTS} failed: ${String((e as Error)?.message ?? e)}`)
+      if (last) throw e
+      await sleep(5000 * attempt)
+    }
+  }
   console.log(`[mira-slack] ⚡️ Bolt app started (Socket Mode) — MIRA_API_URL=${MIRA_API_URL} agent=${DEFAULT_AGENT}`)
   console.log(`[mira-slack] Slash command: /mira <prompt>  ·  Mention: @Mira <prompt>  ·  Replies in thread`)
 }
