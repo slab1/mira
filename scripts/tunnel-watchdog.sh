@@ -29,7 +29,7 @@ alive() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
 start_server() {
   if curl -sf "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1; then return 0; fi
   echo "[watchdog $(date -u +%H:%M:%S)] server down — restarting"
-  setsid bash -c "set -a; . ${MIRA_ENV}; set +a; export HOST=127.0.0.1 PORT=${PORT} CORS_ORIGINS=https://slab1.github.io; cd /tmp/aether; exec bun packages/server/src/index.ts" >>"${SRV_LOG}" 2>&1 </dev/null &
+  setsid bash -c "set -a; . ${MIRA_ENV}; set +a; export HOST=127.0.0.1 PORT=${PORT} CORS_ORIGINS=https://slab1.github.io; cd /workspace/mira; exec bun packages/server/src/index.ts" >>"${SRV_LOG}" 2>&1 </dev/null &
   echo $! > "${SRV_PID}"
 }
 
@@ -59,11 +59,21 @@ start_tunnel() {
 sync_pages() {
   local url="$1"
   echo "[watchdog $(date -u +%H:%M:%S)] syncing VITE_API_URL + redeploy Pages"
-  if gh variable set VITE_API_URL --body "$url" --repo "${REPO}" >/dev/null 2>&1 && \
-     gh workflow run pages.yml --repo "${REPO}" >/dev/null 2>&1; then
-    echo "[watchdog $(date -u +%H:%M:%S)] Pages redeploy triggered"
+  local current
+  current=$(grep -oP 'VITE_API_URL: \K.*' .github/workflows/pages.yml 2>/dev/null | tr -d '"' | tr -d "'" | xargs)
+  if [ "$current" = "$url" ]; then
+    echo "[watchdog $(date -u +%H:%M:%S)] URL unchanged (${url}), skipping commit"
+    return 0
+  fi
+  git config user.email "watchdog@mira.local" 2>/dev/null || true
+  git config user.name "Mira Watchdog" 2>/dev/null || true
+  if sed -i "s|VITE_API_URL: .*|VITE_API_URL: ${url}|" .github/workflows/pages.yml \
+     && git add .github/workflows/pages.yml \
+     && git commit -m "ci: update VITE_API_URL to ${url}" --quiet \
+     && git push origin main --quiet 2>/dev/null; then
+    echo "[watchdog $(date -u +%H:%M:%S)] Pages redeploy triggered via git push"
   else
-    echo "[watchdog $(date -u +%H:%M:%S)] gh sync failed (check gh auth)"
+    echo "[watchdog $(date -u +%H:%M:%S)] git sync failed (check auth / push access)"
   fi
 }
 

@@ -20,6 +20,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      VITE_API_URL: https://raymond-strategic-vice-feeds.trycloudflare.com
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -32,10 +34,6 @@ jobs:
       - name: Build web client
         working-directory: packages/web
         run: bunx vite build
-        env:
-          # Pages frontend calls the Mira server cross-origin (tunnel or PaaS).
-          # Override per-environment via repo variable VITE_API_URL.
-          VITE_API_URL: ${{ vars.VITE_API_URL }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: packages/web/dist
