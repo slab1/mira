@@ -106,10 +106,16 @@ function tierColor(tier: string): string {
 }
 
 export function MemoryGraph(props: Props) {
-  const [graph] = createResource(() => api.getKnowledgeGraph(100).catch(() => ({ nodes: [], edges: [] } as KnowledgeGraph)))
+  const [graph, { refetch }] = createResource(() => api.getKnowledgeGraph(100).catch(() => ({ nodes: [], edges: [] } as KnowledgeGraph)))
   const [selectedId, setSelectedId] = createSignal<string | null>(null)
   const [hoveredId, setHoveredId] = createSignal<string | null>(null)
   const [focusIndex, setFocusIndex] = createSignal(0)
+  const [busy, setBusy] = createSignal<string | null>(null)
+  const [seedTitle, setSeedTitle] = createSignal("")
+  const [seedContent, setSeedContent] = createSignal("")
+  const [seedTier, setSeedTier] = createSignal("semantic")
+  const [showSeed, setShowSeed] = createSignal(false)
+  const [seedError, setSeedError] = createSignal<string | null>(null)
 
   const nodes = () => graph()?.nodes ?? []
   const edges = () => graph()?.edges ?? []
@@ -164,13 +170,134 @@ export function MemoryGraph(props: Props) {
 
   const handleResolve = async (n: GraphNode) => {
     if (n.kind !== "finding") return
+    setBusy(`resolve:${n.id}`)
     try {
       await api.resolveFinding(n.id)
-      // refetch graph after resolve
-      // trigger reload by mutating? simplest: call getKnowledgeGraph again via resource refetch not exposed, so just clear selection
-      setSelectedId(null)
-    } catch {}
+      await refetch()
+    } catch {} finally {
+      setBusy(null)
+    }
   }
+
+  const handleTouch = async (n: GraphNode) => {
+    if (n.kind !== "knowledge") return
+    setBusy(`touch:${n.id}`)
+    try {
+      await api.touchKnowledge(n.id)
+      await refetch()
+    } catch {} finally {
+      setBusy(null)
+    }
+  }
+
+  const handlePromote = async (n: GraphNode) => {
+    if (n.kind !== "finding") return
+    setBusy(`promote:${n.id}`)
+    try {
+      await api.promoteFinding(n.id)
+      await refetch()
+    } catch {} finally {
+      setBusy(null)
+    }
+  }
+
+  const handleSeed = async () => {
+    const title = seedTitle().trim()
+    const content = seedContent().trim()
+    if (!title || !content) {
+      setSeedError("Title and content are required.")
+      return
+    }
+    if (title.length > 200) {
+      setSeedError("Title must be 200 characters or fewer.")
+      return
+    }
+    if (content.length > 4000) {
+      setSeedError("Content must be 4000 characters or fewer.")
+      return
+    }
+    setBusy("seed")
+    setSeedError(null)
+    try {
+      await api.seedKnowledge({ title, content, tier: seedTier() })
+      setSeedTitle("")
+      setSeedContent("")
+      setSeedTier("semantic")
+      setShowSeed(false)
+      await refetch()
+    } catch (e) {
+      setSeedError(e instanceof Error ? e.message : "Seed failed.")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  /** Shared seed form — rendered in the empty state AND the toolbar bar (never both). */
+  const seedForm = (prefix: string) => (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault()
+        void handleSeed()
+      }}
+      aria-label="Seed knowledge form"
+      style={{ display: "flex", "flex-direction": "column", gap: "8px", width: "100%", "max-width": "44ch", margin: prefix === "empty" ? "0 auto" : "0", "text-align": "left" }}
+    >
+      <div style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
+        <label class="settings-label" for={`${prefix}-seed-title`}>Title</label>
+        <input
+          id={`${prefix}-seed-title`}
+          class="input"
+          type="text"
+          value={seedTitle()}
+          onInput={(e) => setSeedTitle(e.currentTarget.value)}
+          placeholder="What should Mira remember?"
+          maxlength={200}
+          style={{ "font-size": "var(--fs-sm)" }}
+        />
+      </div>
+      <div style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
+        <label class="settings-label" for={`${prefix}-seed-content`}>Content</label>
+        <textarea
+          id={`${prefix}-seed-content`}
+          class="input"
+          value={seedContent()}
+          onInput={(e) => setSeedContent(e.currentTarget.value)}
+          placeholder="The fact, decision, or snippet…"
+          rows={3}
+          maxlength={4000}
+          style={{ resize: "vertical", "font-size": "var(--fs-sm)", "line-height": "1.5" }}
+        />
+      </div>
+      <div style={{ display: "flex", gap: "8px", "align-items": "flex-end" }}>
+        <div style={{ display: "flex", "flex-direction": "column", gap: "4px", flex: "1" }}>
+          <label class="settings-label" for={`${prefix}-seed-tier`}>Tier</label>
+          <select
+            id={`${prefix}-seed-tier`}
+            class="input"
+            value={seedTier()}
+            onChange={(e) => setSeedTier(e.currentTarget.value)}
+            style={{ "font-size": "var(--fs-sm)" }}
+          >
+            <option value="semantic">semantic</option>
+            <option value="episodic">episodic</option>
+            <option value="procedural">procedural</option>
+          </select>
+        </div>
+        <button
+          type="submit"
+          class="btn btn-solid"
+          disabled={busy() === "seed"}
+          aria-label="Save knowledge entry"
+          style={{ padding: "7px 14px", "font-size": "var(--fs-sm)", "white-space": "nowrap" }}
+        >
+          {busy() === "seed" ? "Saving…" : "+ Seed memory"}
+        </button>
+      </div>
+      <Show when={seedError()}>
+        <div class="alert" role="alert" style={{ "font-size": "var(--fs-xs)" }}>{seedError()}</div>
+      </Show>
+    </form>
+  )
 
   return (
     <div
@@ -193,6 +320,18 @@ export function MemoryGraph(props: Props) {
           <Show when={graph.loading}>
             <span class="pill pill-warn" style={{ "font-size": "var(--fs-2xs)" }}>loading…</span>
           </Show>
+          <Show when={nodes().length > 0}>
+            <button
+              type="button"
+              class={showSeed() ? "btn btn-outline" : "btn btn-ghost"}
+              onClick={() => setShowSeed((v) => !v)}
+              aria-label={showSeed() ? "Hide seed knowledge form" : "Seed a knowledge entry"}
+              aria-expanded={showSeed() ? "true" : "false"}
+              style={{ padding: "3px 10px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-full)" }}
+            >
+              {showSeed() ? "✕ seed" : "+ seed"}
+            </button>
+          </Show>
         </div>
         <div class="memory-canvas-legend" aria-hidden="true">
           <span class="memory-legend-item"><span class="memory-legend-dot" style={{ background: "var(--warn)" }} /> episodic</span>
@@ -200,6 +339,12 @@ export function MemoryGraph(props: Props) {
           <span class="memory-legend-item"><span class="memory-legend-diamond" style={{ background: "var(--accent-soft)", "border-color": "var(--accent)" }} /> procedural</span>
         </div>
       </div>
+      {/* collapsible seed bar (non-empty graphs) */}
+      <Show when={showSeed() && nodes().length > 0}>
+        <div style={{ padding: "10px 12px", "border-bottom": "1px solid var(--border)", background: "var(--bg-app)" }}>
+          {seedForm("bar")}
+        </div>
+      </Show>
 
       {/* graph area */}
       <div style={{ flex: "1", position: "relative", "min-height": "0", overflow: "hidden", display: "flex" }}>
@@ -400,14 +545,40 @@ export function MemoryGraph(props: Props) {
                       </div>
                     </div>
                     <div class="memory-detail-actions">
+                      <Show when={node().kind === "knowledge"}>
+                        <button
+                          type="button"
+                          class="btn btn-outline"
+                          onClick={() => void handleTouch(node())}
+                          disabled={busy() === `touch:${node().id}`}
+                          aria-label={`Refresh memory entry: ${node().label}`}
+                          title="Refresh — mark as recently accessed"
+                          style={{ flex: "1", padding: "7px 12px", "font-size": "var(--fs-sm)" }}
+                        >
+                          {busy() === `touch:${node().id}` ? "⟳…" : "⟳ refresh"}
+                        </button>
+                      </Show>
                       <Show when={node().kind === "finding" && node().status !== "resolved"}>
                         <button
                           type="button"
                           class="btn btn-solid"
-                          onClick={() => handleResolve(node())}
+                          onClick={() => void handlePromote(node())}
+                          disabled={busy() === `promote:${node().id}`}
+                          aria-label={`Promote finding to memory: ${node().label}`}
+                          title="Promote — copy this finding into long-term memory"
                           style={{ flex: "1", padding: "7px 12px", "font-size": "var(--fs-sm)" }}
                         >
-                          ✓ resolve
+                          {busy() === `promote:${node().id}` ? "⬆…" : "⬆ promote"}
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-solid"
+                          onClick={() => void handleResolve(node())}
+                          disabled={busy() === `resolve:${node().id}`}
+                          aria-label={`Resolve finding: ${node().label}`}
+                          style={{ flex: "1", padding: "7px 12px", "font-size": "var(--fs-sm)" }}
+                        >
+                          {busy() === `resolve:${node().id}` ? "✓…" : "✓ resolve"}
                         </button>
                       </Show>
                       <button
@@ -451,16 +622,9 @@ export function MemoryGraph(props: Props) {
                 Mira hasn't learned this repo yet
               </div>
               <div style={{ "font-size": "var(--fs-sm)", color: "var(--fg-subtle)", "max-width": "36ch", "line-height": "1.55", margin: "0 auto 14px" }}>
-                Run a session, trigger learning, or add knowledge — the graph will populate as Mira captures trajectories, facts, and skills.
+                Run a session, trigger learning, or seed knowledge below — the graph will populate as Mira captures trajectories, facts, and skills.
               </div>
-              <button
-                type="button"
-                class="btn btn-solid"
-                onClick={() => props.onOpenInChat?.({ id: "empty", label: "seed memory", tier: "semantic", source: "user", tags: [], entities: [], createdAt: Date.now(), updatedAt: Date.now(), lastAccessedAt: Date.now(), accessCount: 0, kind: "knowledge" } as GraphNode)}
-                style={{ padding: "7px 14px", "font-size": "var(--fs-sm)" }}
-              >
-                Start a chat →
-              </button>
+              {seedForm("empty")}
             </div>
           </div>
         </Show>

@@ -44,6 +44,10 @@ import type { Bus } from "../bus/index.js"
 import type { MiraDB } from "../storage/db.js"
 import type { Gateway } from "../gateway/index.js"
 import { Hono } from "hono"
+import { z } from "zod"
+import { eq } from "drizzle-orm"
+import { findings } from "../storage/schema.js"
+import { resolveFinding } from "../tools/findings.js"
 
 export interface LearningSystemDeps {
   db?: MiraDB
@@ -61,7 +65,26 @@ export interface LearningSystem {
   patching: PatchingEngine
   scheduler: LearningScheduler
   gateway?: Gateway
+  /** shared deps, exposed so REST routes can reach the findings table + bus */
+  db?: MiraDB
+  bus?: Bus
 }
+
+/** H3-E: seed body — source is HARDCODED to "user", never client-settable. */
+export const knowledgeSeedSchema = z.object({
+  title: z.string().min(1).max(200),
+  content: z.string().min(1).max(4000),
+  tier: z.enum(["episodic", "semantic", "procedural"]).default("semantic"),
+  tags: z.array(z.string().max(40)).max(8).optional(),
+  sessionID: z.string().max(100).optional(),
+})
+export type KnowledgeSeed = z.infer<typeof knowledgeSeedSchema>
+
+/** H3-E: promote body — tier only. */
+export const findingPromoteSchema = z.object({
+  tier: z.enum(["episodic", "semantic", "procedural"]).default("semantic"),
+})
+export type FindingPromote = z.infer<typeof findingPromoteSchema>
 
 /**
  * Create the full Mira learning system with shared deps.
@@ -88,7 +111,7 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
     { online, usage, improvement, knowledge, bus: deps.bus, db: deps.db, patching, gateway: deps.gateway },
   )
 
-  return { online, usage, knowledge, improvement, patching, scheduler, gateway: deps.gateway }
+  return { online, usage, knowledge, improvement, patching, scheduler, gateway: deps.gateway, db: deps.db, bus: deps.bus }
 }
 
 /** Convenience: wire learning REST routes onto a Hono app */
@@ -129,6 +152,60 @@ export function mountLearningRoutes(
     const limit = Math.min(Number(url.searchParams.get("limit") ?? "100") || 100, 500)
     const graph = await system.knowledge.getGraph(limit)
     return c.json(graph)
+  })
+
+  // H3-E write paths (knowledge + finding kept together, next to graph routes)
+  // E1 — touch FIRST: temporal bump for a graph node (no body).
+  app.post("/knowledge/:id/touch", async (c) => {
+    const id = c.req.param("id")
+    if (!id || id.length > 200) return c.json({ error: "invalid id (1-200 chars)" }, 400)
+    const entry = system.knowledge.get(id)
+    if (!entry) return c.json({ error: "not found" }, 404)
+    system.bus?.publish({ type: "job.updated", payload: { knowledge: entry.id, action: "touched" }, timestamp: Date.now() })
+    return c.json(entry)
+  })
+
+  // E2 — seed SECOND: user-authored memory (source HARDCODED to "user").
+  app.post("/knowledge", async (c) => {
+    const body = await c.req.json().catch(() => null)
+    const parsed = knowledgeSeedSchema.safeParse(body)
+    if (!parsed.success) return c.json({ error: `invalid body: ${parsed.error.message.slice(0, 300)}` }, 400)
+    const entry = await system.knowledge.store({
+      tier: parsed.data.tier,
+      source: "user",
+      title: parsed.data.title,
+      content: parsed.data.content,
+      tags: parsed.data.tags,
+      metadata: { sessionID: parsed.data.sessionID ?? null, seededFrom: "graph" },
+    })
+    system.bus?.publish({ type: "job.updated", payload: { knowledge: entry.id, action: "seeded" }, timestamp: Date.now() })
+    return c.json(entry, 201)
+  })
+
+  // E3 — promote THIRD: finding → knowledge entry + resolve (sequential).
+  app.post("/finding/:id/promote", async (c) => {
+    const id = c.req.param("id")
+    if (!id || id.length > 200) return c.json({ error: "invalid id (1-200 chars)" }, 400)
+    const body = await c.req.json().catch(() => ({}))
+    const parsed = findingPromoteSchema.safeParse(body ?? {})
+    if (!parsed.success) return c.json({ error: `invalid body: ${parsed.error.message.slice(0, 300)}` }, 400)
+    const db = system.db ?? null
+    if (!db) return c.json({ error: "not found" }, 404)
+    const rows = await db.select().from(findings).where(eq(findings.id, id)).limit(1)
+    const f = rows[0]
+    if (!f) return c.json({ error: "not found" }, 404)
+    if (f.status === "resolved") return c.json({ error: "already resolved" }, 409)
+    const entry = await system.knowledge.store({
+      tier: parsed.data.tier,
+      source: "system",
+      title: f.title.slice(0, 200),
+      content: `[${f.severity}] ${f.title}\nEvidence: ${f.evidence ?? ""}`.slice(0, 4000),
+      tags: [f.severity],
+      metadata: { findingId: f.id, promotedFrom: "graph", severity: f.severity },
+    })
+    const resolved = await resolveFinding(db, id)
+    system.bus?.publish({ type: "job.updated", payload: { finding: f.id, knowledge: entry.id, action: "promoted" }, timestamp: Date.now() })
+    return c.json({ finding: resolved, entry }, 201)
   })
 
   // Alias for web convenience (same payload)
