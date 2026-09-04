@@ -6,8 +6,8 @@
  * Simple table/timeline, not full OTel UI. Opened by clicking the score pill.
  */
 
-import { createSignal, createEffect, Show, For } from "solid-js"
-import { api } from "../api/client"
+import { createSignal, createEffect, Show, For, onCleanup } from "solid-js"
+import { api, type Job } from "../api/client"
 
 type ScoreData = {
   sessionID: string
@@ -48,7 +48,7 @@ type TraceData = {
 function scoreColor(score: number): string {
   if (score >= 80) return "var(--ok)"
   if (score >= 60) return "var(--warn)"
-  if (score >= 40) return "#f85149"
+  if (score >= 40) return "var(--danger)"
   return "var(--danger)"
 }
 
@@ -58,6 +58,101 @@ export function TraceViewer(props: { sessionID: string | null; open: boolean; on
   const [loading, setLoading] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
   const [copied, setCopied] = createSignal<string | null>(null)
+
+  // ── DAG / wave timeline (orchestrate jobs) ──────────────────────────
+  // Same routes the task UI polls (ChatView + ToolView): listJobs per
+  // session, cancelJob per node. Polls while any node is running, stops
+  // when every node reaches a terminal status.
+  const [jobs, setJobs] = createSignal<Job[] | null>(null)
+  const [jobsLoaded, setJobsLoaded] = createSignal(false)
+  const [cancelling, setCancelling] = createSignal<string | null>(null)
+
+  createEffect(() => {
+    const id = props.sessionID
+    if (!props.open || !id) {
+      setJobs(null)
+      setJobsLoaded(false)
+      return
+    }
+    let stopped = false
+    let timer: number | undefined
+    const fetchJobs = async () => {
+      try {
+        const list = await api.listJobs(id)
+        if (stopped) return
+        setJobs(list)
+        setJobsLoaded(true)
+        if (!list.some((j) => j.status === "running") && timer !== undefined) {
+          clearInterval(timer)
+          timer = undefined
+        }
+      } catch {
+        if (!stopped) setJobsLoaded(true)
+      }
+    }
+    void fetchJobs()
+    timer = window.setInterval(fetchJobs, 3000)
+    onCleanup(() => {
+      stopped = true
+      if (timer !== undefined) clearInterval(timer)
+    })
+  })
+
+  const runningJobs = () => (jobs() ?? []).filter((j) => j.status === "running")
+
+  /** Orchestrate job prompts are `[goal :: taskID] …` — recover the node id. */
+  function taskIDOf(job: Job): string {
+    const m = /\[.*::\s*([^\]]+)\]/.exec(job.prompt ?? "")
+    return m?.[1]?.trim() || job.id.slice(0, 8)
+  }
+
+  function previewOf(job: Job): string {
+    const text =
+      job.status === "completed" ? (job.result ?? "") : job.status === "failed" ? (job.error ?? "") : job.prompt
+    return (text ?? "").slice(0, 120)
+  }
+
+  function dagDot(status: Job["status"]): string {
+    if (status === "running") return "var(--warn)"
+    if (status === "completed") return "var(--ok)"
+    if (status === "failed") return "var(--danger)"
+    return "var(--fg-faint)"
+  }
+
+  function dagPill(status: Job["status"]): string {
+    if (status === "running") return "pill pill-warn"
+    if (status === "completed") return "pill pill-ok"
+    if (status === "failed") return "pill pill-danger"
+    return "pill"
+  }
+
+  async function cancelOne(jobID: string) {
+    setCancelling(jobID)
+    try {
+      const updated = await api.cancelJob(jobID)
+      setJobs((js) => (js ?? []).map((j) => (j.id === jobID ? updated : j)))
+    } catch {
+      // keep the row; next poll refreshes the true status
+    } finally {
+      setCancelling(null)
+    }
+  }
+
+  async function cancelAll() {
+    const running = runningJobs()
+    if (running.length === 0) return
+    setCancelling("all")
+    try {
+      await Promise.all(running.map((j) => api.cancelJob(j.id).catch(() => null)))
+      const id = props.sessionID
+      if (id) {
+        const list = await api.listJobs(id).catch(() => null)
+        if (list) setJobs(list)
+      }
+    } finally {
+      setCancelling(null)
+    }
+  }
 
   createEffect(() => {
     const id = props.sessionID
@@ -163,7 +258,7 @@ export function TraceViewer(props: { sessionID: string | null; open: boolean; on
                       "justify-content": "center",
                       "font-weight": "800",
                       "font-size": "18px",
-                      color: "#fff",
+                      color: "var(--on-accent)",
                       background: scoreColor(s().score),
                       "flex-shrink": "0",
                     }}
@@ -277,6 +372,62 @@ export function TraceViewer(props: { sessionID: string | null; open: boolean; on
               </div>
             )}
           </Show>
+
+          {/* DAG / wave timeline (orchestrate jobs) — reuses the spans row UI */}
+          <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
+            <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", gap: "8px" }}>
+              <div style={{ "font-weight": "600", "font-size": "var(--fs-sm)" }}>
+                DAG runs · {(jobs() ?? []).length}{" "}
+                <span style={{ color: "var(--fg-faint)", "font-weight": "400", "font-size": "var(--fs-xs)" }}>
+                  (waves + nodes)
+                </span>
+              </div>
+              <Show when={runningJobs().length > 0}>
+                <button
+                  type="button"
+                  class="btn btn-danger-ghost"
+                  onClick={() => void cancelAll()}
+                  disabled={cancelling() === "all"}
+                  aria-label={`Cancel all running DAG nodes (${runningJobs().length} running)`}
+                  style={{ padding: "4px 10px", "font-size": "var(--fs-xs)", border: "1px solid var(--danger-border)", "border-radius": "var(--r-full)" }}
+                >
+                  {cancelling() === "all" ? "Cancelling…" : `Cancel all (${runningJobs().length})`}
+                </button>
+              </Show>
+            </div>
+            <Show when={jobsLoaded() && (jobs() ?? []).length === 0}>
+              <div style={{ color: "var(--fg-muted)", "font-size": "var(--fs-xs)", padding: "8px", border: "1px dashed var(--border)", "border-radius": "var(--r-md)" }}>No DAG runs yet.</div>
+            </Show>
+            <div style={{ display: "flex", "flex-direction": "column", gap: "6px", "max-height": "220px", overflow: "auto", padding: "2px" }} role="list" aria-label="DAG nodes">
+              <For each={jobs() ?? []}>
+                {(job) => (
+                  <div role="listitem" style={{ display: "flex", gap: "8px", "align-items": "center", padding: "6px 8px", border: "1px solid var(--border)", "border-radius": "var(--r-md)", background: job.status === "failed" ? "color-mix(in srgb, var(--danger) 6%, var(--bg-app))" : "var(--bg-app)", "font-size": "var(--fs-xs)" }}>
+                    <span class={job.status === "running" ? "dot dot-pulse" : "dot"} style={{ width: "8px", height: "8px", "border-radius": "50%", background: dagDot(job.status), "flex-shrink": "0" }} aria-hidden="true" />
+                    <span style={{ "min-width": "0", flex: "1", overflow: "hidden" }}>
+                      <span style={{ display: "flex", gap: "6px", "align-items": "center", "min-width": "0" }}>
+                        <span style={{ "font-family": "var(--font-mono)", "font-weight": "600", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>{taskIDOf(job)}</span>
+                        <span style={{ color: "var(--fg-faint)", "font-size": "var(--fs-2xs)", "flex-shrink": "0" }}>{job.agent ?? "general"}</span>
+                        <span class={dagPill(job.status)} style={{ "flex-shrink": "0" }}>{job.status}</span>
+                      </span>
+                      <span style={{ display: "block", color: "var(--fg-muted)", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "font-size": "var(--fs-2xs)", "margin-top": "2px" }}>{previewOf(job)}</span>
+                    </span>
+                    <Show when={job.status === "running"}>
+                      <button
+                        type="button"
+                        class="btn btn-danger-ghost"
+                        onClick={() => void cancelOne(job.id)}
+                        disabled={cancelling() === job.id}
+                        aria-label={`Cancel DAG node ${taskIDOf(job)}`}
+                        style={{ padding: "4px 8px", "font-size": "var(--fs-xs)", border: "1px solid var(--danger-border)", "border-radius": "var(--r-full)", "flex-shrink": "0" }}
+                      >
+                        {cancelling() === job.id ? "…" : "✕ cancel"}
+                      </button>
+                    </Show>
+                  </div>
+                )}
+              </For>
+            </div>
+          </div>
 
           {/* tool metrics table */}
           <Show when={(score()?.toolMetrics?.length ?? 0) > 0 || (trace()?.toolMetrics?.length ?? 0) > 0}>
