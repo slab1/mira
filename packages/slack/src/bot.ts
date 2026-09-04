@@ -50,8 +50,17 @@ async function start() {
   if (missing) {
     console.error(`[mira-slack] ${missing}`)
     console.error("[mira-slack] Set SLACK_BOT_TOKEN and SLACK_APP_TOKEN (Socket Mode) — see packages/slack/README.md")
-    console.error("[mira-slack] MIRA_API_URL and MIRA_API_KEY must point at a running Mira server (try: bun run --cwd packages/server dev)")
-    process.exit(1)
+    if (process.env.MIRA_SLACK_STRICT === "1") {
+      process.exit(1)
+    }
+    // Idle (don't exit): a missing Slack key shouldn't take down `turbo dev`.
+    // Set MIRA_SLACK_STRICT=1 to fail fast (CI/prod validation).
+    console.warn("[mira-slack] No Slack credentials — bot idle. API stays up; set creds to enable Slack turns.")
+    // Park the event loop (a bare never-promise alone lets the runtime exit).
+    await new Promise(() => {
+      setInterval(() => {}, 60_000)
+    })
+    return
   }
 
   const healthy = await checkHealth(MIRA_API_URL)
