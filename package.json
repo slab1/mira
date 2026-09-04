@@ -1,0 +1,23 @@
+{
+  "name": "mira",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "prepare": "husky",
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "test": "turbo test",
+    "typecheck": "turbo typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "turbo": "2.10.11",
+    "typescript": "5.9.3",
+    "husky": "^9.1.0",
+    "@commitlint/cli": "^19.6.0",
+    "@commitlint/config-conventional": "^19.6.0",
+    "lint-staged": "^15.3.0",
+    "prettier": "^3.4.0"
+  }
+}
