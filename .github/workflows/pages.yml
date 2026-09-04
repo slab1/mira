@@ -21,7 +21,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      VITE_API_URL: https://raymond-strategic-vice-feeds.trycloudflare.com
+      VITE_API_URL: https://forty-questions-specializing-ordering.trycloudflare.com
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
