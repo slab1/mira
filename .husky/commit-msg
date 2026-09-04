@@ -1,1 +1,1 @@
-bunx --no -- commitlint --edit $1
+./node_modules/.bin/commitlint.exe --edit $1
