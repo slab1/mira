@@ -10,6 +10,7 @@ import { QuestionPrompt } from "./components/QuestionPrompt"
 import { SettingsPanel } from "./components/SettingsPanel"
 import { CommandPalette } from "./components/CommandPalette"
 import { MemoryGraph } from "./components/MemoryGraph"
+import { TraceViewer } from "./components/TraceViewer"
 import { api, getToken, setToken, validateToken, getApiUrl, setApiUrl } from "./api/client"
 
 type ViewMode = "chat" | "split" | "graph"
@@ -194,6 +195,9 @@ export default function App() {
     return "chat" as ViewMode
   })()
   const [viewMode, setViewMode] = createSignal<ViewMode>(initialView)
+  // H2-2 Mira Score GA — trace viewer drawer
+  const [traceOpen, setTraceOpen] = createSignal(false)
+  const [miraScore, setMiraScore] = createSignal<{ score: number; costUSD: number } | null>(null)
 
   onMount(() => {
     // Probe stored token without flashing the gate:
@@ -292,6 +296,27 @@ export default function App() {
   const cycleViewMode = () => {
     setViewMode((v) => (v === "chat" ? "split" : v === "split" ? "graph" : "chat"))
   }
+
+  // H2-2: fetch Mira Score for current session (for header pill)
+  createEffect(() => {
+    const id = store.state.currentId
+    if (!id) {
+      setMiraScore(null)
+      return
+    }
+    api.getScore(id).then((s) => setMiraScore({ score: s.score, costUSD: s.costUSD ?? s.cost ?? 0 })).catch(() => setMiraScore(null))
+  })
+  // Refresh score after each turn finishes (streaming → false)
+  createEffect(() => {
+    const streaming = store.state.streaming
+    const id = store.state.currentId
+    if (!streaming && id) {
+      // small delay so usageLearner has persisted
+      setTimeout(() => {
+        api.getScore(id).then((s) => setMiraScore({ score: s.score, costUSD: s.costUSD ?? s.cost ?? 0 })).catch(() => {})
+      }, 800)
+    }
+  })
 
   const handlePaletteInsert = (text: string) => {
     store.setInput(text)
@@ -482,14 +507,30 @@ export default function App() {
                   ⤓ export
                 </button>
               </Show>
+              <Show when={miraScore()}>
+                {(s) => (
+                  <button
+                    type="button"
+                    onClick={() => setTraceOpen(true)}
+                    title={`Mira Score ${s().score}/100 — click to open trace viewer (cost $${s().costUSD.toFixed(4)})`}
+                    class="pill pill-cost"
+                    style={{ cursor: "pointer", border: "1px solid var(--border)", background: s().score >= 80 ? "color-mix(in srgb, var(--ok) 14%, var(--bg-surface))" : s().score >= 60 ? "color-mix(in srgb, var(--warn) 14%, var(--bg-surface))" : "color-mix(in srgb, var(--danger) 14%, var(--bg-surface))" }}
+                  >
+                    ◈ {s().score}/100
+                  </button>
+                )}
+              </Show>
               <Show when={store.state.cost}>
                 {(c) => (
-                  <span
-                    title={`Gateway: ${c().requests} requests · ${c().inputTokens.toLocaleString()} in / ${c().outputTokens.toLocaleString()} out · avg ${c().avgLatencyMs}ms`}
+                  <button
+                    type="button"
+                    onClick={() => setTraceOpen(true)}
+                    title={`Gateway: ${c().requests} requests · ${c().inputTokens.toLocaleString()} in / ${c().outputTokens.toLocaleString()} out · avg ${c().avgLatencyMs}ms — click for trace`}
                     class="pill pill-cost"
+                    style={{ cursor: "pointer" }}
                   >
                     ${c().costUSD.toFixed(4)}
-                  </span>
+                  </button>
                 )}
               </Show>
               <Show when={(agents() ?? []).length > 0}>
@@ -664,6 +705,7 @@ export default function App() {
       </div>
       <SettingsPanel store={settings} open={settingsOpen()} onClose={() => setSettingsOpen(false)} />
       <CommandPalette settings={settings} open={paletteOpen()} onClose={() => setPaletteOpen(false)} onInsert={handlePaletteInsert} />
+      <TraceViewer sessionID={store.state.currentId} open={traceOpen()} onClose={() => setTraceOpen(false)} />
     </Show>
   )
 }

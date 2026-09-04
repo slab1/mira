@@ -592,6 +592,53 @@ export const api = {
   getKnowledgeGraph: (limit = 100) => req<KnowledgeGraph>(`/knowledge/graph?limit=${limit}`),
   getLearningGraph: (limit = 100) => req<KnowledgeGraph>(`/learning/graph?limit=${limit}`),
 
+  // ── Mira Score GA (H2-2) — per-session {score,cost,doomLoops,toolErrors,memoryHits} + trace ──
+  getScore: (sessionID: string) =>
+    req<{
+      sessionID: string
+      score: number
+      cost: number
+      costUSD: number
+      doomLoops: number
+      toolErrors: number
+      memoryHits: number
+      traceId: string
+      spanId: string
+      requestId: string
+      durationMs: number
+      model: string
+      toolCalls: number
+      steps: number
+      totalTokensIn: number
+      totalTokensOut: number
+      success: boolean
+      toolMetrics?: Array<{ tool: string; durationMs: number; isError: boolean; errorKind?: string; timestamp: number }>
+    }>(`/learning/score?sessionID=${encodeURIComponent(sessionID)}`),
+  getScoreBadgeUrl: (sessionID: string) => `${baseUrl()}/learning/score?sessionID=${encodeURIComponent(sessionID)}&format=badge`,
+  getScoreMarkdown: async (sessionID: string): Promise<string> => {
+    const res = await fetch(`${baseUrl()}/learning/score?sessionID=${encodeURIComponent(sessionID)}&format=markdown`, {
+      headers: authHeaders(),
+      mode: "cors",
+    })
+    if (!res.ok) throw new ApiError(res.status, `score markdown ${res.status}`)
+    return res.text()
+  },
+  getTrace: (sessionID: string) =>
+    req<{
+      sessionID: string
+      requestId: string
+      traceId: string
+      spanId: string
+      durationMs: number
+      model: string
+      toolCalls: number
+      toolErrors: number
+      doomLoops: number
+      spans: Array<{ name: string; traceId: string; spanId: string; startMs: number; endMs?: number; durationMs?: number; status: string; attributes: Record<string, JsonValue> }>
+      toolMetrics: Array<{ tool: string; durationMs: number; isError: boolean; errorKind?: string; timestamp: number; sessionID: string }>
+      metric: { sessionID: string; model: string; steps: number; totalTokensIn: number; totalTokensOut: number; latencyMs: number; toolCalls: number; toolErrors: number; doomLoops: number; success: boolean } | null
+    }>(`/learning/trace?sessionID=${encodeURIComponent(sessionID)}`),
+
   /**
    * Stream prompt response via SSE (POST /session/:id/prompt).
    * Server returns `prompt.streamResponse()` as text/event-stream.

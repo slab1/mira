@@ -266,6 +266,66 @@ export class UsageLearner {
     return { sessions, toolCalls, errorRate: toolCalls ? errors / toolCalls : 0 }
   }
 
+  /** Per-session lookup — in-memory first, then DB fallback */
+  getSessionMetric(sessionID: string): SessionMetric | undefined {
+    return this.sessionMetrics.find(s => s.sessionID === sessionID)
+  }
+
+  getToolMetrics(sessionID: string): ToolMetric[] {
+    return this.toolMetrics.filter(t => t.sessionID === sessionID)
+  }
+
+  /** All session metrics (for aggregate score) */
+  getAllSessionMetrics(): SessionMetric[] {
+    return [...this.sessionMetrics]
+  }
+
+  /** Compute Mira Score 0..100 for a session metric */
+  computeScore(m: SessionMetric, memoryHits = 0): number {
+    let score = 100
+    score -= m.toolErrors * 10
+    score -= m.doomLoops * 20
+    if (!m.success) score -= 15
+    if (m.toolCalls > 12) score -= Math.min(15, (m.toolCalls - 12) * 2)
+    score += Math.min(memoryHits * 2, 10)
+    if (m.userFeedback === "up") score += 5
+    if (m.userFeedback === "down") score -= 10
+    return Math.max(0, Math.min(100, Math.round(score)))
+  }
+
+  /** Enhanced per-session score payload (for GET /learning/score) */
+  getScorePayload(sessionID: string, opts: { memoryHits?: number; costUSD?: number; traceId?: string; spanId?: string; requestId?: string } = {}): Record<string, unknown> | null {
+    const m = this.getSessionMetric(sessionID)
+    if (!m) return null
+    const memoryHits = opts.memoryHits ?? 0
+    const score = this.computeScore(m, memoryHits)
+    const tools = this.getToolMetrics(sessionID)
+    return {
+      sessionID: m.sessionID,
+      score,
+      cost: opts.costUSD ?? 0,
+      costUSD: opts.costUSD ?? 0,
+      doomLoops: m.doomLoops,
+      toolErrors: m.toolErrors,
+      memoryHits,
+      traceId: opts.traceId ?? `trace_${m.sessionID.slice(0, 8)}_${m.createdAt.toString(36)}`,
+      spanId: opts.spanId ?? `span_${m.sessionID.slice(0, 8)}`,
+      requestId: opts.requestId ?? "",
+      durationMs: m.latencyMs,
+      latencyMs: m.latencyMs,
+      model: m.model,
+      toolCalls: m.toolCalls,
+      steps: m.steps,
+      totalTokensIn: m.totalTokensIn,
+      totalTokensOut: m.totalTokensOut,
+      success: m.success,
+      compactionCount: m.compactionCount,
+      userFeedback: m.userFeedback ?? null,
+      createdAt: m.createdAt,
+      toolMetrics: tools.slice(-20).map(t => ({ tool: t.tool, durationMs: t.durationMs, isError: t.isError, errorKind: t.errorKind, timestamp: t.timestamp })),
+    }
+  }
+
   // ── Pattern detection ──────────────────────────────────────────────
 
   private findFailurePatterns(tools: ToolMetric[], sessions: SessionMetric[]): FailurePattern[] {
