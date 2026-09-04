@@ -574,6 +574,7 @@ async function main() {
       path.startsWith("/jobs") ||
       path.startsWith("/terminal") ||
       path.startsWith("/learning") ||
+      path.startsWith("/knowledge") ||
       path.startsWith("/permission") ||
       path.startsWith("/guardrails") ||
       path.startsWith("/admin") ||

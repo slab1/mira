@@ -121,4 +121,20 @@ export function mountLearningRoutes(
     }
     return c.json(system.knowledge.list({ tier: tier ?? undefined, source: source ?? undefined, limit: 50 }))
   })
+
+  // H2-1 Memory v2: graph + temporal — read-only, for web MemoryGraph canvas
+  app.get("/knowledge/graph", async (c) => {
+    const url = new URL(c.req.url)
+    const limit = Math.min(Number(url.searchParams.get("limit") ?? "100") || 100, 500)
+    const graph = await system.knowledge.getGraph(limit)
+    return c.json(graph)
+  })
+
+  // Alias for web convenience (same payload)
+  app.get("/learning/graph", async (c) => {
+    const url = new URL(c.req.url)
+    const limit = Math.min(Number(url.searchParams.get("limit") ?? "100") || 100, 500)
+    const graph = await system.knowledge.getGraph(limit)
+    return c.json(graph)
+  })
 }

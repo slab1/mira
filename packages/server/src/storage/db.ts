@@ -153,9 +153,20 @@ export async function migrate(db: MiraDB) {
     CREATE TABLE IF NOT EXISTS knowledge_entries (
       id TEXT PRIMARY KEY,
       session_id TEXT,
-      kind TEXT NOT NULL,
+      kind TEXT,
+      tier TEXT,
+      source TEXT,
+      title TEXT,
       content TEXT NOT NULL,
-      created_at INTEGER NOT NULL
+      tags TEXT,
+      graph_links TEXT,
+      embedding TEXT,
+      metadata TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER,
+      last_accessed_at INTEGER,
+      access_count INTEGER,
+      entities TEXT
     );
     CREATE INDEX IF NOT EXISTS knowledge_entries_session_idx ON knowledge_entries(session_id);
     CREATE INDEX IF NOT EXISTS knowledge_entries_kind_idx ON knowledge_entries(kind);
@@ -196,6 +207,21 @@ export async function migrate(db: MiraDB) {
   addColumn("sessions", "cost_usd", "REAL")
   addColumn("sessions", "owner_id", "TEXT")
   addColumn("sessions", "agent", "TEXT")
+  // H2-1 Memory v2: temporal decay + entity graph columns
+  addColumn("knowledge_entries", "tier", "TEXT")
+  addColumn("knowledge_entries", "source", "TEXT")
+  addColumn("knowledge_entries", "title", "TEXT")
+  addColumn("knowledge_entries", "tags", "TEXT")
+  addColumn("knowledge_entries", "graph_links", "TEXT")
+  addColumn("knowledge_entries", "embedding", "TEXT")
+  addColumn("knowledge_entries", "metadata", "TEXT")
+  addColumn("knowledge_entries", "updated_at", "INTEGER")
+  addColumn("knowledge_entries", "last_accessed_at", "INTEGER")
+  addColumn("knowledge_entries", "access_count", "INTEGER")
+  addColumn("knowledge_entries", "entities", "TEXT")
+  // Create tier/source indexes after columns exist (for old DBs)
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS knowledge_entries_tier_idx ON knowledge_entries(tier);`) } catch {}
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS knowledge_entries_source_idx ON knowledge_entries(source);`) } catch {}
   // Retention: prune old knowledge_entries >30d if table large
   try {
     const count = sqlite.prepare("SELECT COUNT(*) as c FROM knowledge_entries").get() as { c: number } | undefined

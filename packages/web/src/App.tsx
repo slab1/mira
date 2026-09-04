@@ -1,4 +1,4 @@
-import { createSignal, onMount, Show, onCleanup, createResource, For } from "solid-js"
+import { createSignal, onMount, Show, onCleanup, createResource, For, createEffect } from "solid-js"
 import "./index.css"
 import { createAppStore } from "./stores/app"
 import { createSettingsStore } from "./stores/settings"
@@ -9,7 +9,10 @@ import { SkillSelector } from "./components/SkillSelector"
 import { QuestionPrompt } from "./components/QuestionPrompt"
 import { SettingsPanel } from "./components/SettingsPanel"
 import { CommandPalette } from "./components/CommandPalette"
+import { MemoryGraph } from "./components/MemoryGraph"
 import { api, getToken, setToken, validateToken, getApiUrl, setApiUrl } from "./api/client"
+
+type ViewMode = "chat" | "split" | "graph"
 
 /** Token gate: servers with MIRA_TOKEN/MIRA_API_KEYS reject unauthenticated
  *  clients. Show a credential card until a token is stored and the server
@@ -182,6 +185,15 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = createSignal(false)
   const [agents] = createResource(() => api.listAgents().catch(() => []))
   const [selectedAgent, setSelectedAgent] = createSignal("")
+  // Memory Graph 3-state layout: chat | split | graph
+  const initialView = (() => {
+    try {
+      const v = new URLSearchParams(window.location.search).get("view")
+      if (v === "graph" || v === "split") return v as ViewMode
+    } catch {}
+    return "chat" as ViewMode
+  })()
+  const [viewMode, setViewMode] = createSignal<ViewMode>(initialView)
 
   onMount(() => {
     // Probe stored token without flashing the gate:
@@ -231,6 +243,15 @@ export default function App() {
         e.preventDefault()
         setSettingsOpen(true)
       }
+      // G → toggle Memory Graph (when not typing in an input/textarea)
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "g") {
+        const tag = (e.target as HTMLElement)?.tagName?.toLowerCase()
+        const isInput = tag === "input" || tag === "textarea" || (e.target as HTMLElement)?.isContentEditable
+        if (!isInput) {
+          e.preventDefault()
+          setViewMode((v) => (v === "chat" ? "split" : v === "split" ? "graph" : "chat"))
+        }
+      }
     }
     window.addEventListener("keydown", onKey)
     onCleanup(() => {
@@ -238,9 +259,39 @@ export default function App() {
       window.removeEventListener("mira:open-palette", onPaletteEvent)
       window.removeEventListener("keydown", onKey)
     })
+
+    // deep-link ?view=graph keeps URL in sync when viewMode changes
+    createEffect(() => {
+      const v = viewMode()
+      try {
+        const url = new URL(window.location.href)
+        if (v === "chat") url.searchParams.delete("view")
+        else url.searchParams.set("view", v)
+        window.history.replaceState(null, "", url.toString())
+      } catch {}
+    })
   })
 
   const currentSession = () => store.state.sessions.find((s) => s.id === store.state.currentId)
+
+  // /memory slash → open graph
+  createEffect(() => {
+    const inp = store.input()
+    if (inp.trim() === "/memory" || inp.trim() === "/graph") {
+      setViewMode("graph")
+      // clear the slash so composer doesn't send it
+      // keep it for a moment then clear on next tick if user hasn't typed more
+      queueMicrotask(() => {
+        if (store.input().trim() === "/memory" || store.input().trim() === "/graph") {
+          store.setInput("")
+        }
+      })
+    }
+  })
+
+  const cycleViewMode = () => {
+    setViewMode((v) => (v === "chat" ? "split" : v === "split" ? "graph" : "chat"))
+  }
 
   const handlePaletteInsert = (text: string) => {
     store.setInput(text)
@@ -355,6 +406,25 @@ export default function App() {
             </div>
 
             <div style={{ display: "flex", gap: "8px", "align-items": "center", "flex-shrink": "0" }}>
+              <button
+                type="button"
+                class="btn btn-ghost"
+                onClick={cycleViewMode}
+                title="Memory Graph (G) — chat / split / graph"
+                aria-label="Toggle Memory Graph"
+                aria-pressed={viewMode() !== "chat" ? "true" : "false"}
+                style={{
+                  padding: "5px 9px",
+                  "font-size": "var(--fs-xs)",
+                  border: "1px solid var(--border)",
+                  "border-radius": "var(--r-md)",
+                  background: viewMode() !== "chat" ? "var(--accent-soft)" : "transparent",
+                  color: viewMode() !== "chat" ? "var(--accent)" : "var(--fg-subtle)",
+                  "border-color": viewMode() !== "chat" ? "var(--accent-border)" : "var(--border)",
+                }}
+              >
+                ◈ Memory
+              </button>
               <button
                 type="button"
                 class="btn btn-ghost"
@@ -476,10 +546,119 @@ export default function App() {
             </div>
           </Show>
 
-          <div class="mira-main" style={{ flex: "1", display: "flex", overflow: "hidden", "min-height": "0" }}>
-            <ChatView store={store} settings={settings} onPaletteOpen={() => setPaletteOpen(true)} />
-            <ToolView store={store} />
-          </div>
+          <Show
+            when={viewMode() === "chat"}
+            fallback={
+              <Show
+                when={viewMode() === "split"}
+                fallback={
+                  /* graph: canvas fills mira-main, chat collapses to bottom composer bar */
+                  <div class="mira-main mira-main-graph" style={{ flex: "1", display: "flex", overflow: "hidden", "min-height": "0" }}>
+                    <div class="mira-canvas-pane" style={{ flex: "1", display: "flex", "min-height": "0" }}>
+                      <MemoryGraph
+                        onOpenInChat={(node) => {
+                          if (node.id === "empty") {
+                            setViewMode("chat")
+                            queueMicrotask(() => {
+                              const el = document.querySelector<HTMLTextAreaElement>('[aria-label="Message Mira"]')
+                              el?.focus()
+                            })
+                            return
+                          }
+                          setViewMode("split")
+                          store.setInput(`Tell me about: ${node.label}`)
+                          queueMicrotask(() => {
+                            const el = document.querySelector<HTMLTextAreaElement>('[aria-label="Message Mira"]')
+                            el?.focus()
+                          })
+                        }}
+                      />
+                    </div>
+                    {/* collapsed chat composer bar */}
+                    <div class="mira-composer-bar" style={{ display: "flex", gap: "8px", "align-items": "center" }}>
+                      <input
+                        class="input"
+                        placeholder="Message Mira… (graph view — press G to return to chat)"
+                        value={store.input()}
+                        onInput={(e) => store.setInput(e.currentTarget.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault()
+                            const v = store.input().trim()
+                            if (v === "/memory" || v === "/graph") {
+                              setViewMode("graph")
+                              store.setInput("")
+                              return
+                            }
+                            if (v) {
+                              setViewMode("chat")
+                              store.sendPrompt(v)
+                            }
+                          }
+                          if (e.key === "Escape") setViewMode("chat")
+                        }}
+                        aria-label="Message Mira (graph view)"
+                        style={{ flex: "1" }}
+                      />
+                      <button
+                        type="button"
+                        class="btn btn-solid"
+                        disabled={!store.input().trim()}
+                        onClick={() => {
+                          const v = store.input().trim()
+                          if (!v) return
+                          setViewMode("chat")
+                          store.sendPrompt(v)
+                        }}
+                        style={{ padding: "7px 14px", "font-size": "var(--fs-sm)", flex: "none" }}
+                      >
+                        Send ↵
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-ghost"
+                        onClick={() => setViewMode("chat")}
+                        title="Back to chat (G)"
+                        style={{ padding: "7px 10px", "font-size": "var(--fs-xs)", border: "1px solid var(--border)", "border-radius": "var(--r-md)", flex: "none" }}
+                      >
+                        ← chat
+                      </button>
+                    </div>
+                  </div>
+                }
+              >
+                {/* split: 55% chat + 45% canvas */}
+                <div class="mira-main mira-main-split" style={{ flex: "1", display: "flex", overflow: "hidden", "min-height": "0" }}>
+                  <div class="mira-chat-pane">
+                    <ChatView store={store} settings={settings} onPaletteOpen={() => setPaletteOpen(true)} />
+                  </div>
+                  <div class="mira-canvas-pane">
+                    <MemoryGraph
+                      onOpenInChat={(node) => {
+                        if (node.id === "empty") {
+                          setViewMode("chat")
+                          return
+                        }
+                        store.setInput(`Tell me about: ${node.label}`)
+                        queueMicrotask(() => {
+                          const el = document.querySelector<HTMLTextAreaElement>('[aria-label="Message Mira"]')
+                          el?.focus()
+                        })
+                      }}
+                    />
+                  </div>
+                  <ToolView store={store} />
+                </div>
+              </Show>
+            }
+          >
+            <div class="mira-main mira-main-chat" style={{ flex: "1", display: "flex", overflow: "hidden", "min-height": "0" }}>
+              <div class="mira-chat-pane" style={{ flex: "1", display: "flex", "flex-direction": "column", overflow: "hidden" }}>
+                <ChatView store={store} settings={settings} onPaletteOpen={() => setPaletteOpen(true)} />
+              </div>
+              <ToolView store={store} />
+            </div>
+          </Show>
           <QuestionPrompt store={store} />
         </div>
       </div>

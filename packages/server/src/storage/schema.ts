@@ -146,13 +146,28 @@ export const findingsRelations = relations(findings, ({ one }) => ({
 
 export const knowledgeEntries = sqliteTable("knowledge_entries", {
   id: text("id").primaryKey(),
+  // Legacy columns (kept for backward compat with old DBs)
   sessionID: text("session_id"),
-  kind: text("kind").notNull(),
+  kind: text("kind"),
+  // Rich memory v2 columns (H2-1)
+  tier: text("tier"),
+  source: text("source"),
+  title: text("title"),
   content: text("content").notNull(),
+  tags: text("tags"),
+  graphLinks: text("graph_links"),
+  embedding: text("embedding"),
+  metadata: text("metadata"),
   createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at"),
+  lastAccessedAt: integer("last_accessed_at"),
+  accessCount: integer("access_count"),
+  entities: text("entities"),
 }, (t) => [
   index("knowledge_entries_session_idx").on(t.sessionID),
   index("knowledge_entries_kind_idx").on(t.kind),
+  index("knowledge_entries_tier_idx").on(t.tier),
+  index("knowledge_entries_source_idx").on(t.source),
 ])
 
 // Audit log — queryable DB mirror of file audit log (Risk 2: file-only audit not queryable)
