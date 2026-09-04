@@ -1,4 +1,4 @@
-
+node_modules
 dist
 .turbo
 .env
@@ -22,3 +22,4 @@ data/
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+
