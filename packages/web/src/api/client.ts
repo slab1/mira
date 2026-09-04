@@ -559,6 +559,14 @@ export const api = {
 
   listSnapshots: (id: string) => req<Snapshot[]>(`/session/${id}/snapshots`),
 
+  getSnapshot: (id: string, snapshotId: string) =>
+    req<{
+      path: string
+      snapshotContent: string | null
+      currentContent: string | null
+      existedBefore: boolean
+    }>(`/session/${id}/snapshots/${snapshotId}`),
+
   listFindings: (params: { status?: string; limit?: number } = {}) => {
     const q = new URLSearchParams()
     if (params.status) q.set('status', params.status)
@@ -681,9 +689,26 @@ export const api = {
   listSkills: () => req<SkillEntry[] | string[]>('/skills'),
   getPermission: () => req<PermissionMatrix>('/permission'),
 
-  // ── Knowledge Graph (read-only, H2-1 Memory v2) ──────────────────
+  // ── Knowledge Graph (H2-1 Memory v2 read + H3-E mutations) ────
   getKnowledgeGraph: (limit = 100) => req<KnowledgeGraph>(`/knowledge/graph?limit=${limit}`),
   getLearningGraph: (limit = 100) => req<KnowledgeGraph>(`/learning/graph?limit=${limit}`),
+  /** H3-E: bump lastAccessedAt so a stale node reads fresh (200 entry / 404 {error}). */
+  touchKnowledge: (id: string) =>
+    req<GraphNode>(`/knowledge/${encodeURIComponent(id)}/touch`, { method: 'POST' }),
+  /** H3-E: seed a knowledge entry {title 1-200, content 1-4000, tier, tags?, sessionID?} (201 entry). */
+  seedKnowledge: (body: {
+    title: string
+    content: string
+    tier?: string
+    tags?: string[]
+    sessionID?: string
+  }) => req<GraphNode>('/knowledge', { method: 'POST', body: JSON.stringify(body) }),
+  /** H3-E: promote an unresolved finding into memory (201 {finding, entry} / 404 / 409). */
+  promoteFinding: (id: string, tier?: string) =>
+    req<{ finding: Finding; entry: GraphNode }>(`/finding/${encodeURIComponent(id)}/promote`, {
+      method: 'POST',
+      body: JSON.stringify(tier ? { tier } : {}),
+    }),
 
   // ── Mira Score GA (H2-2) — per-session {score,cost,doomLoops,toolErrors,memoryHits} + trace ──
   getScore: (sessionID: string) =>
