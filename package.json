@@ -1,24 +1,24 @@
 {
   "name": "mira",
-  "version": "0.1.0",
-  "description": "AI agent platform — openness + reasoning + polish + autonomy + transparency, plus memory/eval/guardrails",
   "private": true,
-  "workspaces": [
-    "packages/*"
-  ],
+  "packageManager": "bun@1.3.5",
+  "workspaces": ["packages/*"],
   "scripts": {
-    "dev": "turbo run dev --continue",
-    "build": "turbo run build --continue --filter=@mira/server --filter=@mira/shared --filter=@mira/web",
-    "build:all": "turbo run build --continue",
-    "test": "turbo run test",
-    "eval": "turbo run eval"
+    "prepare": "husky",
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "test": "turbo test",
+    "typecheck": "turbo typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
     "turbo": "2.10.11",
-    "typescript": "5.9.3"
-  },
-  "packageManager": "bun@1.3.14",
-  "dependencies": {
-    "symlink": "^2.1.0"
+    "typescript": "5.9.3",
+    "husky": "^9.1.0",
+    "@commitlint/cli": "^19.6.0",
+    "@commitlint/config-conventional": "^19.6.0",
+    "lint-staged": "^15.3.0",
+    "prettier": "^3.4.0"
   }
 }
