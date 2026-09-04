@@ -1098,6 +1098,315 @@ input:focus-visible,
   border-color: var(--accent-border);
 }
 
+/* ── Memory Graph Canvas ─────────────────────────────────────────── */
+.memory-canvas {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--bg-canvas);
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 24px 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.memory-canvas-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-app);
+  flex-shrink: 0;
+}
+
+.memory-canvas-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--fs-2xs);
+  color: var(--fg-subtle);
+}
+
+.memory-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+}
+
+.memory-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.memory-legend-rect {
+  width: 12px;
+  height: 8px;
+  border-radius: 3px;
+  flex: none;
+  border: 1px solid transparent;
+}
+.memory-legend-diamond {
+  width: 8px;
+  height: 8px;
+  transform: rotate(45deg);
+  flex: none;
+  border: 1px solid transparent;
+}
+
+.memory-graph-svg {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: block;
+}
+
+.memory-node {
+  cursor: pointer;
+  transition:
+    opacity var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease),
+    filter var(--dur-fast) var(--ease);
+  outline: none;
+}
+.memory-node:focus-visible {
+  filter: drop-shadow(0 0 0 3px var(--accent-border));
+}
+.memory-node-episodic {
+  /* amber dot — tail rendered as SVG line, label as text */
+}
+.memory-node-semantic rect {
+  fill: var(--ok-soft);
+  stroke: var(--ok-border);
+  stroke-width: 1.2;
+  rx: 8;
+  ry: 8;
+}
+.memory-node-procedural polygon {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 1.2;
+  filter: drop-shadow(0 0 8px var(--accent-soft));
+}
+.memory-node-selected {
+  filter: drop-shadow(0 0 10px var(--accent-border));
+}
+.memory-node-selected.memory-node-episodic circle {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.memory-node-selected.memory-node-semantic rect {
+  stroke: var(--accent);
+  stroke-width: 1.6;
+}
+.memory-node-selected.memory-node-procedural polygon {
+  stroke: var(--accent-strong);
+  stroke-width: 1.8;
+}
+
+.memory-node-decay {
+  opacity: 0.62;
+  filter: saturate(0.35) brightness(0.92);
+}
+.memory-node-decay.memory-node-semantic,
+.memory-node-decay.memory-node-procedural {
+  transform: scale(0.9);
+  transform-origin: center;
+}
+
+.memory-node-fresh {
+  animation: memory-pulse-once 1.2s var(--ease) 1;
+}
+@keyframes memory-pulse-once {
+  0% { transform: scale(1); opacity: 1; }
+  40% { transform: scale(1.18); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.memory-edge {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  fill: none;
+  transition:
+    stroke var(--dur-fast) var(--ease),
+    opacity var(--dur-fast) var(--ease);
+}
+.memory-edge-dashed {
+  stroke-dasharray: 6 4;
+  opacity: 0.55;
+}
+.memory-edge-highlight {
+  stroke: var(--accent-border);
+  stroke-width: 1.4;
+  opacity: 1;
+}
+
+.memory-detail-card {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  width: min(360px, calc(100% - 24px));
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: memory-slide-in var(--dur-med) var(--ease) both;
+  z-index: 5;
+}
+@keyframes memory-slide-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: none; }
+}
+.memory-detail-head {
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.memory-detail-title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.35;
+  word-break: break-word;
+}
+.memory-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.memory-detail-body {
+  flex: 1;
+  overflow: auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.memory-detail-evidence {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--fg-subtle);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 10px 12px;
+}
+.memory-detail-actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-app);
+}
+
+.memory-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: var(--sp-6);
+}
+.memory-empty-circles {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  margin: 0 auto 16px;
+}
+.memory-empty-circles span {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+}
+.memory-empty-circles span:nth-child(1) {
+  inset: 0;
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+.memory-empty-circles span:nth-child(2) {
+  inset: 14px;
+  background: var(--ok-soft);
+  border-color: var(--ok-border);
+}
+.memory-empty-circles span:nth-child(3) {
+  inset: 28px;
+  background: var(--warn-soft);
+  border-color: var(--warn-border);
+  display: grid;
+  place-items: center;
+  color: var(--warn);
+  font-size: 16px;
+}
+
+/* 3-state layout helpers */
+.mira-main-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.mira-main-split .mira-chat-pane {
+  flex: 0 0 55%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+}
+.mira-main-split .mira-canvas-pane {
+  flex: 0 0 45%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.mira-main-graph {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  flex-direction: column;
+}
+.mira-main-graph .mira-canvas-pane {
+  flex: 1;
+  min-height: 0;
+}
+.mira-main-graph .mira-composer-bar {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-app);
+  padding: 8px 12px;
+}
+.mira-main-chat {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.mira-main-chat .mira-chat-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-width: calc(68ch + 48px);
+  margin: 0 auto;
+  width: 100%;
+}
+
 /* ── 5. Motion ─────────────────────────────────────────────────────────── */
 @keyframes fade-up {
   from {

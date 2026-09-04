@@ -199,6 +199,34 @@ export type SkillEntry = {
 
 export type PermissionMatrix = Record<string, string | Record<string, string>>
 
+export type GraphNode = {
+  id: string
+  label: string
+  tier: string
+  source: string
+  tags: string[]
+  entities: string[]
+  createdAt: number
+  updatedAt: number
+  lastAccessedAt: number
+  accessCount: number
+  kind: "knowledge" | "finding"
+  severity?: string
+  status?: string
+}
+
+export type GraphEdge = {
+  from: string
+  to: string
+  kind: "related" | "entity" | "finding"
+  label?: string
+}
+
+export type KnowledgeGraph = {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+}
+
 const API_URL_KEY = "mira_api_url"
 
 function getEnvBase(): string {
@@ -559,6 +587,10 @@ export const api = {
   listCommands: () => req<CommandEntry[] | string[]>("/commands"),
   listSkills: () => req<SkillEntry[] | string[]>("/skills"),
   getPermission: () => req<PermissionMatrix>("/permission"),
+
+  // ── Knowledge Graph (read-only, H2-1 Memory v2) ──────────────────
+  getKnowledgeGraph: (limit = 100) => req<KnowledgeGraph>(`/knowledge/graph?limit=${limit}`),
+  getLearningGraph: (limit = 100) => req<KnowledgeGraph>(`/learning/graph?limit=${limit}`),
 
   /**
    * Stream prompt response via SSE (POST /session/:id/prompt).
