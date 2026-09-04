@@ -25,6 +25,7 @@ import type { UsageAnalysis, FailurePattern } from "./usage.js"
 import type { KnowledgeBase } from "./knowledge.js"
 import type { MiraDB } from "../storage/db.js"
 import type { Gateway } from "../gateway/index.js"
+import type { JsonValue } from "../types/index.js"
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -343,6 +344,97 @@ export class ImprovementEngine {
       promoted, rejected,
       improvements: results,
     }
+  }
+}
+
+// ── Skill-synthesis lane (hook only, fail-closed) ────────────────────
+//
+// Orchestrate wave failures draft an UNVERIFIED skill scaffold + a staged
+// mira.json patch object. NOTHING here writes files or config — the caller
+// persists the draft (findings) and publishes it (Bus) for human review.
+// Promotion requires the shadow-eval gate (verify()) to pass first; until
+// then the scaffold stays UNVERIFIED-DO-NOT-USE (fail-closed).
+
+/** Staged skill candidate: scaffold text + mira.json patch, never auto-applied. */
+export interface SkillScaffold {
+  /** Proposed skill name (kebab-case, derived from failure signature). */
+  name: string
+  /** Always UNVERIFIED-DO-NOT-USE until shadow eval + promotion. */
+  status: "UNVERIFIED-DO-NOT-USE"
+  /** Draft SKILL.md body (frontmatter + instructions), human-review required. */
+  scaffold: string
+  /** Staged mira.json patch object — review-only, NEVER written by the hook. */
+  miraPatch: JsonValue
+  /** Shadow-eval gate state: pending until verify() passes (fail-closed). */
+  evalGate: {
+    required: boolean
+    status: "pending-shadow-eval" | "verified" | "rejected"
+    command: string
+    detail?: string
+  }
+}
+
+const SKILL_SCAFFOLD_NAME_RE = /^[a-z0-9-]+$/
+
+/**
+ * Draft an UNVERIFIED skill scaffold from a wave-failure summary.
+ * Pure function (no I/O): fail-closed by construction — status is always
+ * UNVERIFIED-DO-NOT-USE and evalGate starts pending-shadow-eval.
+ */
+export function draftSkillScaffold(failingSummary: string, goal: string): SkillScaffold {
+  const slugBase = failingSummary
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32) || "orchestrate-recovery"
+  const name = `orchestrate-${slugBase}`.slice(0, 40).replace(/-+$/g, "") || "orchestrate-recovery"
+  const safeName = SKILL_SCAFFOLD_NAME_RE.test(name) ? name : "orchestrate-recovery"
+  const shortGoal = goal.slice(0, 200)
+  const shortSummary = failingSummary.slice(0, 800)
+  const scaffold = [
+    "---",
+    `name: ${safeName}`,
+    "status: UNVERIFIED-DO-NOT-USE",
+    "description: Draft skill from orchestrate wave failure — human review + shadow eval required before use.",
+    "---",
+    "",
+    `# ${safeName} (UNVERIFIED — DO NOT USE)`,
+    "",
+    `Goal that failed: ${shortGoal}`,
+    "",
+    "## Failing signature",
+    "",
+    shortSummary,
+    "",
+    "## Recovery checklist (draft — verify each step)",
+    "",
+    "- [ ] Reproduce the failing node prompt in isolation",
+    "- [ ] Confirm retry-once + skip-downstream behaved as expected",
+    "- [ ] Narrow contextFrom to the minimal upstream summaries",
+    "- [ ] Split tightly-coupled nodes into one task",
+    "",
+    "> Human Review Required — candidate is UNVERIFIED-DO-NOT-USE until shadow eval + promotion.",
+    "",
+  ].join("\n")
+  const miraPatch: JsonValue = {
+    skills: {
+      [safeName]: {
+        description: `Draft from orchestrate wave failure (${shortGoal.slice(0, 80)}) — UNVERIFIED-DO-NOT-USE`,
+        status: "UNVERIFIED-DO-NOT-USE",
+      },
+    },
+    _note: "STAGED ONLY — never auto-applied by the hook. Apply manually after shadow eval passes.",
+  }
+  return {
+    name: safeName,
+    status: "UNVERIFIED-DO-NOT-USE",
+    scaffold,
+    miraPatch,
+    evalGate: {
+      required: true,
+      status: "pending-shadow-eval",
+      command: "bun test + eval gate (MIRA_EVAL_GATE=1)",
+    },
   }
 }
 

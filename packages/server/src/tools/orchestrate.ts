@@ -158,10 +158,23 @@ function mergeResults(goal: string, strategy: MergeStrategy, results: NodeResult
   return `Synthesis for "${goal}" (${done.length}/${results.length} completed):\n${previews.join("\n")}`
 }
 
+/** Full skill-synthesis lane result (hook only — never auto-applies). */
+export interface SkillLaneResult {
+  skillCandidate: string | null
+  skillName: string
+  scaffold: string
+  miraPatch: JsonValue
+  evalGate: { required: boolean; status: string; command: string; detail?: string }
+}
+
 /**
- * E3 hook (hook only, fail-open): on wave failure, run the improvement
- * engine's synthesize(), persist the candidate to the findings table
- * (source:tool), and publish message.updated { waveFailed, skillCandidate }.
+ * E3 lane (hook only, fail-closed): on wave failure, run the improvement
+ * engine's synthesize(), draft an UNVERIFIED skill scaffold
+ * (draftSkillScaffold), stage a mira.json patch object (NEVER auto-applied),
+ * run the shadow-eval gate hook (verify() — fail-closed), persist the draft
+ * to the findings table (source:tool), and publish message.updated
+ * { waveFailed, skillCandidate, skillName, scaffold, miraPatch, evalGate }.
+ * Never throws the tool; never writes files or config.
  */
 async function skillSynthesisHook(opts: {
   db: MaybeDB
@@ -169,13 +182,13 @@ async function skillSynthesisHook(opts: {
   sessionID: string
   goal: string
   failed: NodeResult[]
-}): Promise<{ skillCandidate: string | null }> {
+}): Promise<SkillLaneResult> {
   const { db, bus, sessionID, goal, failed } = opts
+  const summary = failed.map(f => `${f.id}: ${(f.error ?? "unknown error").slice(0, 200)}`).join("; ")
   let skillCandidate: string | null = null
   try {
     const { ImprovementEngine } = await import("../learning/improvement.js")
     const engine = new ImprovementEngine({ bus, db: db ?? undefined })
-    const summary = failed.map(f => `${f.id}: ${(f.error ?? "unknown error").slice(0, 200)}`).join("; ")
     const improvements = engine.synthesize(
       [{
         id: `orch_wave_${Date.now().toString(36)}`,
@@ -195,7 +208,53 @@ async function skillSynthesisHook(opts: {
   } catch {
     skillCandidate = failed.map(f => `${f.id}: ${(f.error ?? "unknown").slice(0, 160)}`).join("; ").slice(0, 500) || "orchestrate wave failure"
   }
-  // Persist candidate via findings table (source:tool) — never throws the tool.
+  // Draft UNVERIFIED scaffold + staged mira.json patch (never auto-applied).
+  let lane: SkillLaneResult
+  try {
+    const { draftSkillScaffold, ImprovementEngine } = await import("../learning/improvement.js")
+    const draft = draftSkillScaffold(summary || "orchestrate wave failure", goal)
+    // Shadow-eval gate hook (fail-closed): verify a skill-kind improvement.
+    // targetFile is null for skills → verify() returns verified:false, which
+    // keeps the gate pending/rejected (never promotes without human review).
+    let gateStatus: SkillLaneResult["evalGate"] = { ...draft.evalGate, status: "pending-shadow-eval" }
+    try {
+      const engine = new ImprovementEngine({ bus, db: db ?? undefined })
+      const vr = await engine.verify({
+        id: `skill_orch_${Date.now().toString(36)}`,
+        targetFile: null,
+        reason: `orchestrate wave failure → skill draft ${draft.name}`,
+        proposedChange: draft.scaffold.slice(0, 500),
+        kind: "skill",
+        source: "online",
+        verification: "shadow eval gate (MIRA_EVAL_GATE=1)",
+        createdAt: Date.now(),
+      })
+      gateStatus = {
+        required: true,
+        status: vr.verified ? "verified" : "pending-shadow-eval",
+        command: draft.evalGate.command,
+        detail: vr.reason.slice(0, 300),
+      }
+    } catch (e) {
+      gateStatus = { required: true, status: "pending-shadow-eval", command: draft.evalGate.command, detail: `gate error (fail-closed): ${String(e).slice(0, 200)}` }
+    }
+    lane = {
+      skillCandidate,
+      skillName: draft.name,
+      scaffold: draft.scaffold,
+      miraPatch: draft.miraPatch,
+      evalGate: gateStatus,
+    }
+  } catch {
+    lane = {
+      skillCandidate,
+      skillName: "orchestrate-recovery",
+      scaffold: `UNVERIFIED-DO-NOT-USE: ${skillCandidate ?? summary}`.slice(0, 1000),
+      miraPatch: { skills: {}, _note: "STAGED ONLY — never auto-applied." } as JsonValue,
+      evalGate: { required: true, status: "pending-shadow-eval", command: "bun test + eval gate (MIRA_EVAL_GATE=1)", detail: "draft fallback (fail-closed)" },
+    }
+  }
+  // Persist draft via findings table (source:tool) — never throws the tool.
   try {
     if (db) {
       const now = Date.now()
@@ -205,7 +264,7 @@ async function skillSynthesisHook(opts: {
         source: "tool",
         severity: "minor",
         title: `orchestrate wave failure → skill candidate (${goal.slice(0, 80)})`,
-        evidence: skillCandidate,
+        evidence: `UNVERIFIED-DO-NOT-USE [${lane.skillName}]\n${lane.skillCandidate ?? ""}\n--- scaffold ---\n${lane.scaffold.slice(0, 1500)}\n--- miraPatch (STAGED ONLY, never applied) ---\n${JSON.stringify(lane.miraPatch).slice(0, 800)}\n--- evalGate ---\n${lane.evalGate.status}: ${lane.evalGate.detail ?? lane.evalGate.command}`.slice(0, 4000),
         status: "open",
         createdAt: now,
         updatedAt: now,
@@ -219,13 +278,17 @@ async function skillSynthesisHook(opts: {
       sessionID,
       payload: {
         waveFailed: failed.map(f => f.id),
-        skillCandidate,
-        note: "Human Review Required — candidate is UNVERIFIED-DO-NOT-USE until shadow eval + promotion",
+        skillCandidate: lane.skillCandidate,
+        skillName: lane.skillName,
+        scaffold: lane.scaffold.slice(0, 2000),
+        miraPatch: lane.miraPatch,
+        evalGate: lane.evalGate,
+        note: "Human Review Required — candidate is UNVERIFIED-DO-NOT-USE until shadow eval + promotion. Staged patch NEVER auto-applied.",
       } as JsonValue,
       timestamp: Date.now(),
     })
   } catch {}
-  return { skillCandidate }
+  return lane
 }
 
 export const orchestrateTool = {
@@ -315,110 +378,146 @@ export const orchestrateTool = {
       bus?.publish({ type: "job.created", sessionID: ctx.sessionID, payload: { jobID, taskID: t.id, agent: normalizeAgent(t.agent), title: t.title ?? t.id } as JsonValue, timestamp: Date.now() })
     }
 
+    // ── E2b: wave execution with context forwarding + targeted recovery ──
+    // Shared by foreground (await) and background (fire-and-forget via
+    // setImmediate, mirroring tools/task.ts + orchestrateJobAborts pattern).
+    const strategy: MergeStrategy = mergeStrategy ?? "lead-synthesis"
+    const sessionID = ctx.sessionID
+    const runWaves = async (): Promise<NodeResult[]> => {
+      const results: NodeResult[] = []
+      const priorResults = new Map<string, string>() // id → full text (summaries forwarded, full kept in job rows)
+      const failedIDs = new Set<string>()
+      for (let wi = 0; wi < waves.length; wi++) {
+        const wave = waves[wi] as OrchestrateTask[]
+        // Skip nodes whose dependencies failed (targeted recovery: don't run doomed work)
+        const runnable = wave.filter(t => !(t.dependsOn ?? []).some(d => failedIDs.has(d)))
+        const skipped = wave.filter(t => (t.dependsOn ?? []).some(d => failedIDs.has(d)))
+        for (const t of skipped) {
+          results.push({ id: t.id, agent: normalizeAgent(t.agent), jobID: jobIDs.get(t.id), status: "skipped", error: `skipped: upstream failed (${(t.dependsOn ?? []).filter(d => failedIDs.has(d)).join(", ")})` })
+        }
+        bus?.publish({ type: "message.updated", sessionID, payload: { wave: wi + 1, waveSize: wave.length, runnable: runnable.length, skipped: skipped.length, ids: wave.map(t => t.id) } as JsonValue, timestamp: Date.now() })
+        // Run wave in parallel (capped)
+        const waveResults = await runWithLimit(runnable, ORCHESTRATE_CONCURRENCY_CAP, async (t): Promise<NodeResult> => {
+          const agent = normalizeAgent(t.agent)
+          const title = t.title ?? `${t.id}: ${t.prompt.slice(0, 40)}`
+          const jobID = jobIDs.get(t.id)
+          // Forward upstream summaries along contextFrom (⊆ dependsOn), else dependsOn edges.
+          const edgeIDs = (t.contextFrom ?? t.dependsOn ?? []).filter(id => priorResults.has(id))
+          const depContext = edgeIDs.map(id => `[${id} summary]: ${(priorResults.get(id) ?? "").slice(0, 1200)}`).join("\n")
+          const fullPrompt = depContext
+            ? `[${goal} :: ${t.id}] ${t.prompt}\n\nUpstream context (summaries only):\n${depContext}`
+            : `[${goal} :: ${t.id}] ${t.prompt}`
+          const ac = new AbortController()
+          if (jobID) orchestrateJobAborts.set(jobID, ac)
+          const attempt = async (): Promise<NodeResult> => {
+            try {
+              const { sessionID: childID, text } = await runner({ prompt: fullPrompt, parentID: sessionID, agent, title, signal: ac.signal })
+              return { id: t.id, agent, jobID, status: "completed", sessionID: childID, text }
+            } catch (e) {
+              return { id: t.id, agent, jobID, status: "failed", error: String(e) }
+            }
+          }
+          let res = await attempt()
+          if (res.status === "failed" && !ac.signal.aborted) {
+            // Retry once (doom-loop guard: exactly one retry, no replanning here)
+            res = await attempt()
+          }
+          if (jobID) orchestrateJobAborts.delete(jobID)
+          // Stash full text in the job row; parent sees only the 600-char preview.
+          if (db && jobID) {
+            try {
+              if (res.status === "completed") {
+                await db.update(jobs)
+                  .set({ status: "completed", result: res.text, childSessionID: res.sessionID, updatedAt: Date.now() })
+                  .where(and(eq(jobs.id, jobID), eq(jobs.status, "running")))
+              } else if (res.status === "failed") {
+                await db.update(jobs)
+                  .set({ status: ac.signal.aborted ? "cancelled" : "failed", error: res.error, updatedAt: Date.now() })
+                  .where(and(eq(jobs.id, jobID), eq(jobs.status, "running")))
+              }
+            } catch {}
+          }
+          bus?.publish({
+            type: res.status === "completed" ? "job.updated" : ac.signal.aborted ? "job.cancelled" : "job.updated",
+            sessionID,
+            payload: { jobID, taskID: t.id, status: res.status, childSessionID: res.sessionID, preview: (res.text ?? res.error ?? "").slice(0, 600) } as JsonValue,
+            timestamp: Date.now(),
+          })
+          return res
+        })
+        results.push(...waveResults)
+        for (const r of waveResults) {
+          if (r.status === "completed") priorResults.set(r.id, r.text ?? "")
+          else if (r.status === "failed") failedIDs.add(r.id)
+        }
+        // E3: skill-synthesis lane on wave failure (hook only, fail-closed)
+        const waveFailed = waveResults.filter(r => r.status === "failed")
+        if (waveFailed.length > 0) {
+          await skillSynthesisHook({ db, bus, sessionID, goal, failed: waveFailed })
+        }
+      }
+      return results
+    }
+
+    const summarize = (results: NodeResult[]): JsonValue => {
+      const ok = results.filter(r => r.status === "completed").length
+      const failed = results.filter(r => r.status === "failed").length
+      const skippedCount = results.filter(r => r.status === "skipped").length
+      const merged = mergeResults(goal, strategy, results)
+      return {
+        goal,
+        waves: waves.length,
+        total: tasks.length,
+        completed: ok,
+        failed,
+        skipped: skippedCount,
+        denseFallback: isDense,
+        mergeStrategy: strategy,
+        merged,
+        jobIDs: [...jobIDs.entries()].map(([taskID, jobID]) => ({ taskID, jobID })),
+        results: results.map(r => ({ id: r.id, agent: r.agent, jobID: r.jobID, status: r.status, sessionID: r.sessionID, preview: (r.text ?? r.error ?? "").slice(0, 600) })),
+      } as JsonValue
+    }
+
     if (background) {
+      // Fire-and-forget deferred wave runner (mirrors task.ts background):
+      // acknowledge immediately; per-node job.updated/job.cancelled events +
+      // a final message.updated { orchestrateComplete } arrive via Bus.
+      // A per-job AbortController per node lets cancelJob terminate in-flight
+      // work (orchestrateJobAborts map, same pattern as task.ts jobAborts).
+      const ackJobIDs = [...jobIDs.entries()].map(([taskID, jobID]) => ({ taskID, jobID }))
+      setImmediate(() => {
+        runWaves()
+          .then((results) => {
+            const final = summarize(results) as { completed?: number; failed?: number; skipped?: number; merged?: string }
+            bus?.publish({
+              type: "message.updated",
+              sessionID,
+              payload: { orchestrateComplete: true, goal, completed: final.completed, failed: final.failed, skipped: final.skipped, merged: final.merged } as JsonValue,
+              timestamp: Date.now(),
+            })
+          })
+          .catch((e) => {
+            bus?.publish({
+              type: "message.updated",
+              sessionID,
+              payload: { orchestrateComplete: true, goal, error: String(e).slice(0, 500) } as JsonValue,
+              timestamp: Date.now(),
+            })
+          })
+      })
       return {
         goal,
         status: "background",
         waves: waves.length,
         total: tasks.length,
-        jobIDs: [...jobIDs.entries()].map(([taskID, jobID]) => ({ taskID, jobID })),
-        message: "Orchestrate DAG running in background — per-node completion arrives via Bus job.updated events; poll getJob(jobID) for status/result.",
+        jobIDs: ackJobIDs,
+        message: "Orchestrate DAG running in background — per-node completion arrives via Bus job.updated/job.cancelled events plus a final message.updated { orchestrateComplete }; poll getJob(jobID) for status/result.",
       } as JsonValue
     }
 
-    // ── E2b: wave execution with context forwarding + targeted recovery ──
-    const results: NodeResult[] = []
-    const priorResults = new Map<string, string>() // id → full text (summaries forwarded, full kept in job rows)
-    const failedIDs = new Set<string>()
-    const strategy: MergeStrategy = mergeStrategy ?? "lead-synthesis"
-
-    for (let wi = 0; wi < waves.length; wi++) {
-      const wave = waves[wi] as OrchestrateTask[]
-      // Skip nodes whose dependencies failed (targeted recovery: don't run doomed work)
-      const runnable = wave.filter(t => !(t.dependsOn ?? []).some(d => failedIDs.has(d)))
-      const skipped = wave.filter(t => (t.dependsOn ?? []).some(d => failedIDs.has(d)))
-      for (const t of skipped) {
-        results.push({ id: t.id, agent: normalizeAgent(t.agent), jobID: jobIDs.get(t.id), status: "skipped", error: `skipped: upstream failed (${(t.dependsOn ?? []).filter(d => failedIDs.has(d)).join(", ")})` })
-      }
-      bus?.publish({ type: "message.updated", sessionID: ctx.sessionID, payload: { wave: wi + 1, waveSize: wave.length, runnable: runnable.length, skipped: skipped.length, ids: wave.map(t => t.id) } as JsonValue, timestamp: Date.now() })
-      // Run wave in parallel (capped)
-      const waveResults = await runWithLimit(runnable, ORCHESTRATE_CONCURRENCY_CAP, async (t): Promise<NodeResult> => {
-        const agent = normalizeAgent(t.agent)
-        const title = t.title ?? `${t.id}: ${t.prompt.slice(0, 40)}`
-        const jobID = jobIDs.get(t.id)
-        // Forward upstream summaries along contextFrom (⊆ dependsOn), else dependsOn edges.
-        const edgeIDs = (t.contextFrom ?? t.dependsOn ?? []).filter(id => priorResults.has(id))
-        const depContext = edgeIDs.map(id => `[${id} summary]: ${(priorResults.get(id) ?? "").slice(0, 1200)}`).join("\n")
-        const fullPrompt = depContext
-          ? `[${goal} :: ${t.id}] ${t.prompt}\n\nUpstream context (summaries only):\n${depContext}`
-          : `[${goal} :: ${t.id}] ${t.prompt}`
-        const ac = new AbortController()
-        if (jobID) orchestrateJobAborts.set(jobID, ac)
-        const attempt = async (): Promise<NodeResult> => {
-          try {
-            const { sessionID, text } = await runner({ prompt: fullPrompt, parentID: ctx.sessionID, agent, title, signal: ac.signal })
-            return { id: t.id, agent, jobID, status: "completed", sessionID, text }
-          } catch (e) {
-            return { id: t.id, agent, jobID, status: "failed", error: String(e) }
-          }
-        }
-        let res = await attempt()
-        if (res.status === "failed" && !ac.signal.aborted) {
-          // Retry once (doom-loop guard: exactly one retry, no replanning here)
-          res = await attempt()
-        }
-        if (jobID) orchestrateJobAborts.delete(jobID)
-        // Stash full text in the job row; parent sees only the 600-char preview.
-        if (db && jobID) {
-          try {
-            if (res.status === "completed") {
-              await db.update(jobs)
-                .set({ status: "completed", result: res.text, childSessionID: res.sessionID, updatedAt: Date.now() })
-                .where(and(eq(jobs.id, jobID), eq(jobs.status, "running")))
-            } else if (res.status === "failed") {
-              await db.update(jobs)
-                .set({ status: ac.signal.aborted ? "cancelled" : "failed", error: res.error, updatedAt: Date.now() })
-                .where(and(eq(jobs.id, jobID), eq(jobs.status, "running")))
-            }
-          } catch {}
-        }
-        bus?.publish({
-          type: res.status === "completed" ? "job.updated" : ac.signal.aborted ? "job.cancelled" : "job.updated",
-          sessionID: ctx.sessionID,
-          payload: { jobID, taskID: t.id, status: res.status, childSessionID: res.sessionID, preview: (res.text ?? res.error ?? "").slice(0, 600) } as JsonValue,
-          timestamp: Date.now(),
-        })
-        return res
-      })
-      results.push(...waveResults)
-      for (const r of waveResults) {
-        if (r.status === "completed") priorResults.set(r.id, r.text ?? "")
-        else if (r.status === "failed") failedIDs.add(r.id)
-      }
-      // E3: skill-synthesis hook on wave failure (hook only, fail-open)
-      const waveFailed = waveResults.filter(r => r.status === "failed")
-      if (waveFailed.length > 0) {
-        await skillSynthesisHook({ db, bus, sessionID: ctx.sessionID, goal, failed: waveFailed })
-      }
-    }
-
-    const ok = results.filter(r => r.status === "completed").length
-    const failed = results.filter(r => r.status === "failed").length
-    const skippedCount = results.filter(r => r.status === "skipped").length
-    const merged = mergeResults(goal, strategy, results)
-    return {
-      goal,
-      waves: waves.length,
-      total: tasks.length,
-      completed: ok,
-      failed,
-      skipped: skippedCount,
-      denseFallback: isDense,
-      mergeStrategy: strategy,
-      merged,
-      jobIDs: [...jobIDs.entries()].map(([taskID, jobID]) => ({ taskID, jobID })),
-      results: results.map(r => ({ id: r.id, agent: r.agent, jobID: r.jobID, status: r.status, sessionID: r.sessionID, preview: (r.text ?? r.error ?? "").slice(0, 600) })),
-    } as JsonValue
+    const results = await runWaves()
+    return summarize(results)
   },
 } satisfies ToolDef<typeof orchestrateSchema>
 
