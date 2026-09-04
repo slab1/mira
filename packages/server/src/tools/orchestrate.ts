@@ -348,15 +348,25 @@ export const orchestrateTool = {
     const runner = ctx.subagentRunner
     if (!runner) return { error: "No subagentRunner wired — server misconfigured" } as JsonValue
 
-    // ── E1: inferDAG planner ──────────────────────────────────────────
+    // ── E1: inferDAG planner (H3-B: replan-once, then fail-closed) ────
     let tasks: OrchestrateTask[] | undefined = rawTasks
     if ((!tasks || tasks.length === 0) && inferDAG) {
       const gateway = (ctx as { gateway?: Pick<import("../gateway/index.js").Gateway, "complete"> }).gateway ?? null
-      const { planDAG } = await import("./orchestrate-planner.js")
-      const planned = await planDAG(goal, context, gateway)
+      const { planDAG, isReplanable, formatIssues } = await import("./orchestrate-planner.js")
+      let planned = await planDAG(goal, context, gateway)
+      if ("error" in planned && isReplanable(planned.issues)) {
+        // Exactly one replan: feed the structured validation error back so
+        // the planner can fix its own JSON slip (doom-loop guard: no more).
+        const feedback = formatIssues(planned.issues)
+        planned = await planDAG(goal, context, gateway, undefined, feedback)
+      }
       if ("error" in planned) {
         // Fail-closed: planner errors never silently run a guessed plan.
-        return { goal, error: planned.error, hint: "planner failed (fail-closed) — pass tasks explicitly or retry once with more context" } as JsonValue
+        // The error names the rule + task id so the caller can fix it.
+        const ruleHint = "issues" in planned && planned.issues.length > 0
+          ? ` (${formatIssues(planned.issues).slice(0, 300)})`
+          : ""
+        return { goal, error: `${planned.error}${ruleHint}`, hint: "planner failed (fail-closed, replan exhausted) — pass tasks explicitly or fix the named rule/task and retry" } as JsonValue
       }
       tasks = planned.plan.tasks.map(t => ({ ...t }))
       mergeStrategy = planned.plan.mergeStrategy

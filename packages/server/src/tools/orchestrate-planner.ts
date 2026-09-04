@@ -94,17 +94,50 @@ export function extractPlannerJSON(text: string): string {
   return candidate
 }
 
+/**
+ * Structured validation failure: which rule failed, on which task.
+ * Returned alongside the human-readable error so the caller can feed it
+ * back to the planner for exactly one replan (H3-B), then fail closed.
+ */
+export const plannerRuleSchema = z.enum([
+  "unknown-agent",
+  "unknown-dep",
+  "self-dependency",
+  "contextFrom-subset",
+  "cycle",
+  "schema",
+  "non-json",
+  "gateway",
+  "model-call",
+])
+export type PlannerRule = z.infer<typeof plannerRuleSchema>
+
+export const plannerIssueSchema = z.object({
+  rule: plannerRuleSchema,
+  taskID: z.string().optional(),
+  detail: z.string(),
+})
+export type PlannerIssue = z.infer<typeof plannerIssueSchema>
+
 /** Validate raw planner output (unknown agent/dep, cycle, contextFrom ⊆ dependsOn). */
-export function validateDAG(tasks: InferredTask[]): { ok: true } | { ok: false; error: string } {
+export function validateDAG(tasks: InferredTask[]): { ok: true } | { ok: false; error: string; issue: PlannerIssue } {
   const byId = new Map(tasks.map(t => [t.id, t]))
   for (const t of tasks) {
     for (const dep of t.dependsOn ?? []) {
-      if (!byId.has(dep)) return { ok: false, error: `task "${t.id}" dependsOn unknown "${dep}"` }
-      if (dep === t.id) return { ok: false, error: `task "${t.id}" self-dependency` }
+      if (!byId.has(dep)) {
+        return { ok: false, error: `task "${t.id}" dependsOn unknown "${dep}"`, issue: { rule: "unknown-dep", taskID: t.id, detail: `dependsOn "${dep}" matches no task id` } }
+      }
+      if (dep === t.id) {
+        return { ok: false, error: `task "${t.id}" self-dependency`, issue: { rule: "self-dependency", taskID: t.id, detail: "a task cannot depend on itself" } }
+      }
     }
     for (const src of t.contextFrom ?? []) {
       if (!(t.dependsOn ?? []).includes(src)) {
-        return { ok: false, error: `task "${t.id}" contextFrom "${src}" must be a subset of dependsOn` }
+        return {
+          ok: false,
+          error: `task "${t.id}" contextFrom "${src}" must be a subset of dependsOn`,
+          issue: { rule: "contextFrom-subset", taskID: t.id, detail: `contextFrom "${src}" is not in dependsOn` },
+        }
       }
     }
   }
@@ -127,24 +160,62 @@ export function validateDAG(tasks: InferredTask[]): { ok: true } | { ok: false; 
       if (deg === 0) queue.push(nxt)
     }
   }
-  if (visited !== tasks.length) return { ok: false, error: "cycle detected in planned DAG" }
+  if (visited !== tasks.length) {
+    return {
+      ok: false,
+      error: "cycle detected in planned DAG",
+      issue: { rule: "cycle", detail: "dependsOn edges form a cycle (no root task or stuck nodes)" },
+    }
+  }
   return { ok: true }
+}
+
+/** planDAG failure: human-readable error + structured issues for replan feedback. */
+export type PlanDAGError = { error: string; issues: PlannerIssue[] }
+
+/** Rules worth exactly one replan (model output bugs, not infra failures). */
+const REPLANABLE_RULES: ReadonlySet<PlannerRule> = new Set([
+  "unknown-agent",
+  "unknown-dep",
+  "self-dependency",
+  "contextFrom-subset",
+  "cycle",
+  "schema",
+  "non-json",
+])
+
+/** True when every issue is a model-output bug the planner itself could fix. */
+export function isReplanable(issues: PlannerIssue[]): boolean {
+  return issues.length > 0 && issues.every(i => REPLANABLE_RULES.has(i.rule))
+}
+
+/** Render issues as one feedback line for the replan prompt (rule + task id). */
+export function formatIssues(issues: PlannerIssue[]): string {
+  return issues
+    .map(i => (i.taskID ? `rule "${i.rule}" on task "${i.taskID}": ${i.detail}` : `rule "${i.rule}": ${i.detail}`))
+    .join("; ")
 }
 
 /**
  * Ask the cheap model for a task DAG, then validate it.
- * Fail-closed: any parse/validation failure is returned as { error } and the
- * caller must NOT run a fallback plan silently (one replan allowed by caller,
- * then fail-closed per doom-loop guard).
+ * Fail-closed: any parse/validation failure is returned as { error, issues }
+ * and the caller must NOT run a fallback plan silently (one replan allowed by
+ * caller with the issues fed back, then fail-closed per doom-loop guard).
+ * Pass `retryFeedback` (from formatIssues) for the single replan attempt —
+ * it is appended to the planner prompt verbatim.
  */
 export async function planDAG(
   goal: string,
   context: string | undefined,
   gateway: Pick<Gateway, "complete"> | null | undefined,
   model: string = PLANNER_MODEL,
-): Promise<{ plan: InferDAGRequest } | { error: string }> {
+  retryFeedback?: string,
+): Promise<{ plan: InferDAGRequest } | PlanDAGError> {
   if (!gateway) {
-    return { error: "No gateway wired — pass tasks explicitly instead of inferDAG" }
+    return {
+      error: "No gateway wired — pass tasks explicitly instead of inferDAG",
+      issues: [{ rule: "gateway", detail: "no gateway wired for planner complete()" }],
+    }
   }
   let agentCatalog: string
   try {
@@ -165,19 +236,28 @@ export async function planDAG(
   } catch {
     skillNames = ""
   }
-  const prompt = buildPlannerPrompt(goal, context, agentCatalog, skillNames)
+  const basePrompt = buildPlannerPrompt(goal, context, agentCatalog, skillNames)
+  const prompt = retryFeedback
+    ? `${basePrompt}\n\nYour previous plan failed validation: ${retryFeedback}\nFix the issues above and return the FULL corrected JSON again (no prose outside the JSON).`
+    : basePrompt
   let text: string
   try {
     const res = await gateway.complete({ model, prompt, maxTokens: 4000 })
     text = res.text
   } catch (e) {
-    return { error: `planner model call failed: ${String(e).slice(0, 300)}` }
+    return {
+      error: `planner model call failed: ${String(e).slice(0, 300)}`,
+      issues: [{ rule: "model-call", detail: String(e).slice(0, 200) }],
+    }
   }
   let raw: unknown
   try {
     raw = JSON.parse(extractPlannerJSON(text)) as unknown
   } catch {
-    return { error: `planner returned non-JSON: ${text.slice(0, 300)}` }
+    return {
+      error: `planner returned non-JSON: ${text.slice(0, 300)}`,
+      issues: [{ rule: "non-json", detail: text.slice(0, 200) }],
+    }
   }
   const parsed = inferDAGRequestSchema.safeParse(
     typeof raw === "object" && raw !== null && !Array.isArray(raw) && !("goal" in raw)
@@ -185,12 +265,48 @@ export async function planDAG(
       : raw,
   )
   if (!parsed.success) {
-    return { error: `planner output failed validation: ${parsed.error.message.slice(0, 500)}` }
+    return {
+      error: `planner output failed validation: ${parsed.error.message.slice(0, 500)}`,
+      issues: zodToIssues(parsed.error, raw),
+    }
+  }
+  // Unknown-agent check against the live catalog (same source as execute;
+  // explore/research are accepted — execute normalizes them to researcher).
+  const knownAgents = new Set(Object.keys(getAgentTemplates()))
+  for (const t of parsed.data.tasks) {
+    if (t.agent && t.agent !== "explore" && t.agent !== "research" && !knownAgents.has(t.agent)) {
+      return {
+        error: `planner DAG invalid: task "${t.id}" requests unknown agent "${t.agent}"`,
+        issues: [{ rule: "unknown-agent", taskID: t.id, detail: `agent "${t.agent}" not in the agent catalog` }],
+      }
+    }
   }
   const dagCheck = validateDAG(parsed.data.tasks)
   if (dagCheck.ok === false) {
     const err: string = dagCheck.error
-    return { error: `planner DAG invalid: ${err}` }
+    return { error: `planner DAG invalid: ${err}`, issues: [dagCheck.issue] }
   }
   return { plan: parsed.data }
+}
+
+/** Best-effort Zod → PlannerIssue mapping (rule + task id where derivable). */
+function zodToIssues(err: z.ZodError, raw: unknown): PlannerIssue[] {
+  const rawTasks = (typeof raw === "object" && raw !== null
+    ? (raw as Record<string, unknown>)["tasks"]
+    : undefined) as Array<{ id?: unknown }> | undefined
+  const out: PlannerIssue[] = []
+  for (const zIssue of err.issues.slice(0, 3)) {
+    const path = zIssue.path as Array<string | number | symbol>
+    let taskID: string | undefined
+    if (path[0] === "tasks" && typeof path[1] === "number" && Array.isArray(rawTasks)) {
+      const id = rawTasks[path[1]]?.id
+      if (typeof id === "string") taskID = id
+    }
+    out.push({
+      rule: "schema",
+      ...(taskID ? { taskID } : {}),
+      detail: `${path.map(String).join(".") || "(root)"}: ${zIssue.message}`.slice(0, 300),
+    })
+  }
+  return out.length > 0 ? out : [{ rule: "schema", detail: err.message.slice(0, 300) }]
 }
