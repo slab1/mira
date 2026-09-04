@@ -2,10 +2,12 @@
   "name": "mira",
   "private": true,
   "packageManager": "bun@1.3.5",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "prepare": "husky",
-    "dev": "turbo dev",
+    "dev": "turbo dev --continue",
     "build": "turbo build",
     "test": "turbo test",
     "typecheck": "turbo typecheck",
