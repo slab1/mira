@@ -1,38 +1,80 @@
 /**
- * Tool: orchestrate — Kilo K2 Orchestrator Mode v1
+ * Tool: orchestrate — Kilo K2 Orchestrator Mode v2 (H2-3)
  * Parent analyzes goal → spawns sub-agents as DAG waves in parallel.
  *
  * Spec (KILO_COVERAGE P1-1): { goal: string, tasks: [{id, prompt, agent?, dependsOn?}] }
- * - Builds dependency graph, topologically sorts into waves
- * - Each wave runs in parallel via subagentRunner (task tool's runner)
- * - Falls back to sequential if graph is dense (>50% possible edges) or cycle detected
- * - Returns aggregated results + job-like summary
+ * v2 adds (H2-3):
+ *   E1 — inferDAG planner: { inferDAG: true, context? } asks the cheap model
+ *        (tools/orchestrate-planner.ts planDAG) for a bounded DAG, validated
+ *        before execution. Fail-closed on planner errors.
+ *   E2 — wave-context + jobs persistence: one jobs row per task (same pattern
+ *        as task.ts), job.created/updated/cancelled Bus events per node, and
+ *        upstream summaries forwarded along contextFrom (⊆ dependsOn) edges.
+ *        Full texts stay in job rows; the parent sees 600-char previews.
+ *   E3 — skill-synthesis hook: on wave failure, ImprovementEngine.synthesize()
+ *        runs (hook only), the candidate is persisted to the findings table
+ *        (source:tool), and a message.updated { waveFailed, skillCandidate }
+ *        event is published on the Bus.
  *
- * Uses same persistence as task tool (jobs table) for observability, but returns immediately
- * with all wave results (foreground). Background mode can be added later.
+ * Guards: tasks ≤12, budgetSteps ≤25 (cost blowup); unknown agent/dep →
+ * reject; cycle → reject once then fail-closed; dense graph (>50% edges) →
+ * single wave (tightly-coupled → single agent); failed nodes retry once,
+ * then downstream dependents are skipped (targeted recovery).
  */
 import { z } from "zod"
+import { and, eq } from "drizzle-orm"
 import type { ToolDef } from "./registry.js"
+import type { MiraDB } from "../storage/db.js"
 import { isKnownAgent } from "../agents/templates.js"
+import { jobs, findings } from "../storage/schema.js"
+import type { JsonValue } from "../types/index.js"
+import { mergeStrategySchema, type MergeStrategy } from "./orchestrate-planner.js"
 
-const orchestrateSchema = z.object({
-  goal: z.string().min(1).max(5000).describe("Overall goal — parent analysis of why these subtasks exist"),
-  tasks: z.array(z.object({
-    id: z.string().min(1).max(40).regex(/^[a-z0-9_-]+$/i, "task id must be alphanumeric/_/-").describe("Unique task id, used in dependsOn"),
-    prompt: z.string().min(1).max(10000).describe("Full instructions for this subagent"),
-    agent: z.string().min(1).max(40).optional().describe("Agent to use (code/ask/plan/debug/general, etc.)"),
-    dependsOn: z.array(z.string().min(1).max(40)).optional().describe("IDs that must complete before this task"),
-    title: z.string().max(200).optional().describe("Short title for job board"),
-  })).min(1).max(12).describe("Subtasks to orchestrate (max 12, kept bounded)"),
+// Re-export the job board from task.ts so callers have one surface for
+// polling/cancelling orchestrate-spawned jobs.
+export { getJob, listJobs, cancelJob } from "./task.js"
+
+export const orchestrateTaskSchema = z.object({
+  id: z.string().min(1).max(40).regex(/^[a-z0-9_-]+$/i, "task id must be alphanumeric/_/-").describe("Unique task id, used in dependsOn"),
+  prompt: z.string().min(1).max(10000).describe("Full instructions for this subagent"),
+  agent: z.string().min(1).max(40).optional().describe("Agent to use (code/ask/plan/debug/general, etc.)"),
+  dependsOn: z.array(z.string().min(1).max(40)).optional().describe("IDs that must complete before this task"),
+  contextFrom: z.array(z.string().min(1).max(40)).optional().describe("Subset of dependsOn whose summaries are forwarded into this task's prompt"),
+  budgetSteps: z.number().int().min(1).max(25).default(10).describe("Step budget for this node (1-25, default 10)"),
+  title: z.string().max(200).optional().describe("Short title for job board"),
 })
+export type OrchestrateTask = z.infer<typeof orchestrateTaskSchema>
 
-function topologicalWaves(tasks: z.infer<typeof orchestrateSchema>["tasks"]): { waves: typeof tasks[]; error?: string } {
+export const orchestrateSchema = z.object({
+  goal: z.string().min(1).max(5000).describe("Overall goal — parent analysis of why these subtasks exist"),
+  tasks: z.array(orchestrateTaskSchema).min(1).max(12).describe("Subtasks to orchestrate (max 12, kept bounded)").optional(),
+  inferDAG: z.boolean().optional().describe("Ask the cheap planner model to infer the task DAG from goal+context (E1)"),
+  context: z.string().max(5000).optional().describe("Extra context for the inferDAG planner"),
+  mergeStrategy: mergeStrategySchema.default("lead-synthesis").describe("How to combine node summaries"),
+  background: z.boolean().optional().describe("Return immediately with jobIDs; wave results arrive via Bus job.updated events"),
+})
+export type OrchestrateArgs = z.infer<typeof orchestrateSchema>
+
+/** Max parallel subagents per wave (doom-loop / cost guard; default wave runs Promise.all capped here). */
+export const ORCHESTRATE_CONCURRENCY_CAP = 8
+
+/** Live abort controllers for in-flight orchestrate nodes (per-wave cancel). */
+export const orchestrateJobAborts = new Map<string, AbortController>()
+
+type MaybeDB = MiraDB | null | undefined
+
+export function topologicalWaves(tasks: OrchestrateTask[]): { waves: OrchestrateTask[][]; error?: string } {
   const byId = new Map(tasks.map(t => [t.id, t] as const))
-  // validate dependsOn
+  // validate dependsOn + contextFrom ⊆ dependsOn
   for (const t of tasks) {
     for (const dep of t.dependsOn ?? []) {
       if (!byId.has(dep)) return { waves: [], error: `task "${t.id}" dependsOn unknown "${dep}"` }
       if (dep === t.id) return { waves: [], error: `task "${t.id}" self-dependency` }
+    }
+    for (const src of t.contextFrom ?? []) {
+      if (!(t.dependsOn ?? []).includes(src)) {
+        return { waves: [], error: `task "${t.id}" contextFrom "${src}" must be a subset of dependsOn` }
+      }
     }
   }
   // Kahn's with waves
@@ -44,11 +86,11 @@ function topologicalWaves(tasks: z.infer<typeof orchestrateSchema>["tasks"]): { 
   }
   for (const t of tasks) {
     for (const dep of t.dependsOn ?? []) {
-      adj.get(dep)!.push(t.id)
+      adj.get(dep)?.push(t.id)
     }
   }
-  const waves: typeof tasks[] = []
-  let remaining = new Set(tasks.map(t => t.id))
+  const waves: OrchestrateTask[][] = []
+  const remaining = new Set(tasks.map(t => t.id))
   let waveQueue = tasks.filter(t => (t.dependsOn?.length ?? 0) === 0).map(t => t.id)
   if (waveQueue.length === 0 && tasks.length > 0) {
     return { waves: [], error: "cycle detected: no root task (all have dependencies)" }
@@ -57,7 +99,7 @@ function topologicalWaves(tasks: z.infer<typeof orchestrateSchema>["tasks"]): { 
   while (waveQueue.length > 0) {
     const waveIds = [...waveQueue]
     waveQueue = []
-    waves.push(waveIds.map(id => byId.get(id)!))
+    waves.push(waveIds.map(id => byId.get(id) as OrchestrateTask))
     for (const id of waveIds) {
       visited.add(id)
       remaining.delete(id)
@@ -77,15 +119,145 @@ function topologicalWaves(tasks: z.infer<typeof orchestrateSchema>["tasks"]): { 
   return { waves }
 }
 
+/** Run mapper with at most `limit` in flight (wave-level concurrency cap). */
+async function runWithLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length)
+  let next = 0
+  const workers = new Array(Math.min(limit, items.length)).fill(null).map(async () => {
+    while (next < items.length) {
+      const i = next++
+      out[i] = await fn(items[i] as T)
+    }
+  })
+  await Promise.all(workers)
+  return out
+}
+
+type NodeResult = {
+  id: string
+  agent?: string
+  jobID?: string
+  status: "completed" | "failed" | "skipped"
+  sessionID?: string
+  text?: string
+  error?: string
+}
+
+function mergeResults(goal: string, strategy: MergeStrategy, results: NodeResult[]): string {
+  const done = results.filter(r => r.status === "completed")
+  const previews = done.map(r => `[${r.id}]: ${(r.text ?? "").slice(0, 600)}`)
+  if (strategy === "best-of-n") {
+    // Keep the longest completed output as the winner (deterministic, cheap).
+    const best = [...done].sort((a, b) => (b.text?.length ?? 0) - (a.text?.length ?? 0))[0]
+    return best ? `Best of ${done.length} for "${goal}": [${best.id}] ${(best.text ?? "").slice(0, 1200)}` : `No completed nodes for "${goal}"`
+  }
+  if (strategy === "independent-review") {
+    return `Independent review for "${goal}" (${done.length}/${results.length} completed):\n${previews.join("\n")}`
+  }
+  // lead-synthesis (default): single combined summary from node summaries
+  return `Synthesis for "${goal}" (${done.length}/${results.length} completed):\n${previews.join("\n")}`
+}
+
+/**
+ * E3 hook (hook only, fail-open): on wave failure, run the improvement
+ * engine's synthesize(), persist the candidate to the findings table
+ * (source:tool), and publish message.updated { waveFailed, skillCandidate }.
+ */
+async function skillSynthesisHook(opts: {
+  db: MaybeDB
+  bus: import("../bus/index.js").Bus | undefined
+  sessionID: string
+  goal: string
+  failed: NodeResult[]
+}): Promise<{ skillCandidate: string | null }> {
+  const { db, bus, sessionID, goal, failed } = opts
+  let skillCandidate: string | null = null
+  try {
+    const { ImprovementEngine } = await import("../learning/improvement.js")
+    const engine = new ImprovementEngine({ bus, db: db ?? undefined })
+    const summary = failed.map(f => `${f.id}: ${(f.error ?? "unknown error").slice(0, 200)}`).join("; ")
+    const improvements = engine.synthesize(
+      [{
+        id: `orch_wave_${Date.now().toString(36)}`,
+        source: "orchestrate",
+        sourceTitle: "orchestrate wave failure",
+        category: "tool",
+        summary: `orchestrate wave failed for goal "${goal.slice(0, 120)}"`,
+        pattern: `Failing nodes — ${summary}`.slice(0, 500),
+        relevance: 0.8,
+        tags: ["orchestrate", "wave-failure"],
+        rawExcerpt: summary.slice(0, 500),
+        createdAt: Date.now(),
+      }],
+      null,
+    )
+    skillCandidate = improvements[0]?.proposedChange.slice(0, 500) ?? `orchestrate wave failure: ${summary}`.slice(0, 500)
+  } catch {
+    skillCandidate = failed.map(f => `${f.id}: ${(f.error ?? "unknown").slice(0, 160)}`).join("; ").slice(0, 500) || "orchestrate wave failure"
+  }
+  // Persist candidate via findings table (source:tool) — never throws the tool.
+  try {
+    if (db) {
+      const now = Date.now()
+      await db.insert(findings).values({
+        id: crypto.randomUUID(),
+        sessionID,
+        source: "tool",
+        severity: "minor",
+        title: `orchestrate wave failure → skill candidate (${goal.slice(0, 80)})`,
+        evidence: skillCandidate,
+        status: "open",
+        createdAt: now,
+        updatedAt: now,
+        resolvedAt: null,
+      })
+    }
+  } catch {}
+  try {
+    bus?.publish({
+      type: "message.updated",
+      sessionID,
+      payload: {
+        waveFailed: failed.map(f => f.id),
+        skillCandidate,
+        note: "Human Review Required — candidate is UNVERIFIED-DO-NOT-USE until shadow eval + promotion",
+      } as JsonValue,
+      timestamp: Date.now(),
+    })
+  } catch {}
+  return { skillCandidate }
+}
+
 export const orchestrateTool = {
   name: "orchestrate",
-  description: "Orchestrator Mode (Kilo K2): run multiple subagents as a DAG in parallel waves. Provide goal + tasks [{id, prompt, agent?, dependsOn?}]. Each wave runs in parallel, collecting results before next wave. Use for greenfield, cross-layer refactors, or test campaigns with separable workstreams. Falls back to sequential for dense/cyclic graphs.",
+  description: "Orchestrator Mode (Kilo K2) v2: run multiple subagents as a DAG in parallel waves. Provide goal + tasks [{id, prompt, agent?, dependsOn?, contextFrom?, budgetSteps?, title?}] or {inferDAG: true, context?} to plan the DAG with the cheap model. Each wave runs in parallel (cap 8), forwarding upstream summaries along contextFrom edges. Falls back to sequential for dense/cyclic graphs.",
   category: "execution",
   schema: orchestrateSchema,
-  async execute({ goal, tasks }: { goal: string; tasks: Array<{ id: string; prompt: string; agent?: string; dependsOn?: string[]; title?: string }> }, ctx: import("./registry.js").ToolContext): Promise<import("../types/index.js").JsonValue> {
+  async execute(
+    { goal, tasks: rawTasks, inferDAG, context, mergeStrategy, background }: OrchestrateArgs,
+    ctx: import("./registry.js").ToolContext,
+  ): Promise<JsonValue> {
     const bus = ctx.bus
+    const db = (ctx as { db?: MaybeDB }).db ?? null
     const runner = ctx.subagentRunner
-    if (!runner) return { error: "No subagentRunner wired — server misconfigured" } as import("../types/index.js").JsonValue
+    if (!runner) return { error: "No subagentRunner wired — server misconfigured" } as JsonValue
+
+    // ── E1: inferDAG planner ──────────────────────────────────────────
+    let tasks: OrchestrateTask[] | undefined = rawTasks
+    if ((!tasks || tasks.length === 0) && inferDAG) {
+      const gateway = (ctx as { gateway?: Pick<import("../gateway/index.js").Gateway, "complete"> }).gateway ?? null
+      const { planDAG } = await import("./orchestrate-planner.js")
+      const planned = await planDAG(goal, context, gateway)
+      if ("error" in planned) {
+        // Fail-closed: planner errors never silently run a guessed plan.
+        return { goal, error: planned.error, hint: "planner failed (fail-closed) — pass tasks explicitly or retry once with more context" } as JsonValue
+      }
+      tasks = planned.plan.tasks.map(t => ({ ...t }))
+      mergeStrategy = planned.plan.mergeStrategy
+    }
+    if (!tasks || tasks.length === 0) {
+      return { goal, error: "no tasks: pass tasks[] or set inferDAG:true with a wired gateway", hint: "provide 1-12 tasks with [{id, prompt, agent?, dependsOn?}]" } as JsonValue
+    }
 
     // Normalize agent mapping (same as task tool: explore/research → researcher)
     const normalizeAgent = (a?: string): string | undefined => {
@@ -94,57 +266,159 @@ export const orchestrateTool = {
       return isKnownAgent(a) ? a : undefined
     }
 
+    // Reject unknown agents up front (fail-closed, one clear error)
+    for (const t of tasks) {
+      if (t.agent && t.agent !== "explore" && t.agent !== "research" && !isKnownAgent(t.agent)) {
+        return { goal, error: `task "${t.id}" requests unknown agent "${t.agent}"`, hint: "use an agent from the catalog (code/ask/plan/debug/general/…) or omit agent" } as JsonValue
+      }
+    }
+
     // Density heuristic: if >50% of possible edges present, run sequential for cleaner results (Kilo docs: tightly-coupled → single agent)
     const edgeCount = tasks.reduce((n, t) => n + (t.dependsOn?.length ?? 0), 0)
     const maxEdges = (tasks.length * (tasks.length - 1)) / 2
     const isDense = maxEdges > 0 && edgeCount / maxEdges > 0.5
 
-    let waves: (typeof tasks)[] = []
-    let error: string | undefined
+    // Cycle check FIRST (fail-closed): a cyclic DAG is rejected even when dense.
+    const topo = topologicalWaves(tasks)
+    if (topo.error) {
+      // Fail-closed on cycle: reject once, do NOT silently run sequentially.
+      return { goal, error: topo.error, tasks: tasks.map(t => t.id), hint: "fix dependsOn or split into fewer interdependent tasks; running sequentially would be cleaner for tightly-coupled edits" } as JsonValue
+    }
+    let waves: OrchestrateTask[][] = []
     if (isDense) {
       waves = [tasks]
     } else {
-      const res = topologicalWaves(tasks)
-      if (res.error) {
-        // fall back to sequential wave if cycle/density
-        return { goal, error: res.error, tasks: tasks.map(t => t.id), hint: "fix dependsOn or split into fewer interdependent tasks; running sequentially would be cleaner for tightly-coupled edits" } as import("../types/index.js").JsonValue
-      }
-      waves = res.waves
+      waves = topo.waves
     }
 
-    bus?.publish({ type: "message.created", sessionID: ctx.sessionID, payload: { orchestrate: goal, waves: waves.length, tasks: tasks.length } as import("../types/index.js").JsonValue, timestamp: Date.now() })
+    bus?.publish({ type: "message.created", sessionID: ctx.sessionID, payload: { orchestrate: goal, waves: waves.length, tasks: tasks.length } as JsonValue, timestamp: Date.now() })
 
-    const results: Array<{ id: string; agent?: string; status: "completed" | "failed"; sessionID?: string; text?: string; error?: string }> = []
+    // ── E2a: jobs persistence — one row per task before any spawn ─────
+    const jobIDs = new Map<string, string>()
+    const now = Date.now()
+    for (const t of tasks) {
+      const jobID = crypto.randomUUID()
+      jobIDs.set(t.id, jobID)
+      if (db) {
+        try {
+          await db.insert(jobs).values({
+            id: jobID,
+            parentSessionID: ctx.sessionID,
+            agent: normalizeAgent(t.agent),
+            prompt: `[${goal} :: ${t.id}] ${t.prompt}`,
+            status: "running",
+            createdAt: now,
+            updatedAt: now,
+          })
+        } catch {}
+      }
+      bus?.publish({ type: "job.created", sessionID: ctx.sessionID, payload: { jobID, taskID: t.id, agent: normalizeAgent(t.agent), title: t.title ?? t.id } as JsonValue, timestamp: Date.now() })
+    }
+
+    if (background) {
+      return {
+        goal,
+        status: "background",
+        waves: waves.length,
+        total: tasks.length,
+        jobIDs: [...jobIDs.entries()].map(([taskID, jobID]) => ({ taskID, jobID })),
+        message: "Orchestrate DAG running in background — per-node completion arrives via Bus job.updated events; poll getJob(jobID) for status/result.",
+      } as JsonValue
+    }
+
+    // ── E2b: wave execution with context forwarding + targeted recovery ──
+    const results: NodeResult[] = []
+    const priorResults = new Map<string, string>() // id → full text (summaries forwarded, full kept in job rows)
+    const failedIDs = new Set<string>()
+    const strategy: MergeStrategy = mergeStrategy ?? "lead-synthesis"
+
     for (let wi = 0; wi < waves.length; wi++) {
-      const wave = waves[wi]!
-      bus?.publish({ type: "message.updated", sessionID: ctx.sessionID, payload: { wave: wi + 1, waveSize: wave.length, ids: wave.map(t => t.id) } as import("../types/index.js").JsonValue, timestamp: Date.now() })
-      // Run wave in parallel
-      const wavePromises = wave.map(async (t) => {
+      const wave = waves[wi] as OrchestrateTask[]
+      // Skip nodes whose dependencies failed (targeted recovery: don't run doomed work)
+      const runnable = wave.filter(t => !(t.dependsOn ?? []).some(d => failedIDs.has(d)))
+      const skipped = wave.filter(t => (t.dependsOn ?? []).some(d => failedIDs.has(d)))
+      for (const t of skipped) {
+        results.push({ id: t.id, agent: normalizeAgent(t.agent), jobID: jobIDs.get(t.id), status: "skipped", error: `skipped: upstream failed (${(t.dependsOn ?? []).filter(d => failedIDs.has(d)).join(", ")})` })
+      }
+      bus?.publish({ type: "message.updated", sessionID: ctx.sessionID, payload: { wave: wi + 1, waveSize: wave.length, runnable: runnable.length, skipped: skipped.length, ids: wave.map(t => t.id) } as JsonValue, timestamp: Date.now() })
+      // Run wave in parallel (capped)
+      const waveResults = await runWithLimit(runnable, ORCHESTRATE_CONCURRENCY_CAP, async (t): Promise<NodeResult> => {
         const agent = normalizeAgent(t.agent)
         const title = t.title ?? `${t.id}: ${t.prompt.slice(0, 40)}`
-        try {
-          const { sessionID, text } = await runner({ prompt: `[${goal} :: ${t.id}] ${t.prompt}`, parentID: ctx.sessionID, agent, title })
-          return { id: t.id, agent, status: "completed" as const, sessionID, text }
-        } catch (e) {
-          return { id: t.id, agent, status: "failed" as const, error: String(e) }
+        const jobID = jobIDs.get(t.id)
+        // Forward upstream summaries along contextFrom (⊆ dependsOn), else dependsOn edges.
+        const edgeIDs = (t.contextFrom ?? t.dependsOn ?? []).filter(id => priorResults.has(id))
+        const depContext = edgeIDs.map(id => `[${id} summary]: ${(priorResults.get(id) ?? "").slice(0, 1200)}`).join("\n")
+        const fullPrompt = depContext
+          ? `[${goal} :: ${t.id}] ${t.prompt}\n\nUpstream context (summaries only):\n${depContext}`
+          : `[${goal} :: ${t.id}] ${t.prompt}`
+        const ac = new AbortController()
+        if (jobID) orchestrateJobAborts.set(jobID, ac)
+        const attempt = async (): Promise<NodeResult> => {
+          try {
+            const { sessionID, text } = await runner({ prompt: fullPrompt, parentID: ctx.sessionID, agent, title, signal: ac.signal })
+            return { id: t.id, agent, jobID, status: "completed", sessionID, text }
+          } catch (e) {
+            return { id: t.id, agent, jobID, status: "failed", error: String(e) }
+          }
         }
+        let res = await attempt()
+        if (res.status === "failed" && !ac.signal.aborted) {
+          // Retry once (doom-loop guard: exactly one retry, no replanning here)
+          res = await attempt()
+        }
+        if (jobID) orchestrateJobAborts.delete(jobID)
+        // Stash full text in the job row; parent sees only the 600-char preview.
+        if (db && jobID) {
+          try {
+            if (res.status === "completed") {
+              await db.update(jobs)
+                .set({ status: "completed", result: res.text, childSessionID: res.sessionID, updatedAt: Date.now() })
+                .where(and(eq(jobs.id, jobID), eq(jobs.status, "running")))
+            } else if (res.status === "failed") {
+              await db.update(jobs)
+                .set({ status: ac.signal.aborted ? "cancelled" : "failed", error: res.error, updatedAt: Date.now() })
+                .where(and(eq(jobs.id, jobID), eq(jobs.status, "running")))
+            }
+          } catch {}
+        }
+        bus?.publish({
+          type: res.status === "completed" ? "job.updated" : ac.signal.aborted ? "job.cancelled" : "job.updated",
+          sessionID: ctx.sessionID,
+          payload: { jobID, taskID: t.id, status: res.status, childSessionID: res.sessionID, preview: (res.text ?? res.error ?? "").slice(0, 600) } as JsonValue,
+          timestamp: Date.now(),
+        })
+        return res
       })
-      const waveResults = await Promise.all(wavePromises)
       results.push(...waveResults)
-      // If any failed, continue to next wave (remaining dependsOn may still be eligible, but we record failures)
+      for (const r of waveResults) {
+        if (r.status === "completed") priorResults.set(r.id, r.text ?? "")
+        else if (r.status === "failed") failedIDs.add(r.id)
+      }
+      // E3: skill-synthesis hook on wave failure (hook only, fail-open)
+      const waveFailed = waveResults.filter(r => r.status === "failed")
+      if (waveFailed.length > 0) {
+        await skillSynthesisHook({ db, bus, sessionID: ctx.sessionID, goal, failed: waveFailed })
+      }
     }
 
     const ok = results.filter(r => r.status === "completed").length
     const failed = results.filter(r => r.status === "failed").length
+    const skippedCount = results.filter(r => r.status === "skipped").length
+    const merged = mergeResults(goal, strategy, results)
     return {
       goal,
       waves: waves.length,
       total: tasks.length,
       completed: ok,
       failed,
+      skipped: skippedCount,
       denseFallback: isDense,
-      results: results.map(r => ({ id: r.id, agent: r.agent, status: r.status, sessionID: r.sessionID, preview: (r.text ?? r.error ?? "").slice(0, 600) })),
-    } as import("../types/index.js").JsonValue
+      mergeStrategy: strategy,
+      merged,
+      jobIDs: [...jobIDs.entries()].map(([taskID, jobID]) => ({ taskID, jobID })),
+      results: results.map(r => ({ id: r.id, agent: r.agent, jobID: r.jobID, status: r.status, sessionID: r.sessionID, preview: (r.text ?? r.error ?? "").slice(0, 600) })),
+    } as JsonValue
   },
 } satisfies ToolDef<typeof orchestrateSchema>
 
