@@ -1531,6 +1531,11 @@ html {
   .mira-main > .card {
     margin: 8px;
   }
+  /* Prevent inspector from pushing composer off-screen on mobile */
+  #inspector-panel {
+    max-height: 40vh;
+    overflow: auto;
+  }
   /* Header: allow the right-side actions to scroll instead of overflowing */
   header {
     gap: var(--sp-2);
