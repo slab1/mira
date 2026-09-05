@@ -294,10 +294,80 @@ export function mountSessionExtrasRoutes(
     if (!id) return c.json({ error: 'not found' }, 404)
     return c.json(prompt.getQueue(id))
   })
+
+  // Queue items with IDs for reorder/delete
+  app.get('/session/:id/queue/items', async (c: Context) => {
+    const id = requireId(c)
+    if (!id) return c.json({ error: 'not found' }, 404)
+    try {
+      const items = db.sqlite
+        .prepare(
+          'SELECT id, text FROM message_queue WHERE session_id = ? ORDER BY created_at, rowid',
+        )
+        .all(id) as Array<{ id: string; text: string }>
+      return c.json(items)
+    } catch (e) {
+      return c.json([], 200)
+    }
+  })
+
   app.delete('/session/:id/queue', (c: Context) => {
     const id = requireId(c)
     if (!id) return c.json({ error: 'not found' }, 404)
     return c.json({ cleared: prompt.clearQueue(id) })
+  })
+
+  // H3-E: DELETE /session/:id/queue/:itemId — remove a queued item by ID
+  app.delete('/session/:id/queue/:itemId', (c: Context) => {
+    const id = requireId(c)
+    const itemId = c.req.param('itemId')
+    if (!id || !itemId) return c.json({ error: 'not found' }, 404)
+    try {
+      const result = db.sqlite
+        .prepare('DELETE FROM message_queue WHERE session_id = ? AND id = ?')
+        .run(id, itemId)
+      return c.json({ ok: true, deleted: result.changes > 0 })
+    } catch (e) {
+      return c.json({ error: 'delete failed' }, 500)
+    }
+  })
+
+  // H3-E: DELETE /session/:id/queue/item — delete by text (for UI simplicity)
+  app.delete('/session/:id/queue/item', async (c: Context) => {
+    const id = requireId(c)
+    if (!id) return c.json({ error: 'not found' }, 404)
+    const body = await c.req.json().catch(() => null)
+    const text = body?.text
+    if (!text) return c.json({ error: 'text required' }, 400)
+    const item = db.sqlite
+      .prepare('SELECT id FROM message_queue WHERE session_id = ? AND text = ?')
+      .get(id, text) as { id: string } | undefined
+    if (!item) return c.json({ ok: true, deleted: false })
+    db.sqlite.prepare('DELETE FROM message_queue WHERE session_id = ? AND id = ?').run(id, item.id)
+    return c.json({ ok: true, deleted: true, item: { text } })
+  })
+
+  // H3-E: POST /session/:id/queue/reorder — reorder queue by explicit array of strings (text)
+  app.post('/session/:id/queue/reorder', async (c: Context) => {
+    const id = requireId(c)
+    if (!id) return c.json({ error: 'not found' }, 404)
+    const body = await c.req.json().catch(() => null)
+    if (!body || !Array.isArray(body.texts)) return c.json({ error: 'texts array required' }, 400)
+    const texts = body.texts as string[]
+    try {
+      // Delete all and re-insert in order
+      db.sqlite.prepare('DELETE FROM message_queue WHERE session_id = ?').run(id)
+      for (let i = 0; i < texts.length; i++) {
+        db.sqlite
+          .prepare(
+            'INSERT INTO message_queue (id, session_id, text, created_at) VALUES (?, ?, ?, ?)',
+          )
+          .run(crypto.randomUUID(), id, texts[i], Date.now() + i)
+      }
+      return c.json({ ok: true })
+    } catch (e) {
+      return c.json({ error: 'reorder failed' }, 500)
+    }
   })
 
   // File snapshots — undo/rewind agent file mutations

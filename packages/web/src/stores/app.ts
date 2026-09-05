@@ -15,6 +15,7 @@ import {
   type Todo,
   type BusEvent,
 } from '../api/client'
+import { toast } from '../components/Toast'
 
 type AppState = {
   sessions: Session[]
@@ -74,6 +75,10 @@ export function createAppStore() {
   })
 
   const [input, setInput] = createSignal('')
+
+  // Guard against concurrent session creates (race: user clicks "+" while
+  // loadSessions auto-creates the first session, leading to two entries).
+  let creating = false
 
   // ── WebSocket: GlobalBus subscription ────────────────────────────
   let reconnectAttempts = 0
@@ -184,8 +189,9 @@ export function createAppStore() {
     setState('error', null)
     try {
       let sessions = await api.listSessions()
-      // First-run UX: land straight into a usable chat
-      if (sessions.length === 0 && !state.currentId) {
+      // First-run UX: land straight into a usable chat.
+      // Skip if a session was just created (race with createSession guard).
+      if (sessions.length === 0 && !state.currentId && !creating) {
         await createSession('New chat')
         sessions = await api.listSessions()
       }
@@ -202,18 +208,22 @@ export function createAppStore() {
   }
 
   async function createSession(title?: string, opts: { agent?: string } = {}) {
+    if (creating) return null
+    creating = true
     setState('error', null)
     try {
       const body: Record<string, string> = {}
       if (title) body.title = title
       if (opts.agent) body.agent = opts.agent
       const s = await api.createSession(body)
-      setState('sessions', (prev) => [s, ...prev])
+      setState('sessions', (prev) => [s, ...prev.filter((x) => x.id !== s.id)])
       await selectSession(s.id)
       return s
     } catch (e) {
       setState('error', (e as Error).message)
       throw e
+    } finally {
+      creating = false
     }
   }
 
@@ -261,8 +271,18 @@ export function createAppStore() {
     } catch {}
   }
   loadCost()
-  const costIv = setInterval(loadCost, 15_000)
-  onCleanup(() => clearInterval(costIv))
+  // Pause the interval when the page is hidden to avoid wasted polls + HMR leaks.
+  // Use a sentinel that survives HMR via window-level tracking.
+  if (typeof window !== 'undefined') {
+    type MiraWindow = Window & { __miraCostIv?: ReturnType<typeof setInterval> }
+    const w = window as MiraWindow
+    if (w.__miraCostIv) clearInterval(w.__miraCostIv)
+    const tick = () => {
+      if (document.visibilityState === 'visible') void loadCost()
+    }
+    w.__miraCostIv = setInterval(tick, 15_000)
+    document.addEventListener('visibilitychange', tick)
+  }
 
   async function loadTodos(id: string) {
     try {
@@ -291,7 +311,7 @@ export function createAppStore() {
     // Agent busy → queue the message instead of dropping it (Mira-parity UX)
     if (state.streaming) {
       try {
-        await api.queuePrompt(state.currentId, prompt)
+        const result = await api.queuePrompt(state.currentId, prompt)
         setState('queued', (q) => [...q, prompt])
         setState('messages', (m) => [
           ...m,
@@ -304,9 +324,21 @@ export function createAppStore() {
             queued: true,
           },
         ])
+        toast.info(`Queued (#${result.position})`)
+        // Reconcile queue with server in case server-side ordering differs
+        try {
+          const serverQueue = await api.getQueue(state.currentId)
+          setState('queued', serverQueue)
+          // If our prompt didn't make it to the queue, surface the failure
+          if (!serverQueue.includes(prompt)) {
+            toast.warn('Queued message may not have been accepted by the server')
+            setInput(prompt) // restore so the user can retry
+          }
+        } catch {}
       } catch (e) {
         setState('error', (e as Error).message)
         setInput(prompt) // restore input on failure
+        toast.error(`Queue failed: ${(e as Error).message}`)
       }
       return
     }
@@ -379,11 +411,15 @@ export function createAppStore() {
     if (!id) return
     try {
       const out = await api.revertSession(id)
-      if (out.ok && out.reverted > 0) await loadMessages(id)
-      else if (!out.ok) setState('error', 'nothing to undo')
+      if (out.ok && out.reverted > 0) {
+        await loadMessages(id)
+        toast.success(`Reverted ${out.reverted} change${out.reverted === 1 ? '' : 's'}`)
+      } else if (!out.ok) {
+        toast.warn('Nothing to undo')
+      }
       return out
     } catch (e) {
-      setState('error', (e as Error).message)
+      toast.error(`Undo failed: ${(e as Error).message}`)
     }
   }
 

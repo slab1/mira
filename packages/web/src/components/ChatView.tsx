@@ -4,6 +4,7 @@ import type { SettingsStore } from '../stores/settings'
 import type { Message, Part, Job, JsonValue } from '../api/client'
 import { api } from '../api/client'
 import { SlashAutocomplete, filterCommands } from './CommandPalette'
+import { toast } from './Toast'
 
 const EXAMPLE_PROMPTS = [
   "Explain this repo's architecture",
@@ -829,9 +830,12 @@ export function ChatView(props: {
                                               .revertSession(sessionId, messageId)
                                               .then(() => {
                                                 props.store.loadMessages(sessionId)
+                                                toast.success('Rewound to message')
                                               })
                                               .catch((e) =>
-                                                console.error('[mira] revert failed', e),
+                                                toast.error(
+                                                  `Rewind failed: ${(e as Error).message}`,
+                                                ),
                                               )
                                           }}
                                         >
@@ -1145,13 +1149,15 @@ export function ChatView(props: {
                     type="button"
                     class="btn btn-ghost"
                     onClick={async () => {
-                      // Add permission deny rule for the looping tool via config API
                       const tool = d.tool
                       try {
                         const { addPermissionRule } = await import('../api/client')
                         await addPermissionRule(tool, '*', 'deny')
-                      } catch {}
-                      props.store.clearDoomLoop()
+                        toast.success(`Will never repeat ${tool}`)
+                        props.store.clearDoomLoop()
+                      } catch (e) {
+                        toast.error(`Failed to add deny rule: ${(e as Error).message}`)
+                      }
                     }}
                     style={{
                       padding: '4px 10px',

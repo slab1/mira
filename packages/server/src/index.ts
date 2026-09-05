@@ -188,6 +188,7 @@ async function initOtel() {
     const { NodeSDK } = await import('@opentelemetry/sdk-node')
     const { OTLPTraceExporter } = await import('@opentelemetry/exporter-trace-otlp-http')
     const { getNodeAutoInstrumentations } =
+      // @ts-ignore — dynamically imported only when OTEL_EXPORTER_OTLP_ENDPOINT is set
       await import('@opentelemetry/auto-instrumentations-node')
     const sdk = new NodeSDK({
       traceExporter: new OTLPTraceExporter({ url: `${endpoint}/v1/traces` }),

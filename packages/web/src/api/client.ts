@@ -729,6 +729,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(tier ? { tier } : {}),
     }),
+  /** H3-E: delete a knowledge entry (200 {ok:true} / 404 {error}). */
+  deleteKnowledge: (id: string) =>
+    req<{ ok: boolean; id: string }>(`/knowledge/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   // ── Mira Score GA (H2-2) — per-session {score,cost,doomLoops,toolErrors,memoryHits} + trace ──
   getScore: (sessionID: string) =>
@@ -900,8 +903,16 @@ export const api = {
   listPendingPatches: () => Promise.resolve([]),
   approvePatch: (_id: string) => Promise.resolve({ ok: true }),
   getModelEval: (_model: string) => Promise.resolve({ model: _model, score: 0 }),
-  reorderQueue: (_id: string, _order: string[]) => Promise.resolve({ ok: true }),
-  deleteQueueItem: (_id: string, _prompt: string) => Promise.resolve({ ok: true }),
+  reorderQueue: (id: string, orderedItems: string[]) =>
+    req<{ ok: boolean }>(`/session/${id}/queue/reorder`, {
+      method: 'POST',
+      body: JSON.stringify({ texts: orderedItems }),
+    }),
+  deleteQueueItem: (id: string, text: string) =>
+    req<{ ok: boolean; deleted: boolean }>(`/session/${id}/queue/item`, {
+      method: 'DELETE',
+      body: JSON.stringify({ text }),
+    }),
 }
 
 /** Add or update a permission rule for a tool pattern */

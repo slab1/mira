@@ -1,5 +1,6 @@
 import { createSignal, createResource, For, Show, onMount, onCleanup, createEffect } from 'solid-js'
 import { api, type GraphNode, type GraphEdge, type KnowledgeGraph } from '../api/client'
+import { toast } from './Toast'
 
 type Props = {
   onOpenInChat?: (node: GraphNode) => void
@@ -182,7 +183,9 @@ export function MemoryGraph(props: Props) {
     try {
       await api.resolveFinding(n.id)
       await refetch()
-    } catch {
+      toast.success('Finding resolved')
+    } catch (e) {
+      toast.error(`Resolve failed: ${(e as Error).message}`)
     } finally {
       setBusy(null)
     }
@@ -194,7 +197,8 @@ export function MemoryGraph(props: Props) {
     try {
       await api.touchKnowledge(n.id)
       await refetch()
-    } catch {
+    } catch (e) {
+      toast.error(`Touch failed: ${(e as Error).message}`)
     } finally {
       setBusy(null)
     }
@@ -206,7 +210,9 @@ export function MemoryGraph(props: Props) {
     try {
       await api.promoteFinding(n.id)
       await refetch()
-    } catch {
+      toast.success('Finding promoted to knowledge')
+    } catch (e) {
+      toast.error(`Promote failed: ${(e as Error).message}`)
     } finally {
       setBusy(null)
     }

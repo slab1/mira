@@ -2,6 +2,8 @@ import { createSignal, createEffect, For, Show, onCleanup } from 'solid-js'
 import type { SettingsStore } from '../stores/settings'
 import { api } from '../api/client'
 import type { MiraConfig, ThemeChoice } from '../api/client'
+import { ConfirmDialog } from './ConfirmDialog'
+import { toast } from './Toast'
 
 type TabId =
   'general' | 'providers' | 'permissions' | 'connectors' | 'agents' | 'commands' | 'terminal'
@@ -88,11 +90,14 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
   const [budgetCapAmount, setBudgetCapAmount] = createSignal(100)
 
   let dialogRef: HTMLDivElement | undefined
-  let firstFocusRef: HTMLButtonElement | undefined
+  let titleRef: HTMLDivElement | undefined
 
-  // Sync form from loaded config
+  // Sync form from loaded config — only on modal OPEN transition, not on every config update
+  // (the server re-renders config after save and would wipe user edits).
+  let wasOpen = false
   createEffect(() => {
-    if (props.open && s().config) {
+    const open = props.open
+    if (open && !wasOpen && s().config) {
       try {
         const enabled = localStorage.getItem('mira.budgetCap.enabled')
         const amount = localStorage.getItem('mira.budgetCap.amount')
@@ -135,13 +140,14 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
       setFeatLane(feats.enforceLaneContracts ?? true)
       setFeatPerAgent(feats.perAgentPermissionProfiles ?? true)
     }
-    if (props.open) setThemeLocal(s().theme)
+    if (open && !wasOpen) setThemeLocal(s().theme)
+    wasOpen = open
   })
 
   // Focus trap & Escape
   createEffect(() => {
     if (!props.open) return
-    queueMicrotask(() => firstFocusRef?.focus())
+    queueMicrotask(() => titleRef?.focus())
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') props.onClose()
       if (e.key === 'Tab' && dialogRef) {
@@ -228,7 +234,10 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
       featPatch.perAgentPermissionProfiles = featPerAgent()
     if (Object.keys(featPatch).length > 0) patch.features = { ...feats, ...featPatch }
     // Allow clearing loop fields when user empties them — send explicit null via delete? keep as-is for now
-    if (Object.keys(patch).length > 0) await props.store.saveConfig(patch)
+    if (Object.keys(patch).length > 0) {
+      const res = await props.store.saveConfig(patch)
+      if (res) toast.success('Settings saved')
+    }
     // Persist spend cockpit locally
     try {
       localStorage.setItem('mira.budgetCap.enabled', String(budgetCapEnabled()))
@@ -275,10 +284,14 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     setProvTesting(null)
   }
 
+  const [confirmRemoveProvider, setConfirmRemoveProvider] = createSignal<string | null>(null)
+  const [confirmRemovePermission, setConfirmRemovePermission] = createSignal<{
+    tool: string
+    pattern?: string
+  } | null>(null)
+
   const handleRemoveProvider = async (id: string) => {
-    if (!confirm(`Remove provider "${id}"?`)) return
-    await props.store.removeProvider(id)
-    await props.store.loadProviders()
+    setConfirmRemoveProvider(id)
   }
 
   const handleAddMcp = async (e: Event) => {
@@ -366,7 +379,11 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
   }
 
   const handleRemovePermission = async (tool: string, pattern?: string) => {
-    if (!confirm(`Remove permission "${tool}${pattern ? ':' + pattern : ''}"?`)) return
+    setConfirmRemovePermission({ tool, pattern })
+  }
+
+  const performRemovePermission = async (tool: string, pattern?: string) => {
+    setConfirmRemovePermission(null)
     const current = { ...(s().config?.permission ?? {}) } as Record<
       string,
       string | Record<string, string>
@@ -382,7 +399,8 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     } else {
       delete current[tool]
     }
-    await props.store.saveConfig({ permission: current } as Partial<MiraConfig>)
+    const res = await props.store.saveConfig({ permission: current } as Partial<MiraConfig>)
+    if (res) toast.success('Permission removed')
   }
 
   const handleSaveTerminal = async (e: Event) => {
@@ -584,7 +602,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
         >
           <div class="modal-header">
             <div>
-              <div id="settings-title" class="modal-title">
+              <div ref={titleRef} id="settings-title" class="modal-title" tabindex="-1">
                 Settings
               </div>
               <div
@@ -598,7 +616,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
               </div>
             </div>
             <button
-              ref={firstFocusRef}
+              ref={undefined}
               type="button"
               class="modal-close"
               onClick={props.onClose}
@@ -1149,6 +1167,17 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                           role="radiogroup"
                           aria-labelledby="settings-theme-label"
                           style={{ display: 'flex', gap: '6px' }}
+                          onKeyDown={(e) => {
+                            const order: ThemeChoice[] = ['light', 'dark', 'system']
+                            const idx = order.indexOf(theme())
+                            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                              e.preventDefault()
+                              setThemeLocal(order[(idx + 1) % order.length]!)
+                            } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                              e.preventDefault()
+                              setThemeLocal(order[(idx - 1 + order.length) % order.length]!)
+                            }
+                          }}
                         >
                           <For each={['light', 'dark', 'system'] as ThemeChoice[]}>
                             {(choice) => (
@@ -1156,6 +1185,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                                 type="button"
                                 role="radio"
                                 aria-checked={theme() === choice ? 'true' : 'false'}
+                                tabindex={theme() === choice ? 0 : -1}
                                 onClick={() => setThemeLocal(choice)}
                                 style={{
                                   flex: '1',
@@ -2529,6 +2559,45 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
           </div>
         </div>
       </div>
+      <ConfirmDialog
+        open={() => confirmRemoveProvider() !== null}
+        title="Remove provider?"
+        message={
+          confirmRemoveProvider()
+            ? `This will permanently remove the provider "${confirmRemoveProvider()!}" and its API key from mira.json. This cannot be undone.`
+            : ''
+        }
+        confirmLabel="Remove"
+        danger
+        onConfirm={async () => {
+          const id = confirmRemoveProvider()
+          setConfirmRemoveProvider(null)
+          if (id) {
+            const ok = await props.store.removeProvider(id)
+            if (ok) {
+              await props.store.loadProviders()
+              toast.success(`Provider "${id}" removed`)
+            }
+          }
+        }}
+        onCancel={() => setConfirmRemoveProvider(null)}
+      />
+      <ConfirmDialog
+        open={() => confirmRemovePermission() !== null}
+        title="Remove permission?"
+        message={
+          confirmRemovePermission()
+            ? `Remove permission "${confirmRemovePermission()!.tool}${confirmRemovePermission()!.pattern ? ':' + confirmRemovePermission()!.pattern : ''}"? This will revert to default policy.`
+            : ''
+        }
+        confirmLabel="Remove"
+        danger
+        onConfirm={() => {
+          const p = confirmRemovePermission()
+          if (p) void performRemovePermission(p.tool, p.pattern)
+        }}
+        onCancel={() => setConfirmRemovePermission(null)}
+      />
     </Show>
   )
 }

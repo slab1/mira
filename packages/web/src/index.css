@@ -27,7 +27,7 @@
   --fg: #f4f4f5;
   --fg-muted: #a1a1aa;
   --fg-subtle: #82828c;
-  --fg-faint: #5b5b64;
+  --fg-faint: #7a7a85;
 
   /* Accents — violet is THE brand/interactive color. Emerald = live/success,
      amber = attention/streaming/queued. Red reserved for errors/destructive.
@@ -739,6 +739,19 @@ input:focus-visible,
   overflow: hidden;
   animation: fade-up var(--dur-med) var(--ease) both;
 }
+.modal-sm {
+  width: min(420px, 92%);
+  max-height: min(50vh, 320px);
+}
+.btn-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
 .modal-header {
   display: flex;
   align-items: center;
@@ -1423,6 +1436,28 @@ input:focus-visible,
 }
 
 /* ── 5. Motion ─────────────────────────────────────────────────────────── */
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.toast-success {
+  border-color: var(--ok-border);
+}
+.toast-warn {
+  border-color: var(--warn-border);
+}
+.toast-error {
+  border-color: var(--danger-border, rgba(248, 113, 113, 0.38));
+}
+.toast-info {
+  border-color: var(--accent-border);
+}
 @keyframes fade-up {
   from {
     opacity: 0;
@@ -1531,16 +1566,42 @@ html {
   .mira-main > .card {
     margin: 8px;
   }
-  /* Prevent inspector from pushing composer off-screen on mobile */
+  /* Prevent inspector from pushing composer off-screen on mobile.
+     Add scroll-shadow hint at top/bottom to indicate overflow. */
   #inspector-panel {
     max-height: 40vh;
     overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    background:
+      linear-gradient(var(--bg-app) 30%, transparent),
+      linear-gradient(transparent, var(--bg-app) 70%) 0 100%,
+      radial-gradient(at top, rgba(0, 0, 0, 0.4), transparent 70%),
+      radial-gradient(at bottom, rgba(0, 0, 0, 0.4), transparent 70%) 0 100%;
+    background-repeat: no-repeat;
+    background-size:
+      100% 16px,
+      100% 16px,
+      100% 8px,
+      100% 8px;
+    background-attachment: local, local, scroll, scroll;
   }
-  /* Header: allow the right-side actions to scroll instead of overflowing */
+  /* Header: allow the right-side actions to scroll instead of overflowing.
+     Add scroll-shadow hint so users discover there are more controls. */
   header {
     gap: var(--sp-2);
     overflow-x: auto;
     overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    mask-image: linear-gradient(
+      to right,
+      transparent 0,
+      #000 24px,
+      #000 calc(100% - 24px),
+      transparent 100%
+    );
+  }
+  header > * {
+    flex-shrink: 0;
   }
 }
 

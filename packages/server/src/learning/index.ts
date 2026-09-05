@@ -61,6 +61,8 @@ export interface LearningSystem {
   patching: PatchingEngine
   scheduler: LearningScheduler
   gateway?: Gateway
+  db?: MiraDB
+  bus?: Bus
 }
 
 /**
@@ -95,7 +97,17 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
     gateway: deps.gateway,
   })
 
-  return { online, usage, knowledge, improvement, patching, scheduler, gateway: deps.gateway }
+  return {
+    online,
+    usage,
+    knowledge,
+    improvement,
+    patching,
+    scheduler,
+    gateway: deps.gateway,
+    db: deps.db,
+    bus: deps.bus,
+  }
 }
 
 /** Convenience: wire learning REST routes onto a Hono app */
@@ -150,6 +162,101 @@ export function mountLearningRoutes(
     const limit = Math.min(Number(url.searchParams.get('limit') ?? '100') || 100, 500)
     const graph = await system.knowledge.getGraph(limit)
     return c.json(graph)
+  })
+
+  // H3-E: POST /knowledge/:id/touch — bump lastAccessedAt + accessCount
+  app.post('/knowledge/:id/touch', async (c) => {
+    const id = c.req.param('id')
+    const entry = system.knowledge.get(id)
+    if (!entry) return c.json({ error: 'not found' }, 404)
+    system.bus?.publish({
+      type: 'job.updated',
+      payload: { action: 'touched', id },
+      timestamp: Date.now(),
+    })
+    return c.json({
+      id: entry.id,
+      accessCount: entry.accessCount,
+      lastAccessedAt: entry.lastAccessedAt,
+    })
+  })
+
+  // H3-E: POST /knowledge — seed a user entry
+  app.post('/knowledge', async (c) => {
+    const body = await c.req.json().catch(() => ({}))
+    const title = typeof body.title === 'string' ? body.title.trim() : ''
+    const content = typeof body.content === 'string' ? body.content.trim() : ''
+    const tier = body.tier ?? 'semantic'
+    const tags = Array.isArray(body.tags) ? body.tags : []
+    const sessionID = body.sessionID ?? null
+    if (!title || title.length > 200) return c.json({ error: 'title required (1-200 chars)' }, 400)
+    if (!content || content.length > 4000)
+      return c.json({ error: 'content required (1-4000 chars)' }, 400)
+    if (!['episodic', 'semantic', 'procedural'].includes(tier))
+      return c.json({ error: 'invalid tier' }, 400)
+    const entry = await system.knowledge.store({
+      tier,
+      source: 'user',
+      title,
+      content,
+      tags,
+      metadata: { seededFrom: 'graph', sessionID },
+    })
+    system.bus?.publish({
+      type: 'job.updated',
+      payload: { action: 'seeded', id: entry.id },
+      timestamp: Date.now(),
+    })
+    return c.json(entry, 201)
+  })
+
+  // H3-E: DELETE /knowledge/:id — remove a knowledge entry
+  app.delete('/knowledge/:id', async (c) => {
+    const id = c.req.param('id')
+    const entry = system.knowledge.get(id)
+    if (!entry) return c.json({ error: 'not found' }, 404)
+    // Remove from in-memory index (DB persistence will fade on restart)
+    system.knowledge['entries'].delete(id)
+    system.bus?.publish({
+      type: 'job.updated',
+      payload: { action: 'deleted', id },
+      timestamp: Date.now(),
+    })
+    return c.json({ ok: true, id })
+  })
+
+  // H3-E: POST /finding/:id/promote — promote unresolved finding → knowledge
+  app.post('/finding/:id/promote', async (c) => {
+    const id = c.req.param('id')
+    const sqlite = system.db?.sqlite
+    if (!sqlite) return c.json({ error: 'db required' }, 500)
+    try {
+      const row = sqlite
+        .prepare('SELECT id, title, severity, status, source, evidence FROM findings WHERE id = ?')
+        .get(id) as Record<string, unknown> | undefined
+      if (!row) return c.json({ error: 'not found' }, 404)
+      if (row.status === 'resolved') return c.json({ error: 'already resolved' }, 409)
+      sqlite
+        .prepare('UPDATE findings SET status = ?, updated_at = ? WHERE id = ?')
+        .run('resolved', Date.now(), id)
+      const entry = await system.knowledge.store({
+        tier: 'procedural',
+        source: 'improvement',
+        title: `Resolved: ${String(row.title)}`,
+        content: `Finding ${String(row.severity)}: ${String(row.evidence ?? 'no evidence')}. Source: ${String(row.source)}. Resolved to knowledge.`,
+        tags: [String(row.severity), String(row.source), 'resolved'],
+        metadata: { findingId: id, severity: String(row.severity), source: String(row.source) },
+      })
+      system.bus?.publish({
+        type: 'job.updated',
+        payload: { action: 'promoted', findingId: id, entryId: entry.id },
+        timestamp: Date.now(),
+      })
+      return c.json({ finding: { id, status: 'resolved' }, entry }, 201)
+    } catch (err) {
+      console.error('[learning] promote error:', err)
+      return c.json({ error: String(err) }, 500)
+    }
   })
 
   // H2-2 Mira Score GA — per-session {score,cost,doomLoops,toolErrors,memoryHits} + trace

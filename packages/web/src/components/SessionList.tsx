@@ -1,6 +1,8 @@
-import { For, Show } from 'solid-js'
+import { For, Show, createSignal } from 'solid-js'
 import type { AppStore } from '../stores/app'
 import { getApiUrl } from '../api/client'
+import { ConfirmDialog } from './ConfirmDialog'
+import { toast } from './Toast'
 
 function serverHost(): string {
   try {
@@ -14,6 +16,7 @@ function serverHost(): string {
 
 export function SessionList(props: { store: AppStore; open?: boolean }) {
   const s = () => props.store.state
+  const [confirmDelete, setConfirmDelete] = createSignal<{ id: string; title: string } | null>(null)
 
   return (
     <aside
@@ -245,7 +248,10 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                         class="session-del"
                         onClick={(e) => {
                           e.stopPropagation()
-                          if (confirm('Delete session?')) props.store.deleteSession(sess.id)
+                          setConfirmDelete({
+                            id: sess.id,
+                            title: sess.title || sess.id.slice(0, 6),
+                          })
                         }}
                         title="Delete session"
                         aria-label={`Delete session ${sess.title || sess.id.slice(0, 6)}`}
@@ -302,8 +308,54 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
         }}
       >
         <span>Mira Web · SolidJS</span>
-        <span title="API server">{serverHost()}</span>
+        <span
+          title={
+            s().connected
+              ? `Connected to ${serverHost()}`
+              : `Offline — cannot reach ${serverHost()}`
+          }
+          style={{
+            color: s().connected ? 'var(--fg-faint)' : 'var(--danger)',
+            'text-decoration': s().connected ? 'none' : 'line-through',
+            display: 'inline-flex',
+            'align-items': 'center',
+            gap: '4px',
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              width: '6px',
+              height: '6px',
+              'border-radius': '50%',
+              background: s().connected ? 'var(--ok)' : 'var(--danger)',
+            }}
+          />
+          {serverHost()}
+        </span>
       </div>
+      <ConfirmDialog
+        open={() => confirmDelete() !== null}
+        title="Delete session?"
+        message={
+          confirmDelete()
+            ? `This will permanently delete "${confirmDelete()!.title}" and all its messages. This cannot be undone.`
+            : ''
+        }
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => {
+          const item = confirmDelete()
+          setConfirmDelete(null)
+          if (item) {
+            void props.store
+              .deleteSession(item.id)
+              .then(() => toast.success('Session deleted'))
+              .catch((e) => toast.error(`Delete failed: ${(e as Error).message}`))
+          }
+        }}
+        onCancel={() => setConfirmDelete(null)}
+      />
     </aside>
   )
 }

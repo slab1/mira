@@ -1,6 +1,8 @@
 import { createSignal, Show, For } from 'solid-js'
 import type { Message } from '../api/client'
-import { api, getApiUrl, getToken } from '../api/client'
+import { api } from '../api/client'
+import { ConfirmDialog } from './ConfirmDialog'
+import { toast } from './Toast'
 
 type Props = {
   message: Message
@@ -36,6 +38,7 @@ export function ProvenancePanel(props: Props) {
   const prov = () => props.message.provenance ?? []
   const [open, setOpen] = createSignal(false)
   const [busy, setBusy] = createSignal<Record<string, boolean>>({})
+  const [confirmForget, setConfirmForget] = createSignal<string | null>(null)
 
   const setBusyFor = (id: string, v: boolean) => {
     setBusy((prev) => ({ ...prev, [id]: v }))
@@ -45,25 +48,27 @@ export function ProvenancePanel(props: Props) {
     setBusyFor(id, true)
     try {
       await api.touchKnowledge(id)
-    } catch {}
+      toast.success('Memory refreshed')
+    } catch (e) {
+      toast.error(`Touch failed: ${(e as Error).message}`)
+    }
     setBusyFor(id, false)
   }
 
   const handleForget = async (id: string) => {
-    if (!confirm('Forget this memory node? This cannot be undone.')) return
+    setConfirmForget(id)
+  }
+
+  const performForget = async () => {
+    const id = confirmForget()
+    setConfirmForget(null)
+    if (!id) return
     setBusyFor(id, true)
     try {
-      const url = `${getApiUrl() || ''}/knowledge/${encodeURIComponent(id)}`
-      const res = await fetch(url, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
-        },
-      })
-      if (!res.ok) throw new Error(`delete failed ${res.status}`)
+      await api.deleteKnowledge(id)
+      toast.success('Memory forgotten')
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to forget')
+      toast.error(`Forget failed: ${(e as Error).message}`)
     } finally {
       setBusyFor(id, false)
     }
@@ -73,7 +78,10 @@ export function ProvenancePanel(props: Props) {
     setBusyFor(id, true)
     try {
       await api.promoteFinding(id)
-    } catch {}
+      toast.success('Finding promoted to knowledge')
+    } catch (e) {
+      toast.error(`Promote failed: ${(e as Error).message}`)
+    }
     setBusyFor(id, false)
   }
 

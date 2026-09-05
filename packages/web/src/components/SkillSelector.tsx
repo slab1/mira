@@ -1,20 +1,29 @@
 import { createResource, For, Show } from 'solid-js'
 import { api } from '../api/client'
+import { toast } from './Toast'
 
 /** Skill picker in the top bar — selecting a skill starts a new session. */
 export function SkillSelector(props: { onSelect?: (skill: string) => void }) {
   // Use the API client (has auth token + API base URL) — a raw fetch("/skills")
   // hits the static host when web and API live on different origins.
-  const [skills] = createResource(async () =>
-    api.listSkills().catch(() => [] as Array<string | { name: string }>),
-  )
+  const [skills, { refetch }] = createResource(async () => {
+    try {
+      return await api.listSkills()
+    } catch (e) {
+      toast.error(`Skills failed to load: ${(e as Error).message}`)
+      return [] as Array<string | { name: string }>
+    }
+  })
   const names = () =>
     (skills() ?? [])
       .map((s) => (typeof s === 'string' ? s : s.name))
       .filter((n): n is string => typeof n === 'string' && n.length > 0)
 
   return (
-    <span class="select-wrap">
+    <span
+      class="select-wrap"
+      style={{ display: 'inline-flex', 'align-items': 'center', gap: '4px' }}
+    >
       <select
         id="skill-select"
         class="input select"
@@ -34,6 +43,18 @@ export function SkillSelector(props: { onSelect?: (skill: string) => void }) {
           </Show>
         </Show>
       </select>
+      <Show when={skills() !== undefined && names().length === 0}>
+        <button
+          type="button"
+          class="btn btn-ghost"
+          onClick={() => void refetch()}
+          title="Retry loading skills"
+          aria-label="Retry loading skills"
+          style={{ padding: '2px 6px', 'font-size': 'var(--fs-xs)', color: 'var(--fg-faint)' }}
+        >
+          ↻
+        </button>
+      </Show>
     </span>
   )
 }

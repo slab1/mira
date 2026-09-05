@@ -12,6 +12,7 @@ import { CommandPalette } from './components/CommandPalette'
 import { MemoryGraph } from './components/MemoryGraph'
 import { TraceViewer } from './components/TraceViewer'
 import { QueueRail } from './components/QueueRail'
+import { ToastViewport, toast } from './components/Toast'
 import { api, getToken, setToken, validateToken, getApiUrl, setApiUrl } from './api/client'
 
 type ViewMode = 'chat' | 'split' | 'graph'
@@ -341,17 +342,24 @@ export default function App() {
 
   const currentSession = () => store.state.sessions.find((s) => s.id === store.state.currentId)
 
+  // Keep the agent dropdown in sync with the active session's lane
+  createEffect(() => {
+    const sess = currentSession()
+    setSelectedAgent(sess?.agent ?? '')
+  })
+
   // /memory slash → open graph (clear only if the composer still holds the bare slash,
-  // so typing more keeps your text — no race between an async clear and new input)
+  // so typing more keeps your text — debounce to avoid races during fast typing)
   createEffect(() => {
     const inp = store.input()
     const trimmed = inp.trim()
     if (trimmed === '/memory' || trimmed === '/graph') {
       setViewMode('graph')
-      setTimeout(() => {
+      const handle = setTimeout(() => {
         const now = store.input().trim()
         if (now === trimmed) store.setInput('')
-      }, 300)
+      }, 400)
+      onCleanup(() => clearTimeout(handle))
     }
   })
 
@@ -370,6 +378,27 @@ export default function App() {
       .getScore(id)
       .then((s) => setMiraScore({ score: s.score, costUSD: s.costUSD ?? s.cost ?? 0 }))
       .catch(() => setMiraScore(null))
+  })
+  // Close "⋯ More" menu on outside click or Escape
+  createEffect(() => {
+    if (!moreOpen()) return
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null
+      if (!target) return
+      if (!target.closest('[data-more-menu]')) setMoreOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setMoreOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    onCleanup(() => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    })
   })
   // Refresh score after each turn finishes (streaming → false)
   createEffect(() => {
@@ -597,6 +626,10 @@ export default function App() {
                     void (async () => {
                       const id = store.state.currentId
                       if (!id) return
+                      if (store.state.messages.length === 0) {
+                        toast.warn('No messages to export yet')
+                        return
+                      }
                       try {
                         const md = await api.exportSession(id, 'md')
                         const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
@@ -607,11 +640,16 @@ export default function App() {
                         a.click()
                         URL.revokeObjectURL(url)
                       } catch (e) {
-                        console.error('[mira] export failed:', e)
+                        toast.error(`Export failed: ${(e as Error).message}`)
                       }
                     })()
                   }
-                  title="Export conversation transcript as Markdown"
+                  disabled={store.state.messages.length === 0}
+                  title={
+                    store.state.messages.length === 0
+                      ? 'No messages to export'
+                      : 'Export conversation transcript as Markdown'
+                  }
                   class="pill pill-btn"
                 >
                   ⤓ export
@@ -740,6 +778,7 @@ export default function App() {
               <div style={{ position: 'relative' }}>
                 <button
                   type="button"
+                  data-more-menu
                   class="btn btn-ghost"
                   onClick={() => setMoreOpen(!moreOpen())}
                   title="More actions"
@@ -757,6 +796,7 @@ export default function App() {
                 </button>
                 <Show when={moreOpen()}>
                   <div
+                    data-more-menu
                     style={{
                       position: 'absolute',
                       right: '0',
@@ -807,6 +847,7 @@ export default function App() {
                       <button
                         type="button"
                         class="btn btn-ghost"
+                        disabled={store.state.messages.length === 0}
                         style={{
                           width: '100%',
                           'text-align': 'left',
@@ -818,6 +859,10 @@ export default function App() {
                           void (async () => {
                             const id = store.state.currentId
                             if (!id) return
+                            if (store.state.messages.length === 0) {
+                              toast.warn('No messages to export yet')
+                              return
+                            }
                             try {
                               const md = await api.exportSession(id, 'md')
                               const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
@@ -828,7 +873,7 @@ export default function App() {
                               a.click()
                               URL.revokeObjectURL(url)
                             } catch (e) {
-                              console.error('[mira] export failed:', e)
+                              toast.error(`Export failed: ${(e as Error).message}`)
                             }
                           })()
                         }}
@@ -1026,6 +1071,7 @@ export default function App() {
         open={traceOpen()}
         onClose={() => setTraceOpen(false)}
       />
+      <ToastViewport />
     </Show>
   )
 }

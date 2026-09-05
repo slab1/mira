@@ -1,6 +1,7 @@
 import { For, Show, createSignal, createResource } from 'solid-js'
 import type { AppStore } from '../stores/app'
 import { api, type ToolInfo, type Snapshot, type Finding, type Job } from '../api/client'
+import { toast } from './Toast'
 
 type Tab = 'todos' | 'tools' | 'events' | 'history' | 'findings' | 'jobs'
 
@@ -623,7 +624,7 @@ export function ToolView(props: { store: AppStore }) {
                                     const d = await api.getSnapshot(id, snap.id)
                                     setDetail(d)
                                   } catch (e) {
-                                    console.error('[mira] snapshot detail failed:', e)
+                                    toast.error(`Snapshot detail failed: ${(e as Error).message}`)
                                   } finally {
                                     setLoadingDetail(false)
                                   }
@@ -651,8 +652,11 @@ export function ToolView(props: { store: AppStore }) {
                                     await api.revertSession(id, snap.messageID ?? undefined)
                                     await refetchSnaps()
                                     await props.store.loadMessages(id)
+                                    toast.success(
+                                      `Reverted ${snap.messageID ? 'to snapshot' : 'last mutation'}`,
+                                    )
                                   } catch (e) {
-                                    console.error('[mira] revert failed:', e)
+                                    toast.error(`Revert failed: ${(e as Error).message}`)
                                   }
                                 })()
                               }
@@ -870,8 +874,9 @@ export function ToolView(props: { store: AppStore }) {
                               try {
                                 await api.resolveFinding(f.id)
                                 await refetchFindings()
+                                toast.success('Finding resolved')
                               } catch (e) {
-                                console.error('[mira] resolve failed:', e)
+                                toast.error(`Resolve failed: ${(e as Error).message}`)
                               }
                             })()
                           }
@@ -1101,8 +1106,9 @@ export function ToolView(props: { store: AppStore }) {
                                   try {
                                     await api.cancelJob(job.id)
                                     await refetchJobs()
+                                    toast.success('Job cancelled')
                                   } catch (e) {
-                                    console.error('[mira] cancel failed:', e)
+                                    toast.error(`Cancel failed: ${(e as Error).message}`)
                                   }
                                 })()
                               }

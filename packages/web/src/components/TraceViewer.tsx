@@ -8,6 +8,8 @@
 
 import { createSignal, createEffect, Show, For, onCleanup } from 'solid-js'
 import { api, type Job } from '../api/client'
+import { useFocusTrap } from '../hooks/useFocusTrap'
+import { toast } from './Toast'
 
 type ScoreData = {
   sessionID: string
@@ -84,6 +86,12 @@ export function TraceViewer(props: {
   const [loading, setLoading] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
   const [copied, setCopied] = createSignal<string | null>(null)
+  let drawerRef: HTMLDivElement | undefined
+  useFocusTrap(
+    () => props.open,
+    () => drawerRef,
+    props.onClose,
+  )
 
   // ── DAG / wave timeline (orchestrate jobs) ──────────────────────────
   // Same routes the task UI polls (ChatView + ToolView): listJobs per
@@ -161,8 +169,9 @@ export function TraceViewer(props: {
     try {
       const updated = await api.cancelJob(jobID)
       setJobs((js) => (js ?? []).map((j) => (j.id === jobID ? updated : j)))
-    } catch {
-      // keep the row; next poll refreshes the true status
+      toast.success('Job cancelled')
+    } catch (e) {
+      toast.error(`Cancel failed: ${(e as Error).message}`)
     } finally {
       setCancelling(null)
     }
@@ -234,6 +243,7 @@ export function TraceViewer(props: {
       />
       {/* drawer */}
       <div
+        ref={drawerRef}
         role="dialog"
         aria-label="Trace viewer"
         aria-modal="true"
