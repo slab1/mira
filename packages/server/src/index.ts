@@ -1664,7 +1664,7 @@ async function main() {
           ac.abort()
         } catch {}
         try {
-          ;(proc as unknown as { kill?: (code?: number) => void }).kill?.()
+          proc.kill()
         } catch {}
         try {
           ws.close(1000, 'terminal idle timeout')

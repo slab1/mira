@@ -76,33 +76,10 @@ export function mountConfigRoutes(app: Hono<{ Variables: { requestId: string } }
     const cfg = getConfig() as MiraConfig
     return c.json(cfg.permission ?? {})
   })
-  app.get('/config/schema', async (c: Context) => {
-    try {
-      const mod = (await import('zod-to-json-schema' as string).catch(() => null)) as {
-        zodToJsonSchema?: (s: JsonValue) => JsonValue
-      } | null
-      if (mod?.zodToJsonSchema) {
-        const configModule = (await import('../config/index.js').catch(() => ({
-          miraConfigSchema: null,
-        }))) as { miraConfigSchema?: JsonValue }
-        let schema = configModule.miraConfigSchema ?? null
-        if (!schema) {
-          try {
-            // @ts-expect-error — Zod schema is not JsonValue; runtime shape is JSON-serializable
-            const shared = (await import('../../../shared/src/schemas/config.js')) as {
-              miraConfigSchema?: JsonValue
-            }
-            const maybeSchema = shared.miraConfigSchema as JsonValue | undefined
-            schema = maybeSchema ?? null
-          } catch {}
-        }
-        // @ts-expect-error — zodToJsonSchema expects ZodType, not JsonValue; runtime call is correct
-        if (schema)
-          return c.json(
-            (mod as { zodToJsonSchema: (s: JsonValue) => JsonValue }).zodToJsonSchema(schema),
-          )
-      }
-    } catch {}
+  app.get('/config/schema', (c: Context) => {
+    // Static JSON-schema description of the config surface. (Zod v4's toJSONSchema
+    // on miraConfigSchema exceeds TS instantiation limits; the UI only reads this
+    // for documentation and the full typed schema lives in shared/schemas/config.ts.)
     return c.json({
       type: 'object',
       properties: {

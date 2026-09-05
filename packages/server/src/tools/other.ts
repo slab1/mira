@@ -134,6 +134,11 @@ function getByPath(root: JsonValue, key: string): JsonValue | undefined {
   return cur
 }
 
+/** Serialize a typed value into JsonValue (plain JSON round-trip — the canonical widening in this codebase). */
+function toJsonValue(v: object): JsonValue {
+  return JSON.parse(JSON.stringify(v)) as JsonValue
+}
+
 export const configTool = {
   name: 'config',
   description:
@@ -143,7 +148,7 @@ export const configTool = {
   async execute({ action, key, value }, ctx) {
     const cwd = ctx.cwd ?? process.cwd()
     if (action === 'get') {
-      const cfg = getConfig() as unknown as JsonValue
+      const cfg = toJsonValue(getConfig())
       if (!key) return { action, ok: true, config: cfg }
       const resolved = getByPath(cfg, key)
       return { action, ok: true, key, value: resolved === undefined ? null : resolved }
@@ -169,13 +174,13 @@ export const configTool = {
         slot[parts[i]] = value ?? null
       }
     }
-    const updated = await saveConfig(root as unknown as Partial<MiraConfig>, 'project', cwd)
+    const updated = await saveConfig(root as Partial<MiraConfig>, 'project', cwd)
     return {
       action,
       ok: true,
       key,
       value,
-      config: updated as unknown as JsonValue,
+      config: toJsonValue(updated),
       note: `Saved to ${cwd}/mira.json`,
     }
   },
