@@ -184,9 +184,39 @@ function isOriginAllowed(origin: string | null | undefined): boolean {
   return false
 }
 
-// Terminal WS config (wired via MIRA_TERMINAL_ENABLED)
-const TERMINAL_ENABLED = process.env.MIRA_TERMINAL_ENABLED !== '0'
-const TERMINAL_SANDBOX = process.env.MIRA_TERMINAL_SANDBOX === '1'
+// Terminal WS config — env bootstrap + live config (`tools.terminal` in mira.json).
+// Env wins on enable (MIRA_TERMINAL_ENABLED=0 hard-disables), config refines sandbox/allowlist/timeout.
+type TerminalToolConfig = {
+  enabled?: boolean
+  sandbox?: boolean
+  allowedCommands?: string[]
+  timeoutMs?: number
+}
+
+function terminalToolConfig(): TerminalToolConfig | undefined {
+  try {
+    return (getConfig() as { tools?: { terminal?: TerminalToolConfig } }).tools?.terminal
+  } catch {
+    return undefined
+  }
+}
+
+function terminalEnabled(): boolean {
+  if (process.env.MIRA_TERMINAL_ENABLED === '0') return false
+  if (terminalToolConfig()?.enabled === false) return false
+  return true
+}
+
+function terminalSandboxed(): boolean {
+  if (process.env.MIRA_TERMINAL_SANDBOX === '1') return true
+  return terminalToolConfig()?.sandbox === true
+}
+
+/** Idle timeout for the PTY; null = none. */
+function terminalTimeoutMs(): number | null {
+  const ms = terminalToolConfig()?.timeoutMs
+  return typeof ms === 'number' && ms > 0 ? ms : null
+}
 
 // Expand {env:VAR} placeholders in provider/MCP config strings — lets mira.json keep secrets out of git
 function expandEnv(value: string): string {
@@ -812,8 +842,8 @@ async function main() {
     learning,
     gateway,
     metrics,
-    TERMINAL_ENABLED,
-    TERMINAL_SANDBOX,
+    TERMINAL_ENABLED: terminalEnabled(),
+    TERMINAL_SANDBOX: terminalSandboxed(),
     REQUIRED_TOKEN,
     API_KEY_OWNERS,
     CORS_ORIGIN_LIST,
@@ -1481,13 +1511,19 @@ async function main() {
 
   // Terminal — HTTP status + browser client hint
   app.get('/terminal', (c) => {
-    if (!TERMINAL_ENABLED)
-      return c.json({ enabled: false, error: 'terminal disabled (MIRA_TERMINAL_ENABLED=0)' }, 403)
+    if (!terminalEnabled())
+      return c.json(
+        {
+          enabled: false,
+          error: 'terminal disabled (MIRA_TERMINAL_ENABLED=0 or tools.terminal.enabled=false)',
+        },
+        403,
+      )
     const host = c.req.header('host') ?? `localhost:${PORT}`
     const proto = c.req.header('x-forwarded-proto') ?? (host.includes('localhost') ? 'ws' : 'wss')
     return c.json({
       enabled: true,
-      sandbox: TERMINAL_SANDBOX,
+      sandbox: terminalSandboxed(),
       ws: `${proto}://${host}/terminal`,
       auth: 'Bearer token or {type:"auth",token} first message',
     })
@@ -1522,6 +1558,8 @@ async function main() {
     __owner?: string | null
     __proc?: ReturnType<typeof Bun.spawn>
     __ac?: AbortController
+    __idleTimer?: ReturnType<typeof setTimeout>
+    __armIdle?: () => void
     send(data: string): void
     close(code: number, reason?: string): void
     getBufferedAmount?(): number
@@ -1590,7 +1628,7 @@ async function main() {
     ws.send(
       JSON.stringify({
         type: 'terminal.connected',
-        payload: { connected: true, owner: ws.__owner, sandbox: TERMINAL_SANDBOX },
+        payload: { connected: true, owner: ws.__owner, sandbox: terminalSandboxed() },
         timestamp: Date.now(),
       }),
     )
@@ -1604,6 +1642,36 @@ async function main() {
     const ac = new AbortController()
     ws.__proc = proc
     ws.__ac = ac
+    // Idle-timeout watchdog from tools.terminal.timeoutMs (mira.json) — resets on any input
+    ws.__armIdle = () => {
+      if (ws.__idleTimer) clearTimeout(ws.__idleTimer)
+      const ms = terminalTimeoutMs()
+      if (!ms) return
+      ws.__idleTimer = setTimeout(() => {
+        try {
+          ws.send(
+            JSON.stringify({
+              type: 'terminal.output',
+              payload: {
+                stream: 'stderr',
+                data: `\n[idle timeout after ${ms}ms — terminal closed]\n`,
+              },
+              timestamp: Date.now(),
+            }),
+          )
+        } catch {}
+        try {
+          ac.abort()
+        } catch {}
+        try {
+          ;(proc as unknown as { kill?: (code?: number) => void }).kill?.()
+        } catch {}
+        try {
+          ws.close(1000, 'terminal idle timeout')
+        } catch {}
+      }, ms)
+    }
+    ws.__armIdle()
     const streamOutput = async (stream: ReadableStream<Uint8Array> | null, name: string) => {
       if (!stream) return
       const reader = stream.getReader() as ReadableStreamDefaultReader<Uint8Array>
@@ -1636,6 +1704,7 @@ async function main() {
     void streamOutput(proc.stdout as ReadableStream<Uint8Array>, 'stdout')
     void streamOutput(proc.stderr as ReadableStream<Uint8Array>, 'stderr')
     void (proc as { exited: Promise<number> }).exited.then((code: number) => {
+      if (ws.__idleTimer) clearTimeout(ws.__idleTimer)
       try {
         ws.send(JSON.stringify({ type: 'terminal.exit', payload: { code }, timestamp: Date.now() }))
       } catch {}
@@ -1662,7 +1731,7 @@ async function main() {
         }
         const url = new URL(req.url)
         const isTerminal = url.pathname === '/terminal'
-        if (isTerminal && !TERMINAL_ENABLED) {
+        if (isTerminal && !terminalEnabled()) {
           return new Response(JSON.stringify({ error: 'terminal disabled' }), {
             status: 403,
             headers: { 'content-type': 'application/json' },
@@ -1741,8 +1810,9 @@ async function main() {
         // Terminal input path
         if ((w.data as MiraWSData | undefined)?.isTerminal) {
           if (event?.type === 'terminal.input' && typeof event.data === 'string') {
+            w.__armIdle?.()
             // Sandbox: enforce allowedCommands when enabled
-            if (TERMINAL_SANDBOX) {
+            if (terminalSandboxed()) {
               const raw = event.data.trim()
               // allow empty, single word commands only at line start; skip control chars
               if (raw && !raw.startsWith('#')) {
@@ -1859,10 +1929,10 @@ async function main() {
   console.log(`[mira]   liveness: GET /healthz (no auth) · detail: GET /health`)
   console.log(`[mira]   prompt:  POST /session/:id/prompt  (SSE)`)
   console.log(
-    `[mira]   ws:      WS   /  (BusEvent stream)${TERMINAL_ENABLED ? ' · WS /terminal (pty)' : ' · terminal disabled'}`,
+    `[mira]   ws:      WS   /  (BusEvent stream)${terminalEnabled() ? ' · WS /terminal (pty)' : ' · terminal disabled'}`,
   )
   console.log(
-    `[mira]   terminal: GET /terminal → {enabled:${TERMINAL_ENABLED}, sandbox:${TERMINAL_SANDBOX}}`,
+    `[mira]   terminal: GET /terminal → {enabled:${terminalEnabled()}, sandbox:${terminalSandboxed()}}`,
   )
 
   // Graceful shutdown — handles SIGINT (Ctrl-C) AND SIGTERM (systemd/docker/kill)

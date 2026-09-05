@@ -6,8 +6,8 @@
  * Simple table/timeline, not full OTel UI. Opened by clicking the score pill.
  */
 
-import { createSignal, createEffect, Show, For, onCleanup } from "solid-js"
-import { api, type Job } from "../api/client"
+import { createSignal, createEffect, Show, For, onCleanup } from 'solid-js'
+import { api, type Job } from '../api/client'
 
 type ScoreData = {
   sessionID: string
@@ -27,7 +27,13 @@ type ScoreData = {
   totalTokensIn: number
   totalTokensOut: number
   success: boolean
-  toolMetrics?: Array<{ tool: string; durationMs: number; isError: boolean; errorKind?: string; timestamp: number }>
+  toolMetrics?: Array<{
+    tool: string
+    durationMs: number
+    isError: boolean
+    errorKind?: string
+    timestamp: number
+  }>
 }
 
 type TraceData = {
@@ -40,19 +46,39 @@ type TraceData = {
   toolCalls: number
   toolErrors: number
   doomLoops: number
-  spans: Array<{ name: string; traceId: string; spanId: string; startMs: number; endMs?: number; durationMs?: number; status: string; attributes: Record<string, unknown> }>
-  toolMetrics: Array<{ tool: string; durationMs: number; isError: boolean; errorKind?: string; timestamp: number; sessionID: string }>
+  spans: Array<{
+    name: string
+    traceId: string
+    spanId: string
+    startMs: number
+    endMs?: number
+    durationMs?: number
+    status: string
+    attributes: Record<string, unknown>
+  }>
+  toolMetrics: Array<{
+    tool: string
+    durationMs: number
+    isError: boolean
+    errorKind?: string
+    timestamp: number
+    sessionID: string
+  }>
   metric: unknown
 }
 
 function scoreColor(score: number): string {
-  if (score >= 80) return "var(--ok)"
-  if (score >= 60) return "var(--warn)"
-  if (score >= 40) return "var(--danger)"
-  return "var(--danger)"
+  if (score >= 80) return 'var(--ok)'
+  if (score >= 60) return 'var(--warn)'
+  if (score >= 40) return 'var(--danger)'
+  return 'var(--danger)'
 }
 
-export function TraceViewer(props: { sessionID: string | null; open: boolean; onClose: () => void }) {
+export function TraceViewer(props: {
+  sessionID: string | null
+  open: boolean
+  onClose: () => void
+}) {
   const [score, setScore] = createSignal<ScoreData | null>(null)
   const [trace, setTrace] = createSignal<TraceData | null>(null)
   const [loading, setLoading] = createSignal(false)
@@ -82,7 +108,7 @@ export function TraceViewer(props: { sessionID: string | null; open: boolean; on
         if (stopped) return
         setJobs(list)
         setJobsLoaded(true)
-        if (!list.some((j) => j.status === "running") && timer !== undefined) {
+        if (!list.some((j) => j.status === 'running') && timer !== undefined) {
           clearInterval(timer)
           timer = undefined
         }
@@ -98,32 +124,36 @@ export function TraceViewer(props: { sessionID: string | null; open: boolean; on
     })
   })
 
-  const runningJobs = () => (jobs() ?? []).filter((j) => j.status === "running")
+  const runningJobs = () => (jobs() ?? []).filter((j) => j.status === 'running')
 
   /** Orchestrate job prompts are `[goal :: taskID] …` — recover the node id. */
   function taskIDOf(job: Job): string {
-    const m = /\[.*::\s*([^\]]+)\]/.exec(job.prompt ?? "")
+    const m = /\[.*::\s*([^\]]+)\]/.exec(job.prompt ?? '')
     return m?.[1]?.trim() || job.id.slice(0, 8)
   }
 
   function previewOf(job: Job): string {
     const text =
-      job.status === "completed" ? (job.result ?? "") : job.status === "failed" ? (job.error ?? "") : job.prompt
-    return (text ?? "").slice(0, 120)
+      job.status === 'completed'
+        ? (job.result ?? '')
+        : job.status === 'failed'
+          ? (job.error ?? '')
+          : job.prompt
+    return (text ?? '').slice(0, 120)
   }
 
-  function dagDot(status: Job["status"]): string {
-    if (status === "running") return "var(--warn)"
-    if (status === "completed") return "var(--ok)"
-    if (status === "failed") return "var(--danger)"
-    return "var(--fg-faint)"
+  function dagDot(status: Job['status']): string {
+    if (status === 'running') return 'var(--warn)'
+    if (status === 'completed') return 'var(--ok)'
+    if (status === 'failed') return 'var(--danger)'
+    return 'var(--fg-faint)'
   }
 
-  function dagPill(status: Job["status"]): string {
-    if (status === "running") return "pill pill-warn"
-    if (status === "completed") return "pill pill-ok"
-    if (status === "failed") return "pill pill-danger"
-    return "pill"
+  function dagPill(status: Job['status']): string {
+    if (status === 'running') return 'pill pill-warn'
+    if (status === 'completed') return 'pill pill-ok'
+    if (status === 'failed') return 'pill pill-danger'
+    return 'pill'
   }
 
   async function cancelOne(jobID: string) {
@@ -141,7 +171,7 @@ export function TraceViewer(props: { sessionID: string | null; open: boolean; on
   async function cancelAll() {
     const running = runningJobs()
     if (running.length === 0) return
-    setCancelling("all")
+    setCancelling('all')
     try {
       await Promise.all(running.map((j) => api.cancelJob(j.id).catch(() => null)))
       const id = props.sessionID
@@ -166,7 +196,9 @@ export function TraceViewer(props: { sessionID: string | null; open: boolean; on
     setLoading(true)
     setError(null)
     Promise.all([
-      api.getScore(id).catch((e) => { throw new Error(`score: ${String((e as Error).message)}`) }),
+      api.getScore(id).catch((e) => {
+        throw new Error(`score: ${String((e as Error).message)}`)
+      }),
       api.getTrace(id).catch(() => null),
     ])
       .then(([s, t]) => {
@@ -178,10 +210,13 @@ export function TraceViewer(props: { sessionID: string | null; open: boolean; on
   })
 
   function copy(text: string, label: string) {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(label)
-      setTimeout(() => setCopied(null), 1500)
-    }).catch(() => {})
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(label)
+        setTimeout(() => setCopied(null), 1500)
+      })
+      .catch(() => {})
   }
 
   return (
@@ -190,10 +225,10 @@ export function TraceViewer(props: { sessionID: string | null; open: boolean; on
       <div
         onClick={props.onClose}
         style={{
-          position: "fixed",
-          inset: "0",
-          background: "rgba(0,0,0,0.35)",
-          "z-index": "50",
+          position: 'fixed',
+          inset: '0',
+          background: 'rgba(0,0,0,0.35)',
+          'z-index': '50',
         }}
         aria-hidden="true"
       />
@@ -203,42 +238,92 @@ export function TraceViewer(props: { sessionID: string | null; open: boolean; on
         aria-label="Trace viewer"
         aria-modal="true"
         style={{
-          position: "fixed",
-          top: "0",
-          right: "0",
-          bottom: "0",
-          width: "min(560px, 92vw)",
-          background: "var(--bg-surface)",
-          "border-left": "1px solid var(--border)",
-          "box-shadow": "var(--shadow-pop)",
-          "z-index": "51",
-          display: "flex",
-          "flex-direction": "column",
-          overflow: "hidden",
+          position: 'fixed',
+          top: '0',
+          right: '0',
+          bottom: '0',
+          width: 'min(560px, 92vw)',
+          background: 'var(--bg-surface)',
+          'border-left': '1px solid var(--border)',
+          'box-shadow': 'var(--shadow-pop)',
+          'z-index': '51',
+          display: 'flex',
+          'flex-direction': 'column',
+          overflow: 'hidden',
         }}
       >
         {/* header */}
-        <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", padding: "12px 16px", "border-bottom": "1px solid var(--border)", "flex-shrink": "0" }}>
-          <div style={{ display: "flex", "align-items": "center", gap: "10px" }}>
-            <span style={{ "font-weight": "700", "font-size": "var(--fs-md)" }}>Trace</span>
+        <div
+          style={{
+            display: 'flex',
+            'align-items': 'center',
+            'justify-content': 'space-between',
+            padding: '12px 16px',
+            'border-bottom': '1px solid var(--border)',
+            'flex-shrink': '0',
+          }}
+        >
+          <div style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
+            <span style={{ 'font-weight': '700', 'font-size': 'var(--fs-md)' }}>Trace</span>
             <Show when={props.sessionID}>
-              <span style={{ "font-family": "var(--font-mono)", "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "max-width": "14ch", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
+              <span
+                style={{
+                  'font-family': 'var(--font-mono)',
+                  'font-size': 'var(--fs-2xs)',
+                  color: 'var(--fg-faint)',
+                  'max-width': '14ch',
+                  overflow: 'hidden',
+                  'text-overflow': 'ellipsis',
+                  'white-space': 'nowrap',
+                }}
+              >
                 {props.sessionID}
               </span>
             </Show>
           </div>
-          <button type="button" class="btn btn-ghost" onClick={props.onClose} aria-label="Close trace viewer" style={{ padding: "4px 8px", border: "1px solid var(--border)", "border-radius": "var(--r-md)" }}>
+          <button
+            type="button"
+            class="btn btn-ghost"
+            onClick={props.onClose}
+            aria-label="Close trace viewer"
+            style={{
+              padding: '4px 8px',
+              border: '1px solid var(--border)',
+              'border-radius': 'var(--r-md)',
+            }}
+          >
             ✕
           </button>
         </div>
 
         {/* body */}
-        <div style={{ flex: "1", overflow: "auto", padding: "16px", display: "flex", "flex-direction": "column", gap: "16px" }}>
+        <div
+          style={{
+            flex: '1',
+            overflow: 'auto',
+            padding: '16px',
+            display: 'flex',
+            'flex-direction': 'column',
+            gap: '16px',
+          }}
+        >
           <Show when={loading()}>
-            <div style={{ color: "var(--fg-muted)", "font-size": "var(--fs-sm)" }}>Loading trace…</div>
+            <div style={{ color: 'var(--fg-muted)', 'font-size': 'var(--fs-sm)' }}>
+              Loading trace…
+            </div>
           </Show>
           <Show when={error()}>
-            <div role="alert" style={{ color: "var(--danger)", "font-size": "var(--fs-sm)", padding: "8px", border: "1px solid var(--danger)", "border-radius": "var(--r-md)", background: "color-mix(in srgb, var(--danger) 8%, transparent)" }}>
+            <div
+              role="alert"
+              style={{
+                color: 'var(--danger)',
+                'font-size': 'var(--fs-sm)',
+                padding: '8px',
+                border: '1px solid var(--danger)',
+                'border-radius': 'var(--r-md)',
+                background: 'color-mix(in srgb, var(--danger) 8%, transparent)',
+              }}
+            >
               {error()}
             </div>
           </Show>
@@ -247,102 +332,371 @@ export function TraceViewer(props: { sessionID: string | null; open: boolean; on
             {(s) => (
               <>
                 {/* score hero */}
-                <div style={{ display: "flex", gap: "12px", "align-items": "center", padding: "12px", border: "1px solid var(--border)", "border-radius": "var(--r-lg)", background: "var(--bg-app)" }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: '12px',
+                    'align-items': 'center',
+                    padding: '12px',
+                    border: '1px solid var(--border)',
+                    'border-radius': 'var(--r-lg)',
+                    background: 'var(--bg-app)',
+                  }}
+                >
                   <div
                     style={{
-                      width: "56px",
-                      height: "56px",
-                      "border-radius": "50%",
-                      display: "flex",
-                      "align-items": "center",
-                      "justify-content": "center",
-                      "font-weight": "800",
-                      "font-size": "18px",
-                      color: "var(--on-accent)",
+                      width: '56px',
+                      height: '56px',
+                      'border-radius': '50%',
+                      display: 'flex',
+                      'align-items': 'center',
+                      'justify-content': 'center',
+                      'font-weight': '800',
+                      'font-size': '18px',
+                      color: 'var(--on-accent)',
                       background: scoreColor(s().score),
-                      "flex-shrink": "0",
+                      'flex-shrink': '0',
                     }}
                   >
                     {s().score}
                   </div>
-                  <div style={{ flex: "1", "min-width": "0" }}>
-                    <div style={{ "font-weight": "700", "font-size": "var(--fs-sm)" }}>Mira Score — {s().score}/100</div>
-                    <div style={{ "font-size": "var(--fs-xs)", color: "var(--fg-muted)", "line-height": "1.5" }}>
-                      {s().success ? "✓ success" : "✗ failed"} · {s().toolCalls} tool calls · {s().toolErrors} errors · {s().doomLoops} doom loops · {s().memoryHits} memory hits
+                  <div style={{ flex: '1', 'min-width': '0' }}>
+                    <div style={{ 'font-weight': '700', 'font-size': 'var(--fs-sm)' }}>
+                      Mira Score — {s().score}/100
                     </div>
-                    <div style={{ "font-size": "var(--fs-xs)", color: "var(--fg-faint)" }}>
-                      ${Number(s().costUSD ?? s().cost ?? 0).toFixed(4)} · {s().model} · {s().durationMs}ms · {s().steps} steps
+                    <div
+                      style={{
+                        'font-size': 'var(--fs-xs)',
+                        color: 'var(--fg-muted)',
+                        'line-height': '1.5',
+                      }}
+                    >
+                      {s().success ? '✓ success' : '✗ failed'} · {s().toolCalls} tool calls ·{' '}
+                      {s().toolErrors} errors · {s().doomLoops} doom loops · {s().memoryHits} memory
+                      hits
+                    </div>
+                    <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-faint)' }}>
+                      ${Number(s().costUSD ?? s().cost ?? 0).toFixed(4)} · {s().model} ·{' '}
+                      {s().durationMs}ms · {s().steps} steps
                     </div>
                   </div>
                 </div>
 
                 {/* meta grid */}
-                <div style={{ display: "grid", "grid-template-columns": "1fr 1fr", gap: "8px" }}>
-                  <div style={{ padding: "8px 10px", border: "1px solid var(--border)", "border-radius": "var(--r-md)", background: "var(--bg-app)" }}>
-                    <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "text-transform": "uppercase", "letter-spacing": "0.04em" }}>Cost</div>
-                    <div style={{ "font-family": "var(--font-mono)", "font-size": "var(--fs-sm)", "font-weight": "600" }}>${Number(s().costUSD ?? s().cost ?? 0).toFixed(4)}</div>
-                    <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-muted)" }}>{s().totalTokensIn} in / {s().totalTokensOut} out</div>
+                <div style={{ display: 'grid', 'grid-template-columns': '1fr 1fr', gap: '8px' }}>
+                  <div
+                    style={{
+                      padding: '8px 10px',
+                      border: '1px solid var(--border)',
+                      'border-radius': 'var(--r-md)',
+                      background: 'var(--bg-app)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        'font-size': 'var(--fs-2xs)',
+                        color: 'var(--fg-faint)',
+                        'text-transform': 'uppercase',
+                        'letter-spacing': '0.04em',
+                      }}
+                    >
+                      Cost
+                    </div>
+                    <div
+                      style={{
+                        'font-family': 'var(--font-mono)',
+                        'font-size': 'var(--fs-sm)',
+                        'font-weight': '600',
+                      }}
+                    >
+                      ${Number(s().costUSD ?? s().cost ?? 0).toFixed(4)}
+                    </div>
+                    <div style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-muted)' }}>
+                      {s().totalTokensIn} in / {s().totalTokensOut} out
+                    </div>
                   </div>
-                  <div style={{ padding: "8px 10px", border: "1px solid var(--border)", "border-radius": "var(--r-md)", background: "var(--bg-app)" }}>
-                    <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "text-transform": "uppercase", "letter-spacing": "0.04em" }}>Latency</div>
-                    <div style={{ "font-family": "var(--font-mono)", "font-size": "var(--fs-sm)", "font-weight": "600" }}>{s().durationMs}ms</div>
-                    <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-muted)" }}>{s().model}</div>
+                  <div
+                    style={{
+                      padding: '8px 10px',
+                      border: '1px solid var(--border)',
+                      'border-radius': 'var(--r-md)',
+                      background: 'var(--bg-app)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        'font-size': 'var(--fs-2xs)',
+                        color: 'var(--fg-faint)',
+                        'text-transform': 'uppercase',
+                        'letter-spacing': '0.04em',
+                      }}
+                    >
+                      Latency
+                    </div>
+                    <div
+                      style={{
+                        'font-family': 'var(--font-mono)',
+                        'font-size': 'var(--fs-sm)',
+                        'font-weight': '600',
+                      }}
+                    >
+                      {s().durationMs}ms
+                    </div>
+                    <div style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-muted)' }}>
+                      {s().model}
+                    </div>
                   </div>
-                  <div style={{ padding: "8px 10px", border: "1px solid var(--border)", "border-radius": "var(--r-md)", background: "var(--bg-app)" }}>
-                    <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "text-transform": "uppercase", "letter-spacing": "0.04em" }}>Tool calls</div>
-                    <div style={{ "font-family": "var(--font-mono)", "font-size": "var(--fs-sm)", "font-weight": "600" }}>{s().toolCalls} <span style={{ color: s().toolErrors ? "var(--danger)" : "var(--fg-muted)", "font-weight": "400" }}>({s().toolErrors} errors)</span></div>
-                    <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-muted)" }}>{s().doomLoops} doom loops</div>
+                  <div
+                    style={{
+                      padding: '8px 10px',
+                      border: '1px solid var(--border)',
+                      'border-radius': 'var(--r-md)',
+                      background: 'var(--bg-app)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        'font-size': 'var(--fs-2xs)',
+                        color: 'var(--fg-faint)',
+                        'text-transform': 'uppercase',
+                        'letter-spacing': '0.04em',
+                      }}
+                    >
+                      Tool calls
+                    </div>
+                    <div
+                      style={{
+                        'font-family': 'var(--font-mono)',
+                        'font-size': 'var(--fs-sm)',
+                        'font-weight': '600',
+                      }}
+                    >
+                      {s().toolCalls}{' '}
+                      <span
+                        style={{
+                          color: s().toolErrors ? 'var(--danger)' : 'var(--fg-muted)',
+                          'font-weight': '400',
+                        }}
+                      >
+                        ({s().toolErrors} errors)
+                      </span>
+                    </div>
+                    <div style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-muted)' }}>
+                      {s().doomLoops} doom loops
+                    </div>
                   </div>
-                  <div style={{ padding: "8px 10px", border: "1px solid var(--border)", "border-radius": "var(--r-md)", background: "var(--bg-app)" }}>
-                    <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", "text-transform": "uppercase", "letter-spacing": "0.04em" }}>Memory</div>
-                    <div style={{ "font-family": "var(--font-mono)", "font-size": "var(--fs-sm)", "font-weight": "600" }}>{s().memoryHits} hits</div>
-                    <div style={{ "font-size": "var(--fs-2xs)", color: "var(--fg-muted)" }}>knowledge graph</div>
+                  <div
+                    style={{
+                      padding: '8px 10px',
+                      border: '1px solid var(--border)',
+                      'border-radius': 'var(--r-md)',
+                      background: 'var(--bg-app)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        'font-size': 'var(--fs-2xs)',
+                        color: 'var(--fg-faint)',
+                        'text-transform': 'uppercase',
+                        'letter-spacing': '0.04em',
+                      }}
+                    >
+                      Memory
+                    </div>
+                    <div
+                      style={{
+                        'font-family': 'var(--font-mono)',
+                        'font-size': 'var(--fs-sm)',
+                        'font-weight': '600',
+                      }}
+                    >
+                      {s().memoryHits} hits
+                    </div>
+                    <div style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-muted)' }}>
+                      knowledge graph
+                    </div>
                   </div>
                 </div>
 
                 {/* IDs */}
-                <div style={{ display: "flex", "flex-direction": "column", gap: "6px", padding: "10px", border: "1px solid var(--border)", "border-radius": "var(--r-md)", background: "var(--bg-app)" }}>
-                  <div style={{ display: "flex", "align-items": "center", gap: "8px", "font-size": "var(--fs-xs)" }}>
-                    <span style={{ color: "var(--fg-faint)", "min-width": "72px" }}>Trace ID</span>
-                    <code style={{ flex: "1", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "font-size": "var(--fs-2xs)", background: "var(--bg-surface)", padding: "2px 6px", "border-radius": "4px", border: "1px solid var(--border)" }}>{s().traceId}</code>
-                    <button type="button" class="btn btn-ghost" onClick={() => copy(s().traceId, "traceId")} style={{ padding: "2px 6px", "font-size": "var(--fs-2xs)", border: "1px solid var(--border)", "border-radius": "4px" }}>{copied() === "traceId" ? "✓" : "copy"}</button>
+                <div
+                  style={{
+                    display: 'flex',
+                    'flex-direction': 'column',
+                    gap: '6px',
+                    padding: '10px',
+                    border: '1px solid var(--border)',
+                    'border-radius': 'var(--r-md)',
+                    background: 'var(--bg-app)',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      'align-items': 'center',
+                      gap: '8px',
+                      'font-size': 'var(--fs-xs)',
+                    }}
+                  >
+                    <span style={{ color: 'var(--fg-faint)', 'min-width': '72px' }}>Trace ID</span>
+                    <code
+                      style={{
+                        flex: '1',
+                        overflow: 'hidden',
+                        'text-overflow': 'ellipsis',
+                        'white-space': 'nowrap',
+                        'font-size': 'var(--fs-2xs)',
+                        background: 'var(--bg-surface)',
+                        padding: '2px 6px',
+                        'border-radius': '4px',
+                        border: '1px solid var(--border)',
+                      }}
+                    >
+                      {s().traceId}
+                    </code>
+                    <button
+                      type="button"
+                      class="btn btn-ghost"
+                      onClick={() => copy(s().traceId, 'traceId')}
+                      style={{
+                        padding: '2px 6px',
+                        'font-size': 'var(--fs-2xs)',
+                        border: '1px solid var(--border)',
+                        'border-radius': '4px',
+                      }}
+                    >
+                      {copied() === 'traceId' ? '✓' : 'copy'}
+                    </button>
                   </div>
-                  <div style={{ display: "flex", "align-items": "center", gap: "8px", "font-size": "var(--fs-xs)" }}>
-                    <span style={{ color: "var(--fg-faint)", "min-width": "72px" }}>Span ID</span>
-                    <code style={{ flex: "1", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "font-size": "var(--fs-2xs)", background: "var(--bg-surface)", padding: "2px 6px", "border-radius": "4px", border: "1px solid var(--border)" }}>{s().spanId}</code>
-                    <button type="button" class="btn btn-ghost" onClick={() => copy(s().spanId, "spanId")} style={{ padding: "2px 6px", "font-size": "var(--fs-2xs)", border: "1px solid var(--border)", "border-radius": "4px" }}>{copied() === "spanId" ? "✓" : "copy"}</button>
+                  <div
+                    style={{
+                      display: 'flex',
+                      'align-items': 'center',
+                      gap: '8px',
+                      'font-size': 'var(--fs-xs)',
+                    }}
+                  >
+                    <span style={{ color: 'var(--fg-faint)', 'min-width': '72px' }}>Span ID</span>
+                    <code
+                      style={{
+                        flex: '1',
+                        overflow: 'hidden',
+                        'text-overflow': 'ellipsis',
+                        'white-space': 'nowrap',
+                        'font-size': 'var(--fs-2xs)',
+                        background: 'var(--bg-surface)',
+                        padding: '2px 6px',
+                        'border-radius': '4px',
+                        border: '1px solid var(--border)',
+                      }}
+                    >
+                      {s().spanId}
+                    </code>
+                    <button
+                      type="button"
+                      class="btn btn-ghost"
+                      onClick={() => copy(s().spanId, 'spanId')}
+                      style={{
+                        padding: '2px 6px',
+                        'font-size': 'var(--fs-2xs)',
+                        border: '1px solid var(--border)',
+                        'border-radius': '4px',
+                      }}
+                    >
+                      {copied() === 'spanId' ? '✓' : 'copy'}
+                    </button>
                   </div>
-                  <div style={{ display: "flex", "align-items": "center", gap: "8px", "font-size": "var(--fs-xs)" }}>
-                    <span style={{ color: "var(--fg-faint)", "min-width": "72px" }}>Request ID</span>
-                    <code style={{ flex: "1", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "font-size": "var(--fs-2xs)", background: "var(--bg-surface)", padding: "2px 6px", "border-radius": "4px", border: "1px solid var(--border)" }}>{s().requestId || "—"}</code>
+                  <div
+                    style={{
+                      display: 'flex',
+                      'align-items': 'center',
+                      gap: '8px',
+                      'font-size': 'var(--fs-xs)',
+                    }}
+                  >
+                    <span style={{ color: 'var(--fg-faint)', 'min-width': '72px' }}>
+                      Request ID
+                    </span>
+                    <code
+                      style={{
+                        flex: '1',
+                        overflow: 'hidden',
+                        'text-overflow': 'ellipsis',
+                        'white-space': 'nowrap',
+                        'font-size': 'var(--fs-2xs)',
+                        background: 'var(--bg-surface)',
+                        padding: '2px 6px',
+                        'border-radius': '4px',
+                        border: '1px solid var(--border)',
+                      }}
+                    >
+                      {s().requestId || '—'}
+                    </code>
                     <Show when={s().requestId}>
-                      <button type="button" class="btn btn-ghost" onClick={() => copy(s().requestId, "requestId")} style={{ padding: "2px 6px", "font-size": "var(--fs-2xs)", border: "1px solid var(--border)", "border-radius": "4px" }}>{copied() === "requestId" ? "✓" : "copy"}</button>
+                      <button
+                        type="button"
+                        class="btn btn-ghost"
+                        onClick={() => copy(s().requestId, 'requestId')}
+                        style={{
+                          padding: '2px 6px',
+                          'font-size': 'var(--fs-2xs)',
+                          border: '1px solid var(--border)',
+                          'border-radius': '4px',
+                        }}
+                      >
+                        {copied() === 'requestId' ? '✓' : 'copy'}
+                      </button>
                     </Show>
                   </div>
                 </div>
 
                 {/* badge */}
-                <div style={{ display: "flex", gap: "8px", "align-items": "center", "flex-wrap": "wrap" }}>
-                  <span style={{ "font-size": "var(--fs-xs)", color: "var(--fg-muted)" }}>PR badge:</span>
-                  <img src={api.getScoreBadgeUrl(s().sessionID)} alt={`Mira Score ${s().score}/100`} style={{ height: "20px", "border-radius": "3px" }} />
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: '8px',
+                    'align-items': 'center',
+                    'flex-wrap': 'wrap',
+                  }}
+                >
+                  <span style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-muted)' }}>
+                    PR badge:
+                  </span>
+                  <img
+                    src={api.getScoreBadgeUrl(s().sessionID)}
+                    alt={`Mira Score ${s().score}/100`}
+                    style={{ height: '20px', 'border-radius': '3px' }}
+                  />
                   <button
                     type="button"
                     class="btn btn-ghost"
-                    onClick={() => copy(`![Mira Score](Mira Score badge)`, "badge")}
-                    style={{ padding: "2px 6px", "font-size": "var(--fs-2xs)", border: "1px solid var(--border)", "border-radius": "4px" }}
+                    onClick={() =>
+                      copy(`![Mira Score](${api.getScoreBadgeUrl(s().sessionID)})`, 'badge')
+                    }
+                    style={{
+                      padding: '2px 6px',
+                      'font-size': 'var(--fs-2xs)',
+                      border: '1px solid var(--border)',
+                      'border-radius': '4px',
+                    }}
                   >
-                    {copied() === "badge" ? "✓ copied" : "copy markdown"}
+                    {copied() === 'badge' ? '✓ copied' : 'copy markdown'}
                   </button>
                   <button
                     type="button"
                     class="btn btn-ghost"
                     onClick={() => {
-                      const md = `![Mira Score](https://img.shields.io/badge/Mira%20Score-${s().score}%2F100-${s().score >= 80 ? "brightgreen" : s().score >= 60 ? "yellow" : "red"})`
-                      copy(md, "badge2")
+                      const md = `![Mira Score](https://img.shields.io/badge/Mira%20Score-${s().score}%2F100-${s().score >= 80 ? 'brightgreen' : s().score >= 60 ? 'yellow' : 'red'})`
+                      copy(md, 'badge2')
                     }}
-                    style={{ padding: "2px 6px", "font-size": "var(--fs-2xs)", border: "1px solid var(--border)", "border-radius": "4px" }}
+                    style={{
+                      padding: '2px 6px',
+                      'font-size': 'var(--fs-2xs)',
+                      border: '1px solid var(--border)',
+                      'border-radius': '4px',
+                    }}
                   >
-                    {copied() === "badge2" ? "✓" : "copy shields.io"}
+                    {copied() === 'badge2' ? '✓' : 'copy shields.io'}
                   </button>
                 </div>
               </>
@@ -352,19 +706,98 @@ export function TraceViewer(props: { sessionID: string | null; open: boolean; on
           {/* spans timeline */}
           <Show when={trace()}>
             {(t) => (
-              <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
-                <div style={{ "font-weight": "600", "font-size": "var(--fs-sm)" }}>Spans · {t().spans.length} <span style={{ color: "var(--fg-faint)", "font-weight": "400", "font-size": "var(--fs-xs)" }}>(OTel + tool timeline)</span></div>
+              <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
+                <div style={{ 'font-weight': '600', 'font-size': 'var(--fs-sm)' }}>
+                  Spans · {t().spans.length}{' '}
+                  <span
+                    style={{
+                      color: 'var(--fg-faint)',
+                      'font-weight': '400',
+                      'font-size': 'var(--fs-xs)',
+                    }}
+                  >
+                    (OTel + tool timeline)
+                  </span>
+                </div>
                 <Show when={t().spans.length === 0}>
-                  <div style={{ color: "var(--fg-muted)", "font-size": "var(--fs-xs)", padding: "8px", border: "1px dashed var(--border)", "border-radius": "var(--r-md)" }}>No spans yet — run a prompt to generate a trace.</div>
+                  <div
+                    style={{
+                      color: 'var(--fg-muted)',
+                      'font-size': 'var(--fs-xs)',
+                      padding: '8px',
+                      border: '1px dashed var(--border)',
+                      'border-radius': 'var(--r-md)',
+                    }}
+                  >
+                    No spans yet — run a prompt to generate a trace.
+                  </div>
                 </Show>
-                <div style={{ display: "flex", "flex-direction": "column", gap: "6px", "max-height": "220px", overflow: "auto", padding: "2px" }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    'flex-direction': 'column',
+                    gap: '6px',
+                    'max-height': '220px',
+                    overflow: 'auto',
+                    padding: '2px',
+                  }}
+                >
                   <For each={t().spans.slice(0, 50)}>
                     {(sp) => (
-                      <div style={{ display: "flex", gap: "8px", "align-items": "center", padding: "6px 8px", border: "1px solid var(--border)", "border-radius": "var(--r-md)", background: sp.status === "error" ? "color-mix(in srgb, var(--danger) 6%, var(--bg-app))" : "var(--bg-app)", "font-size": "var(--fs-xs)" }}>
-                        <span style={{ width: "8px", height: "8px", "border-radius": "50%", background: sp.status === "error" ? "var(--danger)" : "var(--ok)", "flex-shrink": "0" }} />
-                        <span style={{ "font-family": "var(--font-mono)", "font-weight": "600", "min-width": "0", flex: "1", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>{sp.name}</span>
-                        <span style={{ color: "var(--fg-muted)", "font-family": "var(--font-mono)", "font-size": "var(--fs-2xs)" }}>{sp.durationMs ?? (sp.endMs && sp.startMs ? sp.endMs - sp.startMs : 0)}ms</span>
-                        <span style={{ color: sp.status === "error" ? "var(--danger)" : "var(--fg-faint)", "font-size": "var(--fs-2xs)" }}>{sp.status}</span>
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: '8px',
+                          'align-items': 'center',
+                          padding: '6px 8px',
+                          border: '1px solid var(--border)',
+                          'border-radius': 'var(--r-md)',
+                          background:
+                            sp.status === 'error'
+                              ? 'color-mix(in srgb, var(--danger) 6%, var(--bg-app))'
+                              : 'var(--bg-app)',
+                          'font-size': 'var(--fs-xs)',
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: '8px',
+                            height: '8px',
+                            'border-radius': '50%',
+                            background: sp.status === 'error' ? 'var(--danger)' : 'var(--ok)',
+                            'flex-shrink': '0',
+                          }}
+                        />
+                        <span
+                          style={{
+                            'font-family': 'var(--font-mono)',
+                            'font-weight': '600',
+                            'min-width': '0',
+                            flex: '1',
+                            overflow: 'hidden',
+                            'text-overflow': 'ellipsis',
+                            'white-space': 'nowrap',
+                          }}
+                        >
+                          {sp.name}
+                        </span>
+                        <span
+                          style={{
+                            color: 'var(--fg-muted)',
+                            'font-family': 'var(--font-mono)',
+                            'font-size': 'var(--fs-2xs)',
+                          }}
+                        >
+                          {sp.durationMs ?? (sp.endMs && sp.startMs ? sp.endMs - sp.startMs : 0)}ms
+                        </span>
+                        <span
+                          style={{
+                            color: sp.status === 'error' ? 'var(--danger)' : 'var(--fg-faint)',
+                            'font-size': 'var(--fs-2xs)',
+                          }}
+                        >
+                          {sp.status}
+                        </span>
                       </div>
                     )}
                   </For>
@@ -374,11 +807,24 @@ export function TraceViewer(props: { sessionID: string | null; open: boolean; on
           </Show>
 
           {/* DAG / wave timeline (orchestrate jobs) — reuses the spans row UI */}
-          <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
-            <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", gap: "8px" }}>
-              <div style={{ "font-weight": "600", "font-size": "var(--fs-sm)" }}>
-                DAG runs · {(jobs() ?? []).length}{" "}
-                <span style={{ color: "var(--fg-faint)", "font-weight": "400", "font-size": "var(--fs-xs)" }}>
+          <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
+            <div
+              style={{
+                display: 'flex',
+                'align-items': 'center',
+                'justify-content': 'space-between',
+                gap: '8px',
+              }}
+            >
+              <div style={{ 'font-weight': '600', 'font-size': 'var(--fs-sm)' }}>
+                DAG runs · {(jobs() ?? []).length}{' '}
+                <span
+                  style={{
+                    color: 'var(--fg-faint)',
+                    'font-weight': '400',
+                    'font-size': 'var(--fs-xs)',
+                  }}
+                >
                   (waves + nodes)
                 </span>
               </div>
@@ -387,40 +833,136 @@ export function TraceViewer(props: { sessionID: string | null; open: boolean; on
                   type="button"
                   class="btn btn-danger-ghost"
                   onClick={() => void cancelAll()}
-                  disabled={cancelling() === "all"}
+                  disabled={cancelling() === 'all'}
                   aria-label={`Cancel all running DAG nodes (${runningJobs().length} running)`}
-                  style={{ padding: "4px 10px", "font-size": "var(--fs-xs)", border: "1px solid var(--danger-border)", "border-radius": "var(--r-full)" }}
+                  style={{
+                    padding: '4px 10px',
+                    'font-size': 'var(--fs-xs)',
+                    border: '1px solid var(--danger-border)',
+                    'border-radius': 'var(--r-full)',
+                  }}
                 >
-                  {cancelling() === "all" ? "Cancelling…" : `Cancel all (${runningJobs().length})`}
+                  {cancelling() === 'all' ? 'Cancelling…' : `Cancel all (${runningJobs().length})`}
                 </button>
               </Show>
             </div>
             <Show when={jobsLoaded() && (jobs() ?? []).length === 0}>
-              <div style={{ color: "var(--fg-muted)", "font-size": "var(--fs-xs)", padding: "8px", border: "1px dashed var(--border)", "border-radius": "var(--r-md)" }}>No DAG runs yet.</div>
+              <div
+                style={{
+                  color: 'var(--fg-muted)',
+                  'font-size': 'var(--fs-xs)',
+                  padding: '8px',
+                  border: '1px dashed var(--border)',
+                  'border-radius': 'var(--r-md)',
+                }}
+              >
+                No DAG runs yet.
+              </div>
             </Show>
-            <div style={{ display: "flex", "flex-direction": "column", gap: "6px", "max-height": "220px", overflow: "auto", padding: "2px" }} role="list" aria-label="DAG nodes">
+            <div
+              style={{
+                display: 'flex',
+                'flex-direction': 'column',
+                gap: '6px',
+                'max-height': '220px',
+                overflow: 'auto',
+                padding: '2px',
+              }}
+              role="list"
+              aria-label="DAG nodes"
+            >
               <For each={jobs() ?? []}>
                 {(job) => (
-                  <div role="listitem" style={{ display: "flex", gap: "8px", "align-items": "center", padding: "6px 8px", border: "1px solid var(--border)", "border-radius": "var(--r-md)", background: job.status === "failed" ? "color-mix(in srgb, var(--danger) 6%, var(--bg-app))" : "var(--bg-app)", "font-size": "var(--fs-xs)" }}>
-                    <span class={job.status === "running" ? "dot dot-pulse" : "dot"} style={{ width: "8px", height: "8px", "border-radius": "50%", background: dagDot(job.status), "flex-shrink": "0" }} aria-hidden="true" />
-                    <span style={{ "min-width": "0", flex: "1", overflow: "hidden" }}>
-                      <span style={{ display: "flex", gap: "6px", "align-items": "center", "min-width": "0" }}>
-                        <span style={{ "font-family": "var(--font-mono)", "font-weight": "600", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>{taskIDOf(job)}</span>
-                        <span style={{ color: "var(--fg-faint)", "font-size": "var(--fs-2xs)", "flex-shrink": "0" }}>{job.agent ?? "general"}</span>
-                        <span class={dagPill(job.status)} style={{ "flex-shrink": "0" }}>{job.status}</span>
+                  <div
+                    role="listitem"
+                    style={{
+                      display: 'flex',
+                      gap: '8px',
+                      'align-items': 'center',
+                      padding: '6px 8px',
+                      border: '1px solid var(--border)',
+                      'border-radius': 'var(--r-md)',
+                      background:
+                        job.status === 'failed'
+                          ? 'color-mix(in srgb, var(--danger) 6%, var(--bg-app))'
+                          : 'var(--bg-app)',
+                      'font-size': 'var(--fs-xs)',
+                    }}
+                  >
+                    <span
+                      class={job.status === 'running' ? 'dot dot-pulse' : 'dot'}
+                      style={{
+                        width: '8px',
+                        height: '8px',
+                        'border-radius': '50%',
+                        background: dagDot(job.status),
+                        'flex-shrink': '0',
+                      }}
+                      aria-hidden="true"
+                    />
+                    <span style={{ 'min-width': '0', flex: '1', overflow: 'hidden' }}>
+                      <span
+                        style={{
+                          display: 'flex',
+                          gap: '6px',
+                          'align-items': 'center',
+                          'min-width': '0',
+                        }}
+                      >
+                        <span
+                          style={{
+                            'font-family': 'var(--font-mono)',
+                            'font-weight': '600',
+                            overflow: 'hidden',
+                            'text-overflow': 'ellipsis',
+                            'white-space': 'nowrap',
+                          }}
+                        >
+                          {taskIDOf(job)}
+                        </span>
+                        <span
+                          style={{
+                            color: 'var(--fg-faint)',
+                            'font-size': 'var(--fs-2xs)',
+                            'flex-shrink': '0',
+                          }}
+                        >
+                          {job.agent ?? 'general'}
+                        </span>
+                        <span class={dagPill(job.status)} style={{ 'flex-shrink': '0' }}>
+                          {job.status}
+                        </span>
                       </span>
-                      <span style={{ display: "block", color: "var(--fg-muted)", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "font-size": "var(--fs-2xs)", "margin-top": "2px" }}>{previewOf(job)}</span>
+                      <span
+                        style={{
+                          display: 'block',
+                          color: 'var(--fg-muted)',
+                          overflow: 'hidden',
+                          'text-overflow': 'ellipsis',
+                          'white-space': 'nowrap',
+                          'font-size': 'var(--fs-2xs)',
+                          'margin-top': '2px',
+                        }}
+                      >
+                        {previewOf(job)}
+                      </span>
                     </span>
-                    <Show when={job.status === "running"}>
+                    <Show when={job.status === 'running'}>
                       <button
                         type="button"
                         class="btn btn-danger-ghost"
                         onClick={() => void cancelOne(job.id)}
                         disabled={cancelling() === job.id}
                         aria-label={`Cancel DAG node ${taskIDOf(job)}`}
-                        style={{ padding: "4px 8px", "font-size": "var(--fs-xs)", border: "1px solid var(--danger-border)", "border-radius": "var(--r-full)", "flex-shrink": "0" }}
+                        style={{
+                          padding: '4px 8px',
+                          'font-size': 'var(--fs-xs)',
+                          border: '1px solid var(--danger-border)',
+                          'border-radius': 'var(--r-full)',
+                          'flex-shrink': '0',
+                        }}
                       >
-                        {cancelling() === job.id ? "…" : "✕ cancel"}
+                        {cancelling() === job.id ? '…' : '✕ cancel'}
                       </button>
                     </Show>
                   </div>
@@ -430,37 +972,86 @@ export function TraceViewer(props: { sessionID: string | null; open: boolean; on
           </div>
 
           {/* tool metrics table */}
-          <Show when={(score()?.toolMetrics?.length ?? 0) > 0 || (trace()?.toolMetrics?.length ?? 0) > 0}>
-            <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
-              <div style={{ "font-weight": "600", "font-size": "var(--fs-sm)" }}>Tool calls</div>
-              <div style={{ overflow: "auto", border: "1px solid var(--border)", "border-radius": "var(--r-md)" }}>
-                <table style={{ width: "100%", "border-collapse": "collapse", "font-size": "var(--fs-xs)" }}>
+          <Show
+            when={
+              (score()?.toolMetrics?.length ?? 0) > 0 || (trace()?.toolMetrics?.length ?? 0) > 0
+            }
+          >
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
+              <div style={{ 'font-weight': '600', 'font-size': 'var(--fs-sm)' }}>Tool calls</div>
+              <div
+                style={{
+                  overflow: 'auto',
+                  border: '1px solid var(--border)',
+                  'border-radius': 'var(--r-md)',
+                }}
+              >
+                <table
+                  style={{
+                    width: '100%',
+                    'border-collapse': 'collapse',
+                    'font-size': 'var(--fs-xs)',
+                  }}
+                >
                   <thead>
-                    <tr style={{ background: "var(--bg-app)", "text-align": "left" }}>
-                      <th style={{ padding: "6px 8px", "border-bottom": "1px solid var(--border)", color: "var(--fg-faint)", "font-weight": "600" }}>Tool</th>
-                      <th style={{ padding: "6px 8px", "border-bottom": "1px solid var(--border)", color: "var(--fg-faint)", "font-weight": "600" }}>Latency</th>
-                      <th style={{ padding: "6px 8px", "border-bottom": "1px solid var(--border)", color: "var(--fg-faint)", "font-weight": "600" }}>Status</th>
+                    <tr style={{ background: 'var(--bg-app)', 'text-align': 'left' }}>
+                      <th
+                        style={{
+                          padding: '6px 8px',
+                          'border-bottom': '1px solid var(--border)',
+                          color: 'var(--fg-faint)',
+                          'font-weight': '600',
+                        }}
+                      >
+                        Tool
+                      </th>
+                      <th
+                        style={{
+                          padding: '6px 8px',
+                          'border-bottom': '1px solid var(--border)',
+                          color: 'var(--fg-faint)',
+                          'font-weight': '600',
+                        }}
+                      >
+                        Latency
+                      </th>
+                      <th
+                        style={{
+                          padding: '6px 8px',
+                          'border-bottom': '1px solid var(--border)',
+                          color: 'var(--fg-faint)',
+                          'font-weight': '600',
+                        }}
+                      >
+                        Status
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     <For each={(score()?.toolMetrics ?? trace()?.toolMetrics ?? []).slice(0, 20)}>
                       {(m) => (
-                        <tr style={{ "border-bottom": "1px solid var(--border)" }}>
-                          <td style={{ padding: "6px 8px", "font-family": "var(--font-mono)" }}>{m.tool}</td>
-                          <td style={{ padding: "6px 8px", "font-family": "var(--font-mono)" }}>{m.durationMs}ms</td>
-                          <td style={{ padding: "6px 8px" }}>
+                        <tr style={{ 'border-bottom': '1px solid var(--border)' }}>
+                          <td style={{ padding: '6px 8px', 'font-family': 'var(--font-mono)' }}>
+                            {m.tool}
+                          </td>
+                          <td style={{ padding: '6px 8px', 'font-family': 'var(--font-mono)' }}>
+                            {m.durationMs}ms
+                          </td>
+                          <td style={{ padding: '6px 8px' }}>
                             <span
                               style={{
-                                padding: "1px 6px",
-                                "border-radius": "999px",
-                                "font-size": "var(--fs-2xs)",
-                                "font-weight": "600",
-                                background: m.isError ? "color-mix(in srgb, var(--danger) 12%, transparent)" : "color-mix(in srgb, var(--ok) 12%, transparent)",
-                                color: m.isError ? "var(--danger)" : "var(--ok)",
-                                border: `1px solid ${m.isError ? "var(--danger)" : "var(--ok)"}`,
+                                padding: '1px 6px',
+                                'border-radius': '999px',
+                                'font-size': 'var(--fs-2xs)',
+                                'font-weight': '600',
+                                background: m.isError
+                                  ? 'color-mix(in srgb, var(--danger) 12%, transparent)'
+                                  : 'color-mix(in srgb, var(--ok) 12%, transparent)',
+                                color: m.isError ? 'var(--danger)' : 'var(--ok)',
+                                border: `1px solid ${m.isError ? 'var(--danger)' : 'var(--ok)'}`,
                               }}
                             >
-                              {m.isError ? `error${m.errorKind ? `: ${m.errorKind}` : ""}` : "ok"}
+                              {m.isError ? `error${m.errorKind ? `: ${m.errorKind}` : ''}` : 'ok'}
                             </span>
                           </td>
                         </tr>
@@ -473,15 +1064,42 @@ export function TraceViewer(props: { sessionID: string | null; open: boolean; on
           </Show>
 
           <Show when={!loading() && !score() && !error()}>
-            <div style={{ color: "var(--fg-muted)", "font-size": "var(--fs-sm)", padding: "12px", border: "1px dashed var(--border)", "border-radius": "var(--r-md)", "text-align": "center" }}>
+            <div
+              style={{
+                color: 'var(--fg-muted)',
+                'font-size': 'var(--fs-sm)',
+                padding: '12px',
+                border: '1px dashed var(--border)',
+                'border-radius': 'var(--r-md)',
+                'text-align': 'center',
+              }}
+            >
               No trace for this session yet. Send a prompt to generate a score.
             </div>
           </Show>
         </div>
 
         {/* footer */}
-        <div style={{ padding: "10px 16px", "border-top": "1px solid var(--border)", display: "flex", gap: "8px", "justify-content": "flex-end", "flex-shrink": "0" }}>
-          <button type="button" class="btn btn-ghost" onClick={props.onClose} style={{ padding: "6px 12px", border: "1px solid var(--border)", "border-radius": "var(--r-md)" }}>
+        <div
+          style={{
+            padding: '10px 16px',
+            'border-top': '1px solid var(--border)',
+            display: 'flex',
+            gap: '8px',
+            'justify-content': 'flex-end',
+            'flex-shrink': '0',
+          }}
+        >
+          <button
+            type="button"
+            class="btn btn-ghost"
+            onClick={props.onClose}
+            style={{
+              padding: '6px 12px',
+              border: '1px solid var(--border)',
+              'border-radius': 'var(--r-md)',
+            }}
+          >
             Close
           </button>
         </div>

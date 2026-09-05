@@ -19,8 +19,8 @@
  *   // or scheduled: scheduler calls learner.learnOnce() hourly
  */
 
-import type { Bus } from "../bus/index.js"
-import type { MiraDB } from "../storage/db.js"
+import type { Bus } from '../bus/index.js'
+import type { MiraDB } from '../storage/db.js'
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -41,25 +41,25 @@ export interface FetchedDoc {
 
 export interface Insight {
   id: string
-  source: string          // url
+  source: string // url
   sourceTitle: string
   category: InsightCategory
-  summary: string         // 1-2 sentence distillation
-  pattern: string         // reusable pattern / technique
-  relevance: number       // 0..1
+  summary: string // 1-2 sentence distillation
+  pattern: string // reusable pattern / technique
+  relevance: number // 0..1
   tags: string[]
-  rawExcerpt: string      // grounding excerpt (<=500 chars)
+  rawExcerpt: string // grounding excerpt (<=500 chars)
   createdAt: number
 }
 
 export type InsightCategory =
-  | "agent-technique"
-  | "research-paper"
-  | "tool"
-  | "documentation"
-  | "github-repo"
-  | "eval-method"
-  | "other"
+  | 'agent-technique'
+  | 'research-paper'
+  | 'tool'
+  | 'documentation'
+  | 'github-repo'
+  | 'eval-method'
+  | 'other'
 
 export interface OnlineLearnerConfig {
   /** max search queries per cycle (default 6) */
@@ -81,14 +81,20 @@ export interface OnlineLearnerDeps {
 // ── Default query bank (rotated each cycle) ────────────────────────
 
 export const DEFAULT_TOPICS: Array<{ query: string; category: InsightCategory }> = [
-  { query: "AI agent orchestration framework 2026 Vercel AI SDK LangGraph", category: "agent-technique" },
-  { query: "LLM agent tool use improvement technique 2026", category: "agent-technique" },
-  { query: "arxiv AI agent reasoning memory benchmark", category: "research-paper" },
-  { query: "MCP model context protocol new servers tools 2026", category: "tool" },
-  { query: "agent evaluation harness Braintrust Langfuse 2026", category: "eval-method" },
-  { query: "github awesome AI agents framework trending", category: "github-repo" },
-  { query: "Claude Mira Cursor agent best practices 2026", category: "documentation" },
-  { query: "agent memory architecture Mem0 Zep pgvector hybrid retrieval", category: "agent-technique" },
+  {
+    query: 'AI agent orchestration framework 2026 Vercel AI SDK LangGraph',
+    category: 'agent-technique',
+  },
+  { query: 'LLM agent tool use improvement technique 2026', category: 'agent-technique' },
+  { query: 'arxiv AI agent reasoning memory benchmark', category: 'research-paper' },
+  { query: 'MCP model context protocol new servers tools 2026', category: 'tool' },
+  { query: 'agent evaluation harness Braintrust Langfuse 2026', category: 'eval-method' },
+  { query: 'github awesome AI agents framework trending', category: 'github-repo' },
+  { query: 'Claude Mira Cursor agent best practices 2026', category: 'documentation' },
+  {
+    query: 'agent memory architecture Mem0 Zep pgvector hybrid retrieval',
+    category: 'agent-technique',
+  },
 ]
 
 // ── OnlineLearner ────────────────────────────────────────────────────
@@ -112,9 +118,12 @@ export class OnlineLearner {
   // ── Privacy safeguards ─────────────────────────────────────────────
   private redactInsightText(text: string): string {
     return text
-      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[REDACTED_EMAIL]")
-      .replace(/\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g, "[REDACTED_PHONE]")
-      .replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*["']?([^\s"']+)["']?/gi, "$1=[REDACTED]")
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[REDACTED_EMAIL]')
+      .replace(/\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g, '[REDACTED_PHONE]')
+      .replace(
+        /(api[_-]?key|token|secret|password)\s*[:=]\s*["']?([^\s"']+)["']?/gi,
+        '$1=[REDACTED]',
+      )
   }
 
   /**
@@ -138,20 +147,23 @@ export class OnlineLearner {
     }
     // Deduplicate by URL
     const seen = new Set<string>()
-    const deduped = allResults.filter(r => {
-      if (seen.has(r.url)) return false
-      seen.add(r.url)
-      return true
-    }).slice(0, this.config.maxDocs)
+    const deduped = allResults
+      .filter((r) => {
+        if (seen.has(r.url)) return false
+        seen.add(r.url)
+        return true
+      })
+      .slice(0, this.config.maxDocs)
 
     if (deduped.length === 0) {
-      this.log("online: no search results — skipping fetch")
+      this.log('online: no search results — skipping fetch')
       return []
     }
     this.log(`online: ${deduped.length} unique URLs → fetching...`)
 
     // 2. Fetch
-    const docs: Array<FetchedDoc & { category: InsightCategory; snippet: string; title: string }> = []
+    const docs: Array<FetchedDoc & { category: InsightCategory; snippet: string; title: string }> =
+      []
     for (const r of deduped) {
       try {
         const doc = await this.config.fetchFn(r.url)
@@ -174,7 +186,7 @@ export class OnlineLearner {
     this.log(`online: extracted ${insights.length} insights`)
 
     // 4. Privacy safeguard: redact PII from insights before persistence
-    const redactedInsights = insights.map(i => ({
+    const redactedInsights = insights.map((i) => ({
       ...i,
       summary: this.redactInsightText(i.summary),
       rawExcerpt: this.redactInsightText(i.rawExcerpt),
@@ -183,14 +195,16 @@ export class OnlineLearner {
     // 5. Persist + publish (best-effort)
     if (this.deps.db) await this.persistInsights(redactedInsights).catch(() => {})
     this.deps.bus?.publish({
-      type: "learning.updated",
-      payload: { kind: "learning.online.insights", count: redactedInsights.length, insights: redactedInsights.slice(0, 5) },
+      type: 'learning.updated',
+      payload: {
+        kind: 'learning.online.insights',
+        count: redactedInsights.length,
+        insights: redactedInsights.slice(0, 5),
+      },
       timestamp: Date.now(),
-      })
+    })
 
     return redactedInsights
-
-    return insights
   }
 
   /**
@@ -204,8 +218,8 @@ export class OnlineLearner {
   ): Insight[] {
     const insights: Insight[] = []
     for (const doc of docs) {
-      const excerpt = doc.markdown.slice(0, 500).replace(/\s+/g, " ").trim()
-      const tags = extractTags(doc.markdown, doc.title ?? "")
+      const excerpt = doc.markdown.slice(0, 500).replace(/\s+/g, ' ').trim()
+      const tags = extractTags(doc.markdown, doc.title ?? '')
       const relevance = scoreRelevance(doc.markdown, doc.category)
       // Skip low-signal docs
       if (relevance < 0.25) continue
@@ -245,20 +259,28 @@ export class OnlineLearner {
     try {
       const prompt = `Extract 1-3 concrete, actionable AI agent improvement insights from each doc.
 For each insight return JSON: { summary, pattern, tags: string[], relevance: 0..1 }.
-Docs:\n${docs.map((d, i) => `## Doc ${i + 1}: ${d.title} (${d.url})\n${d.markdown.slice(0, 4000)}`).join("\n\n")}`
-      const { text } = await gateway.generate({ prompt, model: "openrouter/deepseek/deepseek-v3.2-exp" })
-      const parsed = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? "[]") as Array<{ summary?: string; pattern?: string; tags?: string[]; relevance?: number }>
+Docs:\n${docs.map((d, i) => `## Doc ${i + 1}: ${d.title} (${d.url})\n${d.markdown.slice(0, 4000)}`).join('\n\n')}`
+      const { text } = await gateway.generate({
+        prompt,
+        model: 'openrouter/deepseek/deepseek-v3.2-exp',
+      })
+      const parsed = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? '[]') as Array<{
+        summary?: string
+        pattern?: string
+        tags?: string[]
+        relevance?: number
+      }>
       if (Array.isArray(parsed) && parsed.length) {
         return parsed.slice(0, 8).map((p, i: number) => ({
           id: `ins_llm_${Date.now().toString(36)}_${i}`,
-          source: docs[i % docs.length]?.url ?? "llm",
-          sourceTitle: docs[i % docs.length]?.title ?? "LLM extraction",
-          category: (docs[i % docs.length]?.category ?? "other") as InsightCategory,
-          summary: String(p.summary ?? "").slice(0, 300),
-          pattern: String(p.pattern ?? p.summary ?? "").slice(0, 300),
+          source: docs[i % docs.length]?.url ?? 'llm',
+          sourceTitle: docs[i % docs.length]?.title ?? 'LLM extraction',
+          category: (docs[i % docs.length]?.category ?? 'other') as InsightCategory,
+          summary: String(p.summary ?? '').slice(0, 300),
+          pattern: String(p.pattern ?? p.summary ?? '').slice(0, 300),
           relevance: Math.min(1, Math.max(0, Number(p.relevance ?? 0.7))),
           tags: Array.isArray(p.tags) ? p.tags.slice(0, 5) : [],
-          rawExcerpt: docs[i % docs.length]?.markdown.slice(0, 500) ?? "",
+          rawExcerpt: docs[i % docs.length]?.markdown.slice(0, 500) ?? '',
           createdAt: Date.now(),
         }))
       }
@@ -288,10 +310,19 @@ Docs:\n${docs.map((d, i) => `## Doc ${i + 1}: ${d.title} (${d.url})\n${d.markdow
       `)
       const stmt = sqlite.prepare(
         `INSERT OR IGNORE INTO online_learnings (id, source, category, summary, pattern, relevance, tags, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       for (const ins of insights) {
-        stmt.run(ins.id, ins.source, ins.category, ins.summary, ins.pattern, ins.relevance, JSON.stringify(ins.tags), ins.createdAt)
+        stmt.run(
+          ins.id,
+          ins.source,
+          ins.category,
+          ins.summary,
+          ins.pattern,
+          ins.relevance,
+          JSON.stringify(ins.tags),
+          ins.createdAt,
+        )
       }
     } catch {}
   }
@@ -303,88 +334,124 @@ Docs:\n${docs.map((d, i) => `## Doc ${i + 1}: ${d.title} (${d.url})\n${d.markdow
 
 // ── Default search/fetch (real APIs when keys present, else stub) ───
 
-function createDefaultSearchFn(): OnlineLearnerConfig["searchFn"] {
+function createDefaultSearchFn(): OnlineLearnerConfig['searchFn'] {
   return async (query: string, count: number): Promise<SearchResult[]> => {
     // 1. Firecrawl
     if (process.env.FIRECRAWL_API_KEY) {
       try {
-        const res = await fetch("https://api.firecrawl.dev/v1/search", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.FIRECRAWL_API_KEY}` },
+        const res = await fetch('https://api.firecrawl.dev/v1/search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${process.env.FIRECRAWL_API_KEY}`,
+          },
           body: JSON.stringify({ query, limit: count }),
         })
         if (res.ok) {
-          interface SearchHit { title?: string; url?: string; description?: string; markdown?: string }
+          interface SearchHit {
+            title?: string
+            url?: string
+            description?: string
+            markdown?: string
+          }
           const payload = (await res.json()) as { data?: SearchHit[]; results?: SearchHit[] }
           const results = payload.data ?? payload.results ?? []
-          if (results.length) return results.map((r) => ({
-            title: r.title ?? r.url ?? "",
-            url: r.url ?? "",
-            snippet: r.description ?? r.markdown?.slice(0, 200) ?? "",
-          }))
+          if (results.length)
+            return results.map((r) => ({
+              title: r.title ?? r.url ?? '',
+              url: r.url ?? '',
+              snippet: r.description ?? r.markdown?.slice(0, 200) ?? '',
+            }))
         }
       } catch {}
     }
     // 2. Tavily
     if (process.env.TAVILY_API_KEY) {
       try {
-        const res = await fetch("https://api.tavily.com/search", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ api_key: process.env.TAVILY_API_KEY, query, max_results: count, include_answer: false }),
+        const res = await fetch('https://api.tavily.com/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            api_key: process.env.TAVILY_API_KEY,
+            query,
+            max_results: count,
+            include_answer: false,
+          }),
         })
         if (res.ok) {
-          interface TavilyHit { title?: string; url?: string; content?: string; score?: number }
+          interface TavilyHit {
+            title?: string
+            url?: string
+            content?: string
+            score?: number
+          }
           const payload = (await res.json()) as { results?: TavilyHit[] }
-          if (payload.results?.length) return payload.results.map((r) => ({
-            title: r.title ?? "", url: r.url ?? "", snippet: r.content?.slice(0, 200) ?? "", score: r.score,
-          }))
+          if (payload.results?.length)
+            return payload.results.map((r) => ({
+              title: r.title ?? '',
+              url: r.url ?? '',
+              snippet: r.content?.slice(0, 200) ?? '',
+              score: r.score,
+            }))
         }
       } catch {}
     }
-    // 3. Stub — caller can inject real searchFn; this keeps the system functional offline
-    return [
-      { title: `(stub) No search key — configure FIRECRAWL_API_KEY or inject searchFn`, url: `https://example.com/search?q=${encodeURIComponent(query)}`, snippet: `Stub result for "${query}". Set FIRECRAWL_API_KEY for live results.` },
-    ]
+    // 3. No provider key — return no results rather than fabricate.
+    //    A caller can inject a real searchFn via OnlineLearnerConfig.
+    return []
   }
 }
 
-function createDefaultFetchFn(): OnlineLearnerConfig["fetchFn"] {
+function createDefaultFetchFn(): OnlineLearnerConfig['fetchFn'] {
   return async (url: string): Promise<FetchedDoc | null> => {
     // Prefer Firecrawl scrape when available (handles JS, markdown)
     if (process.env.FIRECRAWL_API_KEY) {
       try {
-        const res = await fetch("https://api.firecrawl.dev/v1/scrape", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.FIRECRAWL_API_KEY}` },
-          body: JSON.stringify({ url, formats: ["markdown"], onlyMainContent: true }),
+        const res = await fetch('https://api.firecrawl.dev/v1/scrape', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${process.env.FIRECRAWL_API_KEY}`,
+          },
+          body: JSON.stringify({ url, formats: ['markdown'], onlyMainContent: true }),
         })
         if (res.ok) {
-          interface ScrapeResponse { data?: { markdown?: string; metadata?: { title?: string } }; markdown?: string }
+          interface ScrapeResponse {
+            data?: { markdown?: string; metadata?: { title?: string } }
+            markdown?: string
+          }
           const payload = (await res.json()) as ScrapeResponse
-          const md = payload.data?.markdown ?? payload.markdown ?? ""
-          if (md.length > 100) return { url, title: payload.data?.metadata?.title, markdown: md.slice(0, 12_000), truncated: md.length > 12_000 }
+          const md = payload.data?.markdown ?? payload.markdown ?? ''
+          if (md.length > 100)
+            return {
+              url,
+              title: payload.data?.metadata?.title,
+              markdown: md.slice(0, 12_000),
+              truncated: md.length > 12_000,
+            }
         }
       } catch {}
     }
     // Native fetch → strip HTML
     try {
       const res = await fetch(url, {
-        headers: { "User-Agent": "Mira/0.1 (+https://mira.ai)" },
+        headers: { 'User-Agent': 'Mira/0.1 (+https://mira.ai)' },
         signal: AbortSignal.timeout(15_000),
       })
       if (!res.ok) return null
       const html = await res.text()
       const text = html
-        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-        .replace(/<[^>]+>/g, " ")
-        .replace(/\s+/g, " ")
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
         .trim()
         .slice(0, 12_000)
       const title = html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim()
       return { url, title, markdown: text, truncated: html.length > 12_000 }
-    } catch { return null }
+    } catch {
+      return null
+    }
   }
 }
 
@@ -404,34 +471,48 @@ function pickTopics(
 function extractTags(markdown: string, title: string): string[] {
   const text = `${title} ${markdown}`.toLowerCase()
   const candidates = [
-    "agent", "tool-use", "mcp", "memory", "rag", "eval", "benchmark",
-    "reasoning", "planning", "orchestration", "langgraph", "vercel-ai-sdk",
-    "openrouter", "firecrawl", "braintrust", "langfuse", "pgvector",
+    'agent',
+    'tool-use',
+    'mcp',
+    'memory',
+    'rag',
+    'eval',
+    'benchmark',
+    'reasoning',
+    'planning',
+    'orchestration',
+    'langgraph',
+    'vercel-ai-sdk',
+    'openrouter',
+    'firecrawl',
+    'braintrust',
+    'langfuse',
+    'pgvector',
   ]
-  return candidates.filter(k => text.includes(k)).slice(0, 5)
+  return candidates.filter((k) => text.includes(k)).slice(0, 5)
 }
 
 function scoreRelevance(markdown: string, category: InsightCategory): number {
   const text = markdown.toLowerCase()
   const signals: Record<InsightCategory, string[]> = {
-    "agent-technique": ["agent", "tool", "orchestr", "memory", "loop", "planner"],
-    "research-paper": ["arxiv", "benchmark", "evaluation", "dataset", "model"],
-    "tool": ["mcp", "sdk", "api", "tool", "integration"],
-    "documentation": ["guide", "tutorial", "example", "how to"],
-    "github-repo": ["github", "stars", "repo", "open source"],
-    "eval-method": ["eval", "benchmark", "metric", "pass rate"],
-    "other": [],
+    'agent-technique': ['agent', 'tool', 'orchestr', 'memory', 'loop', 'planner'],
+    'research-paper': ['arxiv', 'benchmark', 'evaluation', 'dataset', 'model'],
+    tool: ['mcp', 'sdk', 'api', 'tool', 'integration'],
+    documentation: ['guide', 'tutorial', 'example', 'how to'],
+    'github-repo': ['github', 'stars', 'repo', 'open source'],
+    'eval-method': ['eval', 'benchmark', 'metric', 'pass rate'],
+    other: [],
   }
   const keywords = signals[category] ?? []
-  let hits = keywords.filter(k => text.includes(k)).length
+  let hits = keywords.filter((k) => text.includes(k)).length
   // Length signal: very short docs are less useful
   const lenScore = Math.min(1, markdown.length / 3000) * 0.2
-  return Math.min(1, hits / Math.max(1, keywords.length) * 0.8 + lenScore)
+  return Math.min(1, (hits / Math.max(1, keywords.length)) * 0.8 + lenScore)
 }
 
 function summarizeHeuristic(markdown: string, title?: string): string {
   // First meaningful sentence(s) up to ~180 chars
-  const cleaned = markdown.replace(/\s+/g, " ").trim()
+  const cleaned = markdown.replace(/\s+/g, ' ').trim()
   const sentence = cleaned.match(/[^.!?]{30,180}[.!?]/)?.[0]?.trim()
   const base = sentence ?? cleaned.slice(0, 180)
   return title ? `${title} — ${base}`.slice(0, 300) : base.slice(0, 300)
@@ -440,7 +521,9 @@ function summarizeHeuristic(markdown: string, title?: string): string {
 function extractPattern(markdown: string, category: InsightCategory): string {
   const text = markdown.slice(0, 3000)
   // Look for imperative / pattern-like lines
-  const line = text.split("\n").find(l => /^(use|prefer|avoid|implement|add|enable|ensure|configure)\b/i.test(l.trim()))
+  const line = text
+    .split('\n')
+    .find((l) => /^(use|prefer|avoid|implement|add|enable|ensure|configure)\b/i.test(l.trim()))
   if (line) return line.trim().slice(0, 280)
   // Fallback: first 200 chars of summary
   return summarizeHeuristic(markdown).slice(0, 200)

@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import * as vscode from 'vscode'
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
 
@@ -29,12 +29,20 @@ function authHeaders(token: string): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-async function miraFetch(context: vscode.ExtensionContext, path: string, init?: RequestInit): Promise<Response> {
+async function miraFetch(
+  context: vscode.ExtensionContext,
+  path: string,
+  init?: RequestInit,
+): Promise<Response> {
   const base = getApiUrl()
   const token = await getToken(context)
   const res = await fetch(`${base}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...authHeaders(token), ...(init?.headers as Record<string, string> | undefined) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(token),
+      ...(init?.headers as Record<string, string> | undefined),
+    },
   })
   if (res.status === 401) {
     vscode.window.showWarningMessage('Mira: unauthorized — run "Mira: Set API Token"')
@@ -59,14 +67,21 @@ async function createSession(context: vscode.ExtensionContext, title?: string): 
   return (await res.json()) as Session
 }
 
-async function createChatWebview(context: vscode.ExtensionContext): Promise<vscode.WebviewPanel> {
-  const panel = vscode.window.createWebviewPanel('miraChat', 'Mira Chat', vscode.ViewColumn.Beside, {
+async function createChatWebview(
+  context: vscode.ExtensionContext,
+  opts: { sessionID?: string; title?: string } = {},
+): Promise<vscode.WebviewPanel> {
+  const panelTitle = opts.sessionID
+    ? `Mira Chat — ${opts.title ?? opts.sessionID.slice(0, 8)}`
+    : 'Mira Chat'
+  const panel = vscode.window.createWebviewPanel('miraChat', panelTitle, vscode.ViewColumn.Beside, {
     enableScripts: true,
     retainContextWhenHidden: true,
   })
   const apiUrl = getApiUrl()
   const token = await getToken(context)
   const tokenJson = JSON.stringify(token)
+  const sessionIdJson = JSON.stringify(opts.sessionID ?? null)
   panel.webview.html = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
@@ -87,9 +102,10 @@ async function createChatWebview(context: vscode.ExtensionContext): Promise<vsco
   const log = document.getElementById('log');
   const input = document.getElementById('input');
   const sendBtn = document.getElementById('send');
-  let sessionId = null;
+  let sessionId = ${sessionIdJson};
   const token = ${tokenJson};
   const authHeaders = token ? {Authorization: 'Bearer ' + token} : {};
+  if (sessionId) log.textContent += '\\n● resuming session ' + sessionId;
   async function ensureSession(){
     if(sessionId) return sessionId;
     const res = await fetch('${apiUrl}/session', {method:'POST', headers:{'Content-Type':'application/json', ...authHeaders}, body: JSON.stringify({title:'VS Code Chat'})});
@@ -146,7 +162,10 @@ export function activate(context: vscode.ExtensionContext) {
   })
 
   const createSessCmd = vscode.commands.registerCommand('mira.createSession', async () => {
-    const title = await vscode.window.showInputBox({ prompt: 'Session title', value: 'VS Code Session' })
+    const title = await vscode.window.showInputBox({
+      prompt: 'Session title',
+      value: 'VS Code Session',
+    })
     if (title === undefined) return
     try {
       const s = await createSession(context, title)
@@ -160,12 +179,18 @@ export function activate(context: vscode.ExtensionContext) {
     try {
       const sessions = await listSessions(context)
       const pick = await vscode.window.showQuickPick(
-        sessions.map(s => ({ label: s.title || s.id.slice(0, 8), description: `${s.model} · ${new Date(s.updatedAt).toLocaleString()}`, id: s.id })),
-        { placeHolder: 'Select Mira session' }
+        sessions.map((s) => ({
+          label: s.title || s.id.slice(0, 8),
+          description: `${s.model} · ${new Date(s.updatedAt).toLocaleString()}`,
+          id: s.id,
+        })),
+        { placeHolder: 'Select Mira session' },
       )
       if (pick && typeof pick === 'object' && 'id' in pick) {
         const id = (pick as { id: string }).id
-        vscode.window.showInformationMessage(`Selected ${id}`)
+        const title = sessions.find((s) => s.id === id)?.title
+        await createChatWebview(context, { sessionID: id, title })
+        vscode.window.showInformationMessage(`Opened session ${id.slice(0, 8)}`)
       }
     } catch (e) {
       vscode.window.showErrorMessage(`Mira list failed: ${String(e)}`)
@@ -173,7 +198,10 @@ export function activate(context: vscode.ExtensionContext) {
   })
 
   const setTokenCmd = vscode.commands.registerCommand('mira.setToken', async () => {
-    const token = await vscode.window.showInputBox({ prompt: 'Mira API token (Bearer, stored in SecretStorage)', password: true })
+    const token = await vscode.window.showInputBox({
+      prompt: 'Mira API token (Bearer, stored in SecretStorage)',
+      password: true,
+    })
     if (token === undefined) return
     await context.secrets.store('mira.token', token)
     vscode.window.showInformationMessage(token ? 'Mira token saved' : 'Mira token cleared')
@@ -182,45 +210,66 @@ export function activate(context: vscode.ExtensionContext) {
   const termCmd = vscode.commands.registerCommand('mira.openTerminal', async () => {
     // PTY via VS Code Pseudoterminal → WS /terminal
     const writeEmitter = new vscode.EventEmitter<string>()
+    let ws: WebSocket | null = null
+    let authed = false
+    const buffer: string[] = []
+    const sendToWs = (data: string) => {
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'terminal.input', data }))
+      else buffer.push(data)
+    }
     const pty: vscode.Pseudoterminal = {
       onDidWrite: writeEmitter.event,
       open: () => {
         writeEmitter.fire('Mira terminal — connecting to /terminal …\r\n')
         // Minimal WS bridge — runs in extension host (Node has global WebSocket in VS Code 1.99+ via `ws` polyfill fallback)
-        try {
-          const base = getApiUrl()
-          const url = base.replace(/^http/, 'ws') + '/terminal'
-          getToken(context).then(token => {
-            const ws = new WebSocket(url)
-            let authSent = false
-            const toWs = (data: string) => {
-              if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'terminal.input', data }))
-            }
+        const base = getApiUrl()
+        const url = base.replace(/^http/, 'ws') + '/terminal'
+        getToken(context)
+          .then((token) => {
+            ws = new WebSocket(url)
             ws.onopen = () => {
-              if (token) ws.send(JSON.stringify({ type: 'auth', token }))
-              authSent = true
+              if (token) ws?.send(JSON.stringify({ type: 'auth', token }))
+              authed = true
               writeEmitter.fire('● connected\r\n')
+              // Flush input typed before the socket was ready
+              for (const d of buffer.splice(0)) sendToWs(d)
             }
             ws.onmessage = (ev: MessageEvent) => {
               try {
-                const m = JSON.parse(String(ev.data)) as { type: string; payload?: Record<string, JsonValue> }
+                const m = JSON.parse(String(ev.data)) as {
+                  type: string
+                  payload?: Record<string, JsonValue>
+                }
                 if (m.type === 'terminal.output') writeEmitter.fire(String(m.payload?.data ?? ''))
-                else if (m.type === 'terminal.exit') writeEmitter.fire(`\r\n[exit ${String(m.payload?.code ?? '')}]\r\n`)
+                else if (m.type === 'terminal.exit') {
+                  writeEmitter.fire(`\r\n[exit ${String(m.payload?.code ?? '')}]\r\n`)
+                  try {
+                    ws?.close(1000, 'terminal exit')
+                  } catch {}
+                  ws = null
+                }
               } catch {}
             }
             ws.onclose = () => writeEmitter.fire('\r\n[closed]\r\n')
             ws.onerror = () => writeEmitter.fire('\r\n[error]\r\n')
-            pty.handleInput = (data: string) => {
-              if (!authSent && token) { try { ws.send(JSON.stringify({ type: 'auth', token })); authSent = true } catch {} }
-              toWs(data)
-            }
           })
-        } catch (e) {
-          writeEmitter.fire(`\r\n[failed: ${String(e)}]\r\n`)
-        }
+          .catch((e) => writeEmitter.fire(`\r\n[failed: ${String(e)}]\r\n`))
       },
-      close: () => {},
-      handleInput: () => {},
+      close: () => {
+        // Terminal closed by user — tear down the WS cleanly
+        try {
+          if (ws && ws.readyState <= 1) ws.close(1000, 'terminal closed by user')
+        } catch {}
+        ws = null
+      },
+      handleInput: (data: string) => {
+        if (!authed) {
+          // Socket not ready yet — buffer the input
+          buffer.push(data)
+          return
+        }
+        sendToWs(data)
+      },
     }
     const term = vscode.window.createTerminal({ name: 'Mira PTY', pty })
     term.show()
@@ -231,32 +280,60 @@ export function activate(context: vscode.ExtensionContext) {
     await createChatWebview(context)
   })
 
-  context.subscriptions.push(hello, openWeb, createSessCmd, listSessCmd, setTokenCmd, termCmd, chatCmd)
+  context.subscriptions.push(
+    hello,
+    openWeb,
+    createSessCmd,
+    listSessCmd,
+    setTokenCmd,
+    termCmd,
+    chatCmd,
+  )
 
   // Inline autocomplete (Kilo K4) — ghost-text via POST /complete
-  let autocompleteEnabled = vscode.workspace.getConfiguration('mira').get<boolean>('autocomplete') ?? true
-  const toggleAutocomplete = vscode.commands.registerCommand('mira.toggleAutocomplete', async () => {
-    autocompleteEnabled = !autocompleteEnabled
-    await vscode.workspace.getConfiguration('mira').update('autocomplete', autocompleteEnabled, vscode.ConfigurationTarget.Global)
-    vscode.window.showInformationMessage(`Mira autocomplete ${autocompleteEnabled ? 'enabled' : 'disabled'}`)
-  })
+  let autocompleteEnabled =
+    vscode.workspace.getConfiguration('mira').get<boolean>('autocomplete') ?? true
+  const toggleAutocomplete = vscode.commands.registerCommand(
+    'mira.toggleAutocomplete',
+    async () => {
+      autocompleteEnabled = !autocompleteEnabled
+      await vscode.workspace
+        .getConfiguration('mira')
+        .update('autocomplete', autocompleteEnabled, vscode.ConfigurationTarget.Global)
+      vscode.window.showInformationMessage(
+        `Mira autocomplete ${autocompleteEnabled ? 'enabled' : 'disabled'}`,
+      )
+    },
+  )
   context.subscriptions.push(toggleAutocomplete)
-  vscode.workspace.onDidChangeConfiguration(e => {
+  vscode.workspace.onDidChangeConfiguration((e) => {
     if (e.affectsConfiguration('mira.autocomplete')) {
-      autocompleteEnabled = vscode.workspace.getConfiguration('mira').get<boolean>('autocomplete') ?? true
+      autocompleteEnabled =
+        vscode.workspace.getConfiguration('mira').get<boolean>('autocomplete') ?? true
     }
   })
 
   const provider: vscode.InlineCompletionItemProvider = {
-    async provideInlineCompletionItems(document: vscode.TextDocument, position: vscode.Position, inlineContext: vscode.InlineCompletionContext, token: vscode.CancellationToken): Promise<vscode.InlineCompletionList | vscode.InlineCompletionItem[]> {
+    async provideInlineCompletionItems(
+      document: vscode.TextDocument,
+      position: vscode.Position,
+      inlineContext: vscode.InlineCompletionContext,
+      token: vscode.CancellationToken,
+    ): Promise<vscode.InlineCompletionList | vscode.InlineCompletionItem[]> {
       if (!autocompleteEnabled) return []
       if (token.isCancellationRequested) return []
       // Skip if triggered by explicit request and empty prefix
       const linePrefix = document.lineAt(position.line).text.slice(0, position.character)
-      if (linePrefix.trim().length === 0 && inlineContext.triggerKind === vscode.InlineCompletionTriggerKind.Automatic) return []
+      if (
+        linePrefix.trim().length === 0 &&
+        inlineContext.triggerKind === vscode.InlineCompletionTriggerKind.Automatic
+      )
+        return []
 
       const prefix = document.getText(new vscode.Range(new vscode.Position(0, 0), position))
-      const suffix = document.getText(new vscode.Range(position, new vscode.Position(document.lineCount, 0)))
+      const suffix = document.getText(
+        new vscode.Range(position, new vscode.Position(document.lineCount, 0)),
+      )
       // Truncate to last 2000 chars of prefix and first 1000 of suffix (server also truncates)
       const truncatedPrefix = prefix.slice(-2000)
       const truncatedSuffix = suffix.slice(0, 1000)
@@ -265,7 +342,12 @@ export function activate(context: vscode.ExtensionContext) {
       try {
         const res = await miraFetch(context, '/complete', {
           method: 'POST',
-          body: JSON.stringify({ prefix: truncatedPrefix, suffix: truncatedSuffix, file: document.fileName, ...(model ? { model } : {}) }),
+          body: JSON.stringify({
+            prefix: truncatedPrefix,
+            suffix: truncatedSuffix,
+            file: document.fileName,
+            ...(model ? { model } : {}),
+          }),
         })
         if (!res.ok) return []
         const data = (await res.json()) as { text?: string }
@@ -279,7 +361,9 @@ export function activate(context: vscode.ExtensionContext) {
     },
   }
   const selector: vscode.DocumentSelector = [{ pattern: '**' }]
-  context.subscriptions.push(vscode.languages.registerInlineCompletionItemProvider(selector, provider))
+  context.subscriptions.push(
+    vscode.languages.registerInlineCompletionItemProvider(selector, provider),
+  )
 
   // Status bar
   const sb = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100)

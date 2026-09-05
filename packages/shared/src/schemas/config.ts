@@ -12,10 +12,10 @@
  *
  * Layered config + Mira specifics (model gateway, permission matrix).
  */
-import { z } from "zod"
+import { z } from 'zod'
 
 // ── Primitives ─────────────────────────────────────────────────────
-export const permissionActionSchema = z.enum(["allow", "deny", "ask"])
+export const permissionActionSchema = z.enum(['allow', 'deny', 'ask'])
 export type PermissionAction = z.infer<typeof permissionActionSchema>
 
 export const permissionValueSchema = z.union([
@@ -24,9 +24,9 @@ export const permissionValueSchema = z.union([
 ])
 
 export const mcpServerConfigSchema = z.object({
-  type: z.enum(["local", "remote"]).describe("local=stdio, remote=http/sse"),
-  command: z.array(z.string()).optional().describe("Command + args for local"),
-  url: z.string().url().optional().describe("URL for remote"),
+  type: z.enum(['local', 'remote']).describe('local=stdio, remote=http/sse'),
+  command: z.array(z.string()).optional().describe('Command + args for local'),
+  url: z.string().url().optional().describe('URL for remote'),
   enabled: z.boolean().default(true),
   env: z.record(z.string(), z.string()).optional(),
 })
@@ -43,11 +43,11 @@ export const providerModelSchema = z.object({
 })
 
 export const providerConfigSchema = z.object({
-  npm: z.string().optional().describe("NPM package for provider SDK"),
-  name: z.string().describe("Display name"),
+  npm: z.string().optional().describe('NPM package for provider SDK'),
+  name: z.string().describe('Display name'),
   options: z.object({
-    baseURL: z.string().describe("API base URL"),
-    apiKey: z.string().describe("API key (may be empty → env fallback)"),
+    baseURL: z.string().describe('API base URL'),
+    apiKey: z.string().describe('API key (may be empty → env fallback)'),
   }),
   models: z.record(z.string(), providerModelSchema).default({}),
 })
@@ -65,7 +65,7 @@ export const agentDefinitionSchema = z.object({
   system: z.string(),
   description: z.string().optional(),
   tools: z.array(z.string()).optional(),
-  permissions: z.enum(["readonly", "standard", "elevated"]).optional(),
+  permissions: z.enum(['readonly', 'standard', 'elevated']).optional(),
   /** per-agent model override — enables Kilo-style cost routing (e.g. ask=flash, code=opus) */
   model: z.string().min(1).optional(),
 })
@@ -73,7 +73,7 @@ export type AgentDefinition = z.infer<typeof agentDefinitionSchema>
 
 export const autoModelConfigSchema = z.object({
   enabled: z.boolean().optional(),
-  tier: z.enum(["cheap", "balanced", "max"]).optional(),
+  tier: z.enum(['cheap', 'balanced', 'max']).optional(),
 })
 export type AutoModelConfig = z.infer<typeof autoModelConfigSchema>
 
@@ -94,10 +94,34 @@ export const guardrailsConfigSchema = z.object({
 })
 export type GuardrailsConfig = z.infer<typeof guardrailsConfigSchema>
 
+/** Feature flags — toggled via Settings → General. Consumed by SessionPrompt. */
+export const featuresConfigSchema = z.object({
+  /** Inject open todos into the per-turn loadContext system message */
+  injectTodosIntoLoadContext: z.boolean().optional(),
+  /** Restrict the LLM-visible toolset to the session agent's allowlist */
+  enforceLaneContracts: z.boolean().optional(),
+  /** Apply per-agent permission profiles (readonly/standard/elevated) before the generic matrix */
+  perAgentPermissionProfiles: z.boolean().optional(),
+})
+export type FeaturesConfig = z.infer<typeof featuresConfigSchema>
+
+/** Tool config — currently the interactive terminal (WS /terminal). */
+export const toolsConfigSchema = z.object({
+  terminal: z
+    .object({
+      enabled: z.boolean().optional(),
+      sandbox: z.boolean().optional(),
+      allowedCommands: z.array(z.string()).optional(),
+      timeoutMs: z.number().int().positive().optional(),
+    })
+    .optional(),
+})
+export type ToolsConfig = z.infer<typeof toolsConfigSchema>
+
 // ── MiraConfig (layer payload) ─────────────────────────────────────
 export const miraConfigSchema = z.object({
   /** Primary model ref: "provider/model-id" or "openrouter/anthropic/claude-sonnet-4" */
-  model: z.string().min(1).default("openrouter/anthropic/claude-sonnet-4"),
+  model: z.string().min(1).default('openrouter/anthropic/claude-sonnet-4'),
   /** Cheap/fast model for subtasks */
   smallModel: z.string().optional(),
   /** Agentic loop limits */
@@ -116,8 +140,12 @@ export const miraConfigSchema = z.object({
   autoModel: autoModelConfigSchema.optional(),
   /** Cost cap per task/session in USD (Kilo K8) */
   costCap: costCapConfigSchema.optional(),
+  /** Feature toggles (Settings → General): context injection, lane contracts, per-agent permission profiles */
+  features: featuresConfigSchema.optional(),
+  /** Tool configuration (interactive terminal: enable/sandbox/allowlist/timeout) */
+  tools: toolsConfigSchema.optional(),
   /** Optional: theme, debug, etc. */
-  theme: z.enum(["dark", "light", "system"]).optional(),
+  theme: z.enum(['dark', 'light', 'system']).optional(),
   debug: z.boolean().optional(),
 })
 export type MiraConfig = z.infer<typeof miraConfigSchema>
@@ -128,29 +156,29 @@ export type PartialMiraConfig = z.infer<typeof partialMiraConfigSchema>
 
 // ── 7 Layers ───────────────────────────────────────────────────────
 export const configLayerNameSchema = z.enum([
-  "defaults",
-  "system",
-  "global",
-  "project",
-  "local",
-  "env",
-  "override",
+  'defaults',
+  'system',
+  'global',
+  'project',
+  'local',
+  'env',
+  'override',
 ])
 export type ConfigLayerName = z.infer<typeof configLayerNameSchema>
 
 export const CONFIG_LAYERS: ConfigLayerName[] = [
-  "defaults",
-  "system",
-  "global",
-  "project",
-  "local",
-  "env",
-  "override",
+  'defaults',
+  'system',
+  'global',
+  'project',
+  'local',
+  'env',
+  'override',
 ]
 
 export const configLayerSchema = z.object({
   name: configLayerNameSchema,
-  path: z.string().optional().describe("File path if file-backed"),
+  path: z.string().optional().describe('File path if file-backed'),
   config: partialMiraConfigSchema,
   priority: z.number().int().min(1).max(7),
 })
@@ -159,21 +187,21 @@ export type ConfigLayer = z.infer<typeof configLayerSchema>
 
 export const CONFIG_FILE_MAP: Record<ConfigLayerName, string | null> = {
   defaults: null,
-  system: "/etc/mira/mira.json",
-  global: "~/.mira/mira.json",
-  project: "mira.json", // also tries mira.jsonc, .mira/config.json
-  local: ".mira/local.json",
+  system: '/etc/mira/mira.json',
+  global: '~/.mira/mira.json',
+  project: 'mira.json', // also tries mira.jsonc, .mira/config.json
+  local: '.mira/local.json',
   env: null,
   override: null,
 }
 
 // ── Env mapping ────────────────────────────────────────────────────
 export const envToConfigMap: Record<string, string> = {
-  MIRA_MODEL: "model",
-  MIRA_SMALL_MODEL: "smallModel",
-  OPENROUTER_API_KEY: "provider.openrouter.options.apiKey",
-  ANTHROPIC_API_KEY: "provider.anthropic.options.apiKey",
-  OPENAI_API_KEY: "provider.openai.options.apiKey",
+  MIRA_MODEL: 'model',
+  MIRA_SMALL_MODEL: 'smallModel',
+  OPENROUTER_API_KEY: 'provider.openrouter.options.apiKey',
+  ANTHROPIC_API_KEY: 'provider.anthropic.options.apiKey',
+  OPENAI_API_KEY: 'provider.openai.options.apiKey',
 }
 
 /** Parse env vars into a partial config (layer 6). Pure — no process access required if env passed. */
@@ -188,8 +216,10 @@ export function parseEnvConfig(env: Record<string, string | undefined> = {}): Pa
 }
 
 // ── Merge ──────────────────────────────────────────────────────────
-export function isPlainObject(v: PartialMiraConfig | MiraConfig | string | number | boolean | null): v is PartialMiraConfig {
-  return typeof v === "object" && v !== null && !Array.isArray(v)
+export function isPlainObject(
+  v: PartialMiraConfig | MiraConfig | string | number | boolean | null,
+): v is PartialMiraConfig {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
 /** Deep merge: arrays replaced, objects merged, primitives last-wins. Used for layer stacking. */
@@ -199,7 +229,10 @@ export function mergeConfigs<T extends PartialMiraConfig>(base: T, patch: Partia
     if (v === undefined) continue
     const prev = out[k as keyof PartialMiraConfig]
     if (isPlainObject(prev as PartialMiraConfig) && isPlainObject(v as PartialMiraConfig)) {
-      out[k as keyof PartialMiraConfig] = mergeConfigs(prev as PartialMiraConfig, v as PartialMiraConfig) as never
+      out[k as keyof PartialMiraConfig] = mergeConfigs(
+        prev as PartialMiraConfig,
+        v as PartialMiraConfig,
+      ) as never
     } else {
       out[k as keyof PartialMiraConfig] = v as never
     }
@@ -220,27 +253,27 @@ export function applyLayers(layers: PartialMiraConfig[]): MiraConfig {
 
 // ── Default config (layer 1) ───────────────────────────────────────
 export const DEFAULT_CONFIG: MiraConfig = miraConfigSchema.parse({
-  model: "openrouter/anthropic/claude-sonnet-4",
-  smallModel: "openrouter/deepseek/deepseek-v3.2-exp",
+  model: 'openrouter/anthropic/claude-sonnet-4',
+  smallModel: 'openrouter/deepseek/deepseek-v3.2-exp',
   permission: {
-    bash: "ask",
-    read: "allow",
-    glob: "allow",
-    grep: "allow",
-    write: "ask",
-    edit: "ask",
-    todowrite: "ask",
-    webfetch: "allow",
-    websearch: "allow",
+    bash: 'ask',
+    read: 'allow',
+    glob: 'allow',
+    grep: 'allow',
+    write: 'ask',
+    edit: 'ask',
+    todowrite: 'ask',
+    webfetch: 'allow',
+    websearch: 'allow',
   },
   mcp: {},
   provider: {
     openrouter: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "OpenRouter",
+      npm: '@ai-sdk/openai-compatible',
+      name: 'OpenRouter',
       options: {
-        baseURL: "https://openrouter.ai/api/v1",
-        apiKey: "",
+        baseURL: 'https://openrouter.ai/api/v1',
+        apiKey: '',
       },
       models: {},
     },
