@@ -64,7 +64,9 @@ export type { Skill, AgentsContext, AgentsFileName } from './agents/index.js'
 // Utils
 export { expandEnv } from './utils/env.js'
 export { createLogger } from './utils/logger.js'
+export { createClient, ApiError } from './utils/client.js'
 export type { Logger, LogLevel } from './utils/logger.js'
+export type { ClientOptions, ReqInit } from './utils/client.js'
 
 // Types (canonical TS types; schemas also export inferred Zod types)
 export * from './types/index.js'
