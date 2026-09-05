@@ -1144,19 +1144,12 @@ export function ChatView(props: {
                   <button
                     type="button"
                     class="btn btn-ghost"
-                    onClick={() => {
-                      // Add permission deny rule for the looping tool
+                    onClick={async () => {
+                      // Add permission deny rule for the looping tool via config API
                       const tool = d.tool
-                      // Best-effort: persist deny rule via config save (client-side)
                       try {
-                        const existing = JSON.parse(
-                          localStorage.getItem('mira.permission.deny') || '{}',
-                        )
-                        existing[tool] = existing[tool] ?? {
-                          action: 'deny',
-                          reason: `Doom-loop prevention for ${d.reason}`,
-                        }
-                        localStorage.setItem('mira.permission.deny', JSON.stringify(existing))
+                        const { addPermissionRule } = await import('../api/client')
+                        await addPermissionRule(tool, '*', 'deny')
                       } catch {}
                       props.store.clearDoomLoop()
                     }}
@@ -1181,6 +1174,35 @@ export function ChatView(props: {
                 </div>
               )
             }}
+          </Show>
+          <Show when={s().budgetWarning}>
+            {(msg) => (
+              <div
+                role="alert"
+                style={{
+                  display: 'flex',
+                  'align-items': 'center',
+                  gap: '8px',
+                  padding: '8px 10px',
+                  'margin-bottom': '8px',
+                  background: 'var(--warn-soft)',
+                  border: '1px solid var(--warn-border)',
+                  'border-radius': 'var(--r-md)',
+                  'font-size': 'var(--fs-xs)',
+                  color: 'var(--fg)',
+                }}
+              >
+                <span style={{ flex: '1', 'min-width': '0' }}>⚠ {msg()}</span>
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  onClick={() => props.store.clearBudgetWarning()}
+                  style={{ padding: '4px 8px', 'font-size': 'var(--fs-xs)', flex: 'none' }}
+                >
+                  ✕
+                </button>
+              </div>
+            )}
           </Show>
           <Show when={s().queued.length > 0}>
             <div

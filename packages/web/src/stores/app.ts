@@ -47,6 +47,8 @@ type AppState = {
   } | null
   /** doom-loop detection — set when server publishes server.error source doom-loop */
   doomLoop: { tool: string; reason: string; pattern?: string[]; sessionID?: string } | null
+  /** budget cap warning — set when spend exceeds configured cap */
+  budgetWarning: string | null
 }
 
 function uid() {
@@ -68,6 +70,7 @@ export function createAppStore() {
     queued: [],
     cost: null,
     doomLoop: null,
+    budgetWarning: null,
   })
 
   const [input, setInput] = createSignal('')
@@ -401,6 +404,8 @@ export function createAppStore() {
     // state mutators
     setError: (msg: string | null) => setState('error', msg),
     clearError: () => setState('error', null),
+    setBudgetWarning: (msg: string | null) => setState('budgetWarning', msg),
+    clearBudgetWarning: () => setState('budgetWarning', null),
     // actions
     loadSessions,
     createSession,

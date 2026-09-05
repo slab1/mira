@@ -324,7 +324,7 @@ export default function App() {
     })
   })
 
-  // Budget cap HITL – trigger question when cost exceeds cap
+  // Budget cap HITL – trigger warning when cost exceeds cap
   createEffect(() => {
     const cost = store.state.cost
     if (!cost || !budgetCapEnabled() || !store.state.currentId) return
@@ -333,10 +333,9 @@ export default function App() {
       const key = `mira.budgetCap.warned.${store.state.currentId}`
       if (localStorage.getItem(key)) return
       localStorage.setItem(key, '1')
-      // Trigger HITL via question.ask
-      // Use store's question mechanism via app store?
-      // For now, show console warning and set error state
-      store.setError(`Budget cap reached: $${cost.costUSD.toFixed(4)} ≥ $${budgetCapAmount()}`)
+      store.setBudgetWarning(
+        `Budget cap reached: $${cost.costUSD.toFixed(4)} ≥ $${budgetCapAmount()}`,
+      )
     }
   })
 

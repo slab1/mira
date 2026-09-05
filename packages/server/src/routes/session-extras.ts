@@ -5,6 +5,7 @@ import type { SessionPrompt } from '../session/prompt.js'
 import { listJobs } from '../tools/task.js'
 import { isKnownAgent } from '../agents/templates.js'
 import type { JsonValue } from '../types/index.js'
+import type { TodoStatus, TodoPriority } from '../types/index.js'
 import { z } from 'zod'
 
 const importSessionSchema = z
@@ -53,8 +54,9 @@ const queuePushSchema = z.object({ prompt: z.string().min(1).max(20000) })
 
 const todoSchema = z.array(
   z.object({
-    text: z.string().min(1).max(2000),
-    done: z.boolean().optional(),
+    content: z.string().min(1).max(2000),
+    status: z.enum(['pending', 'in_progress', 'completed', 'cancelled']).optional(),
+    priority: z.enum(['high', 'medium', 'low']).optional(),
   }),
 )
 
@@ -195,14 +197,12 @@ export function mountSessionExtrasRoutes(
     for (const m of msgs) {
       const mid = crypto.randomUUID()
       try {
-        await db
-          .insert(db.schema.messages)
-          .values({
-            id: mid,
-            sessionID: created.id,
-            role: m.role as 'user' | 'assistant' | 'system',
-            createdAt: Date.now(),
-          })
+        await db.insert(db.schema.messages).values({
+          id: mid,
+          sessionID: created.id,
+          role: m.role as 'user' | 'assistant' | 'system',
+          createdAt: Date.now(),
+        })
         copiedMessages++
         for (const p of m.parts ?? []) {
           await db.insert(db.schema.parts).values({
@@ -378,11 +378,13 @@ export function mountSessionExtrasRoutes(
       )
     const sid = id
     const todos = parsed.data.map((t) => ({
-      ...t,
       id: crypto.randomUUID(),
       sessionID: sid,
+      content: t.content,
+      status: (t.status ?? 'pending') as TodoStatus,
+      priority: (t.priority ?? 'medium') as TodoPriority,
       createdAt: Date.now(),
-    })) as Parameters<SessionPrompt['setTodos']>[1]
+    }))
     const result = await prompt.setTodos(sid, todos)
     bus.publish({ type: 'todo.updated', sessionID: sid, payload: result, timestamp: Date.now() })
     return c.json(result)

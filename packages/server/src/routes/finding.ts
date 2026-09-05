@@ -7,9 +7,9 @@ import { z } from 'zod'
 
 const findingSchema = z.object({
   title: z.string().min(1).max(500),
-  severity: z.enum(['low', 'medium', 'high', 'critical']),
+  severity: z.enum(['info', 'minor', 'major', 'critical']),
   evidence: z.string().max(10000).optional(),
-  source: z.string().max(200).optional(),
+  source: z.enum(['agent', 'tool', 'user']).optional(),
   sessionID: z.string().optional(),
 })
 
