@@ -324,6 +324,22 @@ export default function App() {
     })
   })
 
+  // Budget cap HITL – trigger question when cost exceeds cap
+  createEffect(() => {
+    const cost = store.state.cost
+    if (!cost || !budgetCapEnabled() || !store.state.currentId) return
+    if (cost.costUSD >= budgetCapAmount()) {
+      // Avoid spamming: only trigger once per session
+      const key = `mira.budgetCap.warned.${store.state.currentId}`
+      if (localStorage.getItem(key)) return
+      localStorage.setItem(key, '1')
+      // Trigger HITL via question.ask
+      // Use store's question mechanism via app store?
+      // For now, show console warning and set error state
+      store.setState('error', `Budget cap reached: $${cost.costUSD.toFixed(4)} ≥ $${budgetCapAmount()}`)
+    }
+  })
+
   const currentSession = () => store.state.sessions.find((s) => s.id === store.state.currentId)
 
   // /memory slash → open graph (clear only if the composer still holds the bare slash,
