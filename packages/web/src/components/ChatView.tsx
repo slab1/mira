@@ -797,15 +797,31 @@ export function ChatView(props: {
                                       ✦
                                     </div>
                                     <div style={{ flex: '1', 'min-width': '0' }}>
-                                      <div
-                                        style={{
-                                          'font-size': 'var(--fs-2xs)',
-                                          color: 'var(--fg-faint)',
-                                          'margin-bottom': '3px',
-                                        }}
-                                      >
-                                        Mira · {timeOf(m)}
-                                      </div>
+                                       <div
+                                         style={{
+                                           'font-size': 'var(--fs-2xs)',
+                                           color: 'var(--fg-faint)',
+                                           'margin-bottom': '3px',
+                                           display: 'flex',
+                                           'align-items': 'center',
+                                           gap: '8px',
+                                         }}
+                                       >
+                                         <span>Mira · {timeOf(m)}</span>
+                                         <button
+                                           type="button"
+                                           class="btn btn-ghost"
+                                           style={{ padding: '0 6px', 'font-size': '10px' }}
+                                           title="Rewind session to this message"
+                                           onClick={() => {
+                                             // TODO: implement per-message revert via snapshots
+                                             // For now, undo last mutation as a fallback
+                                             void props.store.undoLastMutation()
+                                           }}
+                                         >
+                                           ↩ Rewind to here
+                                         </button>
+                                       </div>
                                       <FencedContent text={contentOf(m)} />
                                       <Show when={showCaretHere()}>
                                         <span
