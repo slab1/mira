@@ -27,6 +27,9 @@ export type Session = {
   createdAt: string
   updatedAt: string
   status?: string
+  costUsd?: number | null
+  tokensIn?: number | null
+  tokensOut?: number | null
 }
 
 export type Message = {
@@ -38,6 +41,17 @@ export type Message = {
   createdAt: string
   /** optimistic flag — message is queued, not yet processed by the agent */
   queued?: boolean
+  provenance?: Array<{
+    nodeId: string
+    label: string
+    tier: 'episodic' | 'semantic' | 'procedural'
+    kind: 'knowledge' | 'finding'
+    source: string
+    updatedAt: number
+    accessCount: number
+    snippet?: string
+    tags?: string[]
+  }>
 }
 
 export type JsonValue =
@@ -49,6 +63,11 @@ export type Part = {
   tool?: string
   input?: JsonValue
   output?: JsonValue
+  denied?: boolean
+  layer?: 'explicit' | 'pattern' | 'BashArity' | 'lane'
+  reason?: string
+  matchedPattern?: string
+  lane?: string
 }
 
 export type Todo = {
@@ -147,6 +166,7 @@ export type MiraConfig = {
   }
   features?: Record<string, boolean>
   tools?: Record<string, JsonValue>
+  costCap?: { perSession?: number; perTask?: number }
 }
 
 export type MCPServerConfig = {
@@ -559,6 +579,14 @@ export const api = {
 
   listSnapshots: (id: string) => req<Snapshot[]>(`/session/${id}/snapshots`),
 
+  getSnapshot: (id: string, snapshotId: string) =>
+    req<{
+      path: string
+      snapshotContent: string | null
+      currentContent: string | null
+      existedBefore: boolean
+    }>(`/session/${id}/snapshots/${snapshotId}`),
+
   listFindings: (params: { status?: string; limit?: number } = {}) => {
     const q = new URLSearchParams()
     if (params.status) q.set('status', params.status)
@@ -681,9 +709,26 @@ export const api = {
   listSkills: () => req<SkillEntry[] | string[]>('/skills'),
   getPermission: () => req<PermissionMatrix>('/permission'),
 
-  // ── Knowledge Graph (read-only, H2-1 Memory v2) ──────────────────
+  // ── Knowledge Graph (H2-1 Memory v2 read + H3-E mutations) ────
   getKnowledgeGraph: (limit = 100) => req<KnowledgeGraph>(`/knowledge/graph?limit=${limit}`),
   getLearningGraph: (limit = 100) => req<KnowledgeGraph>(`/learning/graph?limit=${limit}`),
+  /** H3-E: bump lastAccessedAt so a stale node reads fresh (200 entry / 404 {error}). */
+  touchKnowledge: (id: string) =>
+    req<GraphNode>(`/knowledge/${encodeURIComponent(id)}/touch`, { method: 'POST' }),
+  /** H3-E: seed a knowledge entry {title 1-200, content 1-4000, tier, tags?, sessionID?} (201 entry). */
+  seedKnowledge: (body: {
+    title: string
+    content: string
+    tier?: string
+    tags?: string[]
+    sessionID?: string
+  }) => req<GraphNode>('/knowledge', { method: 'POST', body: JSON.stringify(body) }),
+  /** H3-E: promote an unresolved finding into memory (201 {finding, entry} / 404 / 409). */
+  promoteFinding: (id: string, tier?: string) =>
+    req<{ finding: Finding; entry: GraphNode }>(`/finding/${encodeURIComponent(id)}/promote`, {
+      method: 'POST',
+      body: JSON.stringify(tier ? { tier } : {}),
+    }),
 
   // ── Mira Score GA (H2-2) — per-session {score,cost,doomLoops,toolErrors,memoryHits} + trace ──
   getScore: (sessionID: string) =>
@@ -848,6 +893,16 @@ export const api = {
       if (m) opts.onChunk(m[1])
     }
   },
+}
+
+/** Add or update a permission rule for a tool pattern */
+export async function addPermissionRule(
+  tool: string,
+  pattern: string,
+  action: 'allow' | 'deny' | 'ask',
+): Promise<MiraConfig> {
+  // Patch config with permission update; server merges permission objects
+  return api.patchConfig({ permission: { [tool]: { [pattern]: action } } })
 }
 
 // ── WebSocket (GlobalBus → Worker → RPC → TUI) ───────────────────

@@ -1253,6 +1253,28 @@ async function main() {
     const { listSnapshots } = await import('./storage/snapshots.js')
     return c.json(listSnapshots(db, id))
   })
+  app.get('/session/:id/snapshots/:snapshotId', async (c) => {
+    const id = requireId(c)
+    const snapshotId = c.req.param('snapshotId')
+    if (!id || !snapshotId) return c.json({ error: 'not found' }, 404)
+    if (!(await authorizedSession(id, c))) return c.json({ error: 'not found' }, 404)
+    const { getSnapshotContent } = await import('./storage/snapshots.js')
+    const snapshot = getSnapshotContent(db, snapshotId)
+    if (!snapshot) return c.json({ error: 'snapshot not found' }, 404)
+    let currentContent: string | null = null
+    try {
+      const fs = await import('fs/promises')
+      currentContent = await fs.readFile(snapshot.path, 'utf-8')
+    } catch {
+      currentContent = null
+    }
+    return c.json({
+      path: snapshot.path,
+      snapshotContent: snapshot.content,
+      currentContent,
+      existedBefore: snapshot.existedBefore,
+    })
+  })
   app.post('/session/:id/revert', async (c) => {
     const body = await c.req.json().catch(() => ({}))
     const { revertLast, revertToMessage } = await import('./storage/snapshots.js')
