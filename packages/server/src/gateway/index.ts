@@ -456,13 +456,11 @@ export function createGateway(config: MiraConfig): Gateway {
         })
         if (!res.ok) throw new Error(String(res.status))
         const data = (await res.json()) as OpenRouterModelsResponse
-        return (data.data ?? [])
-          .slice(0, 50)
-          .map((m) => ({
-            id: `openrouter/${m.id}`,
-            name: m.name ?? '',
-            context: m.context_length ?? 128_000,
-          }))
+        return (data.data ?? []).slice(0, 50).map((m) => ({
+          id: `openrouter/${m.id}`,
+          name: m.name ?? '',
+          context: m.context_length ?? 128_000,
+        }))
       } catch {
         return [
           { id: 'openrouter/anthropic/claude-sonnet-4', name: 'Claude Sonnet 4', context: 200_000 },
@@ -564,8 +562,17 @@ async function liveOpenAIStream(ctx: {
     // Fallback index counter for tool_calls without id (OpenAI spec uses index field)
     let toolCallIndexCounter = 0
     const indexToId = new Map<number, string>()
+    // Per-chunk timeout: 60s between chunks (provider hang detection)
+    const CHUNK_TIMEOUT_MS = 60_000
     while (true) {
-      const { done, value } = await reader.read()
+      const readPromise = reader.read()
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error('gateway stream timeout: no chunk received for 60s')),
+          CHUNK_TIMEOUT_MS,
+        )
+      })
+      const { done, value } = await Promise.race([readPromise, timeoutPromise])
       if (done) break
       buf += decoder.decode(value, { stream: true })
       const lines = buf.split('\n')
