@@ -808,19 +808,22 @@ export function ChatView(props: {
                                          }}
                                        >
                                          <span>Mira · {timeOf(m)}</span>
-                                         <button
-                                           type="button"
-                                           class="btn btn-ghost"
-                                           style={{ padding: '0 6px', 'font-size': '10px' }}
-                                           title="Rewind session to this message"
-                                           onClick={() => {
-                                             // TODO: implement per-message revert via snapshots
-                                             // For now, undo last mutation as a fallback
-                                             void props.store.undoLastMutation()
-                                           }}
-                                         >
-                                           ↩ Rewind to here
-                                         </button>
+                                          <button
+                                            type="button"
+                                            class="btn btn-ghost"
+                                            style={{ padding: '0 6px', 'font-size': '10px' }}
+                                            title="Rewind session to this message"
+                                            onClick={() => {
+                                              const sessionId = props.store.state.currentId
+                                              const messageId = m.id
+                                              if (!sessionId || !messageId) return
+                                              void api.revertSession(sessionId, messageId).then(() => {
+                                                props.store.loadMessages(sessionId)
+                                              }).catch((e) => console.error('[mira] revert failed', e))
+                                            }}
+                                          >
+                                            ↩ Rewind to here
+                                          </button>
                                        </div>
                                       <FencedContent text={contentOf(m)} />
                                       <Show when={showCaretHere()}>
