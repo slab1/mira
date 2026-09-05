@@ -43,6 +43,7 @@ import { mountSessionExtrasRoutes } from './routes/session-extras.js'
 import { mountToolsRoutes } from './routes/tools-routes.js'
 import { mountStaticRoutes } from './routes/static.js'
 import { mountMiddleware } from './middleware/index.js'
+import { createSandbox, loadSandboxConfig } from './sandbox/index.js'
 import { boundSend, WS_CLOSE_TOO_SLOW } from './ws-backpressure.js'
 
 type PartialMiraConfig = Partial<MiraConfig>
@@ -329,6 +330,7 @@ async function main() {
 
   // ── HTTP + WebSocket RPC (Hono) ─────────────────────────────────
   const app = new Hono<{ Variables: { requestId: string } }>()
+  const sandbox = createSandbox(loadSandboxConfig())
 
   let bunServer: ReturnType<typeof Bun.serve> | null = null
 
@@ -683,108 +685,17 @@ async function main() {
           if (event?.type === 'terminal.input' && typeof event.data === 'string') {
             w.__armIdle?.()
             if (terminalSandboxed()) {
-              const raw = event.data.trim()
-              if (raw && !raw.startsWith('#')) {
-                // Split on newlines + shell operators to check ALL commands in the input
-                const commands = raw
-                  .split(/[\n;|&]+/)
-                  .map((s) => s.trim())
-                  .filter(Boolean)
-                let blocked = false
-                let blockedCmd = ''
-
-                const DEFAULT_ALLOWED = [
-                  'ls',
-                  'cat',
-                  'grep',
-                  'find',
-                  'echo',
-                  'pwd',
-                  'head',
-                  'tail',
-                  'wc',
-                  'sort',
-                  'uniq',
-                  'date',
-                  'env',
-                  'which',
-                  'whoami',
-                  'printf',
-                  'sed',
-                  'awk',
-                ]
-                // Commands allowed but with restricted flags (no -c, -e, --eval, etc.)
-                const RESTRICTED_ALLOWED = ['git', 'tsc', 'bun', 'node', 'bash']
-                const ALL_ALLOWED = [...DEFAULT_ALLOWED, ...RESTRICTED_ALLOWED, 'bash']
-
-                let allowed: string[] = ALL_ALLOWED
+              const result = sandbox.isBlocked(event.data)
+              if (result.blocked) {
                 try {
-                  const cfg = getConfig() as MiraConfig
-                  const t = (cfg.tools as Record<string, JsonValue> | undefined)?.terminal as
-                    Record<string, JsonValue> | undefined
-                  const list = t?.allowedCommands as string[] | undefined
-                  if (Array.isArray(list) && list.length > 0) allowed = list
+                  w.send(
+                    JSON.stringify({
+                      type: 'terminal.output',
+                      payload: { stream: 'stderr', data: sandbox.getBlockedMessage(result) },
+                      timestamp: Date.now(),
+                    }),
+                  )
                 } catch {}
-
-                for (const cmd of commands) {
-                  // Strip variable assignments (CMD=val), leading parens, leading backslash
-                  const stripped = cmd
-                    .replace(/^[A-Za-z_][A-Za-z0-9_]*=\S+\s*/, '')
-                    .replace(/^\(\s*/, '')
-                    .replace(/^\\/, '')
-                  if (!stripped) continue
-                  const first = stripped.split(/[\s;|&]+/)[0] ?? ''
-                  const base = first.split('/').pop() ?? first
-
-                  // Check if base command is allowed
-                  if (!allowed.includes(base) && !allowed.includes(first)) {
-                    blocked = true
-                    blockedCmd = base
-                    break
-                  }
-
-                  // Block shell escapes for restricted commands (bash -c, node -e, git -c)
-                  if (RESTRICTED_ALLOWED.includes(base)) {
-                    const args = stripped.slice(first.length)
-                    if (/\s+-[ce]/.test(args) || /\s+--eval\b/.test(args) || /\s+-r/.test(args)) {
-                      blocked = true
-                      blockedCmd = `${base} (restricted flag)`
-                      break
-                    }
-                  }
-
-                  // Block command substitution and backticks in the entire input
-                  if (/\$\(|`[^`]+`/.test(cmd)) {
-                    blocked = true
-                    blockedCmd = 'command substitution'
-                    break
-                  }
-                }
-
-                if (blocked) {
-                  try {
-                    w.send(
-                      JSON.stringify({
-                        type: 'terminal.output',
-                        payload: {
-                          stream: 'stderr',
-                          data: `sandbox: "${blockedCmd}" blocked by allowedCommands policy\n`,
-                        },
-                        timestamp: Date.now(),
-                      }),
-                    )
-                  } catch {}
-                } else {
-                  try {
-                    const stdin = w.__proc?.stdin
-                    if (
-                      stdin &&
-                      typeof stdin !== 'number' &&
-                      typeof (stdin as Bun.FileSink).write === 'function'
-                    )
-                      (stdin as Bun.FileSink).write(event.data)
-                  } catch {}
-                }
               } else {
                 try {
                   const stdin = w.__proc?.stdin
