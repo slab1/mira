@@ -21,6 +21,8 @@
 
 import type { Bus } from '../bus/index.js'
 import type { MiraDB } from '../storage/db.js'
+import type { Gateway } from '../gateway/index.js'
+import { createHash } from 'node:crypto'
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -68,14 +70,20 @@ export interface OnlineLearnerConfig {
   maxDocs?: number
   /** max chars per fetched doc (default 12_000) */
   maxChars?: number
-  /** reuse firecrawl_search / websearch tool shape if injected */
-  searchFn?: (query: string, count: number) => Promise<SearchResult[]>
+  /** reuse firecrawl_search / websearch tool shape if injected; category hints route to */
+  searchFn?: (
+    query: string,
+    count: number,
+    ctx?: { category?: InsightCategory },
+  ) => Promise<SearchResult[]>
   fetchFn?: (url: string) => Promise<FetchedDoc | null>
 }
 
 export interface OnlineLearnerDeps {
   bus?: Bus
   db?: MiraDB
+  /** When provided, extraction uses the LLM and falls back to the heuristic path on error. */
+  gateway?: Gateway
 }
 
 // ── Default query bank (rotated each cycle) ────────────────────────
@@ -135,17 +143,17 @@ export class OnlineLearner {
     const picked = pickTopics(topics, this.config.maxQueries)
     this.log(`online: searching ${picked.length} topics...`)
 
-    // 1. Search
+    // 1. Search — category hints route to the best free provider (arXiv/GitHub/HN) below
     const allResults: Array<SearchResult & { category: InsightCategory }> = []
     for (const t of picked) {
       try {
-        const results = await this.config.searchFn(t.query, 5)
+        const results = await this.config.searchFn(t.query, 5, { category: t.category })
         for (const r of results.slice(0, 3)) allResults.push({ ...r, category: t.category })
       } catch (err) {
         this.log(`search failed for "${t.query}": ${String(err)}`)
       }
     }
-    // Deduplicate by URL
+    // Deduplicate by URL (within-run)
     const seen = new Set<string>()
     const deduped = allResults
       .filter((r) => {
@@ -161,7 +169,7 @@ export class OnlineLearner {
     }
     this.log(`online: ${deduped.length} unique URLs → fetching...`)
 
-    // 2. Fetch
+    // 2. Fetch (respect the >200-char noise floor)
     const docs: Array<FetchedDoc & { category: InsightCategory; snippet: string; title: string }> =
       []
     for (const r of deduped) {
@@ -181,8 +189,21 @@ export class OnlineLearner {
     }
     this.log(`online: fetched ${docs.length}/${deduped.length} docs`)
 
-    // 3. Extract insights
-    const insights = this.extractInsights(docs)
+    // 2b. Heading-aware chunking: split long docs into their best sections so
+    // extraction sees substance rather than front-matter (intro/nav/TOC).
+    const chunkedDocs = docs.flatMap((d) => chunkDocByHeading(d))
+
+    // 3. Extract insights — LLM when a gateway is wired (and actually has a key), else heuristic
+    let insights: Insight[]
+    if (this.deps.gateway) {
+      try {
+        insights = await this.extractWithLLM(chunkedDocs, this.deps.gateway)
+      } catch {
+        insights = this.extractInsights(chunkedDocs)
+      }
+    } else {
+      insights = this.extractInsights(chunkedDocs)
+    }
     this.log(`online: extracted ${insights.length} insights`)
 
     // 4. Privacy safeguard: redact PII from insights before persistence
@@ -225,7 +246,12 @@ export class OnlineLearner {
       if (relevance < 0.25) continue
 
       insights.push({
-        id: `ins_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+        // Deterministic ID: same (url + pattern) across runs collapses to the
+        // same id → INSERT OR IGNORE in persistInsights() dedupes cross-cycle.
+        id: `ins_${createHash('sha256')
+          .update(`${doc.url}::${extractPattern(doc.markdown, doc.category)}`)
+          .digest('hex')
+          .slice(0, 12)}`,
         source: doc.url,
         sourceTitle: doc.title ?? doc.url,
         category: doc.category,
@@ -248,41 +274,49 @@ export class OnlineLearner {
   }
 
   /**
-   * Optional LLM-powered extraction (call when gateway is available).
-   * Falls back to heuristic if LLM fails.
+   * LLM-powered extraction via the real `Gateway.complete`.
+   * Falls back to heuristic if LLM fails or is unavailable.
    */
   async extractWithLLM(
     docs: Array<FetchedDoc & { category: InsightCategory; title?: string }>,
-    gateway?: { generate: (opts: { prompt: string; model?: string }) => Promise<{ text: string }> },
+    gateway: Gateway,
   ): Promise<Insight[]> {
-    if (!gateway) return this.extractInsights(docs)
     try {
       const prompt = `Extract 1-3 concrete, actionable AI agent improvement insights from each doc.
 For each insight return JSON: { summary, pattern, tags: string[], relevance: 0..1 }.
 Docs:\n${docs.map((d, i) => `## Doc ${i + 1}: ${d.title} (${d.url})\n${d.markdown.slice(0, 4000)}`).join('\n\n')}`
-      const { text } = await gateway.generate({
-        prompt,
+      const out = await gateway.complete({
         model: 'openrouter/deepseek/deepseek-v3.2-exp',
+        prompt,
+        maxTokens: 2000,
       })
-      const parsed = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? '[]') as Array<{
+      const parsed = JSON.parse(out.text.match(/\[[\s\S]*\]/)?.[0] ?? '[]') as Array<{
         summary?: string
         pattern?: string
         tags?: string[]
         relevance?: number
       }>
       if (Array.isArray(parsed) && parsed.length) {
-        return parsed.slice(0, 8).map((p, i: number) => ({
-          id: `ins_llm_${Date.now().toString(36)}_${i}`,
-          source: docs[i % docs.length]?.url ?? 'llm',
-          sourceTitle: docs[i % docs.length]?.title ?? 'LLM extraction',
-          category: (docs[i % docs.length]?.category ?? 'other') as InsightCategory,
-          summary: String(p.summary ?? '').slice(0, 300),
-          pattern: String(p.pattern ?? p.summary ?? '').slice(0, 300),
-          relevance: Math.min(1, Math.max(0, Number(p.relevance ?? 0.7))),
-          tags: Array.isArray(p.tags) ? p.tags.slice(0, 5) : [],
-          rawExcerpt: docs[i % docs.length]?.markdown.slice(0, 500) ?? '',
-          createdAt: Date.now(),
-        }))
+        return parsed.slice(0, 8).map((p, i: number) => {
+          const doc = docs[i % docs.length]
+          const pattern = String(p.pattern ?? p.summary ?? '').slice(0, 300)
+          return {
+            // Same deterministic ID rule as the heuristic path → cross-run dedupe
+            id: `ins_${createHash('sha256')
+              .update(`${doc?.url ?? 'llm'}::${pattern}`)
+              .digest('hex')
+              .slice(0, 12)}`,
+            source: doc?.url ?? 'llm',
+            sourceTitle: doc?.title ?? 'LLM extraction',
+            category: (doc?.category ?? 'other') as InsightCategory,
+            summary: String(p.summary ?? '').slice(0, 300),
+            pattern,
+            relevance: Math.min(1, Math.max(0, Number(p.relevance ?? 0.7))),
+            tags: Array.isArray(p.tags) ? p.tags.slice(0, 5) : [],
+            rawExcerpt: doc?.markdown.slice(0, 500) ?? '',
+            createdAt: Date.now(),
+          }
+        })
       }
     } catch (err) {
       this.log(`LLM extraction failed, falling back to heuristic: ${String(err)}`)
@@ -332,10 +366,127 @@ Docs:\n${docs.map((d, i) => `## Doc ${i + 1}: ${d.title} (${d.url})\n${d.markdow
   }
 }
 
-// ── Default search/fetch (real APIs when keys present, else stub) ───
+// ── Default search/fetch (real APIs when keys present, else keyless fallbacks) ───
+
+/** Hacker News via Algolia — completely keyless, high signal for dev-relevant topics. */
+export async function searchHN(query: string, count: number): Promise<SearchResult[]> {
+  try {
+    const url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=${count}`
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+    if (!res.ok) return []
+    const data = (await res.json()) as {
+      hits?: Array<{ title?: string; url?: string; story_text?: string; points?: number }>
+    }
+    return (data.hits ?? [])
+      .filter((h) => typeof h.url === 'string' && h.url)
+      .map((h) => ({
+        title: h.title ?? h.url ?? '',
+        url: h.url as string,
+        snippet: h.story_text?.slice(0, 200) ?? '',
+        score: typeof h.points === 'number' ? h.points : undefined,
+      }))
+  } catch {
+    return []
+  }
+}
+
+/** arXiv Atom API — keyless, structured; used for the `research-paper` category. */
+export async function searchArxiv(query: string, count: number): Promise<SearchResult[]> {
+  try {
+    const url = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&start=0&max_results=${count}&sortBy=relevance&sortOrder=descending`
+    const res = await fetch(url, { signal: AbortSignal.timeout(12_000) })
+    if (!res.ok) return []
+    const xml = await res.text()
+    const entries = [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)]
+    return entries.map((m) => {
+      const body = m[1]
+      const title = (/<title[^>]*>([\s\S]*?)<\/title>/.exec(body)?.[1] ?? '')
+        .replace(/\s+/g, ' ')
+        .trim()
+      const link = /<link[^>]+href=["']([^"']+)["']/.exec(body)?.[1] ?? ''
+      const summary = (/<summary[^>]*>([\s\S]*?)<\/summary>/.exec(body)?.[1] ?? '')
+        .replace(/\s+/g, ' ')
+        .trim()
+      const published = /<published[^>]*>([^<]+)<\/published>/.exec(body)?.[1] ?? undefined
+      return { title, url: link, snippet: summary.slice(0, 280), publishedAt: published }
+    })
+  } catch {
+    return []
+  }
+}
+
+/** GitHub repo search — keyless (60 req/hr rate limit), used for the `github-repo` category. */
+export async function searchGitHubRepos(query: string, count: number): Promise<SearchResult[]> {
+  try {
+    const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=stars&order=desc&per_page=${count}`
+    const res = await fetch(url, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'Mira/0.1 (+https://mira.ai)',
+      },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) return []
+    const data = (await res.json()) as {
+      items?: Array<{
+        full_name?: string
+        html_url?: string
+        description?: string
+        stargazers_count?: number
+      }>
+    }
+    return (data.items ?? [])
+      .filter((r) => typeof r.html_url === 'string' && r.html_url)
+      .map((r) => ({
+        title: r.full_name ?? r.html_url ?? '',
+        url: r.html_url as string,
+        snippet: r.description?.slice(0, 240) ?? '',
+        score: typeof r.stargazers_count === 'number' ? r.stargazers_count : undefined,
+      }))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Chunk a fetched doc by markdown headings — keep each `## -h2` (and friends)
+ * section as a separate doc so extraction weights substantive content over
+ * boilerplate at the top of the page.
+ */
+function chunkDocByHeading(
+  doc: FetchedDoc & { category: InsightCategory; snippet?: string; title?: string },
+): Array<FetchedDoc & { category: InsightCategory; snippet?: string; title?: string }> {
+  const text = doc.markdown
+  if (text.length <= 3000) return [doc]
+  const headings = [...text.matchAll(/^#{1,3}\s+(.+)$/gm)]
+  if (headings.length < 2) return [doc]
+  const chunks: Array<
+    FetchedDoc & { category: InsightCategory; snippet?: string; title?: string }
+  > = []
+  for (let i = 0; i < headings.length; i++) {
+    const start = headings[i].index ?? 0
+    const end = headings[i + 1]?.index ?? text.length
+    const raw = text.slice(start, end).trim()
+    if (raw.length < 220) continue
+    chunks.push({
+      url: doc.url,
+      category: doc.category,
+      snippet: doc.snippet,
+      title: `${doc.title ?? doc.url} — ${headings[i][1].slice(0, 60)}`,
+      markdown: raw.slice(0, 4000),
+      truncated: raw.length > 4000,
+    })
+  }
+  return chunks.length > 0 ? chunks.slice(0, 4) : [doc]
+}
 
 function createDefaultSearchFn(): OnlineLearnerConfig['searchFn'] {
-  return async (query: string, count: number): Promise<SearchResult[]> => {
+  return async (
+    query: string,
+    count: number,
+    ctx?: { category?: InsightCategory },
+  ): Promise<SearchResult[]> => {
+    const category = ctx?.category
     // 1. Firecrawl
     if (process.env.FIRECRAWL_API_KEY) {
       try {
@@ -396,8 +547,19 @@ function createDefaultSearchFn(): OnlineLearnerConfig['searchFn'] {
         }
       } catch {}
     }
-    // 3. No provider key — return no results rather than fabricate.
-    //    A caller can inject a real searchFn via OnlineLearnerConfig.
+    // 3. Keyless fallbacks, category-aware (arXiv for papers, GitHub for repos, HN for general)
+    if (category === 'github-repo') {
+      const rep = await searchGitHubRepos(query, count)
+      if (rep.length) return rep
+    }
+    if (category === 'research-paper') {
+      const ax = await searchArxiv(query, count)
+      if (ax.length) return ax
+    }
+    // HN Algolia: free + keyless + very high signal for dev topics
+    const hn = await searchHN(query, count)
+    if (hn.length) return hn
+    // Return [] rather than fabricate results
     return []
   }
 }

@@ -28,22 +28,22 @@
  *   const result = await improvement.runCycle(insights, analysis)
  */
 
-export * from "./online.js"
-export * from "./usage.js"
-export * from "./knowledge.js"
-export * from "./improvement.js"
-export * from "./scheduler.js"
+export * from './online.js'
+export * from './usage.js'
+export * from './knowledge.js'
+export * from './improvement.js'
+export * from './scheduler.js'
 
-import { OnlineLearner } from "./online.js"
-import { UsageLearner } from "./usage.js"
-import { KnowledgeBase, type MemoryTier, type MemorySource } from "./knowledge.js"
-import { ImprovementEngine } from "./improvement.js"
-import { LearningScheduler } from "./scheduler.js"
-import { createPatchingSystem, type PatchingEngine } from "../patching/index.js"
-import type { Bus } from "../bus/index.js"
-import type { MiraDB } from "../storage/db.js"
-import type { Gateway } from "../gateway/index.js"
-import { Hono } from "hono"
+import { OnlineLearner } from './online.js'
+import { UsageLearner } from './usage.js'
+import { KnowledgeBase, type MemoryTier, type MemorySource } from './knowledge.js'
+import { ImprovementEngine } from './improvement.js'
+import { LearningScheduler } from './scheduler.js'
+import { createPatchingSystem, type PatchingEngine } from '../patching/index.js'
+import type { Bus } from '../bus/index.js'
+import type { MiraDB } from '../storage/db.js'
+import type { Gateway } from '../gateway/index.js'
+import { Hono } from 'hono'
 
 export interface LearningSystemDeps {
   db?: MiraDB
@@ -70,7 +70,7 @@ export interface LearningSystem {
 export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSystem {
   const knowledge = new KnowledgeBase({ bus: deps.bus, db: deps.db })
 
-  const online = new OnlineLearner({ bus: deps.bus, db: deps.db })
+  const online = new OnlineLearner({ bus: deps.bus, db: deps.db, gateway: deps.gateway })
 
   const usage = new UsageLearner({ bus: deps.bus, db: deps.db })
 
@@ -84,9 +84,16 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
     { rootDir: deps.rootDir ?? process.cwd(), autoPatch: true },
   )
 
-  const scheduler = new LearningScheduler(
-    { online, usage, improvement, knowledge, bus: deps.bus, db: deps.db, patching, gateway: deps.gateway },
-  )
+  const scheduler = new LearningScheduler({
+    online,
+    usage,
+    improvement,
+    knowledge,
+    bus: deps.bus,
+    db: deps.db,
+    patching,
+    gateway: deps.gateway,
+  })
 
   return { online, usage, knowledge, improvement, patching, scheduler, gateway: deps.gateway }
 }
@@ -96,45 +103,51 @@ export function mountLearningRoutes(
   app: Hono<{ Variables: { requestId: string } }>,
   system: LearningSystem,
 ): void {
-  app.get("/learning/status", (c) =>
+  app.get('/learning/status', (c) =>
     c.json({
       scheduler: system.scheduler.status(),
-      knowledge: { size: system.knowledge.size(), tiers: ["episodic", "semantic", "procedural"] },
+      knowledge: { size: system.knowledge.size(), tiers: ['episodic', 'semantic', 'procedural'] },
       usage: system.usage.getStats(),
     }),
   )
 
-  app.post("/learning/trigger", async (c) => {
+  app.post('/learning/trigger', async (c) => {
     const body = await c.req.json().catch(() => ({}))
-    const kind = body.kind ?? "all"
+    const kind = body.kind ?? 'all'
     const result = await system.scheduler.trigger(kind)
     return c.json({ kind, result })
   })
 
-  app.get("/learning/insights", async (c) => {
+  app.get('/learning/insights', async (c) => {
     const url = new URL(c.req.url)
-    const tier = url.searchParams.get("tier") as MemoryTier | null
-    const source = url.searchParams.get("source") as MemorySource | null
-    const q = url.searchParams.get("q")
+    const tier = url.searchParams.get('tier') as MemoryTier | null
+    const source = url.searchParams.get('source') as MemorySource | null
+    const q = url.searchParams.get('q')
     if (q) {
-      const results = await system.knowledge.retrieve({ query: q, tier: tier ?? undefined, limit: 20 })
+      const results = await system.knowledge.retrieve({
+        query: q,
+        tier: tier ?? undefined,
+        limit: 20,
+      })
       return c.json(results)
     }
-    return c.json(system.knowledge.list({ tier: tier ?? undefined, source: source ?? undefined, limit: 50 }))
+    return c.json(
+      system.knowledge.list({ tier: tier ?? undefined, source: source ?? undefined, limit: 50 }),
+    )
   })
 
   // H2-1 Memory v2: graph + temporal — read-only, for web MemoryGraph canvas
-  app.get("/knowledge/graph", async (c) => {
+  app.get('/knowledge/graph', async (c) => {
     const url = new URL(c.req.url)
-    const limit = Math.min(Number(url.searchParams.get("limit") ?? "100") || 100, 500)
+    const limit = Math.min(Number(url.searchParams.get('limit') ?? '100') || 100, 500)
     const graph = await system.knowledge.getGraph(limit)
     return c.json(graph)
   })
 
   // Alias for web convenience (same payload)
-  app.get("/learning/graph", async (c) => {
+  app.get('/learning/graph', async (c) => {
     const url = new URL(c.req.url)
-    const limit = Math.min(Number(url.searchParams.get("limit") ?? "100") || 100, 500)
+    const limit = Math.min(Number(url.searchParams.get('limit') ?? '100') || 100, 500)
     const graph = await system.knowledge.getGraph(limit)
     return c.json(graph)
   })
@@ -144,11 +157,11 @@ export function mountLearningRoutes(
   // - JSON (default): enhanced score payload with traceId, spanId, durationMs, model, toolCalls, etc.
   // - format=badge|svg: SVG badge for PR comments / README
   // - format=markdown: markdown snippet for PR comments
-  app.get("/learning/score", async (c) => {
+  app.get('/learning/score', async (c) => {
     const url = new URL(c.req.url)
-    const sessionID = url.searchParams.get("sessionID") ?? url.searchParams.get("sessionId") ?? ""
-    const format = url.searchParams.get("format") ?? ""
-    const requestId = c.get("requestId") ?? ""
+    const sessionID = url.searchParams.get('sessionID') ?? url.searchParams.get('sessionId') ?? ''
+    const format = url.searchParams.get('format') ?? ''
+    const requestId = c.get('requestId') ?? ''
 
     // Resolve cost from gateway (per-process cumulative)
     let costUSD = 0
@@ -159,13 +172,17 @@ export function mountLearningRoutes(
 
     // Memory hits: count knowledge entries (or per-session if we had tracking)
     let memoryHits = 0
-    try { memoryHits = system.knowledge.size() } catch {}
+    try {
+      memoryHits = system.knowledge.size()
+    } catch {}
     // If sessionID provided, try to count session-specific knowledge (best-effort)
     if (sessionID) {
       try {
         const list = system.knowledge.list({ limit: 100 })
         // Heuristic: entries whose metadata.sessionID matches
-        const perSession = list.filter(e => (e.metadata as Record<string, unknown>)?.sessionID === sessionID)
+        const perSession = list.filter(
+          (e) => (e.metadata as Record<string, unknown>)?.sessionID === sessionID,
+        )
         if (perSession.length) memoryHits = perSession.length
       } catch {}
     }
@@ -185,39 +202,78 @@ export function mountLearningRoutes(
           spanId: `span_none`,
           requestId,
           durationMs: 0,
-          model: "unknown",
+          model: 'unknown',
           toolCalls: 0,
           steps: 0,
           totalTokensIn: 0,
           totalTokensOut: 0,
           success: true,
-          message: "no sessions yet — default score",
+          message: 'no sessions yet — default score',
         }
-        if (format === "badge" || format === "svg") {
-          const svg = badgeSvg(payload.score, "Mira Score")
-          return new Response(svg, { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "no-cache" } })
+        if (format === 'badge' || format === 'svg') {
+          const svg = badgeSvg(payload.score, 'Mira Score')
+          return new Response(svg, {
+            headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-cache' },
+          })
         }
-        if (format === "markdown" || format === "md") {
-          return c.text(badgeMarkdown(payload as unknown as { score: number; costUSD: number; toolCalls: number; doomLoops: number; toolErrors: number }), 200, { "Content-Type": "text/markdown; charset=utf-8" })
+        if (format === 'markdown' || format === 'md') {
+          return c.text(
+            badgeMarkdown(
+              payload as unknown as {
+                score: number
+                costUSD: number
+                toolCalls: number
+                doomLoops: number
+                toolErrors: number
+              },
+            ),
+            200,
+            { 'Content-Type': 'text/markdown; charset=utf-8' },
+          )
         }
         return c.json(payload)
       }
       const latest = all[all.length - 1]!
-      const payload = system.usage.getScorePayload(latest.sessionID, { memoryHits, costUSD, requestId }) ?? {
+      const payload = system.usage.getScorePayload(latest.sessionID, {
+        memoryHits,
+        costUSD,
+        requestId,
+      }) ?? {
         sessionID: latest.sessionID,
         score: system.usage.computeScore(latest, memoryHits),
-        cost: costUSD, costUSD, doomLoops: latest.doomLoops, toolErrors: latest.toolErrors, memoryHits,
+        cost: costUSD,
+        costUSD,
+        doomLoops: latest.doomLoops,
+        toolErrors: latest.toolErrors,
+        memoryHits,
         traceId: `trace_${latest.sessionID.slice(0, 8)}_${latest.createdAt.toString(36)}`,
         spanId: `span_${latest.sessionID.slice(0, 8)}`,
-        requestId, durationMs: latest.latencyMs, model: latest.model, toolCalls: latest.toolCalls,
+        requestId,
+        durationMs: latest.latencyMs,
+        model: latest.model,
+        toolCalls: latest.toolCalls,
       }
       // Also try to enrich cost from gateway per-model if available
-      if (format === "badge" || format === "svg") {
-        const svg = badgeSvg((payload as { score: number }).score, "Mira Score")
-        return new Response(svg, { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "no-cache" } })
+      if (format === 'badge' || format === 'svg') {
+        const svg = badgeSvg((payload as { score: number }).score, 'Mira Score')
+        return new Response(svg, {
+          headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-cache' },
+        })
       }
-      if (format === "markdown" || format === "md") {
-        return c.text(badgeMarkdown(payload as unknown as { score: number; costUSD: number; toolCalls: number; doomLoops: number; toolErrors: number }), 200, { "Content-Type": "text/markdown; charset=utf-8" })
+      if (format === 'markdown' || format === 'md') {
+        return c.text(
+          badgeMarkdown(
+            payload as unknown as {
+              score: number
+              costUSD: number
+              toolCalls: number
+              doomLoops: number
+              toolErrors: number
+            },
+          ),
+          200,
+          { 'Content-Type': 'text/markdown; charset=utf-8' },
+        )
       }
       return c.json({ ...payload, requestId })
     }
@@ -226,12 +282,39 @@ export function mountLearningRoutes(
     const payload = system.usage.getScorePayload(sessionID, { memoryHits, costUSD, requestId })
     if (!payload) {
       // No usage yet for this session — return skeleton with DB fallback
-      let dbMetric: { model?: string; latencyMs?: number; toolCalls?: number; toolErrors?: number; doomLoops?: number } | null = null
+      let dbMetric: {
+        model?: string
+        latencyMs?: number
+        toolCalls?: number
+        toolErrors?: number
+        doomLoops?: number
+      } | null = null
       try {
-        const sqlite = (system as unknown as { db?: { sqlite?: unknown } }).db?.sqlite as unknown as { prepare(s: string): { get(...args: unknown[]): unknown } } | undefined
+        const sqlite = (system as unknown as { db?: { sqlite?: unknown } }).db
+          ?.sqlite as unknown as
+          { prepare(s: string): { get(...args: unknown[]): unknown } } | undefined
         if (sqlite) {
-          const row = sqlite.prepare(`SELECT model, latency_ms, tool_calls, tool_errors, doom_loops FROM usage_sessions WHERE session_id = ?`).get(sessionID) as { model?: string; latency_ms?: number; tool_calls?: number; tool_errors?: number; doom_loops?: number } | undefined
-          if (row) dbMetric = { model: row.model, latencyMs: row.latency_ms, toolCalls: row.tool_calls, toolErrors: row.tool_errors, doomLoops: row.doom_loops }
+          const row = sqlite
+            .prepare(
+              `SELECT model, latency_ms, tool_calls, tool_errors, doom_loops FROM usage_sessions WHERE session_id = ?`,
+            )
+            .get(sessionID) as
+            | {
+                model?: string
+                latency_ms?: number
+                tool_calls?: number
+                tool_errors?: number
+                doom_loops?: number
+              }
+            | undefined
+          if (row)
+            dbMetric = {
+              model: row.model,
+              latencyMs: row.latency_ms,
+              toolCalls: row.tool_calls,
+              toolErrors: row.tool_errors,
+              doomLoops: row.doom_loops,
+            }
         }
       } catch {}
       const fallback = {
@@ -246,54 +329,95 @@ export function mountLearningRoutes(
         spanId: `span_${sessionID.slice(0, 8)}`,
         requestId,
         durationMs: dbMetric?.latencyMs ?? 0,
-        model: dbMetric?.model ?? "unknown",
+        model: dbMetric?.model ?? 'unknown',
         toolCalls: dbMetric?.toolCalls ?? 0,
         steps: 0,
         totalTokensIn: 0,
         totalTokensOut: 0,
         success: true,
         createdAt: Date.now(),
-        note: "no usage metric yet — skeleton",
+        note: 'no usage metric yet — skeleton',
       }
-      if (format === "badge" || format === "svg") {
-        const svg = badgeSvg(fallback.score, "Mira Score")
-        return new Response(svg, { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "no-cache" } })
+      if (format === 'badge' || format === 'svg') {
+        const svg = badgeSvg(fallback.score, 'Mira Score')
+        return new Response(svg, {
+          headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-cache' },
+        })
       }
-      if (format === "markdown" || format === "md") {
-        return c.text(badgeMarkdown(fallback as unknown as { score: number; costUSD: number; toolCalls: number; doomLoops: number; toolErrors: number }), 200, { "Content-Type": "text/markdown; charset=utf-8" })
+      if (format === 'markdown' || format === 'md') {
+        return c.text(
+          badgeMarkdown(
+            fallback as unknown as {
+              score: number
+              costUSD: number
+              toolCalls: number
+              doomLoops: number
+              toolErrors: number
+            },
+          ),
+          200,
+          { 'Content-Type': 'text/markdown; charset=utf-8' },
+        )
       }
       return c.json(fallback)
     }
 
-    if (format === "badge" || format === "svg") {
-      const svg = badgeSvg((payload as { score: number }).score, "Mira Score")
-      return new Response(svg, { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "no-cache" } })
+    if (format === 'badge' || format === 'svg') {
+      const svg = badgeSvg((payload as { score: number }).score, 'Mira Score')
+      return new Response(svg, {
+        headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-cache' },
+      })
     }
-    if (format === "markdown" || format === "md") {
-      return c.text(badgeMarkdown(payload as unknown as { score: number; costUSD: number; toolCalls: number; doomLoops: number; toolErrors: number; sessionID: string }), 200, { "Content-Type": "text/markdown; charset=utf-8" })
+    if (format === 'markdown' || format === 'md') {
+      return c.text(
+        badgeMarkdown(
+          payload as unknown as {
+            score: number
+            costUSD: number
+            toolCalls: number
+            doomLoops: number
+            toolErrors: number
+            sessionID: string
+          },
+        ),
+        200,
+        { 'Content-Type': 'text/markdown; charset=utf-8' },
+      )
     }
     return c.json(payload)
   })
 
   // GET /learning/trace?sessionID=xxx — OTel spans + tool metrics + X-Request-Id
-  app.get("/learning/trace", async (c) => {
+  app.get('/learning/trace', async (c) => {
     const url = new URL(c.req.url)
-    const sessionID = url.searchParams.get("sessionID") ?? url.searchParams.get("sessionId") ?? ""
-    const requestId = c.get("requestId") ?? ""
-    if (!sessionID) return c.json({ error: "sessionID required" }, 400)
+    const sessionID = url.searchParams.get('sessionID') ?? url.searchParams.get('sessionId') ?? ''
+    const requestId = c.get('requestId') ?? ''
+    if (!sessionID) return c.json({ error: 'sessionID required' }, 400)
 
     const metric = system.usage.getSessionMetric(sessionID)
     const tools = system.usage.getToolMetrics(sessionID)
 
     // Try to pull OTel traces that mention this session (best-effort)
-    let otelSpans: Array<{ name: string; traceId: string; spanId: string; startMs: number; endMs?: number; durationMs?: number; status: string; attributes: Record<string, unknown> }> = []
+    let otelSpans: Array<{
+      name: string
+      traceId: string
+      spanId: string
+      startMs: number
+      endMs?: number
+      durationMs?: number
+      status: string
+      attributes: Record<string, unknown>
+    }> = []
     try {
-      const { listTraces } = await import("../eval/tracing.js")
+      const { listTraces } = await import('../eval/tracing.js')
       const traces = listTraces()
       for (const t of traces) {
         for (const s of t.spans) {
           const attrs = s.attributes as Record<string, unknown>
-          if (String(attrs.session_id ?? attrs.sessionID ?? "") === sessionID || t.name.includes(sessionID.slice(0, 8))) {
+          if (
+            String(attrs.session_id ?? attrs.sessionID ?? '') === sessionID ||
+            t.name.includes(sessionID.slice(0, 8))
+          ) {
             otelSpans.push({
               name: s.name,
               traceId: s.traceId,
@@ -318,7 +442,7 @@ export function mountLearningRoutes(
         startMs: t.timestamp,
         endMs: t.timestamp + t.durationMs,
         durationMs: t.durationMs,
-        status: t.isError ? "error" : "ok",
+        status: t.isError ? 'error' : 'ok',
         attributes: { tool: t.tool, isError: t.isError, errorKind: t.errorKind ?? null },
       }))
     }
@@ -326,12 +450,14 @@ export function mountLearningRoutes(
     return c.json({
       sessionID,
       requestId,
-      traceId: metric ? `trace_${sessionID.slice(0, 8)}_${metric.createdAt.toString(36)}` : `trace_${sessionID.slice(0, 8)}`,
+      traceId: metric
+        ? `trace_${sessionID.slice(0, 8)}_${metric.createdAt.toString(36)}`
+        : `trace_${sessionID.slice(0, 8)}`,
       spanId: `span_${sessionID.slice(0, 8)}`,
       durationMs: metric?.latencyMs ?? 0,
-      model: metric?.model ?? "unknown",
+      model: metric?.model ?? 'unknown',
       toolCalls: metric?.toolCalls ?? tools.length,
-      toolErrors: metric?.toolErrors ?? tools.filter(t => t.isError).length,
+      toolErrors: metric?.toolErrors ?? tools.filter((t) => t.isError).length,
       doomLoops: metric?.doomLoops ?? 0,
       spans: otelSpans,
       toolMetrics: tools.slice(-50),
@@ -341,13 +467,13 @@ export function mountLearningRoutes(
 }
 
 function badgeColor(score: number): string {
-  if (score >= 80) return "#2ea043" // green
-  if (score >= 60) return "#d29922" // yellow
-  if (score >= 40) return "#f85149" // orange-red
-  return "#da3633" // red
+  if (score >= 80) return '#2ea043' // green
+  if (score >= 60) return '#d29922' // yellow
+  if (score >= 40) return '#f85149' // orange-red
+  return '#da3633' // red
 }
 
-function badgeSvg(score: number, label = "Mira Score"): string {
+function badgeSvg(score: number, label = 'Mira Score'): string {
   const color = badgeColor(score)
   const text = `${score}/100`
   // Simple flat badge SVG (shields.io style, no external deps)
@@ -369,8 +495,16 @@ function badgeSvg(score: number, label = "Mira Score"): string {
 </svg>`
 }
 
-function badgeMarkdown(p: { score: number; costUSD?: number; toolCalls?: number; doomLoops?: number; toolErrors?: number; sessionID?: string }): string {
-  const color = p.score >= 80 ? "brightgreen" : p.score >= 60 ? "yellow" : p.score >= 40 ? "orange" : "red"
+function badgeMarkdown(p: {
+  score: number
+  costUSD?: number
+  toolCalls?: number
+  doomLoops?: number
+  toolErrors?: number
+  sessionID?: string
+}): string {
+  const color =
+    p.score >= 80 ? 'brightgreen' : p.score >= 60 ? 'yellow' : p.score >= 40 ? 'orange' : 'red'
   const badgeUrl = `https://img.shields.io/badge/Mira%20Score-${p.score}%2F100-${color}`
   const lines = [
     `![Mira Score](${badgeUrl})`,
@@ -381,5 +515,5 @@ function badgeMarkdown(p: { score: number; costUSD?: number; toolCalls?: number;
     p.toolCalls !== undefined ? `Tool calls: ${p.toolCalls} (errors: ${p.toolErrors ?? 0})` : ``,
     p.doomLoops !== undefined ? `Doom loops: ${p.doomLoops}` : ``,
   ].filter(Boolean)
-  return lines.join("  \n")
+  return lines.join('  \n')
 }
