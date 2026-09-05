@@ -97,6 +97,38 @@ export interface UsageLearnerDeps {
   db?: MiraDB
 }
 
+/** Score payload returned by getScorePayload() — typed instead of Record<string, unknown> */
+export interface ScorePayload {
+  sessionID: string
+  score: number
+  cost: number
+  costUSD: number
+  doomLoops: number
+  toolErrors: number
+  memoryHits: number
+  traceId: string
+  spanId: string
+  requestId: string
+  durationMs: number
+  latencyMs: number
+  model: string
+  toolCalls: number
+  steps: number
+  totalTokensIn: number
+  totalTokensOut: number
+  success: boolean
+  compactionCount: number
+  userFeedback: 'up' | 'down' | null
+  createdAt: number
+  toolMetrics: Array<{
+    tool: string
+    durationMs: number
+    isError: boolean
+    errorKind?: string
+    timestamp: number
+  }>
+}
+
 // ── UsageLearner ─────────────────────────────────────────────────────
 
 export class UsageLearner {
@@ -313,7 +345,7 @@ export class UsageLearner {
       spanId?: string
       requestId?: string
     } = {},
-  ): Record<string, unknown> | null {
+  ): ScorePayload | null {
     const m = this.getSessionMetric(sessionID)
     if (!m) return null
     const memoryHits = opts.memoryHits ?? 0
@@ -341,15 +373,13 @@ export class UsageLearner {
       compactionCount: m.compactionCount,
       userFeedback: m.userFeedback ?? null,
       createdAt: m.createdAt,
-      toolMetrics: tools
-        .slice(-20)
-        .map((t) => ({
-          tool: t.tool,
-          durationMs: t.durationMs,
-          isError: t.isError,
-          errorKind: t.errorKind,
-          timestamp: t.timestamp,
-        })),
+      toolMetrics: tools.slice(-20).map((t) => ({
+        tool: t.tool,
+        durationMs: t.durationMs,
+        isError: t.isError,
+        errorKind: t.errorKind,
+        timestamp: t.timestamp,
+      })),
     }
   }
 

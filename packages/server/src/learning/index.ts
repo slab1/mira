@@ -217,19 +217,9 @@ export function mountLearningRoutes(
           })
         }
         if (format === 'markdown' || format === 'md') {
-          return c.text(
-            badgeMarkdown(
-              payload as unknown as {
-                score: number
-                costUSD: number
-                toolCalls: number
-                doomLoops: number
-                toolErrors: number
-              },
-            ),
-            200,
-            { 'Content-Type': 'text/markdown; charset=utf-8' },
-          )
+          return c.text(badgeMarkdown(payload), 200, {
+            'Content-Type': 'text/markdown; charset=utf-8',
+          })
         }
         return c.json(payload)
       }
@@ -250,30 +240,29 @@ export function mountLearningRoutes(
         spanId: `span_${latest.sessionID.slice(0, 8)}`,
         requestId,
         durationMs: latest.latencyMs,
+        latencyMs: latest.latencyMs,
         model: latest.model,
         toolCalls: latest.toolCalls,
+        steps: latest.steps,
+        totalTokensIn: latest.totalTokensIn,
+        totalTokensOut: latest.totalTokensOut,
+        success: latest.success,
+        compactionCount: latest.compactionCount,
+        userFeedback: latest.userFeedback ?? null,
+        createdAt: latest.createdAt,
+        toolMetrics: [],
       }
       // Also try to enrich cost from gateway per-model if available
       if (format === 'badge' || format === 'svg') {
-        const svg = badgeSvg((payload as { score: number }).score, 'Mira Score')
+        const svg = badgeSvg(payload.score, 'Mira Score')
         return new Response(svg, {
           headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-cache' },
         })
       }
       if (format === 'markdown' || format === 'md') {
-        return c.text(
-          badgeMarkdown(
-            payload as unknown as {
-              score: number
-              costUSD: number
-              toolCalls: number
-              doomLoops: number
-              toolErrors: number
-            },
-          ),
-          200,
-          { 'Content-Type': 'text/markdown; charset=utf-8' },
-        )
+        return c.text(badgeMarkdown(payload), 200, {
+          'Content-Type': 'text/markdown; charset=utf-8',
+        })
       }
       return c.json({ ...payload, requestId })
     }
@@ -282,61 +271,30 @@ export function mountLearningRoutes(
     const payload = system.usage.getScorePayload(sessionID, { memoryHits, costUSD, requestId })
     if (!payload) {
       // No usage yet for this session — return skeleton with DB fallback
-      let dbMetric: {
-        model?: string
-        latencyMs?: number
-        toolCalls?: number
-        toolErrors?: number
-        doomLoops?: number
-      } | null = null
-      try {
-        const sqlite = (system as unknown as { db?: { sqlite?: unknown } }).db
-          ?.sqlite as unknown as
-          { prepare(s: string): { get(...args: unknown[]): unknown } } | undefined
-        if (sqlite) {
-          const row = sqlite
-            .prepare(
-              `SELECT model, latency_ms, tool_calls, tool_errors, doom_loops FROM usage_sessions WHERE session_id = ?`,
-            )
-            .get(sessionID) as
-            | {
-                model?: string
-                latency_ms?: number
-                tool_calls?: number
-                tool_errors?: number
-                doom_loops?: number
-              }
-            | undefined
-          if (row)
-            dbMetric = {
-              model: row.model,
-              latencyMs: row.latency_ms,
-              toolCalls: row.tool_calls,
-              toolErrors: row.tool_errors,
-              doomLoops: row.doom_loops,
-            }
-        }
-      } catch {}
+      const sessionMetric = system.usage.getSessionMetric(sessionID)
       const fallback = {
         sessionID,
         score: 100,
         cost: costUSD,
         costUSD,
-        doomLoops: dbMetric?.doomLoops ?? 0,
-        toolErrors: dbMetric?.toolErrors ?? 0,
+        doomLoops: sessionMetric?.doomLoops ?? 0,
+        toolErrors: sessionMetric?.toolErrors ?? 0,
         memoryHits,
         traceId: `trace_${sessionID.slice(0, 8)}_${Date.now().toString(36)}`,
         spanId: `span_${sessionID.slice(0, 8)}`,
         requestId,
-        durationMs: dbMetric?.latencyMs ?? 0,
-        model: dbMetric?.model ?? 'unknown',
-        toolCalls: dbMetric?.toolCalls ?? 0,
-        steps: 0,
-        totalTokensIn: 0,
-        totalTokensOut: 0,
-        success: true,
-        createdAt: Date.now(),
-        note: 'no usage metric yet — skeleton',
+        durationMs: sessionMetric?.latencyMs ?? 0,
+        latencyMs: sessionMetric?.latencyMs ?? 0,
+        model: sessionMetric?.model ?? 'unknown',
+        toolCalls: sessionMetric?.toolCalls ?? 0,
+        steps: sessionMetric?.steps ?? 0,
+        totalTokensIn: sessionMetric?.totalTokensIn ?? 0,
+        totalTokensOut: sessionMetric?.totalTokensOut ?? 0,
+        success: sessionMetric?.success ?? true,
+        compactionCount: sessionMetric?.compactionCount ?? 0,
+        userFeedback: sessionMetric?.userFeedback ?? null,
+        createdAt: sessionMetric?.createdAt ?? Date.now(),
+        toolMetrics: [],
       }
       if (format === 'badge' || format === 'svg') {
         const svg = badgeSvg(fallback.score, 'Mira Score')
@@ -345,44 +303,21 @@ export function mountLearningRoutes(
         })
       }
       if (format === 'markdown' || format === 'md') {
-        return c.text(
-          badgeMarkdown(
-            fallback as unknown as {
-              score: number
-              costUSD: number
-              toolCalls: number
-              doomLoops: number
-              toolErrors: number
-            },
-          ),
-          200,
-          { 'Content-Type': 'text/markdown; charset=utf-8' },
-        )
+        return c.text(badgeMarkdown(fallback), 200, {
+          'Content-Type': 'text/markdown; charset=utf-8',
+        })
       }
       return c.json(fallback)
     }
 
     if (format === 'badge' || format === 'svg') {
-      const svg = badgeSvg((payload as { score: number }).score, 'Mira Score')
+      const svg = badgeSvg(payload.score, 'Mira Score')
       return new Response(svg, {
         headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-cache' },
       })
     }
     if (format === 'markdown' || format === 'md') {
-      return c.text(
-        badgeMarkdown(
-          payload as unknown as {
-            score: number
-            costUSD: number
-            toolCalls: number
-            doomLoops: number
-            toolErrors: number
-            sessionID: string
-          },
-        ),
-        200,
-        { 'Content-Type': 'text/markdown; charset=utf-8' },
-      )
+      return c.text(badgeMarkdown(payload), 200, { 'Content-Type': 'text/markdown; charset=utf-8' })
     }
     return c.json(payload)
   })
