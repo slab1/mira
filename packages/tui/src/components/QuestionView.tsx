@@ -6,7 +6,7 @@
  * Click an option to select (toggle for multiple), then Submit.
  */
 
-import { Show, For, createSignal } from "solid-js"
+import { Show, For, createSignal, onMount, onCleanup } from "solid-js"
 import type { PendingQuestion } from "../stores/session"
 
 type Props = {
@@ -36,6 +36,29 @@ export default function QuestionView(props: Props) {
     )
     setSelections({})
   }
+
+  onMount(() => {
+    const handler = (e: KeyboardEvent) => {
+      const req = q()
+      if (!req) return
+      if (!/^[1-9]$/.test(e.key)) return
+      const n = Number(e.key) - 1
+      // Flatten options in render order
+      let idx = 0
+      for (const question of req.questions) {
+        for (const opt of question.options) {
+          if (idx === n) {
+            e.preventDefault()
+            toggle(question.header, opt.label, question.multiple)
+            return
+          }
+          idx++
+        }
+      }
+    }
+    window.addEventListener("keydown", handler)
+    onCleanup(() => window.removeEventListener("keydown", handler))
+  })
 
   return (
     <Show when={q()}>
@@ -73,8 +96,9 @@ export default function QuestionView(props: Props) {
                   </span>
                 </div>
                 <For each={question.options}>
-                  {(opt) => {
+                  {(opt, i) => {
                     const selected = () => (selections()[question.header] ?? []).includes(opt.label)
+                    const num = () => i() + 1
                     return (
                       <div
                         onClick={() => toggle(question.header, opt.label, question.multiple)}
@@ -88,7 +112,7 @@ export default function QuestionView(props: Props) {
                           color: "#e4e4e7",
                         }}
                       >
-                        <strong>{selected() ? "◉" : "○"} {opt.label}</strong>
+                        <strong>{selected() ? "◉" : "○"} {num()}. {opt.label}</strong>
                         <span style={{ color: "#a1a1aa", "margin-left": "8px", "font-size": "11.5px" }}>
                           {opt.description}
                         </span>

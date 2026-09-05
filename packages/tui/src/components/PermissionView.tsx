@@ -6,7 +6,7 @@
  * BashArity level 2 shows a destructive warning.
  */
 
-import { Show, createMemo } from "solid-js"
+import { Show, createMemo, onMount, onCleanup } from "solid-js"
 import type { PendingPermission } from "../stores/session"
 
 type Props = {
@@ -34,6 +34,21 @@ function isDestructive(tool: string, args: unknown): boolean {
 export default function PermissionView(props: Props) {
   const req = () => props.request
   const destructive = createMemo(() => (req() ? isDestructive(req()!.tool, req()!.args) : false))
+
+  onMount(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!req()) return
+      if (e.key === "1") {
+        e.preventDefault()
+        props.onAllow()
+      } else if (e.key === "2") {
+        e.preventDefault()
+        props.onDeny()
+      }
+    }
+    window.addEventListener("keydown", handler)
+    onCleanup(() => window.removeEventListener("keydown", handler))
+  })
 
   return (
     <Show when={req()}>
@@ -126,7 +141,7 @@ export default function PermissionView(props: Props) {
                 "font-size": "12px",
               }}
             >
-              Deny
+              2 Deny
             </button>
             <button
               onClick={props.onAllow}
@@ -142,13 +157,12 @@ export default function PermissionView(props: Props) {
                 "font-size": "12px",
               }}
             >
-              Allow{destructive() ? " anyway" : ""}
+              1 Allow{destructive() ? " anyway" : ""}
             </button>
           </div>
 
           <span style={{ "font-size": "10px", opacity: "0.45" }}>
-            Tip: <kbd style={{ padding: "1px 5px", "border-radius": "4px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.1)" }}>a</kbd> allow ·{" "}
-            <kbd style={{ padding: "1px 5px", "border-radius": "4px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.1)" }}>d</kbd> deny · decision sent via WebSocket → GlobalBus → SessionPrompt resumes
+            Tip: <kbd style={{ padding: "1px 5px", "border-radius": "4px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.1)" }}>1</kbd> allow · <kbd style={{ padding: "1px 5px", "border-radius": "4px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.1)" }}>2</kbd> deny · <kbd style={{ padding: "1px 5px", "border-radius": "4px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.1)" }}>a</kbd> allow · <kbd style={{ padding: "1px 5px", "border-radius": "4px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.1)" }}>d</kbd> deny
           </span>
         </div>
       )}

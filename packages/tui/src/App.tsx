@@ -25,11 +25,15 @@ import { createSessionStore } from "./stores/session"
 import SessionView from "./components/SessionView"
 import PermissionView from "./components/PermissionView"
 import QuestionView from "./components/QuestionView"
+import CommandPalette from "./components/CommandPalette"
+import HelpOverlay from "./components/HelpOverlay"
 
 export default function App() {
   const store = createSessionStore()
   const [health, setHealth] = createSignal<{ ok: boolean; version: string; tools: number } | null>(null)
   const [cost, setCost] = createSignal<{ requests: number; inputTokens: number; outputTokens: number; costUSD: number } | null>(null)
+  const [commandMode, setCommandMode] = createSignal(false)
+  const [helpOpen, setHelpOpen] = createSignal(false)
 
   onMount(() => {
     store.loadSessions()
@@ -67,6 +71,45 @@ export default function App() {
     }
     if (e.key === "Escape" && store.state.streaming) {
       store.stopStream()
+    }
+    // Intercept leading '/' to open command palette
+    if (e.key === "/" && store.input() === "") {
+      e.preventDefault()
+      setCommandMode(true)
+    }
+    // Intercept '?' to toggle help
+    if (e.key === "?" && !e.shiftKey) {
+      e.preventDefault()
+      setHelpOpen((v) => !v)
+    }
+  }
+
+  const handleCommand = async (cmd: string) => {
+    switch (cmd) {
+      case "cost":
+        try {
+          const { rpc } = await import("./rpc/client")
+          const d = await rpc.devHealth()
+          setCost(d.gateway)
+        } catch {}
+        break
+      case "undo":
+        void store.undoLast()
+        break
+      case "queue":
+        // Queue view is already in header; no-op for now
+        break
+      case "jobs":
+        // Jobs view not implemented yet
+        break
+      case "fork":
+        if (store.state.currentId) {
+          void store.createSession()
+        }
+        break
+      case "export":
+        // Export not implemented yet
+        break
     }
   }
 
@@ -333,6 +376,9 @@ export default function App() {
         </span>
         <span>Enter send · Esc stop · a/d on permission · “better than all”</span>
       </div>
+
+      <CommandPalette open={commandMode()} onClose={() => setCommandMode(false)} onExecute={handleCommand} />
+      <HelpOverlay open={helpOpen()} onClose={() => setHelpOpen(false)} />
     </div>
   )
 }
