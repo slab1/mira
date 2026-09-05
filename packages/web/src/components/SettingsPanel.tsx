@@ -84,7 +84,8 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
   const [featInject, setFeatInject] = createSignal(true)
   const [featLane, setFeatLane] = createSignal(true)
   const [featPerAgent, setFeatPerAgent] = createSignal(true)
-  const [budgetCap, setBudgetCap] = createSignal<string | null>(null)
+  const [budgetCapEnabled, setBudgetCapEnabled] = createSignal(false)
+  const [budgetCapAmount, setBudgetCapAmount] = createSignal(100)
 
   let dialogRef: HTMLDivElement | undefined
   let firstFocusRef: HTMLButtonElement | undefined
@@ -92,6 +93,12 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
   // Sync form from loaded config
   createEffect(() => {
     if (props.open && s().config) {
+      try {
+        const enabled = localStorage.getItem('mira.budgetCap.enabled')
+        const amount = localStorage.getItem('mira.budgetCap.amount')
+        if (enabled != null) setBudgetCapEnabled(enabled === 'true')
+        if (amount != null) setBudgetCapAmount(Number(amount) || 100)
+      } catch {}
       setModel(s().config?.model ?? '')
       setSmallModel(s().config?.smallModel ?? '')
       const loop = s().config?.loop ?? {}
@@ -222,6 +229,11 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     if (Object.keys(featPatch).length > 0) patch.features = { ...feats, ...featPatch }
     // Allow clearing loop fields when user empties them — send explicit null via delete? keep as-is for now
     if (Object.keys(patch).length > 0) await props.store.saveConfig(patch)
+    // Persist spend cockpit locally
+    try {
+      localStorage.setItem('mira.budgetCap.enabled', String(budgetCapEnabled()))
+      localStorage.setItem('mira.budgetCap.amount', String(budgetCapAmount()))
+    } catch {}
     // Theme is local-only (persisted via store, not server)
     props.store.setTheme(theme())
   }
@@ -857,21 +869,21 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                         >
                           <input
                             type="checkbox"
-                            checked={budgetCap()}
-                            onChange={(e) => setBudgetCap(e.currentTarget.checked)}
+                            checked={budgetCapEnabled()}
+                            onChange={(e) => setBudgetCapEnabled(e.currentTarget.checked)}
                           />
                           Enable budget cap
                         </label>
                         <span class="settings-hint" style={{ margin: '0' }}>
-                          Trigger HITL when monthly spend exceeds
+                          Warn when monthly spend exceeds
                         </span>
                         <input
                           type="number"
                           min="0"
                           step="10"
-                          value="100"
-                          onInput={(e) => setBudgetWarn(Number(e.currentTarget.value) || null)}
-                          style={{ 'font-size': 'var(--fs-sm)', width: '60px' }}
+                          value={budgetCapAmount()}
+                          onInput={(e) => setBudgetCapAmount(Number(e.currentTarget.value) || 0)}
+                          style={{ 'font-size': 'var(--fs-sm)', width: '80px' }}
                         />
                         USD / month
                       </div>

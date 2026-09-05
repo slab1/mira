@@ -222,6 +222,8 @@ export default function App() {
   // Mobile: session sidebar is an off-canvas drawer; toggled by the hamburger.
   const [sidebarOpen, setSidebarOpen] = createSignal(false)
   const [moreOpen, setMoreOpen] = createSignal(false)
+  const [budgetCapEnabled, setBudgetCapEnabled] = createSignal(false)
+  const [budgetCapAmount, setBudgetCapAmount] = createSignal(100)
   const [agents] = createResource(() => api.listAgents().catch(() => []))
   const [selectedAgent, setSelectedAgent] = createSignal('')
   // Memory Graph 3-state layout: chat | split | graph
@@ -238,6 +240,13 @@ export default function App() {
   const [miraScore, setMiraScore] = createSignal<{ score: number; costUSD: number } | null>(null)
 
   onMount(() => {
+    // Load budget cap from localStorage
+    try {
+      const e = localStorage.getItem('mira.budgetCap.enabled')
+      const a = localStorage.getItem('mira.budgetCap.amount')
+      if (e != null) setBudgetCapEnabled(e === 'true')
+      if (a != null) setBudgetCapAmount(Number(a) || 100)
+    } catch {}
     // Probe stored token without flashing the gate:
     // - No token → keep gate visible (user must Connect; empty allowed for open dev servers)
     // - Token present → validate first; only on success load sessions and authorize
@@ -615,18 +624,22 @@ export default function App() {
                   </button>
                 )}
               </Show>
-              <Show when={store.state.cost}>
-                {(c) => (
-                  <button
-                    type="button"
-                    onClick={() => setTraceOpen(true)}
-                    title={`Gateway: ${c().requests} requests · ${c().inputTokens.toLocaleString()} in / ${c().outputTokens.toLocaleString()} out · avg ${c().avgLatencyMs}ms — click for trace`}
-                    class="pill pill-cost"
-                    style={{ cursor: 'pointer' }}
-                  >
-                    ${c().costUSD.toFixed(4)}
-                  </button>
-                )}
+               <Show when={store.state.cost}>
+                 {(c) => {
+                   const cost = c().costUSD
+                   const over = budgetCapEnabled() && cost >= budgetCapAmount()
+                   return (
+                     <button
+                       type="button"
+                       onClick={() => setTraceOpen(true)}
+                       title={`Gateway: ${c().requests} requests · ${c().inputTokens.toLocaleString()} in / ${c().outputTokens.toLocaleString()} out · avg ${c().avgLatencyMs}ms — click for trace${over ? ' · ⚠ Budget cap exceeded' : ''}`}
+                       class={`pill pill-cost ${over ? 'pill-danger' : ''}`}
+                       style={{ cursor: 'pointer', background: over ? 'color-mix(in srgb, var(--danger) 14%, var(--bg-surface))' : undefined }}
+                     >
+                       ${cost.toFixed(4)}{over ? ' ⚠' : ''}
+                     </button>
+                   )
+                 }}
                 <QueueRail store={store} />
               </Show>
               <Show when={(agents() ?? []).length > 0}>
