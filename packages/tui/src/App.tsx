@@ -67,12 +67,40 @@ export default function App() {
     if (e.key === 'd' || e.key === 'D' || e.key === 'Escape') store.replyPermission('deny')
   }
 
+  // Global TUI shortcuts
+  const onGlobalKey = (e: KeyboardEvent) => {
+    const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase()
+    const isTyping = targetTag === 'input' || targetTag === 'textarea' || (e.target as HTMLElement)?.isContentEditable
+    if (e.key === '?' && !isTyping) {
+      e.preventDefault()
+      setHelpOpen(v => !v)
+    }
+    // Session quick pick 1-9
+    if (!isTyping && e.key >= '1' && e.key <= '9') {
+      const sessions = store.sessions()
+      const idx = Number(e.key) - 1
+      const s = sessions?.[idx]
+      if (s) store.selectSession(s.id)
+    }
+    // j/k scroll messages (handled by SessionView internally, but we can prevent default)
+    // Esc stops streaming globally
+    if (e.key === 'Escape' && store.state.streaming && !store.state.pendingPermission) {
+      store.stopStream()
+    }
+  }
+
   // Attach global key handler when permission is pending
   createEffect(() => {
     if (store.state.pendingPermission) window.addEventListener('keydown', onKeyDown)
     else window.removeEventListener('keydown', onKeyDown)
   })
   onCleanup(() => window.removeEventListener('keydown', onKeyDown))
+
+  // Global shortcuts always on
+  onMount(() => {
+    window.addEventListener('keydown', onGlobalKey)
+    return () => window.removeEventListener('keydown', onGlobalKey)
+  })
 
   const handleSend = () => {
     void store.sendPrompt()

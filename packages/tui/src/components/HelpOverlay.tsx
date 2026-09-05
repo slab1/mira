@@ -15,6 +15,7 @@ const shortcuts = [
   { key: 'Esc', desc: 'Stop streaming / close overlay' },
   { key: '/', desc: 'Open command palette' },
   { key: '?', desc: 'Toggle help' },
+  { key: '1-9', desc: 'Quick session pick' },
   { key: 'a / A', desc: 'Allow permission' },
   { key: 'd / D', desc: 'Deny permission' },
   { key: '1 / 2', desc: 'Number pick in PermissionView' },
