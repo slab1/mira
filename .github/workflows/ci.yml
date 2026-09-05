@@ -110,10 +110,10 @@ jobs:
           key: turbo-${{ github.sha }}
           restore-keys: turbo-
       - name: Turborepo remote cache login (optional)
-        # Guarded: forks without TURBO_TOKEN skip gracefully instead of
-        # failing. Actual auth is env passthrough (top-level TURBO_TOKEN /
-        # TURBO_TEAM); this step only records intent.
-        if: ${{ secrets.TURBO_TOKEN != '' }}
+        # `secrets.*` is NOT allowed in step-level `if:` — read the mapped env var
+        # (top-level `env: TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}`) instead.
+        # Forks without the secret skip gracefully instead of failing.
+        if: ${{ env.TURBO_TOKEN != '' }}
         run: |
           echo "Remote cache enabled (team: ${{ vars.TURBO_TEAM }})."
           bunx turbo --version
