@@ -52,6 +52,11 @@ export type Part = {
   tool?: string
   input?: JsonValue
   output?: JsonValue
+  denied?: boolean
+  layer?: 'explicit' | 'pattern' | 'BashArity' | 'lane'
+  reason?: string
+  matchedPattern?: string
+  lane?: string
 }
 
 export type Todo = {
@@ -877,6 +882,12 @@ export const api = {
       if (m) opts.onChunk(m[1])
     }
   },
+}
+
+/** Add or update a permission rule for a tool pattern */
+export async function addPermissionRule(tool: string, pattern: string, action: 'allow' | 'deny' | 'ask'): Promise<MiraConfig> {
+  // Patch config with permission update; server merges permission objects
+  return api.patchConfig({ permission: { [tool]: { [pattern]: action } } })
 }
 
 // ── WebSocket (GlobalBus → Worker → RPC → TUI) ───────────────────
