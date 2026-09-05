@@ -41,6 +41,7 @@ export default function App() {
   } | null>(null)
   const [commandMode, setCommandMode] = createSignal(false)
   const [helpOpen, setHelpOpen] = createSignal(false)
+  const [focusRing, setFocusRing] = createSignal<'sidebar' | 'messages' | 'input'>('input')
 
   onMount(() => {
     store.loadSessions()
@@ -75,6 +76,15 @@ export default function App() {
       e.preventDefault()
       setHelpOpen(v => !v)
     }
+    // Tab focus cycle
+    if (e.key === 'Tab' && !isTyping) {
+      e.preventDefault()
+      setFocusRing(f => {
+        if (f === 'sidebar') return 'messages'
+        if (f === 'messages') return 'input'
+        return 'sidebar'
+      })
+    }
     // Session quick pick 1-9
     if (!isTyping && e.key >= '1' && e.key <= '9') {
       const sessions = store.sessions()
@@ -82,7 +92,6 @@ export default function App() {
       const s = sessions?.[idx]
       if (s) store.selectSession(s.id)
     }
-    // j/k scroll messages (handled by SessionView internally, but we can prevent default)
     // Esc stops streaming globally
     if (e.key === 'Escape' && store.state.streaming && !store.state.pendingPermission) {
       store.stopStream()
