@@ -1,8 +1,9 @@
 // Unit tests for the keyless-online learner (HN/arXiv/GitHub fallbacks).
 // Uses in-memory fetch stubs — no external network calls.
 import { describe, expect, test } from 'bun:test'
-import { OnlineLearner } from './online.js'
+import { OnlineLearner, jaccardTokens, PATTERN_SIMILARITY_FLOOR } from './online.js'
 import type { Insight } from './online.js'
+import { KnowledgeBase } from './knowledge.js'
 import type { JsonValue } from '../types/index.js'
 
 // ----------------------------------------------------------------
@@ -119,13 +120,15 @@ describe('OnlineLearner — keyless fallbacks + dedupe + LLM', () => {
 
   test('extractWithLLM falls back to heuristic when gateway.complete throws', async () => {
     const props = {
-      searchFn: async () => [{ title: 'T', url: 'https://x.local/t', snippet: 'x' }],
+      searchFn: async () => [{ title: 'T', url: 'https://x.local/t', snippet: 'agent technique' }],
       fetchFn: async () => ({
         url: 'https://x.local/t',
         title: 'T',
         markdown:
-          'Pin the agent tool versions explicitly — tool calls from any agent planner should record the tool loop result. ' +
-          'Prefer this tool pattern; the agent and its planner both use tool keys. '.repeat(20),
+          'Use explicit tool pinning for every agent tool call — a verified technique. ' +
+          'Record the agent tool, run the agent loop, then the tool result updates the planner memory. '.repeat(
+            30,
+          ),
         truncated: false,
       }),
     }
@@ -146,13 +149,16 @@ describe('OnlineLearner — keyless fallbacks + dedupe + LLM', () => {
       }),
     }
     const learner = new OnlineLearner({ gateway: gateway as never } as never, props)
-    const insights = await learner.learnOnce()
+    const insights = await learner.learnOnce([
+      { query: 'agent tool pinning', category: 'agent-technique' },
+    ])
     expect(insights.length).toBe(1)
     expect(insights[0].pattern.length).toBeGreaterThan(0)
     expect(insights[0].id.startsWith('ins_')).toBe(true)
   })
 
   test('LLM-success path yields structured insights and deterministic ids', async () => {
+    const topic = { query: 'agent tool pinning', category: 'agent-technique' as const }
     const docsWhereTheLLMWins = {
       searchFn: async () => [{ title: 'T', url: 'https://x.local/t', snippet: 'x' }],
       fetchFn: async () => ({
@@ -188,7 +194,9 @@ describe('OnlineLearner — keyless fallbacks + dedupe + LLM', () => {
       }),
     }
     const learner = new OnlineLearner({ gateway: gateway as never } as never, docsWhereTheLLMWins)
-    const insights = await learner.learnOnce()
+    const insights = await learner.learnOnce([
+      { query: 'agent tool pinning', category: 'agent-technique' },
+    ])
     expect(insights.length).toBe(1)
     expect(insights[0].summary).toContain('Deterministic caching')
     // id must hash from (url + pattern)
@@ -207,5 +215,81 @@ describe('OnlineLearner — keyless fallbacks + dedupe + LLM', () => {
     for (const i of insights) {
       expect(i.summary).not.toMatch(/stub/i)
     }
+  })
+})
+
+describe('jaccardTokens — near-dup detection via token overlap', () => {
+  test('identical text → 1.0', () => {
+    expect(jaccardTokens('use db indexes', 'use db indexes')).toBe(1)
+  })
+
+  test('nearly identical text ≥ PATTERN_SIMILARITY_FLOOR', () => {
+    const a = 'use content-addressed hash keys to pin tool call results'
+    const b = 'use content-addressed hash keys to pin tool call result values'
+    expect(jaccardTokens(a, b)).toBeGreaterThanOrEqual(PATTERN_SIMILARITY_FLOOR)
+  })
+
+  test('completely different text → below floor', () => {
+    expect(
+      jaccardTokens(
+        'use db indexes for speed',
+        'install docker container orchestration kubernetes node service',
+      ),
+    ).toBeLessThan(PATTERN_SIMILARITY_FLOOR)
+  })
+})
+
+describe('KnowledgeBase.storeInsight + utility feedback loop', () => {
+  test('re-storing the same insight by deterministic id updates the row and accumulates utility', async () => {
+    const kb = new KnowledgeBase({ bus: undefined, db: undefined })
+    const ins = {
+      id: 'ins_test123',
+      source: 'https://example.com/x',
+      sourceTitle: 'Cache result',
+      category: 'agent-technique' as const,
+      summary: 'pin tool versions explicitly',
+      pattern: 'Pin tool versions via content hash.',
+      relevance: 0.9,
+      tags: ['retrieval'],
+      rawExcerpt: '',
+      createdAt: Date.now(),
+    }
+    const first = await kb.storeInsight(ins)
+    const again = await kb.storeInsight({
+      ...ins,
+      summary: 'pin tool versions explicitly (refined)',
+    })
+    // Same entry id — the second call updates in place
+    expect(again.id).toBe(first.id)
+    expect(kb.list({ source: 'online' })).toHaveLength(1)
+    expect(kb.get(first.id)?.accessCount).toBeGreaterThan(0)
+
+    // Bump utility by turn results
+    kb.bumpUtility(first.id, 1)
+    kb.bumpUtility(first.id, 1)
+    kb.bumpUtility(first.id, -1)
+    const entry = kb.get(first.id)!
+    expect(typeof entry.metadata.utility === 'number' && entry.metadata.utility === 1).toBe(true)
+  })
+
+  test('utility is clamped at ±20', async () => {
+    const kb = new KnowledgeBase()
+    const stored = await kb.storeInsight({
+      id: 'ins_clamp',
+      source: 'https://x.local/y',
+      sourceTitle: 'Y',
+      category: 'agent-technique',
+      summary: 's',
+      pattern: 'p',
+      relevance: 1,
+      tags: [],
+      rawExcerpt: '',
+      createdAt: Date.now(),
+    })
+    for (let i = 0; i < 50; i++) kb.bumpUtility(stored.id, 1)
+    const entry = kb.get(stored.id)!
+    expect((entry.metadata.utility as number) <= 20).toBe(true)
+    for (let i = 0; i < 50; i++) kb.bumpUtility(stored.id, -1)
+    expect((kb.get(stored.id)!.metadata.utility as number) >= -20).toBe(true)
   })
 })

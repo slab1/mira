@@ -62,7 +62,9 @@ export interface SessionPromptDeps {
     retrieve(opts: {
       query: string
       limit?: number
-    }): Promise<Array<{ title: string; content: string }>>
+    }): Promise<Array<{ id: string; title: string; content: string }>>
+    /** utility feedback loop: id ∈ [insight.id from online, parse id] */
+    bumpUtility?: (id: string, delta: number) => void
   }
   /** usage learner (injected from learning system) */
   usage?: {
@@ -168,6 +170,23 @@ export class SessionPrompt {
     }
     return d
   }
+  /** Knowledge entries currently resident in this session's prompt (for utility feedback). */
+  private injectedMemories = new Map<string, Array<{ id: string; title: string }>>()
+
+  /** Log-utility hooks — Phase 4 of ONLINE_LEARNING_ROADMAP. */
+  private trackInjectedMemory(sessionID: string, doc: { id: string; title: string }): void {
+    if (!this.injectedMemories.has(sessionID)) this.injectedMemories.set(sessionID, [])
+    this.injectedMemories.get(sessionID)!.push(doc)
+  }
+  /** After a turn finishes, bump/decrement the utility of injected memory rows. */
+  private settleInjectedMemories(sessionID: string, success: boolean): void {
+    const docs = this.injectedMemories.get(sessionID)
+    if (!docs?.length || !this.deps.knowledge?.bumpUtility) return
+    const delta = success ? 1 : -1
+    for (const d of docs) this.deps.knowledge.bumpUtility!(d.id, delta)
+    this.injectedMemories.delete(sessionID)
+  }
+
   /** Queues persist in SQLite (message_queue) — survive restarts */
 
   constructor(private deps: SessionPromptDeps) {}
@@ -320,16 +339,14 @@ export class SessionPrompt {
       .delete(this.deps.db.schema.todos)
       .where(eq(this.deps.db.schema.todos.sessionID, sessionID))
     if (todos.length) {
-      await this.deps.db
-        .insert(this.deps.db.schema.todos)
-        .values(
-          todos.map((t: Todo) => ({
-            ...t,
-            id: t.id ?? crypto.randomUUID(),
-            sessionID,
-            createdAt: Date.now(),
-          })),
-        )
+      await this.deps.db.insert(this.deps.db.schema.todos).values(
+        todos.map((t: Todo) => ({
+          ...t,
+          id: t.id ?? crypto.randomUUID(),
+          sessionID,
+          createdAt: Date.now(),
+        })),
+      )
     }
     return todos
   }
@@ -943,6 +960,7 @@ export class SessionPrompt {
       payload: { id: assistantMessageID, text: accumulatedText, done: true },
       timestamp: Date.now(),
     })
+    const finishSuccess = doomLoopCount === 0
     if (this.deps.usage) {
       this.deps.usage
         .recordSession({
@@ -956,12 +974,14 @@ export class SessionPrompt {
           toolErrors: toolErrorCount,
           doomLoops: doomLoopCount,
           compactionCount,
-          success: doomLoopCount === 0,
+          success: finishSuccess,
           userFeedback: null,
           createdAt: Date.now(),
         })
         .catch(() => {})
     }
+    // Phase 4: settle utility for any knowledge entries we injected into this turn
+    this.settleInjectedMemories(sessionID, finishSuccess)
     trace.update({ steps: step })
     trace.end()
     // Persist per-session spend (tokens observed from provider usage chunks)
@@ -1071,9 +1091,12 @@ export class SessionPrompt {
           ? await this.deps.knowledge.retrieve({ query: lastUserText, limit: 3 })
           : await searchKnowledge(lastUserText, 3)
         if (docs.length) {
+          // Phase 4 utility-feedback: remember which memory rows entered the
+          // prompt; after the turn resolves we credit/blame them on success.
+          for (const d of docs) this.trackInjectedMemory(sessionID, d)
           context.push({
             role: 'system',
-            content: `Relevant memory:\n${docs.map((d) => `- ${d.title}: ${d.content.slice(0, 300)}`).join('\n')}`,
+            content: `Relevant memory:\n${docs.map((d) => `- [${d.title}](${d.id}): ${d.content.slice(0, 300)}`).join('\n')}`,
           })
         }
       } catch {}

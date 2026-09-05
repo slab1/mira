@@ -263,14 +263,17 @@ export class OnlineLearner {
         createdAt: Date.now(),
       })
     }
-    // Sort by relevance desc, dedupe by pattern
+    // Sort by relevance desc, dedupe by pattern Jaccard similarity (≥55% token
+    // overlap = same technique; stable on short extracted strings).
     insights.sort((a, b) => b.relevance - a.relevance)
-    const byPattern = new Map<string, Insight>()
+    const kept: Insight[] = []
     for (const ins of insights) {
-      const key = ins.pattern.toLowerCase().slice(0, 80)
-      if (!byPattern.has(key)) byPattern.set(key, ins)
+      const dup = kept.some(
+        (k) => jaccardTokens(k.pattern, ins.pattern) >= PATTERN_SIMILARITY_FLOOR,
+      )
+      if (!dup) kept.push(ins)
     }
-    return [...byPattern.values()]
+    return kept
   }
 
   /**
@@ -616,6 +619,29 @@ function createDefaultFetchFn(): OnlineLearnerConfig['fetchFn'] {
     }
   }
 }
+
+// ── Near-duplicate detection: Jaccard token-similarity ─────────────────────
+// Jaccard is stable on short pattern strings (~1 sentence); simhash needed way
+// more text to converge. Two patterns are duplicates when overlap ≥ 55%.
+
+export function jaccardTokens(a: string, b: string): number {
+  const toks = (s: string) =>
+    new Set(
+      s
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t.length > 1),
+    )
+  const A = toks(a)
+  const B = toks(b)
+  if (A.size === 0 || B.size === 0) return 0
+  let inter = 0
+  for (const t of A) if (B.has(t)) inter++
+  return inter / (A.size + B.size - inter)
+}
+
+/** Near-dup merge threshold: 55% token overlap = same insight. */
+export const PATTERN_SIMILARITY_FLOOR = 0.55
 
 // ── Heuristics ───────────────────────────────────────────────────────
 
