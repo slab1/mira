@@ -27,6 +27,9 @@ export type Session = {
   createdAt: string
   updatedAt: string
   status?: string
+  costUsd?: number | null
+  tokensIn?: number | null
+  tokensOut?: number | null
 }
 
 export type Message = {
@@ -147,6 +150,7 @@ export type MiraConfig = {
   }
   features?: Record<string, boolean>
   tools?: Record<string, JsonValue>
+  costCap?: { perSession?: number; perTask?: number }
 }
 
 export type MCPServerConfig = {

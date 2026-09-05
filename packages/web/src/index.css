@@ -1519,3 +1519,19 @@ html {
   }
 }
 
+/* Spend cockpit */
+.cost-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  background: var(--bg-surface);
+}
+.cost-sparkline {
+  display: block;
+  color: var(--accent);
+  flex: none;
+}
+
