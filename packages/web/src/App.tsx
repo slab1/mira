@@ -221,6 +221,7 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = createSignal(false)
   // Mobile: session sidebar is an off-canvas drawer; toggled by the hamburger.
   const [sidebarOpen, setSidebarOpen] = createSignal(false)
+  const [moreOpen, setMoreOpen] = createSignal(false)
   const [agents] = createResource(() => api.listAgents().catch(() => []))
   const [selectedAgent, setSelectedAgent] = createSignal('')
   // Memory Graph 3-state layout: chat | split | graph
@@ -702,6 +703,87 @@ export default function App() {
               >
                 health ↗
               </a>
+              <div style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  onClick={() => setMoreOpen(!moreOpen())}
+                  title="More actions"
+                  aria-label="More actions"
+                  aria-haspopup="true"
+                  aria-expanded={moreOpen() ? 'true' : 'false'}
+                  style={{
+                    padding: '5px 9px',
+                    'font-size': 'var(--fs-xs)',
+                    border: '1px solid var(--border)',
+                    'border-radius': 'var(--r-md)',
+                  }}
+                >
+                  ⋯ More
+                </button>
+                <Show when={moreOpen()}>
+                  <div
+                    style={{
+                      position: 'absolute',
+                      right: '0',
+                      top: '100%',
+                      'margin-top': '4px',
+                      background: 'var(--bg-surface)',
+                      border: '1px solid var(--border)',
+                      'border-radius': 'var(--r-md)',
+                      'box-shadow': '0 4px 12px rgba(0,0,0,0.15)',
+                      padding: '4px',
+                      'min-width': '160px',
+                      'z-index': '100',
+                    }}
+                  >
+                    <button
+                      type="button"
+                      class="btn btn-ghost"
+                      style={{ width: '100%', 'text-align': 'left', padding: '6px 8px', 'font-size': 'var(--fs-xs)' }}
+                      onClick={() => { setMoreOpen(false); setSettingsOpen(true) }}
+                    >
+                      ⚙ Settings
+                    </button>
+                    <Show when={store.state.currentId}>
+                      <button
+                        type="button"
+                        class="btn btn-ghost"
+                        style={{ width: '100%', 'text-align': 'left', padding: '6px 8px', 'font-size': 'var(--fs-xs)' }}
+                        onClick={() => { setMoreOpen(false); void store.undoLastMutation() }}
+                      >
+                        ↩ Undo
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-ghost"
+                        style={{ width: '100%', 'text-align': 'left', padding: '6px 8px', 'font-size': 'var(--fs-xs)' }}
+                        onClick={() => {
+                          setMoreOpen(false);
+                          void (async () => {
+                            const id = store.state.currentId
+                            if (!id) return
+                            try {
+                              const md = await api.exportSession(id, 'md')
+                              const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+                              const url = URL.createObjectURL(blob)
+                              const a = document.createElement('a')
+                              a.href = url
+                              a.download = `mira-${id.slice(0, 8)}.md`
+                              a.click()
+                              URL.revokeObjectURL(url)
+                            } catch (e) {
+                              console.error('[mira] export failed:', e)
+                            }
+                          })()
+                        }}
+                      >
+                        ⤓ Export
+                      </button>
+                    </Show>
+                  </div>
+                </Show>
+              </div>
             </div>
           </header>
 
