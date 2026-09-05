@@ -1,7 +1,12 @@
 // Unit tests for the keyless-online learner (HN/arXiv/GitHub fallbacks).
 // Uses in-memory fetch stubs — no external network calls.
 import { describe, expect, test } from 'bun:test'
-import { OnlineLearner, jaccardTokens, PATTERN_SIMILARITY_FLOOR } from './online.js'
+import {
+  OnlineLearner,
+  jaccardTokens,
+  PATTERN_SIMILARITY_FLOOR,
+  buildDynamicTopicsFromAnalysis,
+} from './online.js'
 import type { Insight } from './online.js'
 import { KnowledgeBase } from './knowledge.js'
 import type { JsonValue } from '../types/index.js'
@@ -291,5 +296,36 @@ describe('KnowledgeBase.storeInsight + utility feedback loop', () => {
     expect((entry.metadata.utility as number) <= 20).toBe(true)
     for (let i = 0; i < 50; i++) kb.bumpUtility(stored.id, -1)
     expect((kb.get(stored.id)!.metadata.utility as number) >= -20).toBe(true)
+  })
+})
+
+describe('buildDynamicTopicsFromAnalysis — failure-driven queries', () => {
+  test('converts high-errorRate failures into agent-technique search topics', () => {
+    const topics = buildDynamicTopicsFromAnalysis({
+      window: { from: 0, to: 0, sessions: 3 },
+      failurePatterns: [
+        { id: 'f1', kind: 'tool', key: 'bash', count: 3, errorRate: 0.6, suggestion: 'x' },
+      ],
+      successPatterns: [],
+      toolStats: {},
+      modelStats: {},
+      generatedAt: Date.now(),
+    })
+    expect(topics.length).toBeGreaterThan(0)
+    expect(topics[0].category).toBe('tool')
+    expect(topics[0].query).toContain('bash')
+  })
+  test('low-error failure keys are not promoted to topics', () => {
+    const topics = buildDynamicTopicsFromAnalysis({
+      window: { from: 0, to: 0, sessions: 3 },
+      failurePatterns: [
+        { id: 'f', kind: 'tool', key: 'read', count: 3, errorRate: 0.05, suggestion: 'x' },
+      ],
+      successPatterns: [],
+      toolStats: {},
+      modelStats: {},
+      generatedAt: Date.now(),
+    })
+    expect(topics).toHaveLength(0)
   })
 })

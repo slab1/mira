@@ -22,6 +22,7 @@
 import type { Bus } from '../bus/index.js'
 import type { MiraDB } from '../storage/db.js'
 import type { Gateway } from '../gateway/index.js'
+import type { UsageAnalysis } from './usage.js'
 import { createHash } from 'node:crypto'
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -643,7 +644,31 @@ export function jaccardTokens(a: string, b: string): number {
 /** Near-dup merge threshold: 55% token overlap = same insight. */
 export const PATTERN_SIMILARITY_FLOOR = 0.55
 
-// ── Heuristics ───────────────────────────────────────────────────────
+/** Derive query topics from observed failure patterns so the learner searches for
+ *  fixes to *real current problems*, not just the static pool. Falls back to empty
+ *  list when usage has never collected a significant failure. */
+export function buildDynamicTopicsFromAnalysis(
+  analysis: UsageAnalysis,
+): Array<{ query: string; category: InsightCategory }> {
+  const out: Array<{ query: string; category: InsightCategory }> = []
+  for (const f of analysis.failurePatterns) {
+    if (f.errorRate < 0.3) continue // not a real waste cycle
+    if (f.key.includes('doom-loop'))
+      out.push({ query: 'agent tool call loop detection prevention', category: 'agent-technique' })
+    else if (f.kind === 'tool')
+      out.push({
+        query: `${f.key} workaround agent coding tool failure ${f.errorRate.toFixed(0)}`,
+        category: 'tool',
+      })
+    else if (f.kind === 'model')
+      out.push({ query: `LLM failure mitigation model degradation`, category: 'agent-technique' })
+    else out.push({ query: `agent workflow failure prevention`, category: 'agent-technique' })
+  }
+  for (const s of analysis.successPatterns.slice(0, 1)) {
+    out.push({ query: `extend successful agent pattern ${s.key}`, category: 'agent-technique' })
+  }
+  return out.slice(0, 4)
+}
 
 function pickTopics(
   topics: Array<{ query: string; category: InsightCategory }>,

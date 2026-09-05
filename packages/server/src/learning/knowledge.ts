@@ -412,8 +412,11 @@ export class KnowledgeBase {
 
       // Phase 4: utility bonus — sessions that used this memory succeeded push it up (+0.4/win),
       // losses (-1) demote. Bounded at ±20 so a single rancid streak can't poison forever.
-      const utility = (e.metadata.utility as number) ?? 0
-      score += Math.max(-20, Math.min(20, utility)) * 0.04
+      // Fades gently as the memory ages (1%/day) so stale wins don't cap the ranking forever.
+      const rawUtility = (e.metadata.utility as number) ?? 0
+      const utilityAgeDays = (now - e.updatedAt) / (24 * 60 * 60 * 1000)
+      const utilityDecay = Math.pow(0.99, utilityAgeDays) // 1%/day decay on utility
+      score += Math.max(-20, Math.min(20, rawUtility)) * utilityDecay * 0.04
 
       if (score >= minScore) scored.push({ ...e, _score: score, _rawScore: s, score })
     }
