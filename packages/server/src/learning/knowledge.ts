@@ -229,7 +229,9 @@ export class KnowledgeBase {
         this.entries.set(e.id, e)
         this.indexEntry(e)
       }
-    } catch {}
+    } catch (err) {
+      console.error('[knowledge] load failed:', err)
+    }
     return this.entries.size
   }
 
@@ -627,7 +629,9 @@ export class KnowledgeBase {
             }
           }
         }
-      } catch {}
+      } catch (err) {
+        console.warn('[knowledge] getGraph findings query failed:', err)
+      }
     }
 
     return { nodes, edges }
@@ -730,7 +734,9 @@ export class KnowledgeBase {
             entry.accessCount,
             JSON.stringify(entry.entities),
           )
-      } catch {}
+      } catch (fallbackErr) {
+        console.error('[knowledge] persist fallback also failed:', fallbackErr)
+      }
     }
   }
 }

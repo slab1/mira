@@ -362,7 +362,9 @@ Docs:\n${docs.map((d, i) => `## Doc ${i + 1}: ${d.title} (${d.url})\n${d.markdow
           ins.createdAt,
         )
       }
-    } catch {}
+    } catch (err) {
+      this.log(`persistInsights failed: ${err}`)
+    }
   }
 
   private log(msg: string) {

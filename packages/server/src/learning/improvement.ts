@@ -19,24 +19,24 @@
  *   3. Fallback → syntax check (parse + py_compile-style tsc)
  */
 
-import { Bus } from "../bus/index.js"
-import type { Insight } from "./online.js"
-import type { UsageAnalysis, FailurePattern } from "./usage.js"
-import type { KnowledgeBase } from "./knowledge.js"
-import type { MiraDB } from "../storage/db.js"
-import type { Gateway } from "../gateway/index.js"
-import type { JsonValue } from "../types/index.js"
+import { Bus } from '../bus/index.js'
+import type { Insight } from './online.js'
+import type { UsageAnalysis, FailurePattern } from './usage.js'
+import type { KnowledgeBase } from './knowledge.js'
+import type { MiraDB } from '../storage/db.js'
+import type { Gateway } from '../gateway/index.js'
+import type { JsonValue } from '../types/index.js'
 
 // ── Types ────────────────────────────────────────────────────────────
 
 export interface Improvement {
   id: string
-  targetFile: string | null       // relative to server root, null = no file target
+  targetFile: string | null // relative to server root, null = no file target
   reason: string
-  proposedChange: string          // human-readable; also the appended note for generic patches
-  kind: "agent-prompt" | "tool" | "engine" | "config" | "skill"
-  source: "online" | "usage" | "hybrid"
-  verification: string            // command that verifies it (for logging)
+  proposedChange: string // human-readable; also the appended note for generic patches
+  kind: 'agent-prompt' | 'tool' | 'engine' | 'config' | 'skill'
+  source: 'online' | 'usage' | 'hybrid'
+  verification: string // command that verifies it (for logging)
   createdAt: number
 }
 
@@ -47,7 +47,7 @@ export interface VerifyResult {
 }
 
 export interface CycleResult {
-  status: "stable" | "cycle_complete"
+  status: 'stable' | 'cycle_complete'
   analyzed: { insights: number; failures: number }
   synthesized: number
   promoted: number
@@ -96,10 +96,7 @@ export class ImprovementEngine {
    * Turn online insights + usage failures into concrete Improvements.
    * Each improvement targets a real file and carries a verification command.
    */
-  synthesize(
-    insights: Insight[],
-    analysis: UsageAnalysis | null,
-  ): Improvement[] {
+  synthesize(insights: Insight[], analysis: UsageAnalysis | null): Improvement[] {
     const out: Improvement[] = []
 
     // From online insights (high-relevance only)
@@ -112,7 +109,7 @@ export class ImprovementEngine {
         reason: `Online insight (${ins.category}): ${ins.summary.slice(0, 120)} — ${ins.source}`,
         proposedChange: ins.pattern,
         kind: target.kind,
-        source: "online",
+        source: 'online',
         verification: target.verification,
         createdAt: Date.now(),
       })
@@ -123,14 +120,14 @@ export class ImprovementEngine {
       for (const f of analysis.failurePatterns) {
         const target = targetForFailure(f)
         // Skip if already covered by an online improvement for same file
-        if (target.file && out.some(o => o.targetFile === target.file)) continue
+        if (target.file && out.some((o) => o.targetFile === target.file)) continue
         out.push({
           id: `imp_us_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 4)}`,
           targetFile: target.file,
           reason: `Usage failure: ${f.key} — ${Math.round(f.errorRate * 100)}% over ${f.count} occurrences. ${f.suggestion}`,
           proposedChange: f.suggestion,
           kind: target.kind,
-          source: "usage",
+          source: 'usage',
           verification: target.verification,
           createdAt: Date.now(),
         })
@@ -139,12 +136,14 @@ export class ImprovementEngine {
 
     // Deduplicate by targetFile + kind
     const seen = new Set<string>()
-    return out.filter(imp => {
-      const key = `${imp.targetFile ?? "null"}:${imp.kind}:${imp.proposedChange.slice(0, 60)}`
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    }).slice(0, 6) // cap per cycle
+    return out
+      .filter((imp) => {
+        const key = `${imp.targetFile ?? 'null'}:${imp.kind}:${imp.proposedChange.slice(0, 60)}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+      .slice(0, 6) // cap per cycle
   }
 
   // ── Verify (shadow test) ───────────────────────────────────────────
@@ -155,7 +154,7 @@ export class ImprovementEngine {
    */
   async verify(imp: Improvement): Promise<VerifyResult> {
     if (!imp.targetFile) {
-      return { verified: false, reason: "no targetFile — cannot verify file-less improvement" }
+      return { verified: false, reason: 'no targetFile — cannot verify file-less improvement' }
     }
     const abs = `${this.config.rootDir}/${imp.targetFile}`
     const file = Bun.file(abs)
@@ -165,14 +164,14 @@ export class ImprovementEngine {
 
     // Create shadow copy in temp dir
     const tmpDir = `${this.config.rootDir}/.tmp_shadow_${Date.now()}`
-    const { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } = await import("node:fs")
+    const { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } = await import('node:fs')
     try {
       mkdirSync(tmpDir, { recursive: true })
       const original = await file.text()
-      const shadowPath = `${tmpDir}/shadow_${imp.targetFile.replace(/\//g, "_")}`
+      const shadowPath = `${tmpDir}/shadow_${imp.targetFile.replace(/\//g, '_')}`
       // Apply proposed change (append improvement note — safe generic)
       const patched = applyChange(original, imp.proposedChange, imp.targetFile)
-      writeFileSync(shadowPath, patched, "utf-8")
+      writeFileSync(shadowPath, patched, 'utf-8')
 
       // Run verification in order: tsc → bun test (if prompt) → syntax
       const result = await this.runShadowChecks(shadowPath, imp, original, abs)
@@ -180,7 +179,9 @@ export class ImprovementEngine {
     } catch (err) {
       return { verified: false, reason: `shadow error: ${String(err)}` }
     } finally {
-      try { rmSync(tmpDir, { recursive: true, force: true }) } catch {}
+      try {
+        rmSync(tmpDir, { recursive: true, force: true })
+      } catch {}
     }
   }
 
@@ -191,43 +192,54 @@ export class ImprovementEngine {
     _abs: string,
   ): Promise<VerifyResult> {
     // 1. For TS files: tsc --noEmit on the shadow (syntax + types)
-    if (imp.targetFile!.endsWith(".ts") || imp.targetFile!.endsWith(".js")) {
+    if (imp.targetFile!.endsWith('.ts') || imp.targetFile!.endsWith('.js')) {
       try {
-        const proc = Bun.spawn(["npx", "tsc", "--noEmit", "--skipLibCheck", shadowPath], {
+        const proc = Bun.spawn(['npx', 'tsc', '--noEmit', '--skipLibCheck', shadowPath], {
           cwd: this.config.rootDir,
-          stdout: "pipe", stderr: "pipe",
+          stdout: 'pipe',
+          stderr: 'pipe',
         })
         const exit = await proc.exited
-        const stderr = await new Response(proc.stderr).text().catch(() => "")
+        const stderr = await new Response(proc.stderr).text().catch(() => '')
         if (exit !== 0) {
-          return { verified: false, reason: `tsc failed (exit ${exit}): ${stderr.slice(0, 600)}`, shadowOutput: stderr }
+          return {
+            verified: false,
+            reason: `tsc failed (exit ${exit}): ${stderr.slice(0, 600)}`,
+            shadowOutput: stderr,
+          }
         }
       } catch (err) {
         // tsc not available → fall back to syntax check
         const ok = await syntaxCheck(shadowPath)
         if (!ok) return { verified: false, reason: `syntax check failed: ${String(err)}` }
       }
-    } else if (imp.targetFile!.endsWith(".md")) {
+    } else if (imp.targetFile!.endsWith('.md')) {
       // Markdown prompts: just ensure non-empty and not broken frontmatter
-      const content = await Bun.file(shadowPath).text().catch(() => "")
-      if (content.length < 10) return { verified: false, reason: "shadow markdown empty" }
+      const content = await Bun.file(shadowPath)
+        .text()
+        .catch(() => '')
+      if (content.length < 10) return { verified: false, reason: 'shadow markdown empty' }
     }
 
     // 2. Targeted test run — runs by default (disable with MIRA_SHADOW_RUN_TESTS=0)
     // For TS engine/tool patches we run the relevant test suite; MD patches skip
-    if (process.env.MIRA_SHADOW_RUN_TESTS !== "0" && imp.targetFile?.endsWith(".ts")) {
+    if (process.env.MIRA_SHADOW_RUN_TESTS !== '0' && imp.targetFile?.endsWith('.ts')) {
       try {
-        const proc = Bun.spawn(["bun", "test", "--timeout", "15000"], {
+        const proc = Bun.spawn(['bun', 'test', '--timeout', '15000'], {
           cwd: this.config.rootDir,
-          stdout: "pipe", stderr: "pipe",
+          stdout: 'pipe',
+          stderr: 'pipe',
         })
-        const exit = await Promise.race([
+        const exit = (await Promise.race([
           proc.exited,
-          new Promise<number>((_, rej) => setTimeout(() => rej(new Error("test timeout")), 30_000)),
-        ]) as number
+          new Promise<number>((_, rej) => setTimeout(() => rej(new Error('test timeout')), 30_000)),
+        ])) as number
         if (exit !== 0) {
-          const stderr = await new Response(proc.stderr).text().catch(() => "")
-          return { verified: false, reason: `bun test failed (exit ${exit}): ${stderr.slice(0, 600)}` }
+          const stderr = await new Response(proc.stderr).text().catch(() => '')
+          return {
+            verified: false,
+            reason: `bun test failed (exit ${exit}): ${stderr.slice(0, 600)}`,
+          }
         }
       } catch (err) {
         return { verified: false, reason: `test run error: ${String(err)}` }
@@ -238,26 +250,29 @@ export class ImprovementEngine {
     //    eval harness. This is the RCSI promotion gate — a patch that passes
     //    tsc but regresses any pr check is rejected with the failing checkIds
     //    recorded. Fails CLOSED on harness errors.
-    if (process.env.MIRA_EVAL_GATE === "1") {
+    if (process.env.MIRA_EVAL_GATE === '1') {
       try {
-        const { runEval } = await import("../eval/index.js")
-        const report = await runEval("pr")
+        const { runEval } = await import('../eval/index.js')
+        const report = await runEval('pr')
         if (!report.passed) {
           const failed = report.tiers
-            .flatMap(t => t.checks)
-            .filter(c => !c.passed)
-            .map(c => c.checkId + (c.message ? ` (${c.message.slice(0, 80)})` : ""))
+            .flatMap((t) => t.checks)
+            .filter((c) => !c.passed)
+            .map((c) => c.checkId + (c.message ? ` (${c.message.slice(0, 80)})` : ''))
           return {
             verified: false,
-            reason: `eval gate rejected patch — failing checks: ${failed.slice(0, 5).join("; ")}`,
+            reason: `eval gate rejected patch — failing checks: ${failed.slice(0, 5).join('; ')}`,
           }
         }
       } catch (err) {
-        return { verified: false, reason: `eval gate error (fail closed): ${String(err).slice(0, 300)}` }
+        return {
+          verified: false,
+          reason: `eval gate error (fail closed): ${String(err).slice(0, 300)}`,
+        }
       }
     }
 
-    return { verified: true, reason: "shadow checks passed" }
+    return { verified: true, reason: 'shadow checks passed' }
   }
 
   // ── Apply ──────────────────────────────────────────────────────────
@@ -286,21 +301,23 @@ export class ImprovementEngine {
 
     // Record in knowledge base as procedural memory
     if (this.deps.knowledge) {
-      await this.deps.knowledge.store({
-        tier: "procedural",
-        source: "improvement",
-        title: `Applied: ${imp.proposedChange.slice(0, 120)} → ${imp.targetFile}`,
-        content: `Reason: ${imp.reason}\nChange: ${imp.proposedChange}\nVerified: ${verifyResult?.reason ?? "pre-verified"}`,
-        tags: ["improvement", imp.kind, imp.source],
-        metadata: { improvementId: imp.id, targetFile: imp.targetFile },
-      }).catch(() => {})
+      await this.deps.knowledge
+        .store({
+          tier: 'procedural',
+          source: 'improvement',
+          title: `Applied: ${imp.proposedChange.slice(0, 120)} → ${imp.targetFile}`,
+          content: `Reason: ${imp.reason}\nChange: ${imp.proposedChange}\nVerified: ${verifyResult?.reason ?? 'pre-verified'}`,
+          tags: ['improvement', imp.kind, imp.source],
+          metadata: { improvementId: imp.id, targetFile: imp.targetFile },
+        })
+        .catch(() => {})
     }
 
     this.deps.bus?.publish({
-      type: "learning.updated",
-      payload: { kind: "learning.improvement.applied", id: imp.id, file: imp.targetFile },
+      type: 'learning.updated',
+      payload: { kind: 'learning.improvement.applied', id: imp.id, file: imp.targetFile },
       timestamp: Date.now(),
-      })
+    })
     return true
   }
 
@@ -310,23 +327,30 @@ export class ImprovementEngine {
    * Empirical RCSI loop: synthesize → shadow-verify → apply.
    * Returns a CycleResult for observability.
    */
-  async runCycle(
-    insights: Insight[],
-    analysis: UsageAnalysis | null,
-  ): Promise<CycleResult> {
-    console.log(`[learning:improvement] cycle start — ${insights.length} insights, ${analysis?.failurePatterns.length ?? 0} failures`)
+  async runCycle(insights: Insight[], analysis: UsageAnalysis | null): Promise<CycleResult> {
+    console.log(
+      `[learning:improvement] cycle start — ${insights.length} insights, ${analysis?.failurePatterns.length ?? 0} failures`,
+    )
     const improvements = this.synthesize(insights, analysis)
     if (improvements.length === 0) {
-      console.log("[learning:improvement] no improvements synthesized — stable")
-      return { status: "stable", analyzed: { insights: insights.length, failures: analysis?.failurePatterns.length ?? 0 }, synthesized: 0, promoted: 0, rejected: 0, improvements: [] }
+      console.log('[learning:improvement] no improvements synthesized — stable')
+      return {
+        status: 'stable',
+        analyzed: { insights: insights.length, failures: analysis?.failurePatterns.length ?? 0 },
+        synthesized: 0,
+        promoted: 0,
+        rejected: 0,
+        improvements: [],
+      }
     }
     console.log(`[learning:improvement] synthesized ${improvements.length} improvements`)
-    let promoted = 0, rejected = 0
-    const results: CycleResult["improvements"] = []
+    let promoted = 0,
+      rejected = 0
+    const results: CycleResult['improvements'] = []
     for (const imp of improvements) {
       console.log(`  → verifying ${imp.id} (${imp.kind} → ${imp.targetFile})`)
       const vr = await this.verify(imp)
-      console.log(`    ${vr.verified ? "VERIFIED" : "REJECTED"}: ${vr.reason}`)
+      console.log(`    ${vr.verified ? 'VERIFIED' : 'REJECTED'}: ${vr.reason}`)
       if (vr.verified) {
         const ok = await this.apply(imp, vr)
         if (ok) promoted++
@@ -336,12 +360,15 @@ export class ImprovementEngine {
         results.push({ id: imp.id, targetFile: imp.targetFile, verified: false })
       }
     }
-    console.log(`[learning:improvement] cycle complete — ${promoted} promoted, ${rejected} rejected`)
+    console.log(
+      `[learning:improvement] cycle complete — ${promoted} promoted, ${rejected} rejected`,
+    )
     return {
-      status: "cycle_complete",
+      status: 'cycle_complete',
       analyzed: { insights: insights.length, failures: analysis?.failurePatterns.length ?? 0 },
       synthesized: improvements.length,
-      promoted, rejected,
+      promoted,
+      rejected,
       improvements: results,
     }
   }
@@ -360,7 +387,7 @@ export interface SkillScaffold {
   /** Proposed skill name (kebab-case, derived from failure signature). */
   name: string
   /** Always UNVERIFIED-DO-NOT-USE until shadow eval + promotion. */
-  status: "UNVERIFIED-DO-NOT-USE"
+  status: 'UNVERIFIED-DO-NOT-USE'
   /** Draft SKILL.md body (frontmatter + instructions), human-review required. */
   scaffold: string
   /** Staged mira.json patch object — review-only, NEVER written by the hook. */
@@ -368,7 +395,7 @@ export interface SkillScaffold {
   /** Shadow-eval gate state: pending until verify() passes (fail-closed). */
   evalGate: {
     required: boolean
-    status: "pending-shadow-eval" | "verified" | "rejected"
+    status: 'pending-shadow-eval' | 'verified' | 'rejected'
     command: string
     detail?: string
   }
@@ -382,107 +409,123 @@ const SKILL_SCAFFOLD_NAME_RE = /^[a-z0-9-]+$/
  * UNVERIFIED-DO-NOT-USE and evalGate starts pending-shadow-eval.
  */
 export function draftSkillScaffold(failingSummary: string, goal: string): SkillScaffold {
-  const slugBase = failingSummary
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 32) || "orchestrate-recovery"
-  const name = `orchestrate-${slugBase}`.slice(0, 40).replace(/-+$/g, "") || "orchestrate-recovery"
-  const safeName = SKILL_SCAFFOLD_NAME_RE.test(name) ? name : "orchestrate-recovery"
+  const slugBase =
+    failingSummary
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 32) || 'orchestrate-recovery'
+  const name = `orchestrate-${slugBase}`.slice(0, 40).replace(/-+$/g, '') || 'orchestrate-recovery'
+  const safeName = SKILL_SCAFFOLD_NAME_RE.test(name) ? name : 'orchestrate-recovery'
   const shortGoal = goal.slice(0, 200)
   const shortSummary = failingSummary.slice(0, 800)
   const scaffold = [
-    "---",
+    '---',
     `name: ${safeName}`,
-    "status: UNVERIFIED-DO-NOT-USE",
-    "description: Draft skill from orchestrate wave failure — human review + shadow eval required before use.",
-    "---",
-    "",
+    'status: UNVERIFIED-DO-NOT-USE',
+    'description: Draft skill from orchestrate wave failure — human review + shadow eval required before use.',
+    '---',
+    '',
     `# ${safeName} (UNVERIFIED — DO NOT USE)`,
-    "",
+    '',
     `Goal that failed: ${shortGoal}`,
-    "",
-    "## Failing signature",
-    "",
+    '',
+    '## Failing signature',
+    '',
     shortSummary,
-    "",
-    "## Recovery checklist (draft — verify each step)",
-    "",
-    "- [ ] Reproduce the failing node prompt in isolation",
-    "- [ ] Confirm retry-once + skip-downstream behaved as expected",
-    "- [ ] Narrow contextFrom to the minimal upstream summaries",
-    "- [ ] Split tightly-coupled nodes into one task",
-    "",
-    "> Human Review Required — candidate is UNVERIFIED-DO-NOT-USE until shadow eval + promotion.",
-    "",
-  ].join("\n")
+    '',
+    '## Recovery checklist (draft — verify each step)',
+    '',
+    '- [ ] Reproduce the failing node prompt in isolation',
+    '- [ ] Confirm retry-once + skip-downstream behaved as expected',
+    '- [ ] Narrow contextFrom to the minimal upstream summaries',
+    '- [ ] Split tightly-coupled nodes into one task',
+    '',
+    '> Human Review Required — candidate is UNVERIFIED-DO-NOT-USE until shadow eval + promotion.',
+    '',
+  ].join('\n')
   const miraPatch: JsonValue = {
     skills: {
       [safeName]: {
         description: `Draft from orchestrate wave failure (${shortGoal.slice(0, 80)}) — UNVERIFIED-DO-NOT-USE`,
-        status: "UNVERIFIED-DO-NOT-USE",
+        status: 'UNVERIFIED-DO-NOT-USE',
       },
     },
-    _note: "STAGED ONLY — never auto-applied by the hook. Apply manually after shadow eval passes.",
+    _note: 'STAGED ONLY — never auto-applied by the hook. Apply manually after shadow eval passes.',
   }
   return {
     name: safeName,
-    status: "UNVERIFIED-DO-NOT-USE",
+    status: 'UNVERIFIED-DO-NOT-USE',
     scaffold,
     miraPatch,
     evalGate: {
       required: true,
-      status: "pending-shadow-eval",
-      command: "bun test + eval gate (MIRA_EVAL_GATE=1)",
+      status: 'pending-shadow-eval',
+      command: 'bun test + eval gate (MIRA_EVAL_GATE=1)',
     },
   }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-function targetForInsight(ins: Insight): { file: string | null; kind: Improvement["kind"]; verification: string } {
+function targetForInsight(ins: Insight): {
+  file: string | null
+  kind: Improvement['kind']
+  verification: string
+} {
   const cat = ins.category
   const text = `${ins.summary} ${ins.pattern}`.toLowerCase()
   // Route by category + content signals
-  if (cat === "agent-technique" || text.includes("prompt") || text.includes("instruction")) {
-    return { file: "AGENTS.md", kind: "agent-prompt", verification: "markdown non-empty" }
+  if (cat === 'agent-technique' || text.includes('prompt') || text.includes('instruction')) {
+    return { file: 'AGENTS.md', kind: 'agent-prompt', verification: 'markdown non-empty' }
   }
-  if (cat === "tool" || text.includes("tool") || text.includes("mcp")) {
+  if (cat === 'tool' || text.includes('tool') || text.includes('mcp')) {
     // Heuristic: pick most relevant tool file if mentioned, else generic
-    if (text.includes("websearch") || text.includes("webfetch")) return { file: "src/tools/websearch.ts", kind: "tool", verification: "tsc --noEmit" }
-    if (text.includes("memory") || text.includes("retrieval")) return { file: "src/learning/knowledge.ts", kind: "tool", verification: "tsc --noEmit" }
-    return { file: "src/tools/registry.ts", kind: "tool", verification: "tsc --noEmit" }
+    if (text.includes('websearch') || text.includes('webfetch'))
+      return { file: 'src/tools/websearch.ts', kind: 'tool', verification: 'tsc --noEmit' }
+    if (text.includes('memory') || text.includes('retrieval'))
+      return { file: 'src/learning/knowledge.ts', kind: 'tool', verification: 'tsc --noEmit' }
+    return { file: 'src/tools/registry.ts', kind: 'tool', verification: 'tsc --noEmit' }
   }
-  if (cat === "eval-method" || text.includes("eval")) {
-    return { file: "src/learning/usage.ts", kind: "engine", verification: "tsc --noEmit" }
+  if (cat === 'eval-method' || text.includes('eval')) {
+    return { file: 'src/learning/usage.ts', kind: 'engine', verification: 'tsc --noEmit' }
   }
-  if (text.includes("memory") || text.includes("knowledge") || text.includes("retrieval")) {
-    return { file: "src/learning/knowledge.ts", kind: "engine", verification: "tsc --noEmit" }
+  if (text.includes('memory') || text.includes('knowledge') || text.includes('retrieval')) {
+    return { file: 'src/learning/knowledge.ts', kind: 'engine', verification: 'tsc --noEmit' }
   }
-  return { file: "AGENTS.md", kind: "agent-prompt", verification: "markdown non-empty" }
+  return { file: 'AGENTS.md', kind: 'agent-prompt', verification: 'markdown non-empty' }
 }
 
-function targetForFailure(f: FailurePattern): { file: string | null; kind: Improvement["kind"]; verification: string } {
+function targetForFailure(f: FailurePattern): {
+  file: string | null
+  kind: Improvement['kind']
+  verification: string
+} {
   const key = f.key.toLowerCase()
-  if (key.startsWith("bash") || key.startsWith("edit") || key.startsWith("read") || key.startsWith("write")) {
-    const tool = key.split(":")[0]
-    return { file: `src/tools/${tool}.ts`, kind: "tool", verification: "tsc --noEmit" }
+  if (
+    key.startsWith('bash') ||
+    key.startsWith('edit') ||
+    key.startsWith('read') ||
+    key.startsWith('write')
+  ) {
+    const tool = key.split(':')[0]
+    return { file: `src/tools/${tool}.ts`, kind: 'tool', verification: 'tsc --noEmit' }
   }
-  if (key.includes("webfetch") || key.includes("websearch")) {
-    return { file: "src/tools/websearch.ts", kind: "tool", verification: "tsc --noEmit" }
+  if (key.includes('webfetch') || key.includes('websearch')) {
+    return { file: 'src/tools/websearch.ts', kind: 'tool', verification: 'tsc --noEmit' }
   }
-  if (key.includes("doom")) {
-    return { file: "src/session/prompt.ts", kind: "engine", verification: "tsc --noEmit" }
+  if (key.includes('doom')) {
+    return { file: 'src/session/prompt.ts', kind: 'engine', verification: 'tsc --noEmit' }
   }
-  if (key.includes("feedback") || key.includes("workflow")) {
-    return { file: "AGENTS.md", kind: "agent-prompt", verification: "markdown non-empty" }
+  if (key.includes('feedback') || key.includes('workflow')) {
+    return { file: 'AGENTS.md', kind: 'agent-prompt', verification: 'markdown non-empty' }
   }
-  return { file: "src/session/prompt.ts", kind: "engine", verification: "tsc --noEmit" }
+  return { file: 'src/session/prompt.ts', kind: 'engine', verification: 'tsc --noEmit' }
 }
 
 function applyChange(original: string, change: string, targetFile: string): string {
   // Safe generic: append improvement note (RCSI pattern — never rewrites logic)
-  const isMD = targetFile.endsWith(".md")
+  const isMD = targetFile.endsWith('.md')
   const note = isMD
     ? `\n\n<!-- Mira Improvement (${new Date().toISOString().slice(0, 10)}): ${change.slice(0, 300)} -->\n`
     : `\n\n// Mira Improvement (${new Date().toString().slice(0, 10)}): ${change.slice(0, 300)}\n`
@@ -495,13 +538,13 @@ async function syntaxCheck(path: string): Promise<boolean> {
   try {
     const content = await Bun.file(path).text()
     if (content.length < 1) return false
-    // For TS: try to parse with Bun's transpiler (throws on syntax error)
-    if (path.endsWith(".ts") || path.endsWith(".js")) {
-      try { new Function(content) } catch {}
-      // Bun transpiler check
-      const t = new Bun.Transpiler({ loader: "ts" })
+    // For TS/JS: use Bun's transpiler for syntax validation (safe, no code execution)
+    if (path.endsWith('.ts') || path.endsWith('.js')) {
+      const t = new Bun.Transpiler({ loader: path.endsWith('.ts') ? 'ts' : 'js' })
       t.transformSync(content)
     }
     return true
-  } catch { return false }
+  } catch {
+    return false
+  }
 }

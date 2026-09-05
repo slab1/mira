@@ -21,9 +21,9 @@
  *   - Scheduler calls `analyze()` after each session + nightly rollup
  */
 
-import type { Bus } from "../bus/index.js"
-import type { MiraDB } from "../storage/db.js"
-import type { JsonValue } from "../types/index.js"
+import type { Bus } from '../bus/index.js'
+import type { MiraDB } from '../storage/db.js'
+import type { JsonValue } from '../types/index.js'
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -33,7 +33,7 @@ export interface ToolMetric {
   tokensIn?: number
   tokensOut?: number
   isError: boolean
-  errorKind?: string   // e.g. "permission_denied" | "timeout" | "validation"
+  errorKind?: string // e.g. "permission_denied" | "timeout" | "validation"
   sessionID: string
   timestamp: number
 }
@@ -49,17 +49,17 @@ export interface SessionMetric {
   toolErrors: number
   doomLoops: number
   compactionCount: number
-  success: boolean       // true if finished without error/doom-loop
-  userFeedback?: "up" | "down" | null
+  success: boolean // true if finished without error/doom-loop
+  userFeedback?: 'up' | 'down' | null
   createdAt: number
 }
 
 export interface FailurePattern extends Record<string, JsonValue | undefined> {
   id: string
-  kind: "tool" | "model" | "workflow"
-  key: string            // e.g. "bash:timeout" | "edit:validation"
+  kind: 'tool' | 'model' | 'workflow'
+  key: string // e.g. "bash:timeout" | "edit:validation"
   count: number
-  errorRate: number      // 0..1
+  errorRate: number // 0..1
   avgLatencyMs?: number
   example?: string
   suggestion: string
@@ -67,9 +67,9 @@ export interface FailurePattern extends Record<string, JsonValue | undefined> {
 
 export interface SuccessPattern extends Record<string, JsonValue | undefined> {
   id: string
-  key: string            // e.g. "read+edit+bash" (tool sequence)
+  key: string // e.g. "read+edit+bash" (tool sequence)
   count: number
-  successRate: number    // 0..1
+  successRate: number // 0..1
   avgTokens?: number
   suggestion: string
 }
@@ -117,34 +117,35 @@ export class UsageLearner {
     }
     // Wire usage telemetry via bus subscription for backward compatibility
     if (this.deps.bus) {
-      this.deps.bus.subscribe("part.created", (event) => {
-        const part = event.payload as { type?: string; tool?: string; isError?: boolean } | undefined
+      this.deps.bus.subscribe('part.created', (event) => {
+        const part = event.payload as
+          { type?: string; tool?: string; isError?: boolean } | undefined
         if (!part || !part.tool) return
         // Record tool calls / results from bus events with privacy safeguards
         const now = Date.now()
-        if (part.type === "tool-call") {
+        if (part.type === 'tool-call') {
           this.recordTool({
             tool: part.tool,
             durationMs: 0,
             isError: false,
             errorKind: undefined,
-            sessionID: event.sessionID ?? "",
+            sessionID: event.sessionID ?? '',
             timestamp: now,
           }).catch(() => {})
         }
-        if (part.type === "tool-result") {
+        if (part.type === 'tool-result') {
           this.recordTool({
             tool: part.tool,
             durationMs: 0,
             isError: !!part.isError,
-            errorKind: part.isError ? "execution" : undefined,
-            sessionID: event.sessionID ?? "",
+            errorKind: part.isError ? 'execution' : undefined,
+            sessionID: event.sessionID ?? '',
             timestamp: now,
           }).catch(() => {})
         }
       })
       // Record session completion via message.created as proxy
-      this.deps.bus.subscribe("message.created", (event) => {
+      this.deps.bus.subscribe('message.created', (event) => {
         // simple heuristic: if message is assistant, we may close session
         // actual session finish is handled by explicit recordSession call
       })
@@ -153,19 +154,23 @@ export class UsageLearner {
 
   // ── Privacy safeguards ─────────────────────────────────────────────
   private redactSensitive(input: JsonValue): JsonValue {
-    if (typeof input === "string") {
+    if (typeof input === 'string') {
       return input
-        .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[REDACTED_EMAIL]")
-        .replace(/\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g, "[REDACTED_PHONE]")
-        .replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*["']?([^\s"']+)["']?/gi, "$1=[REDACTED]")
+        .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[REDACTED_EMAIL]')
+        .replace(/\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g, '[REDACTED_PHONE]')
+        .replace(
+          /(api[_-]?key|token|secret|password)\s*[:=]\s*["']?([^\s"']+)["']?/gi,
+          '$1=[REDACTED]',
+        )
     }
-    if (Array.isArray(input)) return input.map(v => this.redactSensitive(v as JsonValue)) as JsonValue
-    if (input && typeof input === "object") {
+    if (Array.isArray(input))
+      return input.map((v) => this.redactSensitive(v as JsonValue)) as JsonValue
+    if (input && typeof input === 'object') {
       const out: Record<string, JsonValue> = {}
       for (const [k, v] of Object.entries(input)) {
         const key = k.toLowerCase()
-        if (["password","secret","token","apikey","api_key"].includes(key)) {
-          out[k] = "[REDACTED]"
+        if (['password', 'secret', 'token', 'apikey', 'api_key'].includes(key)) {
+          out[k] = '[REDACTED]'
         } else {
           out[k] = this.redactSensitive(v as JsonValue)
         }
@@ -177,7 +182,7 @@ export class UsageLearner {
 
   private safeResultSize(result: JsonValue): number {
     try {
-      return JSON.stringify(result ?? "").length
+      return JSON.stringify(result ?? '').length
     } catch {
       return 0
     }
@@ -202,21 +207,26 @@ export class UsageLearner {
     if (this.sessionMetrics.length >= 5) {
       const analysis = await this.analyze()
       this.deps.bus?.publish({
-        type: "learning.updated",
-        payload: { kind: "learning.usage.analysis", analysis },
+        type: 'learning.updated',
+        payload: { kind: 'learning.usage.analysis', analysis },
         timestamp: Date.now(),
-        })
+      })
     }
   }
 
   /** Record user feedback (thumbs up/down) for a session */
-  async recordFeedback(sessionID: string, feedback: "up" | "down"): Promise<void> {
-    const m = this.sessionMetrics.find(s => s.sessionID === sessionID)
+  async recordFeedback(sessionID: string, feedback: 'up' | 'down'): Promise<void> {
+    const m = this.sessionMetrics.find((s) => s.sessionID === sessionID)
     if (m) m.userFeedback = feedback
-    if (this.deps.db) {
+    if (this.deps.db?.sqlite) {
       try {
-        this.deps.db.sqlite?.exec(`UPDATE usage_sessions SET user_feedback='${feedback}' WHERE session_id='${sessionID}'`)
-      } catch {}
+        const stmt = this.deps.db.sqlite.prepare(
+          'UPDATE usage_sessions SET user_feedback = ? WHERE session_id = ?',
+        )
+        stmt.run(feedback, sessionID)
+      } catch (e) {
+        console.error('[mira] recordFeedback failed:', e)
+      }
     }
   }
 
@@ -262,17 +272,17 @@ export class UsageLearner {
   getStats(): { sessions: number; toolCalls: number; errorRate: number } {
     const sessions = this.sessionMetrics.length
     const toolCalls = this.toolMetrics.length
-    const errors = this.toolMetrics.filter(t => t.isError).length
+    const errors = this.toolMetrics.filter((t) => t.isError).length
     return { sessions, toolCalls, errorRate: toolCalls ? errors / toolCalls : 0 }
   }
 
   /** Per-session lookup — in-memory first, then DB fallback */
   getSessionMetric(sessionID: string): SessionMetric | undefined {
-    return this.sessionMetrics.find(s => s.sessionID === sessionID)
+    return this.sessionMetrics.find((s) => s.sessionID === sessionID)
   }
 
   getToolMetrics(sessionID: string): ToolMetric[] {
-    return this.toolMetrics.filter(t => t.sessionID === sessionID)
+    return this.toolMetrics.filter((t) => t.sessionID === sessionID)
   }
 
   /** All session metrics (for aggregate score) */
@@ -288,13 +298,22 @@ export class UsageLearner {
     if (!m.success) score -= 15
     if (m.toolCalls > 12) score -= Math.min(15, (m.toolCalls - 12) * 2)
     score += Math.min(memoryHits * 2, 10)
-    if (m.userFeedback === "up") score += 5
-    if (m.userFeedback === "down") score -= 10
+    if (m.userFeedback === 'up') score += 5
+    if (m.userFeedback === 'down') score -= 10
     return Math.max(0, Math.min(100, Math.round(score)))
   }
 
   /** Enhanced per-session score payload (for GET /learning/score) */
-  getScorePayload(sessionID: string, opts: { memoryHits?: number; costUSD?: number; traceId?: string; spanId?: string; requestId?: string } = {}): Record<string, unknown> | null {
+  getScorePayload(
+    sessionID: string,
+    opts: {
+      memoryHits?: number
+      costUSD?: number
+      traceId?: string
+      spanId?: string
+      requestId?: string
+    } = {},
+  ): Record<string, unknown> | null {
     const m = this.getSessionMetric(sessionID)
     if (!m) return null
     const memoryHits = opts.memoryHits ?? 0
@@ -310,7 +329,7 @@ export class UsageLearner {
       memoryHits,
       traceId: opts.traceId ?? `trace_${m.sessionID.slice(0, 8)}_${m.createdAt.toString(36)}`,
       spanId: opts.spanId ?? `span_${m.sessionID.slice(0, 8)}`,
-      requestId: opts.requestId ?? "",
+      requestId: opts.requestId ?? '',
       durationMs: m.latencyMs,
       latencyMs: m.latencyMs,
       model: m.model,
@@ -322,7 +341,15 @@ export class UsageLearner {
       compactionCount: m.compactionCount,
       userFeedback: m.userFeedback ?? null,
       createdAt: m.createdAt,
-      toolMetrics: tools.slice(-20).map(t => ({ tool: t.tool, durationMs: t.durationMs, isError: t.isError, errorKind: t.errorKind, timestamp: t.timestamp })),
+      toolMetrics: tools
+        .slice(-20)
+        .map((t) => ({
+          tool: t.tool,
+          durationMs: t.durationMs,
+          isError: t.isError,
+          errorKind: t.errorKind,
+          timestamp: t.timestamp,
+        })),
     }
   }
 
@@ -333,7 +360,7 @@ export class UsageLearner {
     // Group tool errors by tool + errorKind
     const groups = new Map<string, ToolMetric[]>()
     for (const t of tools) {
-      const key = t.isError ? `${t.tool}:${t.errorKind ?? "error"}` : `${t.tool}:ok`
+      const key = t.isError ? `${t.tool}:${t.errorKind ?? 'error'}` : `${t.tool}:ok`
       if (!groups.has(key)) groups.set(key, [])
       groups.get(key)!.push(t)
     }
@@ -344,44 +371,48 @@ export class UsageLearner {
       byTool.get(t.tool)!.push(t)
     }
     for (const [tool, arr] of byTool) {
-      const errors = arr.filter(x => x.isError).length
+      const errors = arr.filter((x) => x.isError).length
       const rate = arr.length ? errors / arr.length : 0
       if (arr.length >= this.config.minCount && rate >= this.config.failureRateThreshold) {
-        const dominantKind = mostCommon(arr.filter(x => x.isError).map(x => x.errorKind ?? "error"))
+        const dominantKind = mostCommon(
+          arr.filter((x) => x.isError).map((x) => x.errorKind ?? 'error'),
+        )
         patterns.push({
           id: `fail_${tool}_${Date.now().toString(36)}`,
-          kind: "tool",
-          key: `${tool}:${dominantKind ?? "error"}`,
+          kind: 'tool',
+          key: `${tool}:${dominantKind ?? 'error'}`,
           count: errors,
           errorRate: round(rate, 2),
-          avgLatencyMs: avg(arr.map(x => x.durationMs)),
-          example: arr.find(x => x.isError)?.errorKind,
-          suggestion: suggestFixForTool(tool, dominantKind ?? "error", rate),
+          avgLatencyMs: avg(arr.map((x) => x.durationMs)),
+          example: arr.find((x) => x.isError)?.errorKind,
+          suggestion: suggestFixForTool(tool, dominantKind ?? 'error', rate),
         })
       }
     }
     // Doom-loop / workflow failures from sessions
-    const doomCount = sessions.filter(s => s.doomLoops > 0).length
+    const doomCount = sessions.filter((s) => s.doomLoops > 0).length
     if (doomCount >= 2) {
       patterns.push({
         id: `fail_workflow_doomloop_${Date.now().toString(36)}`,
-        kind: "workflow",
-        key: "workflow:doom-loop",
+        kind: 'workflow',
+        key: 'workflow:doom-loop',
         count: doomCount,
         errorRate: round(doomCount / Math.max(1, sessions.length), 2),
-        suggestion: "Doom-loop detected in ≥2 sessions. Tighten doom-detector threshold or add tool-call deduplication in SessionPrompt.",
+        suggestion:
+          'Doom-loop detected in ≥2 sessions. Tighten doom-detector threshold or add tool-call deduplication in SessionPrompt.',
       })
     }
     // Thumbs-down feedback
-    const downs = sessions.filter(s => s.userFeedback === "down").length
+    const downs = sessions.filter((s) => s.userFeedback === 'down').length
     if (downs >= 2) {
       patterns.push({
         id: `fail_workflow_feedback_${Date.now().toString(36)}`,
-        kind: "workflow",
-        key: "workflow:negative-feedback",
+        kind: 'workflow',
+        key: 'workflow:negative-feedback',
         count: downs,
         errorRate: round(downs / Math.max(1, sessions.length), 2),
-        suggestion: "Multiple negative feedback signals. Review recent session transcripts for user intent mismatch; consider prompt or tool-selection tuning.",
+        suggestion:
+          'Multiple negative feedback signals. Review recent session transcripts for user intent mismatch; consider prompt or tool-selection tuning.',
       })
     }
     return patterns.sort((a, b) => b.errorRate - a.errorRate).slice(0, 8)
@@ -389,7 +420,7 @@ export class UsageLearner {
 
   private findSuccessPatterns(tools: ToolMetric[], sessions: SessionMetric[]): SuccessPattern[] {
     // Successful tool sequences (bigrams/trigrams) in sessions that succeeded
-    const successSessions = sessions.filter(s => s.success)
+    const successSessions = sessions.filter((s) => s.success)
     if (successSessions.length < 3) return []
     // For simplicity, use in-memory tool order per session
     const seqCount = new Map<string, number>()
@@ -401,7 +432,7 @@ export class UsageLearner {
       bySession.get(t.sessionID)!.push(t)
     }
     for (const s of sessions) {
-      const seq = (bySession.get(s.sessionID) ?? []).map(t => t.tool).join("+")
+      const seq = (bySession.get(s.sessionID) ?? []).map((t) => t.tool).join('+')
       if (!seq) continue
       seqCount.set(seq, (seqCount.get(seq) ?? 0) + 1)
       if (s.success) seqSuccess.set(seq, (seqSuccess.get(seq) ?? 0) + 1)
@@ -424,18 +455,18 @@ export class UsageLearner {
     return patterns.sort((a, b) => b.successRate - a.successRate).slice(0, 5)
   }
 
-  private computeToolStats(tools: ToolMetric[]): UsageAnalysis["toolStats"] {
-    const out: UsageAnalysis["toolStats"] = {}
+  private computeToolStats(tools: ToolMetric[]): UsageAnalysis['toolStats'] {
+    const out: UsageAnalysis['toolStats'] = {}
     const byTool = new Map<string, ToolMetric[]>()
     for (const t of tools) {
       if (!byTool.has(t.tool)) byTool.set(t.tool, [])
       byTool.get(t.tool)!.push(t)
     }
     for (const [tool, arr] of byTool) {
-      const sorted = arr.map(x => x.durationMs).sort((a, b) => a - b)
+      const sorted = arr.map((x) => x.durationMs).sort((a, b) => a - b)
       out[tool] = {
         count: arr.length,
-        errorRate: round(arr.filter(x => x.isError).length / arr.length, 3),
+        errorRate: round(arr.filter((x) => x.isError).length / arr.length, 3),
         p50Ms: percentile(sorted, 0.5),
         p95Ms: percentile(sorted, 0.95),
       }
@@ -443,8 +474,8 @@ export class UsageLearner {
     return out
   }
 
-  private computeModelStats(sessions: SessionMetric[]): UsageAnalysis["modelStats"] {
-    const out: UsageAnalysis["modelStats"] = {}
+  private computeModelStats(sessions: SessionMetric[]): UsageAnalysis['modelStats'] {
+    const out: UsageAnalysis['modelStats'] = {}
     const byModel = new Map<string, SessionMetric[]>()
     for (const s of sessions) {
       if (!byModel.has(s.model)) byModel.set(s.model, [])
@@ -453,8 +484,8 @@ export class UsageLearner {
     for (const [model, arr] of byModel) {
       out[model] = {
         sessions: arr.length,
-        successRate: round(arr.filter(x => x.success).length / arr.length, 3),
-        avgTokens: Math.round(avg(arr.map(x => x.totalTokensIn + x.totalTokensOut))),
+        successRate: round(arr.filter((x) => x.success).length / arr.length, 3),
+        avgTokens: Math.round(avg(arr.map((x) => x.totalTokensIn + x.totalTokensOut))),
       }
     }
     return out
@@ -477,10 +508,20 @@ export class UsageLearner {
       );
       CREATE INDEX IF NOT EXISTS usage_tools_tool_idx ON usage_tools(tool);
     `)
-    sqlite.prepare(
-      `INSERT OR IGNORE INTO usage_tools (id, session_id, tool, duration_ms, is_error, error_kind, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(crypto.randomUUID(), m.sessionID, m.tool, m.durationMs, m.isError ? 1 : 0, m.errorKind ?? null, m.timestamp)
+    sqlite
+      .prepare(
+        `INSERT OR IGNORE INTO usage_tools (id, session_id, tool, duration_ms, is_error, error_kind, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        crypto.randomUUID(),
+        m.sessionID,
+        m.tool,
+        m.durationMs,
+        m.isError ? 1 : 0,
+        m.errorKind ?? null,
+        m.timestamp,
+      )
   }
 
   private async persistSession(m: SessionMetric): Promise<void> {
@@ -502,11 +543,26 @@ export class UsageLearner {
         created_at INTEGER NOT NULL
       );
     `)
-    sqlite.prepare(
-      `INSERT OR REPLACE INTO usage_sessions
+    sqlite
+      .prepare(
+        `INSERT OR REPLACE INTO usage_sessions
        (session_id, model, steps, total_tokens_in, total_tokens_out, latency_ms, tool_calls, tool_errors, doom_loops, success, user_feedback, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(m.sessionID, m.model, m.steps, m.totalTokensIn, m.totalTokensOut, m.latencyMs, m.toolCalls, m.toolErrors, m.doomLoops, m.success ? 1 : 0, m.userFeedback ?? null, m.createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        m.sessionID,
+        m.model,
+        m.steps,
+        m.totalTokensIn,
+        m.totalTokensOut,
+        m.latencyMs,
+        m.toolCalls,
+        m.toolErrors,
+        m.doomLoops,
+        m.success ? 1 : 0,
+        m.userFeedback ?? null,
+        m.createdAt,
+      )
   }
 
   private async persistAnalysis(a: UsageAnalysis): Promise<void> {
@@ -519,7 +575,8 @@ export class UsageLearner {
         created_at INTEGER NOT NULL
       );
     `)
-    sqlite.prepare(`INSERT INTO usage_analyses (id, payload, created_at) VALUES (?, ?, ?)`)
+    sqlite
+      .prepare(`INSERT INTO usage_analyses (id, payload, created_at) VALUES (?, ?, ?)`)
       .run(crypto.randomUUID(), JSON.stringify(a), a.generatedAt)
   }
 
@@ -527,23 +584,66 @@ export class UsageLearner {
     const sqlite = this.deps.db?.sqlite
     if (!sqlite) return null
     try {
-      interface UsageToolRow { tool: string; duration_ms: number; is_error: number; error_kind?: string; session_id: string; created_at: number }
-      const tools = (sqlite.prepare(`SELECT * FROM usage_tools ORDER BY created_at DESC LIMIT 500`).all() as UsageToolRow[]).map(r => ({
-        tool: r.tool, durationMs: r.duration_ms, isError: !!r.is_error, errorKind: r.error_kind,
-        sessionID: r.session_id, timestamp: r.created_at,
+      interface UsageToolRow {
+        tool: string
+        duration_ms: number
+        is_error: number
+        error_kind?: string
+        session_id: string
+        created_at: number
+      }
+      const tools = (
+        sqlite
+          .prepare(`SELECT * FROM usage_tools ORDER BY created_at DESC LIMIT 500`)
+          .all() as UsageToolRow[]
+      ).map((r) => ({
+        tool: r.tool,
+        durationMs: r.duration_ms,
+        isError: !!r.is_error,
+        errorKind: r.error_kind,
+        sessionID: r.session_id,
+        timestamp: r.created_at,
       }))
-      type SessionRow = { session_id: string; model: string; steps: number; total_tokens_in: number; total_tokens_out: number; latency_ms: number; tool_calls: number; tool_errors: number; doom_loops?: number; compaction_count?: number; success: number; user_feedback?: string | null; created_at: number }
-      const sessions: SessionMetric[] = (sqlite.prepare(`SELECT * FROM usage_sessions ORDER BY created_at DESC LIMIT 200`).all() as SessionRow[]).map(r => ({
-        sessionID: r.session_id, model: r.model, steps: r.steps,
-        totalTokensIn: r.total_tokens_in, totalTokensOut: r.total_tokens_out,
-        latencyMs: r.latency_ms, toolCalls: r.tool_calls, toolErrors: r.tool_errors,
-        doomLoops: r.doom_loops ?? 0, compactionCount: r.compaction_count ?? 0, success: !!r.success,
-        userFeedback: r.user_feedback === "up" || r.user_feedback === "down" ? r.user_feedback : null,
+      type SessionRow = {
+        session_id: string
+        model: string
+        steps: number
+        total_tokens_in: number
+        total_tokens_out: number
+        latency_ms: number
+        tool_calls: number
+        tool_errors: number
+        doom_loops?: number
+        compaction_count?: number
+        success: number
+        user_feedback?: string | null
+        created_at: number
+      }
+      const sessions: SessionMetric[] = (
+        sqlite
+          .prepare(`SELECT * FROM usage_sessions ORDER BY created_at DESC LIMIT 200`)
+          .all() as SessionRow[]
+      ).map((r) => ({
+        sessionID: r.session_id,
+        model: r.model,
+        steps: r.steps,
+        totalTokensIn: r.total_tokens_in,
+        totalTokensOut: r.total_tokens_out,
+        latencyMs: r.latency_ms,
+        toolCalls: r.tool_calls,
+        toolErrors: r.tool_errors,
+        doomLoops: r.doom_loops ?? 0,
+        compactionCount: r.compaction_count ?? 0,
+        success: !!r.success,
+        userFeedback:
+          r.user_feedback === 'up' || r.user_feedback === 'down' ? r.user_feedback : null,
         createdAt: r.created_at,
       }))
       // Return ascending for analysis window slicing
       return { tools: tools.reverse(), sessions: sessions.reverse() }
-    } catch { return null }
+    } catch {
+      return null
+    }
   }
 }
 
@@ -563,14 +663,22 @@ function round(n: number, d: number): number {
 function mostCommon(arr: string[]): string | undefined {
   const c = new Map<string, number>()
   for (const x of arr) c.set(x, (c.get(x) ?? 0) + 1)
-  let best: string | undefined, max = 0
-  for (const [k, v] of c) if (v > max) { max = v; best = k }
+  let best: string | undefined,
+    max = 0
+  for (const [k, v] of c)
+    if (v > max) {
+      max = v
+      best = k
+    }
   return best
 }
 function suggestFixForTool(tool: string, kind: string, rate: number): string {
   const pct = Math.round(rate * 100)
-  if (tool === "bash" && kind === "timeout") return `bash timeout at ${pct}% error rate — increase timeout, add retry, or split long commands.`
-  if (tool === "edit" && kind.includes("valid")) return `edit validation failing (${pct}%) — add pre-read hash check or tighten schema.`
-  if (tool === "webfetch" && kind.includes("fetch")) return `webfetch failing (${pct}%) — add retry with backoff, check allow-list.`
+  if (tool === 'bash' && kind === 'timeout')
+    return `bash timeout at ${pct}% error rate — increase timeout, add retry, or split long commands.`
+  if (tool === 'edit' && kind.includes('valid'))
+    return `edit validation failing (${pct}%) — add pre-read hash check or tighten schema.`
+  if (tool === 'webfetch' && kind.includes('fetch'))
+    return `webfetch failing (${pct}%) — add retry with backoff, check allow-list.`
   return `${tool} error "${kind}" at ${pct}% — review tool impl and add guard/retry or permission hint.`
 }
