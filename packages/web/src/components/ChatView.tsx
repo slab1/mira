@@ -830,16 +830,41 @@ export function ChatView(props: {
                                           )
                                         }
                                       >
-                                        <div
-                                          style={{
-                                            'margin-top': '8px',
-                                            display: 'flex',
-                                            'flex-direction': 'column',
-                                            gap: '5px',
-                                            'align-items': 'flex-start',
-                                          }}
-                                        >
-                                          <For each={m.parts}>
+                                        {() => {
+                                          const calls = m.parts?.filter(p => p.type === 'tool_call') ?? []
+                                          const results = m.parts?.filter(p => p.type === 'tool_result') ?? []
+                                          const counts = new Map<string, number>()
+                                          for (const p of calls) {
+                                            const t = p.tool ?? 'unknown'
+                                            counts.set(t, (counts.get(t) ?? 0) + 1)
+                                          }
+                                          const summary = Array.from(counts.entries())
+                                            .map(([t, c]) => `${c} ${t}`)
+                                            .join(', ')
+                                          return (
+                                            <>
+                                              <div
+                                                style={{
+                                                  'font-size': 'var(--fs-2xs)',
+                                                  color: 'var(--fg-faint)',
+                                                  'margin-top': '6px',
+                                                  'margin-bottom': '4px',
+                                                  'font-family': 'var(--font-mono)',
+                                                }}
+                                              >
+                                                {summary || `${calls.length} tool${calls.length===1?'':'s'}`}
+                                                {calls.length > 0 ? ` · ${results.length} result${results.length===1?'':'s'}` : ''}
+                                              </div>
+                                              <div
+                                                style={{
+                                                  'margin-top': '8px',
+                                                  display: 'flex',
+                                                  'flex-direction': 'column',
+                                                  gap: '5px',
+                                                  'align-items': 'flex-start',
+                                                }}
+                                              >
+                                                <For each={m.parts}>
                                             {(p) => (
                                               <Show
                                                 when={
@@ -851,7 +876,10 @@ export function ChatView(props: {
                                             )}
                                           </For>
                                         </div>
-                                      </Show>
+                                      </>
+                                    )
+                                  }}
+                                </Show>
                                     </div>
                                   </div>
                                 </Show>
