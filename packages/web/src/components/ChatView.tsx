@@ -135,6 +135,8 @@ function FencedContent(props: { text: string; isUser?: boolean }) {
 /** Inline tool-call chip — special-cases edit/write/patch as unified diff (red/green). */
 function ToolChip(props: { part: Part }) {
   const [open, setOpen] = createSignal(false)
+  const [audit, setAudit] = createSignal<{ decision: 'allow' | 'deny' | 'warn'; reason?: string } | null>(null)
+  const [auditLoading, setAuditLoading] = createSignal(false)
   const isCall = () => props.part.type === 'tool_call'
   const tool = () => props.part.tool ?? ''
   const input = () => props.part.input as Record<string, string> | undefined
@@ -164,6 +166,20 @@ function ToolChip(props: { part: Part }) {
       return `patch ${String(inp.patch).split('\n').length} lines`
     return ''
   }
+
+  createEffect(async () => {
+    if (open() && isCall() && tool()) {
+      setAuditLoading(true)
+      try {
+        const res = await api.checkGuardrails({ tool: tool(), args: props.part.input as Record<string, unknown> })
+        setAudit({ decision: res.decision, reason: res.reason })
+      } catch {
+        setAudit(null)
+      } finally {
+        setAuditLoading(false)
+      }
+    }
+  })
 
   return (
     <div>
@@ -203,6 +219,35 @@ function ToolChip(props: { part: Part }) {
         <span class="chip-chevron">▶</span>
       </button>
       <Show when={open()}>
+        <Show when={auditLoading()}>
+          <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-faint)', 'margin': '4px 0' }}>Checking guardrails…</div>
+        </Show>
+        <Show when={audit()}>
+          <div
+            style={{
+              margin: '4px 0',
+              padding: '6px 8px',
+              'border-radius': '6px',
+              'font-size': 'var(--fs-xs)',
+              background:
+                audit()?.decision === 'allow'
+                  ? 'color-mix(in srgb, var(--ok) 10%, transparent)'
+                  : audit()?.decision === 'deny'
+                    ? 'color-mix(in srgb, var(--danger) 10%, transparent)'
+                    : 'color-mix(in srgb, var(--warn) 10%, transparent)',
+              color:
+                audit()?.decision === 'allow'
+                  ? 'var(--ok)'
+                  : audit()?.decision === 'deny'
+                    ? 'var(--danger)'
+                    : 'var(--warn)',
+              border: '1px solid var(--border)',
+            }}
+          >
+            Guardrail: <b>{audit()?.decision}</b>
+            {audit()?.reason ? ` — ${audit()?.reason}` : ''}
+          </div>
+        </Show>
         <Show
           when={isDiffTool()}
           fallback={
