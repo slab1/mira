@@ -15,6 +15,8 @@ set -uo pipefail
 MIRA_ENV="${HOME}/.mira/mira.env"
 LOG_DIR="${HOME}/.mira"
 PORT="${MIRA_PORT:-4096}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 CF_PID="${LOG_DIR}/cloudflared.pid"
 CF_LOG="${LOG_DIR}/cloudflared.log"
 SRV_PID="${LOG_DIR}/mira.pid"
@@ -29,7 +31,7 @@ alive() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
 start_server() {
   if curl -sf "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1; then return 0; fi
   echo "[watchdog $(date -u +%H:%M:%S)] server down — restarting"
-  setsid bash -c "set -a; . ${MIRA_ENV}; set +a; export HOST=127.0.0.1 PORT=${PORT} CORS_ORIGINS=https://slab1.github.io; cd /workspace/mira; exec bun packages/server/src/index.ts" >>"${SRV_LOG}" 2>&1 </dev/null &
+  setsid bash -c "set -a; . ${MIRA_ENV}; set +a; export HOST=127.0.0.1 PORT=${PORT} CORS_ORIGINS=https://slab1.github.io; cd ${REPO_ROOT}; exec bun packages/server/src/index.ts" >>"${SRV_LOG}" 2>&1 </dev/null &
   echo $! > "${SRV_PID}"
 }
 
@@ -59,6 +61,8 @@ start_tunnel() {
 sync_pages() {
   local url="$1"
   echo "[watchdog $(date -u +%H:%M:%S)] syncing VITE_API_URL + redeploy Pages"
+  # Run git ops from the repo root regardless of where the watchdog was started
+  cd "${REPO_ROOT}" || { echo "[watchdog] cannot cd to ${REPO_ROOT}"; return 1; }
   local current
   current=$(grep -oP 'VITE_API_URL: \K.*' .github/workflows/pages.yml 2>/dev/null | tr -d '"' | tr -d "'" | xargs)
   if [ "$current" = "$url" ]; then

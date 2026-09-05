@@ -32,7 +32,7 @@ export type Session = {
 export type Message = {
   id: string
   sessionId: string
-  role: "user" | "assistant" | "system" | "tool"
+  role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
   parts?: Part[]
   createdAt: string
@@ -40,10 +40,11 @@ export type Message = {
   queued?: boolean
 }
 
-export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
+export type JsonValue =
+  string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
 
 export type Part = {
-  type: "text" | "tool_call" | "tool_result" | "reasoning"
+  type: 'text' | 'tool_call' | 'tool_result' | 'reasoning'
   text?: string
   tool?: string
   input?: JsonValue
@@ -53,7 +54,7 @@ export type Part = {
 export type Todo = {
   id: string
   content: string
-  status: "pending" | "in_progress" | "completed" | "cancelled"
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
   priority?: string
 }
 
@@ -87,10 +88,10 @@ export type Finding = {
   id: string
   sessionID: string | null
   source: string
-  severity: "info" | "minor" | "major" | "critical"
+  severity: 'info' | 'minor' | 'major' | 'critical'
   title: string
   evidence: string | null
-  status: "open" | "resolved"
+  status: 'open' | 'resolved'
   createdAt: number
   updatedAt: number
   resolvedAt: number | null
@@ -102,7 +103,7 @@ export type Job = {
   childSessionID: string | null
   agent: string | null
   prompt: string
-  status: "running" | "completed" | "failed" | "cancelled"
+  status: 'running' | 'completed' | 'failed' | 'cancelled'
   result: string | null
   error: string | null
   createdAt: number
@@ -117,7 +118,7 @@ export type BusEvent = {
 }
 
 // ── Settings types ─────────────────────────────────────────────────
-export type ThemeChoice = "light" | "dark" | "system"
+export type ThemeChoice = 'light' | 'dark' | 'system'
 
 export type MiraConfig = {
   model: string
@@ -134,14 +135,22 @@ export type MiraConfig = {
   }
   mcp: Record<string, MCPServerConfig>
   provider: Record<string, ProviderConfig>
-  agents?: Record<string, { system: string; description?: string; tools?: string[]; permissions?: string }>
-  loop?: { maxSteps?: number; contextLimit?: number; compactionThreshold?: number; smallModel?: string }
+  agents?: Record<
+    string,
+    { system: string; description?: string; tools?: string[]; permissions?: string }
+  >
+  loop?: {
+    maxSteps?: number
+    contextLimit?: number
+    compactionThreshold?: number
+    smallModel?: string
+  }
   features?: Record<string, boolean>
   tools?: Record<string, JsonValue>
 }
 
 export type MCPServerConfig = {
-  type: "local" | "remote"
+  type: 'local' | 'remote'
   command?: string[]
   url?: string
   enabled: boolean
@@ -157,7 +166,10 @@ export type ProviderConfig = {
 }
 
 export type ConfigSchema = {
-  properties?: Record<string, { type: string; description?: string; default?: JsonValue; enum?: string[] }>
+  properties?: Record<
+    string,
+    { type: string; description?: string; default?: JsonValue; enum?: string[] }
+  >
   required?: string[]
 }
 
@@ -166,14 +178,14 @@ export type ProviderEntry = {
   name: string
   maskedKey?: string
   baseURL?: string
-  status?: "ok" | "error" | "unknown"
+  status?: 'ok' | 'error' | 'unknown'
   models?: string[]
 }
 
 export type MCPServerEntry = {
   name: string
   type: string
-  status: "connected" | "error" | "disabled" | "unknown"
+  status: 'connected' | 'error' | 'disabled' | 'unknown'
   toolCount: number
   tools: Array<{ name: string; description: string }>
   error?: string
@@ -192,7 +204,7 @@ export type CommandEntry = {
   name: string
   description: string
   content?: string
-  source: "command" | "skill"
+  source: 'command' | 'skill'
 }
 
 export type SkillEntry = {
@@ -213,7 +225,7 @@ export type GraphNode = {
   updatedAt: number
   lastAccessedAt: number
   accessCount: number
-  kind: "knowledge" | "finding"
+  kind: 'knowledge' | 'finding'
   severity?: string
   status?: string
 }
@@ -221,7 +233,7 @@ export type GraphNode = {
 export type GraphEdge = {
   from: string
   to: string
-  kind: "related" | "entity" | "finding"
+  kind: 'related' | 'entity' | 'finding'
   label?: string
 }
 
@@ -230,32 +242,40 @@ export type KnowledgeGraph = {
   edges: GraphEdge[]
 }
 
-const API_URL_KEY = "mira_api_url"
+const API_URL_KEY = 'mira_api_url'
 
 function getEnvBase(): string {
   try {
     const env = (import.meta as { env?: Record<string, string> }).env
-    return env?.VITE_API_URL ?? ""
+    return env?.VITE_API_URL ?? ''
   } catch {
-    return ""
+    return ''
   }
 }
 
+let runtimeApiUrlWarned = false
 function getRuntimeApiUrl(): string {
   try {
     // 1. Explicit user override (survives rebuilds, fixes ephemeral trycloudflare URL without redeploy)
-    const stored = typeof window !== "undefined" ? window.localStorage.getItem(API_URL_KEY) : null
-    if (stored && stored.trim()) return stored.trim().replace(/\/$/, "")
+    const stored = typeof window !== 'undefined' ? window.localStorage.getItem(API_URL_KEY) : null
+    if (stored && stored.trim()) return stored.trim().replace(/\/$/, '')
     // 2. URL query param ?api=https://... (shareable link)
-    if (typeof window !== "undefined") {
-      const q = new URLSearchParams(window.location.search).get("api")
-      if (q && q.trim()) return q.trim().replace(/\/$/, "")
+    if (typeof window !== 'undefined') {
+      const q = new URLSearchParams(window.location.search).get('api')
+      if (q && q.trim()) return q.trim().replace(/\/$/, '')
       // 3. Window-injected (for runtime-config.json or watchdog)
       const w = window as { __MIRA_API_URL?: string }
-      if (w.__MIRA_API_URL && w.__MIRA_API_URL.trim()) return w.__MIRA_API_URL.trim().replace(/\/$/, "")
+      if (w.__MIRA_API_URL && w.__MIRA_API_URL.trim())
+        return w.__MIRA_API_URL.trim().replace(/\/$/, '')
     }
-  } catch {}
-  return ""
+  } catch (e) {
+    // localStorage/query-string access can throw (SSR, storage disabled) — log once, keep baked default.
+    if (!runtimeApiUrlWarned) {
+      runtimeApiUrlWarned = true
+      console.warn('[mira] getRuntimeApiUrl() unavailable, using baked default', e)
+    }
+  }
+  return ''
 }
 
 export function getApiUrl(): string {
@@ -264,27 +284,33 @@ export function getApiUrl(): string {
 
 export function setApiUrl(url: string): void {
   try {
-    const trimmed = url.trim().replace(/\/$/, "")
+    const trimmed = url.trim().replace(/\/$/, '')
     if (trimmed) window.localStorage.setItem(API_URL_KEY, trimmed)
     else window.localStorage.removeItem(API_URL_KEY)
-    try { window.dispatchEvent(new CustomEvent("mira:api-url-change", { detail: { url: trimmed } })) } catch {}
+    try {
+      window.dispatchEvent(new CustomEvent('mira:api-url-change', { detail: { url: trimmed } }))
+    } catch {}
   } catch {}
 }
 
 export function clearApiUrl(): void {
-  try { window.localStorage.removeItem(API_URL_KEY) } catch {}
-  try { window.dispatchEvent(new CustomEvent("mira:api-url-change", { detail: { url: "" } })) } catch {}
+  try {
+    window.localStorage.removeItem(API_URL_KEY)
+  } catch {}
+  try {
+    window.dispatchEvent(new CustomEvent('mira:api-url-change', { detail: { url: '' } }))
+  } catch {}
 }
 
 function baseUrl(): string {
   const runtime = getRuntimeApiUrl()
   if (runtime) return runtime
   const raw = getEnvBase()
-  if (raw) return raw.replace(/\/$/, "")
+  if (raw) return raw.replace(/\/$/, '')
   // dev proxy: relative urls go through Vite proxy to :4096
   // prod: same origin unless VITE_API_URL set
-  if (typeof window !== "undefined" && window.location.port === "3000") return ""
-  return "http://127.0.0.1:4096"
+  if (typeof window !== 'undefined' && window.location.port === '3000') return ''
+  return 'http://127.0.0.1:4096'
 }
 
 // ── Auth (bearer token; servers with MIRA_TOKEN/MIRA_API_KEYS require it) ──
@@ -294,14 +320,14 @@ function baseUrl(): string {
 //  2. Vite env `VITE_MIRA_TOKEN` — dev fallback from packages/web/.env (getToken() fallback).
 // Server side: ~/.mira/mira.env  →  MIRA_TOKEN=…  (sourced + exported by scripts/serve-local.sh:10)
 //  then `scripts/serve-local.sh start` restarts the server. req() clears on 401 via clearTokenOn401.
-const TOKEN_KEY = "mira_token"
+const TOKEN_KEY = 'mira_token'
 
 export class ApiError extends Error {
   status: number
   body: string
-  constructor(status: number, message: string, body = "") {
+  constructor(status: number, message: string, body = '') {
     super(message)
-    this.name = "ApiError"
+    this.name = 'ApiError'
     this.status = status
     this.body = body
   }
@@ -312,8 +338,10 @@ export function getToken(): string {
     const stored = localStorage.getItem(TOKEN_KEY)
     if (stored) return stored
     // dev fallback from Vite env
-    return (import.meta.env.VITE_MIRA_TOKEN as string) ?? ""
-  } catch { return "" }
+    return (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
+  } catch {
+    return ''
+  }
 }
 
 export function setToken(token: string): void {
@@ -322,7 +350,7 @@ export function setToken(token: string): void {
     else localStorage.removeItem(TOKEN_KEY)
     // notify same-tab listeners (storage event only fires cross-tab)
     try {
-      window.dispatchEvent(new CustomEvent("mira:token-change", { detail: { token } }))
+      window.dispatchEvent(new CustomEvent('mira:token-change', { detail: { token } }))
     } catch {}
   } catch {}
 }
@@ -332,35 +360,41 @@ export function clearTokenOn401(): void {
     localStorage.removeItem(TOKEN_KEY)
   } catch {}
   try {
-    window.dispatchEvent(new CustomEvent("mira:auth-invalid"))
+    window.dispatchEvent(new CustomEvent('mira:auth-invalid'))
   } catch {}
 }
 
 export async function validateToken(): Promise<boolean> {
   try {
-    await req<{ ok: boolean }>("/health")
+    await req<{ ok: boolean }>('/health')
     return true
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) return false
-    // try /config as fallback (also gated)
+    // /health may be open on dev servers while /config is gated — try /config
+    // before concluding the token is invalid.
     try {
-      await req<MiraConfig>("/config")
+      await req<MiraConfig>('/config')
       return true
-    } catch (e2) {
-      if (e2 instanceof ApiError && e2.status === 401) return false
-      // network or other error — don't treat as invalid
-      return true
+    } catch {
+      // Network or other error (not 401) — the server is unreachable, so the
+      // token cannot be validated. Return false so AuthGate surfaces instead of
+      // letting the app load and fail on every subsequent API call.
+      return false
     }
   }
 }
 
 // cross-tab token sync — storage event only fires in other tabs
-if (typeof window !== "undefined") {
-  window.addEventListener("storage", (e) => {
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
     if (e.key === TOKEN_KEY) {
       try {
-        window.dispatchEvent(new CustomEvent("mira:auth-invalid", { detail: { token: e.newValue } }))
-        window.dispatchEvent(new CustomEvent("mira:token-change", { detail: { token: e.newValue ?? "" } }))
+        window.dispatchEvent(
+          new CustomEvent('mira:auth-invalid', { detail: { token: e.newValue } }),
+        )
+        window.dispatchEvent(
+          new CustomEvent('mira:token-change', { detail: { token: e.newValue ?? '' } }),
+        )
       } catch {}
     }
   })
@@ -388,50 +422,60 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
       } else {
         try {
           const anyFn = (AbortSignal as { any?: (s: AbortSignal[]) => AbortSignal }).any
-          if (typeof anyFn === "function") signal = anyFn([controller.signal, caller])
+          if (typeof anyFn === 'function') signal = anyFn([controller.signal, caller])
           else {
-            caller.addEventListener("abort", () => controller.abort((caller as AbortSignal & { reason?: string }).reason), { once: true })
+            caller.addEventListener(
+              'abort',
+              () => controller.abort((caller as AbortSignal & { reason?: string }).reason),
+              { once: true },
+            )
           }
         } catch {
-          caller.addEventListener("abort", () => controller.abort((caller as AbortSignal & { reason?: string }).reason), { once: true })
+          caller.addEventListener(
+            'abort',
+            () => controller.abort((caller as AbortSignal & { reason?: string }).reason),
+            { once: true },
+          )
         }
       }
     }
     try {
       const res = await fetch(`${baseUrl()}${path}`, {
         ...init,
-        mode: "cors",
+        mode: 'cors',
         signal,
-        headers: { "Content-Type": "application/json", ...authHeaders(init?.headers) },
+        headers: { 'Content-Type': 'application/json', ...authHeaders(init?.headers) },
       })
       clearTimeout(timer)
       if (res.status === 401) {
         clearTokenOn401()
-        throw new ApiError(401, "unauthorized")
+        throw new ApiError(401, 'unauthorized')
       }
       if (!res.ok) {
-        const text = await res.text().catch(() => "")
-        let msg = `${res.status} ${res.statusText}${text ? `: ${text}` : ""}`
+        const text = await res.text().catch(() => '')
+        let msg = `${res.status} ${res.statusText}${text ? `: ${text}` : ''}`
         try {
           const j = JSON.parse(text) as { error?: string; message?: string }
-          if (typeof j.error === "string" && j.error) msg = `${res.status} ${j.error}`
-          else if (typeof j.message === "string" && j.message) msg = `${res.status} ${j.message}`
+          if (typeof j.error === 'string' && j.error) msg = `${res.status} ${j.error}`
+          else if (typeof j.message === 'string' && j.message) msg = `${res.status} ${j.message}`
         } catch {}
         throw new ApiError(res.status, msg, text)
       }
       // 204 / empty
-      const ct = res.headers.get("content-type") || ""
-      if (ct.includes("application/json")) return (await res.json()) as T
-      return (await res.json().catch(() => ({} as T))) as T
+      const ct = res.headers.get('content-type') || ''
+      if (ct.includes('application/json')) return (await res.json()) as T
+      return (await res.json().catch(() => ({}) as T)) as T
     } catch (e) {
       clearTimeout(timer)
       if (e instanceof ApiError) throw e
       const err = e as Error
       const callerAborted = init?.signal ? (init.signal as AbortSignal).aborted : false
       // caller explicitly aborted — don't retry
-      if (callerAborted && err.name === "AbortError") throw e
-      const isAbort = err.name === "AbortError"
-      const shouldRetry = attempt < maxRetries && (isAbort || err instanceof TypeError)
+      if (callerAborted && err.name === 'AbortError') throw e
+      const isAbort = err.name === 'AbortError'
+      // Internal timeout (AbortError) is fatal — do NOT retry (3 retries ≈ 30s dead wait).
+      // Only transient network failures (TypeError from fetch) are worth retrying.
+      const shouldRetry = attempt < maxRetries && !isAbort && err instanceof TypeError
       if (shouldRetry) {
         lastErr = err
         await new Promise((r) => setTimeout(r, 300))
@@ -441,7 +485,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
       throw e
     }
   }
-  throw lastErr ?? new Error("request failed")
+  throw lastErr ?? new Error('request failed')
 }
 
 // ── Tool cache (TTL 30s) ───────────────────────────────────────────
@@ -449,7 +493,7 @@ const TOOL_CACHE_TTL = 30_000
 let toolCache: { data: ToolInfo[]; ts: number } | null = null
 
 async function listToolsRaw(): Promise<ToolInfo[]> {
-  return req<ToolInfo[]>("/tools")
+  return req<ToolInfo[]>('/tools')
 }
 
 async function listToolsCached(): Promise<ToolInfo[]> {
@@ -465,18 +509,18 @@ function invalidateToolCache(): void {
 
 // ── REST ─────────────────────────────────────────────────────────────
 export const api = {
-  health: () => req<{ ok: boolean; version: string; tools: number }>("/health"),
+  health: () => req<{ ok: boolean; version: string; tools: number }>('/health'),
 
-  listSessions: () => req<Session[]>("/session"),
+  listSessions: () => req<Session[]>('/session'),
   createSession: (body: Partial<Session> = {}) =>
-    req<Session>("/session", { method: "POST", body: JSON.stringify(body) }),
+    req<Session>('/session', { method: 'POST', body: JSON.stringify(body) }),
   getSession: (id: string) => req<Session>(`/session/${id}`),
-  deleteSession: (id: string) => req<{ ok: boolean }>(`/session/${id}`, { method: "DELETE" }),
+  deleteSession: (id: string) => req<{ ok: boolean }>(`/session/${id}`, { method: 'DELETE' }),
 
   getMessages: (id: string) => req<Message[]>(`/session/${id}/message`),
   getTodos: (id: string) => req<Todo[]>(`/session/${id}/todo`),
   setTodos: (id: string, todos: Todo[]) =>
-    req<Todo[]>(`/session/${id}/todo`, { method: "POST", body: JSON.stringify(todos) }),
+    req<Todo[]>(`/session/${id}/todo`, { method: 'POST', body: JSON.stringify(todos) }),
 
   listTools: () => listToolsRaw(),
   listToolsCached,
@@ -487,19 +531,29 @@ export const api = {
     req<{
       ok: boolean
       tools: number
-      gateway: { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number }
-    }>("/dev/health"),
+      gateway: {
+        requests: number
+        inputTokens: number
+        outputTokens: number
+        costUSD: number
+        avgLatencyMs: number
+      }
+    }>('/dev/health'),
 
   /** Queue a message while the agent is streaming (processed after current turn) */
   queuePrompt: (id: string, prompt: string) =>
-    req<{ position: number }>(`/session/${id}/queue`, { method: "POST", body: JSON.stringify({ prompt }) }),
+    req<{ position: number }>(`/session/${id}/queue`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt }),
+    }),
   getQueue: (id: string) => req<string[]>(`/session/${id}/queue`),
-  clearQueue: (id: string) => req<{ cleared: number }>(`/session/${id}/queue`, { method: "DELETE" }),
+  clearQueue: (id: string) =>
+    req<{ cleared: number }>(`/session/${id}/queue`, { method: 'DELETE' }),
 
   /** File snapshot undo — revert last mutation or rewind to a message */
   revertSession: (id: string, messageID?: string) =>
     req<{ ok: boolean; reverted: number; files: string[] }>(`/session/${id}/revert`, {
-      method: "POST",
+      method: 'POST',
       body: JSON.stringify(messageID ? { messageID } : {}),
     }),
 
@@ -507,33 +561,34 @@ export const api = {
 
   listFindings: (params: { status?: string; limit?: number } = {}) => {
     const q = new URLSearchParams()
-    if (params.status) q.set("status", params.status)
-    if (params.limit) q.set("limit", String(params.limit))
-    const qs = q.toString() ? `?${q}` : ""
+    if (params.status) q.set('status', params.status)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString() ? `?${q}` : ''
     return req<Finding[]>(`/finding${qs}`)
   },
-  resolveFinding: (id: string) => req<Finding>(`/finding/${encodeURIComponent(id)}/resolve`, { method: "POST" }),
+  resolveFinding: (id: string) =>
+    req<Finding>(`/finding/${encodeURIComponent(id)}/resolve`, { method: 'POST' }),
 
   listJobs: (sessionId: string) => req<Job[]>(`/session/${encodeURIComponent(sessionId)}/jobs`),
   getJob: (id: string) => req<Job>(`/job/${encodeURIComponent(id)}`),
-  cancelJob: (id: string) => req<Job>(`/job/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+  cancelJob: (id: string) => req<Job>(`/job/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
 
   /** Export session transcript — markdown or JSON (triggers download in caller) */
-  exportSession: async (id: string, format: "md" | "json" = "md"): Promise<string> => {
+  exportSession: async (id: string, format: 'md' | 'json' = 'md'): Promise<string> => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 10_000)
     try {
       const res = await fetch(`${baseUrl()}/session/${id}/export?format=${format}`, {
-        mode: "cors",
+        mode: 'cors',
         signal: controller.signal,
         headers: authHeaders(),
       })
       if (res.status === 401) {
         clearTokenOn401()
-        throw new ApiError(401, "unauthorized")
+        throw new ApiError(401, 'unauthorized')
       }
       if (!res.ok) {
-        const t = await res.text().catch(() => "")
+        const t = await res.text().catch(() => '')
         let msg = `${res.status} ${res.statusText}`
         try {
           const j = JSON.parse(t) as { error?: string }
@@ -544,7 +599,8 @@ export const api = {
       return await res.text()
     } catch (e) {
       if (e instanceof ApiError) throw e
-      if ((e as Error).name === "AbortError") throw new Error(`request timeout after 10000ms: /session/${id}/export`)
+      if ((e as Error).name === 'AbortError')
+        throw new Error(`request timeout after 10000ms: /session/${id}/export`)
       throw e
     } finally {
       clearTimeout(timer)
@@ -552,44 +608,78 @@ export const api = {
   },
 
   checkPermission: (body: Record<string, JsonValue>) =>
-    req<{ action?: string; allowed?: boolean; reason?: string; matchedPattern?: string; arity?: number; lane?: { agent: string; permissions: string; allowed?: string[]; blocked?: boolean } }>("/permission/check", {
-      method: "POST",
+    req<{
+      action?: string
+      allowed?: boolean
+      reason?: string
+      matchedPattern?: string
+      arity?: number
+      lane?: { agent: string; permissions: string; allowed?: string[]; blocked?: boolean }
+    }>('/permission/check', {
+      method: 'POST',
       body: JSON.stringify(body),
     }),
 
   checkGuardrails: (body: { tool: string; args?: Record<string, JsonValue>; sessionID?: string }) =>
-    req<{ decision: "allow" | "deny" | "warn"; reason?: string; tool: string; sessionID: string }>("/guardrails/check", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
+    req<{ decision: 'allow' | 'deny' | 'warn'; reason?: string; tool: string; sessionID: string }>(
+      '/guardrails/check',
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      },
+    ),
 
   previewAgent: (name: string) =>
-    req<{ agent: string; permissions: string; allowed: string[]; blocked: string[]; allowlist: string[] }>(`/agents/${encodeURIComponent(name)}/preview`),
+    req<{
+      agent: string
+      permissions: string
+      allowed: string[]
+      blocked: string[]
+      allowlist: string[]
+    }>(`/agents/${encodeURIComponent(name)}/preview`),
 
   // ── Settings ─────────────────────────────────────────────────────
-  getConfig: () => req<MiraConfig>("/config"),
-  getConfigSchema: () => req<ConfigSchema>("/config/schema"),
+  getConfig: () => req<MiraConfig>('/config'),
+  getConfigSchema: () => req<ConfigSchema>('/config/schema'),
   patchConfig: (patch: Partial<MiraConfig>) =>
-    req<MiraConfig>("/config", { method: "PATCH", body: JSON.stringify(patch) }),
+    req<MiraConfig>('/config', { method: 'PATCH', body: JSON.stringify(patch) }),
 
-  listProviders: () => req<ProviderEntry[] | Record<string, ProviderConfig>>("/providers"),
+  listProviders: () => req<ProviderEntry[] | Record<string, ProviderConfig>>('/providers'),
   testProvider: (id: string) =>
-    req<{ ok: boolean; latencyMs?: number; error?: string }>(`/providers/${encodeURIComponent(id)}/test`, { method: "POST" }),
-  removeProvider: (id: string) => req<{ ok: boolean }>(`/providers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    req<{ ok: boolean; latencyMs?: number; error?: string }>(
+      `/providers/${encodeURIComponent(id)}/test`,
+      { method: 'POST' },
+    ),
+  removeProvider: (id: string) =>
+    req<{ ok: boolean }>(`/providers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
-  listMcp: () => req<MCPServerEntry[]>("/mcp"),
-  addMcp: (body: { name: string; type: "local" | "remote"; command?: string[]; url?: string; enabled?: boolean; env?: Record<string, string>; headers?: Record<string, string> }) =>
-    req<MCPServerEntry>("/mcp", { method: "POST", body: JSON.stringify(body) }),
+  listMcp: () => req<MCPServerEntry[]>('/mcp'),
+  addMcp: (body: {
+    name: string
+    type: 'local' | 'remote'
+    command?: string[]
+    url?: string
+    enabled?: boolean
+    env?: Record<string, string>
+    headers?: Record<string, string>
+  }) => req<MCPServerEntry>('/mcp', { method: 'POST', body: JSON.stringify(body) }),
   toggleMcp: (name: string, enabled: boolean) =>
-    req<MCPServerEntry>(`/mcp/${encodeURIComponent(name)}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
+    req<MCPServerEntry>(`/mcp/${encodeURIComponent(name)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled }),
+    }),
   testMcp: (name: string) =>
-    req<{ ok: boolean; toolCount?: number; error?: string }>(`/mcp/${encodeURIComponent(name)}/test`, { method: "POST" }),
-  removeMcp: (name: string) => req<{ ok: boolean }>(`/mcp/${encodeURIComponent(name)}`, { method: "DELETE" }),
+    req<{ ok: boolean; toolCount?: number; error?: string }>(
+      `/mcp/${encodeURIComponent(name)}/test`,
+      { method: 'POST' },
+    ),
+  removeMcp: (name: string) =>
+    req<{ ok: boolean }>(`/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 
-  listAgents: () => req<AgentEntry[]>("/agents"),
-  listCommands: () => req<CommandEntry[] | string[]>("/commands"),
-  listSkills: () => req<SkillEntry[] | string[]>("/skills"),
-  getPermission: () => req<PermissionMatrix>("/permission"),
+  listAgents: () => req<AgentEntry[]>('/agents'),
+  listCommands: () => req<CommandEntry[] | string[]>('/commands'),
+  listSkills: () => req<SkillEntry[] | string[]>('/skills'),
+  getPermission: () => req<PermissionMatrix>('/permission'),
 
   // ── Knowledge Graph (read-only, H2-1 Memory v2) ──────────────────
   getKnowledgeGraph: (limit = 100) => req<KnowledgeGraph>(`/knowledge/graph?limit=${limit}`),
@@ -615,14 +705,24 @@ export const api = {
       totalTokensIn: number
       totalTokensOut: number
       success: boolean
-      toolMetrics?: Array<{ tool: string; durationMs: number; isError: boolean; errorKind?: string; timestamp: number }>
+      toolMetrics?: Array<{
+        tool: string
+        durationMs: number
+        isError: boolean
+        errorKind?: string
+        timestamp: number
+      }>
     }>(`/learning/score?sessionID=${encodeURIComponent(sessionID)}`),
-  getScoreBadgeUrl: (sessionID: string) => `${baseUrl()}/learning/score?sessionID=${encodeURIComponent(sessionID)}&format=badge`,
+  getScoreBadgeUrl: (sessionID: string) =>
+    `${baseUrl()}/learning/score?sessionID=${encodeURIComponent(sessionID)}&format=badge`,
   getScoreMarkdown: async (sessionID: string): Promise<string> => {
-    const res = await fetch(`${baseUrl()}/learning/score?sessionID=${encodeURIComponent(sessionID)}&format=markdown`, {
-      headers: authHeaders(),
-      mode: "cors",
-    })
+    const res = await fetch(
+      `${baseUrl()}/learning/score?sessionID=${encodeURIComponent(sessionID)}&format=markdown`,
+      {
+        headers: authHeaders(),
+        mode: 'cors',
+      },
+    )
     if (!res.ok) throw new ApiError(res.status, `score markdown ${res.status}`)
     return res.text()
   },
@@ -637,9 +737,36 @@ export const api = {
       toolCalls: number
       toolErrors: number
       doomLoops: number
-      spans: Array<{ name: string; traceId: string; spanId: string; startMs: number; endMs?: number; durationMs?: number; status: string; attributes: Record<string, JsonValue> }>
-      toolMetrics: Array<{ tool: string; durationMs: number; isError: boolean; errorKind?: string; timestamp: number; sessionID: string }>
-      metric: { sessionID: string; model: string; steps: number; totalTokensIn: number; totalTokensOut: number; latencyMs: number; toolCalls: number; toolErrors: number; doomLoops: number; success: boolean } | null
+      spans: Array<{
+        name: string
+        traceId: string
+        spanId: string
+        startMs: number
+        endMs?: number
+        durationMs?: number
+        status: string
+        attributes: Record<string, JsonValue>
+      }>
+      toolMetrics: Array<{
+        tool: string
+        durationMs: number
+        isError: boolean
+        errorKind?: string
+        timestamp: number
+        sessionID: string
+      }>
+      metric: {
+        sessionID: string
+        model: string
+        steps: number
+        totalTokensIn: number
+        totalTokensOut: number
+        latencyMs: number
+        toolCalls: number
+        toolErrors: number
+        doomLoops: number
+        success: boolean
+      } | null
     }>(`/learning/trace?sessionID=${encodeURIComponent(sessionID)}`),
 
   /**
@@ -653,20 +780,22 @@ export const api = {
     opts: { model?: string; onChunk: (chunk: string) => void; signal?: AbortSignal },
   ) => {
     // fresh token + baseUrl on each call (watchdog may have redeployed)
-    const headers = { ...authHeaders({ "Content-Type": "application/json", Accept: "text/event-stream" }) }
+    const headers = {
+      ...authHeaders({ 'Content-Type': 'application/json', Accept: 'text/event-stream' }),
+    }
     const res = await fetch(`${baseUrl()}/session/${id}/prompt`, {
-      method: "POST",
-      mode: "cors",
+      method: 'POST',
+      mode: 'cors',
       headers,
       body: JSON.stringify({ prompt, model: opts.model }),
       signal: opts.signal,
     })
     if (res.status === 401) {
       clearTokenOn401()
-      throw new ApiError(401, "unauthorized")
+      throw new ApiError(401, 'unauthorized')
     }
     if (!res.ok) {
-      const t = await res.text().catch(() => "")
+      const t = await res.text().catch(() => '')
       let msg = `prompt failed ${res.status}: ${t}`
       try {
         const j = JSON.parse(t) as { error?: string }
@@ -681,25 +810,31 @@ export const api = {
     }
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
-    let buf = ""
+    let buf = ''
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
       buf += decoder.decode(value, { stream: true })
       // SSE frames: data: {...}\n\n
-      const frames = buf.split("\n\n")
-      buf = frames.pop() || ""
+      const frames = buf.split('\n\n')
+      buf = frames.pop() || ''
       for (const f of frames) {
-        const lines = f.split("\n").filter((l) => l.startsWith("data:"))
+        const lines = f.split('\n').filter((l) => l.startsWith('data:'))
         for (const l of lines) {
           const data = l.slice(5).trim()
-          if (data === "[DONE]") return
+          if (data === '[DONE]') return
           if (!data) continue
           // Try JSON unwrap: some servers send JSON per frame
           try {
-            const j = JSON.parse(data) as { textDelta?: string; text?: string; content?: string; delta?: string }
+            const j = JSON.parse(data) as {
+              textDelta?: string
+              text?: string
+              content?: string
+              delta?: string
+            }
             // Vercel AI SDK style: { type: "text-delta", textDelta: "..." }
-            const text = j.textDelta ?? j.text ?? j.content ?? j.delta ?? (typeof j === "string" ? j : "")
+            const text =
+              j.textDelta ?? j.text ?? j.content ?? j.delta ?? (typeof j === 'string' ? j : '')
             if (text) opts.onChunk(String(text))
             else opts.onChunk(data)
           } catch {
@@ -735,11 +870,11 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
   function wsUrl(): string {
     const base = baseUrl()
     if (!base) {
-      const proto = window.location.protocol === "https:" ? "wss:" : "ws:"
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       return `${proto}//${window.location.host}/`
     }
     const u = new URL(base)
-    const proto = u.protocol === "https:" ? "wss:" : "ws:"
+    const proto = u.protocol === 'https:' ? 'wss:' : 'ws:'
     return `${proto}//${u.host}/`
   }
 
@@ -751,7 +886,7 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
       // Servers with auth enabled close unauthenticated sockets after 5s —
       // browsers cannot set WS headers, so authenticate via first message.
       const t = getToken()
-      if (t) ws?.send(JSON.stringify({ type: "auth", token: t }))
+      if (t) ws?.send(JSON.stringify({ type: 'auth', token: t }))
       handlers.open?.()
     }
     ws.onmessage = (ev) => {
@@ -768,12 +903,12 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
   }
 
   // re-auth on token change (cross-tab or in-tab)
-  if (typeof window !== "undefined") {
+  if (typeof window !== 'undefined') {
     const onTokenChange = () => {
       if (ws && ws.readyState === WebSocket.OPEN) {
         const t = getToken()
         try {
-          if (t) ws.send(JSON.stringify({ type: "auth", token: t }))
+          if (t) ws.send(JSON.stringify({ type: 'auth', token: t }))
           else {
             // token cleared — reconnect to trigger 401 handling
             ws.close()
@@ -783,8 +918,8 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
         // will reconnect via interval in app store
       }
     }
-    window.addEventListener("mira:auth-invalid", onTokenChange)
-    window.addEventListener("mira:token-change", onTokenChange)
+    window.addEventListener('mira:auth-invalid', onTokenChange)
+    window.addEventListener('mira:token-change', onTokenChange)
   }
 
   return {
@@ -801,7 +936,9 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
       ws = null
     },
     reconnect() {
-      try { ws?.close() } catch {}
+      try {
+        ws?.close()
+      } catch {}
       ws = null
       return doConnect()
     },

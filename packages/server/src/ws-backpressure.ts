@@ -32,7 +32,8 @@ export interface BoundedSink {
 export function boundSend(ws: BoundedSink, data: string): boolean {
   if (!ws.__active) return false
   if (data.length > WS_SEND_MAX_MESSAGE) return false
-  if (ws.getBufferedAmount && ws.getBufferedAmount() > WS_SEND_MAX_BUFFERED) return false
+  const buffered = ws.getBufferedAmount ? ws.getBufferedAmount() : 0
+  if (buffered > WS_SEND_MAX_BUFFERED) return false
   try {
     ws.send(data)
     return true
