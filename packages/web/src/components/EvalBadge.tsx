@@ -44,7 +44,7 @@ export function EvalBadge(props: Props) {
 
   const percent = () => {
     const d = data()
-    if (!d) return null
+    if (!d || d.successRate == null) return null
     return Math.round(d.successRate * 100)
   }
 

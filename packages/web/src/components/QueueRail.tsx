@@ -49,10 +49,11 @@ export function QueueRail(props: { store: AppStore }) {
   const cancel = async (idx: number) => {
     const id = sessionId()
     if (!id) return
+    const prompt = items()[idx]
     const arr = items().filter((_, i) => i !== idx)
     setItems(arr)
     try {
-      await api.deleteQueueItem(id, idx)
+      await api.deleteQueueItem(id, prompt)
     } catch (e) {
       setError((e as Error).message)
       load()

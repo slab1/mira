@@ -893,6 +893,15 @@ export const api = {
       if (m) opts.onChunk(m[1])
     }
   },
+
+  // Stubs for autopilot / eval / queue features
+  getLearningSchedulerStatus: () => Promise.resolve({ status: 'idle' }),
+  getLearningLastEvalDelta: () => Promise.resolve({ delta: 0, sessionID: '' }),
+  listPendingPatches: () => Promise.resolve([]),
+  approvePatch: (_id: string) => Promise.resolve({ ok: true }),
+  getModelEval: (_model: string) => Promise.resolve({ model: _model, score: 0 }),
+  reorderQueue: (_id: string, _order: string[]) => Promise.resolve({ ok: true }),
+  deleteQueueItem: (_id: string, _prompt: string) => Promise.resolve({ ok: true }),
 }
 
 /** Add or update a permission rule for a tool pattern */
@@ -1001,4 +1010,16 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
       if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg))
     },
   }
+}
+
+// ── Stub types for autopilot / eval / queue features
+export type SchedulerStatus = { status: string; nextRunAt?: string; lastRunAt?: string }
+export type EvalDelta = { delta: number; sessionID: string }
+export type Patch = { id: string; painPointId: string; reason: string; change: string }
+export type ModelEval = {
+  model: string
+  score: number
+  successRate?: number
+  sessions?: number
+  lastEvalAt?: string
 }

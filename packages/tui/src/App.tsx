@@ -71,15 +71,18 @@ export default function App() {
   // Global TUI shortcuts
   const onGlobalKey = (e: KeyboardEvent) => {
     const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase()
-    const isTyping = targetTag === 'input' || targetTag === 'textarea' || (e.target as HTMLElement)?.isContentEditable
+    const isTyping =
+      targetTag === 'input' ||
+      targetTag === 'textarea' ||
+      (e.target as HTMLElement)?.isContentEditable
     if (e.key === '?' && !isTyping) {
       e.preventDefault()
-      setHelpOpen(v => !v)
+      setHelpOpen((v) => !v)
     }
     // Tab focus cycle
     if (e.key === 'Tab' && !isTyping) {
       e.preventDefault()
-      setFocusRing(f => {
+      setFocusRing((f) => {
         if (f === 'sidebar') return 'messages'
         if (f === 'messages') return 'input'
         return 'sidebar'
@@ -87,7 +90,7 @@ export default function App() {
     }
     // Session quick pick 1-9
     if (!isTyping && e.key >= '1' && e.key <= '9') {
-      const sessions = store.sessions()
+      const sessions = store.state.sessions
       const idx = Number(e.key) - 1
       const s = sessions?.[idx]
       if (s) store.selectSession(s.id)

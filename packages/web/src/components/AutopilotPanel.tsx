@@ -19,9 +19,9 @@ export function AutopilotPanel() {
         api.getLearningLastEvalDelta(),
         api.listPendingPatches(),
       ])
-      setStatus(s)
-      setDelta(d)
-      setPatches(p)
+      setStatus(s as SchedulerStatus)
+      setDelta(d as EvalDelta)
+      setPatches(p as Patch[])
     } catch (e: any) {
       setError(e?.message ?? 'Failed to load autopilot')
     } finally {

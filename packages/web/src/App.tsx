@@ -336,7 +336,7 @@ export default function App() {
       // Trigger HITL via question.ask
       // Use store's question mechanism via app store?
       // For now, show console warning and set error state
-      store.setState('error', `Budget cap reached: $${cost.costUSD.toFixed(4)} ≥ $${budgetCapAmount()}`)
+      store.setError(`Budget cap reached: $${cost.costUSD.toFixed(4)} ≥ $${budgetCapAmount()}`)
     }
   })
 
@@ -640,22 +640,28 @@ export default function App() {
                   </button>
                 )}
               </Show>
-               <Show when={store.state.cost}>
-                 {(c) => {
-                   const cost = c().costUSD
-                   const over = budgetCapEnabled() && cost >= budgetCapAmount()
-                   return (
-                     <button
-                       type="button"
-                       onClick={() => setTraceOpen(true)}
-                       title={`Gateway: ${c().requests} requests · ${c().inputTokens.toLocaleString()} in / ${c().outputTokens.toLocaleString()} out · avg ${c().avgLatencyMs}ms — click for trace${over ? ' · ⚠ Budget cap exceeded' : ''}`}
-                       class={`pill pill-cost ${over ? 'pill-danger' : ''}`}
-                       style={{ cursor: 'pointer', background: over ? 'color-mix(in srgb, var(--danger) 14%, var(--bg-surface))' : undefined }}
-                     >
-                       ${cost.toFixed(4)}{over ? ' ⚠' : ''}
-                     </button>
-                   )
-                 }}
+              <Show when={store.state.cost}>
+                {(() => {
+                  const cost = store.state.cost!.costUSD
+                  const over = budgetCapEnabled() && cost >= budgetCapAmount()
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => setTraceOpen(true)}
+                      title={`Gateway: ${store.state.cost!.requests} requests · ${store.state.cost!.inputTokens.toLocaleString()} in / ${store.state.cost!.outputTokens.toLocaleString()} out · avg ${store.state.cost!.avgLatencyMs}ms — click for trace${over ? ' · ⚠ Budget cap exceeded' : ''}`}
+                      class={`pill pill-cost ${over ? 'pill-danger' : ''}`}
+                      style={{
+                        cursor: 'pointer',
+                        background: over
+                          ? 'color-mix(in srgb, var(--danger) 14%, var(--bg-surface))'
+                          : undefined,
+                      }}
+                    >
+                      ${cost.toFixed(4)}
+                      {over ? ' ⚠' : ''}
+                    </button>
+                  )
+                })()}
                 <QueueRail store={store} />
               </Show>
               <Show when={(agents() ?? []).length > 0}>
@@ -769,8 +775,16 @@ export default function App() {
                     <button
                       type="button"
                       class="btn btn-ghost"
-                      style={{ width: '100%', 'text-align': 'left', padding: '6px 8px', 'font-size': 'var(--fs-xs)' }}
-                      onClick={() => { setMoreOpen(false); setSettingsOpen(true) }}
+                      style={{
+                        width: '100%',
+                        'text-align': 'left',
+                        padding: '6px 8px',
+                        'font-size': 'var(--fs-xs)',
+                      }}
+                      onClick={() => {
+                        setMoreOpen(false)
+                        setSettingsOpen(true)
+                      }}
                     >
                       ⚙ Settings
                     </button>
@@ -778,17 +792,30 @@ export default function App() {
                       <button
                         type="button"
                         class="btn btn-ghost"
-                        style={{ width: '100%', 'text-align': 'left', padding: '6px 8px', 'font-size': 'var(--fs-xs)' }}
-                        onClick={() => { setMoreOpen(false); void store.undoLastMutation() }}
+                        style={{
+                          width: '100%',
+                          'text-align': 'left',
+                          padding: '6px 8px',
+                          'font-size': 'var(--fs-xs)',
+                        }}
+                        onClick={() => {
+                          setMoreOpen(false)
+                          void store.undoLastMutation()
+                        }}
                       >
                         ↩ Undo
                       </button>
                       <button
                         type="button"
                         class="btn btn-ghost"
-                        style={{ width: '100%', 'text-align': 'left', padding: '6px 8px', 'font-size': 'var(--fs-xs)' }}
+                        style={{
+                          width: '100%',
+                          'text-align': 'left',
+                          padding: '6px 8px',
+                          'font-size': 'var(--fs-xs)',
+                        }}
                         onClick={() => {
-                          setMoreOpen(false);
+                          setMoreOpen(false)
                           void (async () => {
                             const id = store.state.currentId
                             if (!id) return

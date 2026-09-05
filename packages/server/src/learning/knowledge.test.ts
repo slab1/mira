@@ -55,6 +55,7 @@ async function testApp(): Promise<{
   system: LearningSystem
   app: Hono<{ Variables: { requestId: string } }>
   busEvents: BusCapture[]
+  db: ReturnType<typeof createDatabase>
 }> {
   const db = createDatabase(':memory:')
   await migrate(db)
@@ -67,7 +68,7 @@ async function testApp(): Promise<{
   await system.knowledge.load()
   const app = new Hono<{ Variables: { requestId: string } }>()
   mountLearningRoutes(app, system)
-  return { system, app, busEvents }
+  return { system, app, busEvents, db }
 }
 
 function actionOf(payload: unknown): string | undefined {
@@ -151,8 +152,7 @@ describe('H3-E knowledge graph write paths', () => {
   })
 
   test('promote e2e: finding resolved + entry metadata.findingId + finding edge', async () => {
-    const { system, app, busEvents } = await testApp()
-    const db = system.db
+    const { system, app, busEvents, db } = await testApp()
     if (!db) throw new Error('test db missing')
     // Shared entity "AuthService" so getGraph links finding → entry
     const anchor = await system.knowledge.store({
@@ -188,8 +188,7 @@ describe('H3-E knowledge graph write paths', () => {
   })
 
   test('promote 404s unknown ids, 409s already-resolved', async () => {
-    const { system, app } = await testApp()
-    const db = system.db
+    const { system, app, db } = await testApp()
     if (!db) throw new Error('test db missing')
     const missing = await app.request('/finding/nope-missing/promote', {
       method: 'POST',

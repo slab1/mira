@@ -398,6 +398,9 @@ export function createAppStore() {
     input,
     setInput,
     socket,
+    // state mutators
+    setError: (msg: string | null) => setState('error', msg),
+    clearError: () => setState('error', null),
     // actions
     loadSessions,
     createSession,

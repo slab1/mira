@@ -1,7 +1,7 @@
 import { For, Show, createSignal, createEffect, onMount, onCleanup, createResource } from 'solid-js'
 import type { AppStore } from '../stores/app'
 import type { SettingsStore } from '../stores/settings'
-import type { Message, Part, Job } from '../api/client'
+import type { Message, Part, Job, JsonValue } from '../api/client'
 import { api } from '../api/client'
 import { SlashAutocomplete, filterCommands } from './CommandPalette'
 
@@ -135,7 +135,10 @@ function FencedContent(props: { text: string; isUser?: boolean }) {
 /** Inline tool-call chip — special-cases edit/write/patch as unified diff (red/green). */
 function ToolChip(props: { part: Part }) {
   const [open, setOpen] = createSignal(false)
-  const [audit, setAudit] = createSignal<{ decision: 'allow' | 'deny' | 'warn'; reason?: string } | null>(null)
+  const [audit, setAudit] = createSignal<{
+    decision: 'allow' | 'deny' | 'warn'
+    reason?: string
+  } | null>(null)
   const [auditLoading, setAuditLoading] = createSignal(false)
   const isCall = () => props.part.type === 'tool_call'
   const tool = () => props.part.tool ?? ''
@@ -171,7 +174,10 @@ function ToolChip(props: { part: Part }) {
     if (open() && isCall() && tool()) {
       setAuditLoading(true)
       try {
-        const res = await api.checkGuardrails({ tool: tool(), args: props.part.input as Record<string, unknown> })
+        const res = await api.checkGuardrails({
+          tool: tool(),
+          args: props.part.input as unknown as Record<string, JsonValue>,
+        })
         setAudit({ decision: res.decision, reason: res.reason })
       } catch {
         setAudit(null)
@@ -220,7 +226,9 @@ function ToolChip(props: { part: Part }) {
       </button>
       <Show when={open()}>
         <Show when={auditLoading()}>
-          <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-faint)', 'margin': '4px 0' }}>Checking guardrails…</div>
+          <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-faint)', margin: '4px 0' }}>
+            Checking guardrails…
+          </div>
         </Show>
         <Show when={audit()}>
           <div
@@ -797,34 +805,39 @@ export function ChatView(props: {
                                       ✦
                                     </div>
                                     <div style={{ flex: '1', 'min-width': '0' }}>
-                                       <div
-                                         style={{
-                                           'font-size': 'var(--fs-2xs)',
-                                           color: 'var(--fg-faint)',
-                                           'margin-bottom': '3px',
-                                           display: 'flex',
-                                           'align-items': 'center',
-                                           gap: '8px',
-                                         }}
-                                       >
-                                         <span>Mira · {timeOf(m)}</span>
-                                          <button
-                                            type="button"
-                                            class="btn btn-ghost"
-                                            style={{ padding: '0 6px', 'font-size': '10px' }}
-                                            title="Rewind session to this message"
-                                            onClick={() => {
-                                              const sessionId = props.store.state.currentId
-                                              const messageId = m.id
-                                              if (!sessionId || !messageId) return
-                                              void api.revertSession(sessionId, messageId).then(() => {
+                                      <div
+                                        style={{
+                                          'font-size': 'var(--fs-2xs)',
+                                          color: 'var(--fg-faint)',
+                                          'margin-bottom': '3px',
+                                          display: 'flex',
+                                          'align-items': 'center',
+                                          gap: '8px',
+                                        }}
+                                      >
+                                        <span>Mira · {timeOf(m)}</span>
+                                        <button
+                                          type="button"
+                                          class="btn btn-ghost"
+                                          style={{ padding: '0 6px', 'font-size': '10px' }}
+                                          title="Rewind session to this message"
+                                          onClick={() => {
+                                            const sessionId = props.store.state.currentId
+                                            const messageId = m.id
+                                            if (!sessionId || !messageId) return
+                                            void api
+                                              .revertSession(sessionId, messageId)
+                                              .then(() => {
                                                 props.store.loadMessages(sessionId)
-                                              }).catch((e) => console.error('[mira] revert failed', e))
-                                            }}
-                                          >
-                                            ↩ Rewind to here
-                                          </button>
-                                       </div>
+                                              })
+                                              .catch((e) =>
+                                                console.error('[mira] revert failed', e),
+                                              )
+                                          }}
+                                        >
+                                          ↩ Rewind to here
+                                        </button>
+                                      </div>
                                       <FencedContent text={contentOf(m)} />
                                       <Show when={showCaretHere()}>
                                         <span
@@ -849,9 +862,11 @@ export function ChatView(props: {
                                           )
                                         }
                                       >
-                                        {() => {
-                                          const calls = m.parts?.filter(p => p.type === 'tool_call') ?? []
-                                          const results = m.parts?.filter(p => p.type === 'tool_result') ?? []
+                                        {(() => {
+                                          const calls =
+                                            m.parts?.filter((p) => p.type === 'tool_call') ?? []
+                                          const results =
+                                            m.parts?.filter((p) => p.type === 'tool_result') ?? []
                                           const counts = new Map<string, number>()
                                           for (const p of calls) {
                                             const t = p.tool ?? 'unknown'
@@ -871,8 +886,11 @@ export function ChatView(props: {
                                                   'font-family': 'var(--font-mono)',
                                                 }}
                                               >
-                                                {summary || `${calls.length} tool${calls.length===1?'':'s'}`}
-                                                {calls.length > 0 ? ` · ${results.length} result${results.length===1?'':'s'}` : ''}
+                                                {summary ||
+                                                  `${calls.length} tool${calls.length === 1 ? '' : 's'}`}
+                                                {calls.length > 0
+                                                  ? ` · ${results.length} result${results.length === 1 ? '' : 's'}`
+                                                  : ''}
                                               </div>
                                               <div
                                                 style={{
@@ -884,21 +902,22 @@ export function ChatView(props: {
                                                 }}
                                               >
                                                 <For each={m.parts}>
-                                            {(p) => (
-                                              <Show
-                                                when={
-                                                  p.type === 'tool_call' || p.type === 'tool_result'
-                                                }
-                                              >
-                                                <ToolChip part={p} />
-                                              </Show>
-                                            )}
-                                          </For>
-                                        </div>
-                                      </>
-                                    )
-                                  }}
-                                </Show>
+                                                  {(p) => (
+                                                    <Show
+                                                      when={
+                                                        p.type === 'tool_call' ||
+                                                        p.type === 'tool_result'
+                                                      }
+                                                    >
+                                                      <ToolChip part={p} />
+                                                    </Show>
+                                                  )}
+                                                </For>
+                                              </div>
+                                            </>
+                                          )
+                                        })()}
+                                      </Show>
                                     </div>
                                   </div>
                                 </Show>
@@ -1130,8 +1149,13 @@ export function ChatView(props: {
                       const tool = d.tool
                       // Best-effort: persist deny rule via config save (client-side)
                       try {
-                        const existing = JSON.parse(localStorage.getItem('mira.permission.deny') || '{}')
-                        existing[tool] = existing[tool] ?? { action: 'deny', reason: `Doom-loop prevention for ${d.reason}` }
+                        const existing = JSON.parse(
+                          localStorage.getItem('mira.permission.deny') || '{}',
+                        )
+                        existing[tool] = existing[tool] ?? {
+                          action: 'deny',
+                          reason: `Doom-loop prevention for ${d.reason}`,
+                        }
                         localStorage.setItem('mira.permission.deny', JSON.stringify(existing))
                       } catch {}
                       props.store.clearDoomLoop()
