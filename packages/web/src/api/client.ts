@@ -41,6 +41,17 @@ export type Message = {
   createdAt: string
   /** optimistic flag — message is queued, not yet processed by the agent */
   queued?: boolean
+  provenance?: Array<{
+    nodeId: string
+    label: string
+    tier: 'episodic' | 'semantic' | 'procedural'
+    kind: 'knowledge' | 'finding'
+    source: string
+    updatedAt: number
+    accessCount: number
+    snippet?: string
+    tags?: string[]
+  }>
 }
 
 export type JsonValue =
