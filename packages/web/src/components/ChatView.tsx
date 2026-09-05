@@ -1106,6 +1106,30 @@ export function ChatView(props: {
                   <button
                     type="button"
                     class="btn btn-ghost"
+                    onClick={() => {
+                      // Add permission deny rule for the looping tool
+                      const tool = d.tool
+                      // Best-effort: persist deny rule via config save (client-side)
+                      try {
+                        const existing = JSON.parse(localStorage.getItem('mira.permission.deny') || '{}')
+                        existing[tool] = existing[tool] ?? { action: 'deny', reason: `Doom-loop prevention for ${d.reason}` }
+                        localStorage.setItem('mira.permission.deny', JSON.stringify(existing))
+                      } catch {}
+                      props.store.clearDoomLoop()
+                    }}
+                    style={{
+                      padding: '4px 10px',
+                      'font-size': 'var(--fs-xs)',
+                      'border-radius': 'var(--r-md)',
+                      flex: 'none',
+                    }}
+                    title="Never repeat this pattern — add deny rule"
+                  >
+                    ⛔ Never repeat
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost"
                     onClick={() => props.store.clearDoomLoop()}
                     style={{ padding: '4px 8px', 'font-size': 'var(--fs-xs)', flex: 'none' }}
                   >
