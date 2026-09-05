@@ -84,6 +84,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
   const [featInject, setFeatInject] = createSignal(true)
   const [featLane, setFeatLane] = createSignal(true)
   const [featPerAgent, setFeatPerAgent] = createSignal(true)
+  const [budgetCap, setBudgetCap] = createSignal<string | null>(null)
 
   let dialogRef: HTMLDivElement | undefined
   let firstFocusRef: HTMLButtonElement | undefined
@@ -822,6 +823,104 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                           />
                           <span class="settings-hint">Overrides smallModel for loops.</span>
                         </div>
+                      </div>
+
+                      <div
+                        style={{
+                          'font-size': 'var(--fs-xs)',
+                          'font-weight': '700',
+                          color: 'var(--fg-muted)',
+                          'letter-spacing': '0.04em',
+                          'text-transform': 'uppercase',
+                          'margin-top': '4px',
+                        }}
+                      >
+                        Spend cockpit
+                      </div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          'align-items': 'center',
+                          gap: '8px',
+                          'margin-bottom': '12px',
+                        }}
+                      >
+                        <label
+                          style={{
+                            display: 'inline-flex',
+                            'align-items': 'center',
+                            gap: '6px',
+                            'font-size': 'var(--fs-sm)',
+                            color: 'var(--fg)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={budgetCap()}
+                            onChange={(e) => setBudgetCap(e.currentTarget.checked)}
+                          />
+                          Enable budget cap
+                        </label>
+                        <span class="settings-hint" style={{ margin: '0' }}>
+                          Trigger HITL when monthly spend exceeds
+                        </span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="10"
+                          value="100"
+                          onInput={(e) => setBudgetWarn(Number(e.currentTarget.value) || null)}
+                          style={{ 'font-size': 'var(--fs-sm)', width: '60px' }}
+                        />
+                        USD / month
+                      </div>
+
+                      <div
+                        style={{
+                          'font-size': 'var(--fs-xs)',
+                          'font-weight': '700',
+                          color: 'var(--fg-muted)',
+                          'letter-spacing': '0.04em',
+                          'text-transform': 'uppercase',
+                          'margin-top': '4px',
+                        }}
+                      >
+                        Spend cockpit
+                      </div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          'align-items': 'center',
+                          gap: '8px',
+                          'margin-bottom': '12px',
+                        }}
+                      >
+                        <label
+                          style={{
+                            display: 'inline-flex',
+                            'align-items': 'center',
+                            gap: '6px',
+                            'font-size': 'var(--fs-sm)',
+                            color: 'var(--fg)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <input type="checkbox" checked={false} onChange={(e) => {}} />
+                          Enable budget cap
+                        </label>
+                        <span class="settings-hint" style={{ margin: '0' }}>
+                          Monthly threshold (USD)
+                        </span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="10"
+                          value="100"
+                          onInput={(e) => {}}
+                          style={{ 'font-size': 'var(--fs-sm)', width: '60px' }}
+                        />
+                        USD / month
                       </div>
 
                       <div

@@ -11,6 +11,7 @@ import { SettingsPanel } from './components/SettingsPanel'
 import { CommandPalette } from './components/CommandPalette'
 import { MemoryGraph } from './components/MemoryGraph'
 import { TraceViewer } from './components/TraceViewer'
+import { QueueRail } from './components/QueueRail'
 import { api, getToken, setToken, validateToken, getApiUrl, setApiUrl } from './api/client'
 
 type ViewMode = 'chat' | 'split' | 'graph'
@@ -625,6 +626,7 @@ export default function App() {
                     ${c().costUSD.toFixed(4)}
                   </button>
                 )}
+                <QueueRail store={store} />
               </Show>
               <Show when={(agents() ?? []).length > 0}>
                 <select

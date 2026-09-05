@@ -272,6 +272,21 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
           }}
         >
           ⚠ {s().error}
+          <button
+            onClick={() => store.setState('error', null)}
+            class="alert-close"
+            aria-label="Dismiss error"
+            style={{
+              marginLeft: '8px',
+              background: 'none',
+              border: 'none',
+              color: 'var(--fg-muted)',
+              fontSize: 'var(--fs-xs)',
+              cursor: 'pointer',
+            }}
+          >
+            ×
+          </button>
         </div>
       </Show>
 
