@@ -685,18 +685,19 @@ async function main() {
             if (terminalSandboxed()) {
               const raw = event.data.trim()
               if (raw && !raw.startsWith('#')) {
-                const first = raw.split(/[\s;|&]+/)[0] ?? ''
-                const base = first.split('/').pop() ?? first
-                let allowed: string[] = [
-                  'bash',
+                // Split on newlines + shell operators to check ALL commands in the input
+                const commands = raw
+                  .split(/[\n;|&]+/)
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+                let blocked = false
+                let blockedCmd = ''
+
+                const DEFAULT_ALLOWED = [
                   'ls',
                   'cat',
                   'grep',
                   'find',
-                  'git',
-                  'bun',
-                  'node',
-                  'tsc',
                   'echo',
                   'pwd',
                   'head',
@@ -712,21 +713,62 @@ async function main() {
                   'sed',
                   'awk',
                 ]
+                // Commands allowed but with restricted flags (no -c, -e, --eval, etc.)
+                const RESTRICTED_ALLOWED = ['git', 'tsc', 'bun', 'node', 'bash']
+                const ALL_ALLOWED = [...DEFAULT_ALLOWED, ...RESTRICTED_ALLOWED, 'bash']
+
+                let allowed: string[] = ALL_ALLOWED
                 try {
                   const cfg = getConfig() as MiraConfig
                   const t = (cfg.tools as Record<string, JsonValue> | undefined)?.terminal as
                     Record<string, JsonValue> | undefined
                   const list = t?.allowedCommands as string[] | undefined
-                  if (Array.isArray(list)) allowed = list
+                  if (Array.isArray(list) && list.length > 0) allowed = list
                 } catch {}
-                if (base && !allowed.includes(base) && !allowed.includes(first)) {
+
+                for (const cmd of commands) {
+                  // Strip variable assignments (CMD=val), leading parens, leading backslash
+                  const stripped = cmd
+                    .replace(/^[A-Za-z_][A-Za-z0-9_]*=\S+\s*/, '')
+                    .replace(/^\(\s*/, '')
+                    .replace(/^\\/, '')
+                  if (!stripped) continue
+                  const first = stripped.split(/[\s;|&]+/)[0] ?? ''
+                  const base = first.split('/').pop() ?? first
+
+                  // Check if base command is allowed
+                  if (!allowed.includes(base) && !allowed.includes(first)) {
+                    blocked = true
+                    blockedCmd = base
+                    break
+                  }
+
+                  // Block shell escapes for restricted commands (bash -c, node -e, git -c)
+                  if (RESTRICTED_ALLOWED.includes(base)) {
+                    const args = stripped.slice(first.length)
+                    if (/\s+-[ce]/.test(args) || /\s+--eval\b/.test(args) || /\s+-r/.test(args)) {
+                      blocked = true
+                      blockedCmd = `${base} (restricted flag)`
+                      break
+                    }
+                  }
+
+                  // Block command substitution and backticks in the entire input
+                  if (/\$\(|`[^`]+`/.test(cmd)) {
+                    blocked = true
+                    blockedCmd = 'command substitution'
+                    break
+                  }
+                }
+
+                if (blocked) {
                   try {
                     w.send(
                       JSON.stringify({
                         type: 'terminal.output',
                         payload: {
                           stream: 'stderr',
-                          data: `sandbox: command "${base}" not in allowedCommands [${allowed.join(',')}] — blocked\n`,
+                          data: `sandbox: "${blockedCmd}" blocked by allowedCommands policy\n`,
                         },
                         timestamp: Date.now(),
                       }),
