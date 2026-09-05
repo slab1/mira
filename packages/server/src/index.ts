@@ -43,7 +43,6 @@ import { mountSessionExtrasRoutes } from './routes/session-extras.js'
 import { mountToolsRoutes } from './routes/tools-routes.js'
 import { mountStaticRoutes } from './routes/static.js'
 import { mountMiddleware } from './middleware/index.js'
-import { createSandbox, loadSandboxConfig } from './sandbox/index.js'
 import { boundSend, WS_CLOSE_TOO_SLOW } from './ws-backpressure.js'
 
 type PartialMiraConfig = Partial<MiraConfig>
@@ -330,7 +329,6 @@ async function main() {
 
   // ── HTTP + WebSocket RPC (Hono) ─────────────────────────────────
   const app = new Hono<{ Variables: { requestId: string } }>()
-  const sandbox = createSandbox(loadSandboxConfig())
 
   let bunServer: ReturnType<typeof Bun.serve> | null = null
 
@@ -685,17 +683,66 @@ async function main() {
           if (event?.type === 'terminal.input' && typeof event.data === 'string') {
             w.__armIdle?.()
             if (terminalSandboxed()) {
-              const result = sandbox.isBlocked(event.data)
-              if (result.blocked) {
+              const raw = event.data.trim()
+              if (raw && !raw.startsWith('#')) {
+                const first = raw.split(/[\s;|&]+/)[0] ?? ''
+                const base = first.split('/').pop() ?? first
+                let allowed: string[] = [
+                  'bash',
+                  'ls',
+                  'cat',
+                  'grep',
+                  'find',
+                  'git',
+                  'bun',
+                  'node',
+                  'tsc',
+                  'echo',
+                  'pwd',
+                  'head',
+                  'tail',
+                  'wc',
+                  'sort',
+                  'uniq',
+                  'date',
+                  'env',
+                  'which',
+                  'whoami',
+                  'printf',
+                  'sed',
+                  'awk',
+                ]
                 try {
-                  w.send(
-                    JSON.stringify({
-                      type: 'terminal.output',
-                      payload: { stream: 'stderr', data: sandbox.getBlockedMessage(result) },
-                      timestamp: Date.now(),
-                    }),
-                  )
+                  const cfg = getConfig() as MiraConfig
+                  const t = (cfg.tools as Record<string, JsonValue> | undefined)?.terminal as
+                    Record<string, JsonValue> | undefined
+                  const list = t?.allowedCommands as string[] | undefined
+                  if (Array.isArray(list)) allowed = list
                 } catch {}
+                if (base && !allowed.includes(base) && !allowed.includes(first)) {
+                  try {
+                    w.send(
+                      JSON.stringify({
+                        type: 'terminal.output',
+                        payload: {
+                          stream: 'stderr',
+                          data: `sandbox: command "${base}" not in allowedCommands [${allowed.join(',')}] — blocked\n`,
+                        },
+                        timestamp: Date.now(),
+                      }),
+                    )
+                  } catch {}
+                } else {
+                  try {
+                    const stdin = w.__proc?.stdin
+                    if (
+                      stdin &&
+                      typeof stdin !== 'number' &&
+                      typeof (stdin as Bun.FileSink).write === 'function'
+                    )
+                      (stdin as Bun.FileSink).write(event.data)
+                  } catch {}
+                }
               } else {
                 try {
                   const stdin = w.__proc?.stdin
