@@ -1,4 +1,4 @@
-import { For, Show, createSignal, createEffect, onMount, onCleanup, createResource } from 'solid-js'
+import { For, Show, createSignal, createEffect, createMemo, onMount, onCleanup, createResource } from 'solid-js'
 import type { AppStore } from '../stores/app'
 import type { SettingsStore } from '../stores/settings'
 import type { Message, Part, Job, JsonValue } from '../api/client'
@@ -14,7 +14,8 @@ const EXAMPLE_PROMPTS = [
 
 const contentOf = (m: Message) => m.content || (m.parts?.map((p) => p.text || '').join('\n') ?? '')
 
-/** Fenced code block with copy button — minimal markdownish (```lang blocks only). */
+// ── Code fence ────────────────────────────────────────────────────────
+
 function CodeFence(props: { lang: string; code: string }) {
   const [copied, setCopied] = createSignal(false)
   const copy = async () => {
@@ -96,9 +97,34 @@ function CodeFence(props: { lang: string; code: string }) {
   )
 }
 
-function FencedContent(props: { text: string; isUser?: boolean }) {
-  const segments = () => {
+/** Streaming-aware fenced content: defers code block rendering until closing fence arrives. */
+function FencedContent(props: { text: string; isUser?: boolean; streaming?: boolean }) {
+  const segments = createMemo(() => {
     const text = props.text ?? ''
+    // While streaming, don't render an unclosed fence as code — show as plain text until ``` closes
+    if (props.streaming) {
+      const openCount = (text.match(/```/g) || []).length
+      if (openCount % 2 === 1) {
+        // Unclosed fence: split at last ``` and render tail as text
+        const lastFence = text.lastIndexOf('```')
+        const before = text.slice(0, lastFence)
+        const tail = text.slice(lastFence)
+        // Parse completed fences in `before` normally, tail stays as text
+        const re = /```(\w*)\n([\s\S]*?)```/g
+        const out: Array<{ type: 'text' | 'code'; content: string; lang?: string }> = []
+        let last = 0
+        let m: RegExpExecArray | null
+        while ((m = re.exec(before)) !== null) {
+          if (m.index > last) out.push({ type: 'text', content: before.slice(last, m.index) })
+          out.push({ type: 'code', content: m[2], lang: m[1] || '' })
+          last = re.lastIndex
+        }
+        if (last < before.length) out.push({ type: 'text', content: before.slice(last) })
+        out.push({ type: 'text', content: tail })
+        if (out.length === 0) out.push({ type: 'text', content: text })
+        return out
+      }
+    }
     if (!text.includes('```')) return [{ type: 'text' as const, content: text }]
     const re = /```(\w*)\n([\s\S]*?)```/g
     const out: Array<{ type: 'text' | 'code'; content: string; lang?: string }> = []
@@ -112,7 +138,8 @@ function FencedContent(props: { text: string; isUser?: boolean }) {
     if (last < text.length) out.push({ type: 'text', content: text.slice(last) })
     if (out.length === 0) out.push({ type: 'text', content: text })
     return out
-  }
+  })
+
   return (
     <div style={{ display: 'flex', 'flex-direction': 'column', gap: '0' }}>
       <For each={segments()}>
@@ -138,256 +165,132 @@ function FencedContent(props: { text: string; isUser?: boolean }) {
   )
 }
 
-/** Inline tool-call chip — special-cases edit/write/patch as unified diff (red/green). */
-function ToolChip(props: { part: Part }) {
-  const [open, setOpen] = createSignal(false)
-  const [audit, setAudit] = createSignal<{
-    decision: 'allow' | 'deny' | 'warn'
-    reason?: string
-  } | null>(null)
-  const [auditLoading, setAuditLoading] = createSignal(false)
-  const isCall = () => props.part.type === 'tool_call'
-  const tool = () => props.part.tool ?? ''
-  const input = () => props.part.input as Record<string, string> | undefined
-  const isDiffTool = () => isCall() && ['edit', 'write', 'patch'].includes(tool())
+// ── Citation ──────────────────────────────────────────────────────────
 
-  const detail = () => {
-    const src = isCall() ? props.part.input : props.part.output
-    if (src === undefined) return ''
-    try {
-      return JSON.stringify(src, null, 2)
-    } catch {
-      return String(src)
-    }
-  }
-
-  const diffPreview = () => {
-    const inp = input()
-    if (!inp) return ''
-    if (tool() === 'edit' && inp.path) {
-      const oldS = String(inp.oldString ?? '').slice(0, 240)
-      const newS = String(inp.newString ?? '').slice(0, 240)
-      return `${inp.path}: ${oldS.length > 40 ? oldS.slice(0, 40) + '…' : oldS} → ${newS.length > 40 ? newS.slice(0, 40) + '…' : newS}`
-    }
-    if (tool() === 'write' && inp.path)
-      return `${inp.path} (${String(inp.content ?? '').length} chars)`
-    if (tool() === 'patch' && inp.patch)
-      return `patch ${String(inp.patch).split('\n').length} lines`
-    return ''
-  }
-
-  createEffect(async () => {
-    if (open() && isCall() && tool()) {
-      setAuditLoading(true)
-      try {
-        const res = await api.checkGuardrails({
-          tool: tool(),
-          args: props.part.input as unknown as Record<string, JsonValue>,
-        })
-        setAudit({ decision: res.decision, reason: res.reason })
-      } catch {
-        setAudit(null)
-      } finally {
-        setAuditLoading(false)
-      }
-    }
-  })
-
+function CitationChip(props: { label: string; source?: string; onClick?: () => void }) {
   return (
-    <div>
+    <button type="button" class="citation" onClick={props.onClick} title={props.source ?? props.label} aria-label={`Source: ${props.label}`}>
+      ◈ {props.label}
+    </button>
+  )
+}
+
+// ── Confidence ────────────────────────────────────────────────────────
+
+function ConfidenceIndicator(props: { value?: number }) {
+  const v = () => props.value ?? 0.75
+  const level = () => (v() >= 0.8 ? 'high' : v() >= 0.5 ? 'med' : 'low')
+  const color = () => (level() === 'high' ? 'var(--confidence-high)' : level() === 'med' ? 'var(--confidence-med)' : 'var(--confidence-low)')
+  const label = () => (level() === 'high' ? 'High confidence' : level() === 'med' ? 'Medium confidence' : 'Low confidence')
+  return (
+    <span class="confidence-bar" title={label()} aria-label={label()}>
+      <span class="confidence-dot" style={{ background: color() }} />
+      <span style={{ color: color(), 'font-size': 'var(--fs-2xs)' }}>{label()}</span>
+    </span>
+  )
+}
+
+// ── Feedback ──────────────────────────────────────────────────────────
+
+function FeedbackRow(props: { messageId: string }) {
+  const [vote, setVote] = createSignal<'up' | 'down' | null>(null)
+  return (
+    <div class="feedback-row" role="group" aria-label="Feedback">
       <button
         type="button"
-        class="chip"
-        aria-expanded={open() ? 'true' : 'false'}
-        onClick={() => setOpen(!open())}
-        title={isCall() ? 'Show tool input' : 'Show tool output'}
+        class={`feedback-btn ${vote() === 'up' ? 'active-up' : ''}`}
+        onClick={() => setVote(vote() === 'up' ? null : 'up')}
+        title="Helpful"
+        aria-label="Mark as helpful"
+        aria-pressed={vote() === 'up' ? 'true' : 'false'}
       >
-        <span
-          style={{
-            color: isCall() ? 'var(--warn)' : 'var(--ok)',
-            'font-size': '10px',
-            flex: 'none',
-          }}
-        >
-          {isCall() ? '◷' : '✓'}
-        </span>
-        <span class="chip-name">{tool() || props.part.type}</span>
-        <Show when={isDiffTool() && diffPreview()}>
-          <span
-            style={{
-              'font-size': 'var(--fs-2xs)',
-              color: 'var(--fg-faint)',
-              'margin-left': '6px',
-              'font-family': 'var(--font-mono)',
-              overflow: 'hidden',
-              'text-overflow': 'ellipsis',
-              'white-space': 'nowrap',
-              'max-width': '28ch',
-            }}
-          >
-            {diffPreview()}
-          </span>
-        </Show>
-        <span class="chip-chevron">▶</span>
+        👍
+      </button>
+      <button
+        type="button"
+        class={`feedback-btn ${vote() === 'down' ? 'active-down' : ''}`}
+        onClick={() => setVote(vote() === 'down' ? null : 'down')}
+        title="Not helpful"
+        aria-label="Mark as not helpful"
+        aria-pressed={vote() === 'down' ? 'true' : 'false'}
+      >
+        👎
+      </button>
+    </div>
+  )
+}
+
+// ── Reasoning block (collapsible) ─────────────────────────────────────
+
+function ReasoningBlock(props: { text: string }) {
+  const [open, setOpen] = createSignal(false)
+  return (
+    <div style={{ margin: '6px 0' }}>
+      <button
+        type="button"
+        class="btn btn-ghost"
+        onClick={() => setOpen(!open())}
+        aria-expanded={open() ? 'true' : 'false'}
+        style={{
+          padding: '4px 8px',
+          'font-size': 'var(--fs-xs)',
+          border: '1px solid var(--border)',
+          'border-radius': 'var(--r-md)',
+          color: 'var(--fg-subtle)',
+          gap: '6px',
+        }}
+      >
+        <span style={{ 'font-size': '10px' }}>{open() ? '▼' : '▶'}</span> Reasoning
       </button>
       <Show when={open()}>
-        <Show when={auditLoading()}>
-          <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-faint)', margin: '4px 0' }}>
-            Checking guardrails…
-          </div>
-        </Show>
-        <Show when={audit()}>
-          <div
-            style={{
-              margin: '4px 0',
-              padding: '6px 8px',
-              'border-radius': '6px',
-              'font-size': 'var(--fs-xs)',
-              background:
-                audit()?.decision === 'allow'
-                  ? 'color-mix(in srgb, var(--ok) 10%, transparent)'
-                  : audit()?.decision === 'deny'
-                    ? 'color-mix(in srgb, var(--danger) 10%, transparent)'
-                    : 'color-mix(in srgb, var(--warn) 10%, transparent)',
-              color:
-                audit()?.decision === 'allow'
-                  ? 'var(--ok)'
-                  : audit()?.decision === 'deny'
-                    ? 'var(--danger)'
-                    : 'var(--warn)',
-              border: '1px solid var(--border)',
-            }}
-          >
-            Guardrail: <b>{audit()?.decision}</b>
-            {audit()?.reason ? ` — ${audit()?.reason}` : ''}
-          </div>
-        </Show>
-        <Show
-          when={isDiffTool()}
-          fallback={
-            <Show when={detail()}>
-              <pre class="chip-detail">{detail()}</pre>
-            </Show>
-          }
+        <div
+          style={{
+            margin: '6px 0 0',
+            padding: '10px 12px',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border)',
+            'border-radius': 'var(--r-md)',
+            'font-size': 'var(--fs-sm)',
+            'line-height': '1.6',
+            color: 'var(--fg-muted)',
+            'white-space': 'pre-wrap',
+            'word-break': 'break-word',
+          }}
         >
-          <div
-            class="card"
-            style={{
-              margin: '6px 0 0',
-              padding: '8px 10px',
-              background: 'var(--bg-surface)',
-              border: '1px solid var(--border)',
-              'border-radius': 'var(--r-md)',
-              'font-family': 'var(--font-mono)',
-              'font-size': 'var(--fs-xs)',
-              'line-height': '1.5',
-              overflow: 'auto',
-              'max-height': '260px',
-            }}
-          >
-            <Show when={tool() === 'edit'}>
-              <div
-                style={{
-                  'font-size': 'var(--fs-2xs)',
-                  color: 'var(--fg-faint)',
-                  'margin-bottom': '6px',
-                }}
-              >
-                {String(input()?.path ?? '')}
-              </div>
-              <Show when={String(input()?.oldString ?? '').length > 0}>
-                <div
-                  style={{
-                    background: 'color-mix(in srgb, var(--danger) 12%, transparent)',
-                    color: 'var(--danger)',
-                    padding: '4px 6px',
-                    'border-radius': '4px',
-                    'white-space': 'pre-wrap',
-                    'word-break': 'break-word',
-                    'margin-bottom': '4px',
-                  }}
-                >
-                  − {String(input()?.oldString ?? '').slice(0, 800)}
-                </div>
-              </Show>
-              <div
-                style={{
-                  background: 'color-mix(in srgb, var(--ok) 14%, transparent)',
-                  color: 'var(--ok)',
-                  padding: '4px 6px',
-                  'border-radius': '4px',
-                  'white-space': 'pre-wrap',
-                  'word-break': 'break-word',
-                }}
-              >
-                + {String(input()?.newString ?? '').slice(0, 800)}
-              </div>
-              <Show
-                when={
-                  String(input()?.oldString ?? '').length > 800 ||
-                  String(input()?.newString ?? '').length > 800
-                }
-              >
-                <div
-                  style={{
-                    'font-size': 'var(--fs-2xs)',
-                    color: 'var(--fg-faint)',
-                    'margin-top': '4px',
-                  }}
-                >
-                  … truncated, expand JSON for full
-                </div>
-              </Show>
-            </Show>
-            <Show when={tool() === 'write'}>
-              <div
-                style={{
-                  'font-size': 'var(--fs-2xs)',
-                  color: 'var(--fg-faint)',
-                  'margin-bottom': '6px',
-                }}
-              >
-                {String(input()?.path ?? '')} · new file
-              </div>
-              <pre
-                style={{
-                  margin: '0',
-                  'white-space': 'pre-wrap',
-                  'word-break': 'break-word',
-                  color: 'var(--fg)',
-                  background: 'var(--bg-app)',
-                  padding: '6px 8px',
-                  'border-radius': '4px',
-                  border: '1px solid var(--border)',
-                }}
-              >
-                {String(input()?.content ?? '').slice(0, 1200)}
-              </pre>
-              <Show when={String(input()?.content ?? '').length > 1200}>
-                <div
-                  style={{
-                    'font-size': 'var(--fs-2xs)',
-                    color: 'var(--fg-faint)',
-                    'margin-top': '4px',
-                  }}
-                >
-                  … truncated
-                </div>
-              </Show>
-            </Show>
-            <Show when={tool() === 'patch'}>
-              <pre
-                style={{ margin: '0', 'white-space': 'pre', overflow: 'auto', color: 'var(--fg)' }}
-              >
-                {String(input()?.patch ?? '').slice(0, 2000)}
-              </pre>
-            </Show>
-          </div>
-        </Show>
+          {props.text}
+        </div>
       </Show>
     </div>
   )
 }
+
+// ── Error recovery card ───────────────────────────────────────────────
+
+function ErrorCard(props: { message: string; onRetry?: () => void; onDismiss: () => void }) {
+  return (
+    <div class="error-card" role="alert">
+      <div class="error-card-title">Something went wrong</div>
+      <div class="error-card-why">
+        <strong>What happened:</strong> {props.message}
+      </div>
+      <div class="error-card-why">
+        <strong>Why:</strong> The request failed or the agent encountered an error. Check your connection and try again.
+      </div>
+      <div class="error-card-next">
+        <Show when={props.onRetry}>
+          <button type="button" class="btn btn-solid" onClick={props.onRetry} style={{ padding: '6px 12px', 'font-size': 'var(--fs-xs)' }}>
+            Retry
+          </button>
+        </Show>
+        <button type="button" class="btn btn-ghost" onClick={props.onDismiss} style={{ padding: '6px 12px', 'font-size': 'var(--fs-xs)', border: '1px solid var(--border)', 'border-radius': 'var(--r-md)' }}>
+          Dismiss
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Main ChatView ─────────────────────────────────────────────────────
 
 export function ChatView(props: {
   store: AppStore
@@ -398,7 +301,18 @@ export function ChatView(props: {
   let scrollRef: HTMLDivElement | undefined
   let inputRef: HTMLTextAreaElement | undefined
 
-  // Slash autocomplete state
+  // Pinned messages
+  const [pinnedIds, setPinnedIds] = createSignal<Set<string>>(new Set())
+  const togglePin = (id: string) => {
+    setPinnedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // Slash autocomplete
   const slashQuery = () => {
     const v = props.store.input()
     return v.startsWith('/') ? v : ''
@@ -406,10 +320,8 @@ export function ChatView(props: {
   const slashCommands = () => props.settings?.allCommands() ?? []
   const slashFiltered = () => filterCommands(slashQuery(), slashCommands())
   const [slashIndex, setSlashIndex] = createSignal(0)
-  // Esc dismisses the dropdown once; it re-opens when the query text changes
   const [slashDismissed, setSlashDismissed] = createSignal(false)
-  const slashVisible = () =>
-    slashQuery().startsWith('/') && slashFiltered().length > 0 && !slashDismissed()
+  const slashVisible = () => slashQuery().startsWith('/') && slashFiltered().length > 0 && !slashDismissed()
   createEffect(() => {
     void slashQuery()
     setSlashIndex(0)
@@ -421,11 +333,10 @@ export function ChatView(props: {
     autoGrow()
   }
 
-  // pinned = stick to bottom; unpins the moment the user scrolls up to read,
-  // and a "jump to latest" pill appears instead of yanking them down.
+  // Auto-scroll pinning
   const [pinned, setPinned] = createSignal(true)
 
-  // background jobs — poll while session active, show spinner cards in chat
+  // Background jobs
   const [jobs, { refetch: refetchJobs }] = createResource(
     () => s().currentId,
     (id) => api.listJobs(id).catch(() => [] as Job[]),
@@ -451,12 +362,10 @@ export function ChatView(props: {
     el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
   }
 
-  // new message → smooth glide (if pinned)
   createEffect(() => {
     void s().messages.length
     if (pinned()) queueMicrotask(() => scrollToBottom(true))
   })
-  // streaming deltas → instant catch-up (smooth every token is nauseating)
   createEffect(() => {
     void s().streamText
     if (pinned()) queueMicrotask(() => scrollToBottom(false))
@@ -469,6 +378,27 @@ export function ChatView(props: {
   }
 
   onMount(() => inputRef?.focus())
+
+  // Keyboard shortcuts
+  const onGlobalKey = (e: KeyboardEvent) => {
+    const tag = (e.target as HTMLElement)?.tagName?.toLowerCase()
+    const isInput = tag === 'input' || tag === 'textarea' || (e.target as HTMLElement)?.isContentEditable
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault()
+      props.onPaletteOpen?.()
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !isInput) {
+      e.preventDefault()
+      props.store.sendPrompt()
+    }
+    if (e.key === 'Escape' && s().streaming) {
+      // Don't auto-stop; user must click Stop explicitly
+    }
+  }
+  onMount(() => {
+    window.addEventListener('keydown', onGlobalKey)
+    onCleanup(() => window.removeEventListener('keydown', onGlobalKey))
+  })
 
   const lastMsg = () => s().messages[s().messages.length - 1]
   const typingDots = () => {
@@ -487,7 +417,6 @@ export function ChatView(props: {
   }
 
   const onKeyDown = (e: KeyboardEvent) => {
-    // Slash autocomplete navigation
     const q = slashQuery()
     const filtered = slashFiltered()
     const hasSlash = slashVisible()
@@ -502,11 +431,7 @@ export function ChatView(props: {
         setSlashIndex((i) => Math.max(i - 1, 0))
         return
       }
-      if (
-        e.key === 'Tab' ||
-        (e.key === 'Enter' && !e.shiftKey && q.trim().split(/\s/).length === 1)
-      ) {
-        // Tab or Enter on single-token slash query → autocomplete first match
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && q.trim().split(/\s/).length === 1)) {
         const pick = filtered[slashIndex()]
         if (pick && q.trim() !== pick.name) {
           e.preventDefault()
@@ -525,11 +450,15 @@ export function ChatView(props: {
         return
       }
     }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault()
+      props.store.sendPrompt()
+      return
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       props.store.sendPrompt()
     }
-    // "/" at start when empty → ensure commands loaded
     if (e.key === '/' && !props.store.input()) {
       void props.settings?.loadAll()
     }
@@ -552,6 +481,12 @@ export function ChatView(props: {
 
   const timeOf = (m: Message) => new Date(m.createdAt).toLocaleTimeString()
 
+  // Branch: create new session from a message
+  const branchFrom = (m: Message) => {
+    const text = contentOf(m).slice(0, 200)
+    void props.store.createSession(`Branch: ${text.slice(0, 40)}…`).catch(() => {})
+  }
+
   return (
     <section
       style={{
@@ -564,14 +499,9 @@ export function ChatView(props: {
         overflow: 'hidden',
       }}
     >
-      {/* messages — relative wrapper hosts the jump pill over the scroller */}
+      {/* messages */}
       <div style={{ flex: '1', position: 'relative', 'min-height': '0' }}>
-        <div
-          class="scroll"
-          ref={scrollRef}
-          onScroll={onScroll}
-          style={{ position: 'absolute', inset: '0' }}
-        >
+        <div class="scroll" ref={scrollRef} onScroll={onScroll} style={{ position: 'absolute', inset: '0' }}>
           <div
             style={{
               'max-width': 'calc(68ch + 48px)',
@@ -586,7 +516,6 @@ export function ChatView(props: {
             <Show
               when={s().currentId}
               fallback={
-                /* no session selected — designed welcome + exit */
                 <div
                   style={{
                     flex: '1',
@@ -596,14 +525,7 @@ export function ChatView(props: {
                     padding: 'var(--sp-6)',
                   }}
                 >
-                  <div
-                    style={{
-                      display: 'flex',
-                      'flex-direction': 'column',
-                      'align-items': 'center',
-                      gap: '12px',
-                    }}
-                  >
+                  <div style={{ display: 'flex', 'flex-direction': 'column', 'align-items': 'center', gap: '12px' }}>
                     <div
                       style={{
                         width: '46px',
@@ -619,36 +541,11 @@ export function ChatView(props: {
                     >
                       ✦
                     </div>
-                    <div
-                      style={{
-                        'font-weight': '700',
-                        color: 'var(--fg)',
-                        'font-size': 'var(--fs-lg)',
-                      }}
-                    >
-                      Welcome to Mira
+                    <div style={{ 'font-weight': '700', color: 'var(--fg)', 'font-size': 'var(--fs-lg)' }}>Welcome to Mira</div>
+                    <div style={{ 'font-size': 'var(--fs-sm)', color: 'var(--fg-subtle)', 'max-width': '44ch', 'line-height': '1.6' }}>
+                      A self-hosted coding agent with streaming answers, tool execution, and snapshot undo. Create a session to start.
                     </div>
-                    <div
-                      style={{
-                        'font-size': 'var(--fs-sm)',
-                        color: 'var(--fg-subtle)',
-                        'max-width': '44ch',
-                        'line-height': '1.6',
-                      }}
-                    >
-                      A self-hosted coding agent with streaming answers, tool execution, and
-                      snapshot undo. Create a session to start.
-                    </div>
-                    <button
-                      type="button"
-                      class="btn btn-solid"
-                      onClick={() => void props.store.createSession().catch(() => {})}
-                      style={{
-                        padding: '8px 14px',
-                        'font-size': 'var(--fs-sm)',
-                        'margin-top': '4px',
-                      }}
-                    >
+                    <button type="button" class="btn btn-solid" onClick={() => void props.store.createSession().catch(() => {})} style={{ padding: '8px 14px', 'font-size': 'var(--fs-sm)', 'margin-top': '4px' }}>
                       ＋ New session
                     </button>
                   </div>
@@ -658,7 +555,6 @@ export function ChatView(props: {
               <Show
                 when={s().messages.length > 0}
                 fallback={
-                  /* empty conversation — offer concrete first steps */
                   <div
                     style={{
                       flex: '1',
@@ -668,14 +564,7 @@ export function ChatView(props: {
                       padding: 'var(--sp-6)',
                     }}
                   >
-                    <div
-                      style={{
-                        display: 'flex',
-                        'flex-direction': 'column',
-                        'align-items': 'center',
-                        gap: '10px',
-                      }}
-                    >
+                    <div style={{ display: 'flex', 'flex-direction': 'column', 'align-items': 'center', gap: '10px' }}>
                       <div
                         aria-hidden="true"
                         style={{
@@ -692,55 +581,43 @@ export function ChatView(props: {
                       >
                         ✦
                       </div>
-                      <div
-                        style={{
-                          'font-weight': '600',
-                          color: 'var(--fg)',
-                          'font-size': 'var(--fs-md)',
-                        }}
-                      >
-                        Start the conversation
+                      <div style={{ 'font-weight': '600', color: 'var(--fg)', 'font-size': 'var(--fs-md)' }}>Start the conversation</div>
+                      <div style={{ 'font-size': 'var(--fs-sm)', color: 'var(--fg-subtle)', 'max-width': '42ch', 'line-height': '1.55' }}>
+                        Ask anything — Mira streams the answer, runs tools, and edits files with undo.
                       </div>
-                      <div
-                        style={{
-                          'font-size': 'var(--fs-sm)',
-                          color: 'var(--fg-subtle)',
-                          'max-width': '42ch',
-                          'line-height': '1.55',
-                        }}
-                      >
-                        Ask anything — Mira streams the answer, runs tools, and edits files with
-                        undo.
-                      </div>
-                      <div
-                        style={{
-                          display: 'flex',
-                          'flex-wrap': 'wrap',
-                          gap: '6px',
-                          'justify-content': 'center',
-                          'margin-top': '6px',
-                        }}
-                      >
-                        <For each={EXAMPLE_PROMPTS}>
-                          {(ex) => (
-                            <button type="button" class="chip" onClick={() => useExample(ex)}>
-                              {ex}
-                            </button>
-                          )}
-                        </For>
+                      <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '6px', 'justify-content': 'center', 'margin-top': '6px' }}>
+                        <For each={EXAMPLE_PROMPTS}>{(ex) => <button type="button" class="chip" onClick={() => useExample(ex)}>{ex}</button>}</For>
                       </div>
                     </div>
                   </div>
                 }
               >
+                {/* Pinned messages strip */}
+                <Show when={pinnedIds().size > 0}>
+                  <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap', 'align-items': 'center', padding: '6px 0', 'border-bottom': '1px solid var(--border)', 'margin-bottom': '4px' }}>
+                    <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'font-weight': '600', 'letter-spacing': '0.04em', 'text-transform': 'uppercase' }}>Pinned</span>
+                    <For each={s().messages.filter((m) => pinnedIds().has(m.id))}>
+                      {(m) => (
+                        <span class="msg-pinned-badge">
+                          {m.role === 'user' ? 'You' : 'Mira'}: {contentOf(m).slice(0, 40)}…
+                          <button type="button" onClick={() => togglePin(m.id)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit', 'font-size': '10px', padding: '0 2px' }} aria-label="Unpin">
+                            ✕
+                          </button>
+                        </span>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+
                 <For each={s().messages}>
                   {(m, i) => {
                     const isUser = m.role === 'user'
                     const isLast = () => i() === s().messages.length - 1
                     const showCaretHere = () => showCaret() && isLast()
+                    const isPinned = () => pinnedIds().has(m.id)
+                    const reasoningParts = () => m.parts?.filter((p) => p.type === 'reasoning') ?? []
+                    const toolCount = () => m.parts?.filter((p) => p.type === 'tool_call' || p.type === 'tool_result').length ?? 0
 
-                    // system / tool roles get compact treatments; user and
-                    // assistant are structurally distinct, not just recolored
                     return (
                       <Show
                         when={m.role === 'system'}
@@ -748,7 +625,6 @@ export function ChatView(props: {
                           <Show
                             when={m.role === 'tool'}
                             fallback={
-                              /* ── user: right-aligned bubble / assistant: open block ── */
                               <div
                                 class="msg-in"
                                 style={{
@@ -761,15 +637,14 @@ export function ChatView(props: {
                                   when={!isUser}
                                   fallback={
                                     <>
-                                      <span
-                                        style={{
-                                          'font-size': 'var(--fs-2xs)',
-                                          color: 'var(--fg-faint)',
-                                          'margin-bottom': '3px',
-                                        }}
-                                      >
+                                      <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'margin-bottom': '3px' }}>
                                         You · {timeOf(m)}
                                         {m.queued ? ' · ⏳ queued' : ''}
+                                        <Show when={isPinned()}>
+                                          <span class="msg-pinned-badge" style={{ 'margin-left': '6px' }}>
+                                            📌 pinned
+                                          </span>
+                                        </Show>
                                       </span>
                                       <div
                                         style={{
@@ -783,16 +658,29 @@ export function ChatView(props: {
                                       >
                                         <FencedContent text={contentOf(m)} isUser={true} />
                                       </div>
+                                      <div class="msg-actions">
+                                        <button type="button" class="msg-action-btn" onClick={() => togglePin(m.id)} aria-label={isPinned() ? 'Unpin message' : 'Pin message'}>
+                                          {isPinned() ? 'Unpin' : '📌 Pin'}
+                                        </button>
+                                        <button type="button" class="msg-action-btn" onClick={() => branchFrom(m)} aria-label="Branch conversation">
+                                          ⎇ Branch
+                                        </button>
+                                        <button
+                                          type="button"
+                                          class="msg-action-btn"
+                                          onClick={() => {
+                                            void navigator.clipboard.writeText(contentOf(m))
+                                            toast.success('Copied')
+                                          }}
+                                          aria-label="Copy message"
+                                        >
+                                          ⧉ Copy
+                                        </button>
+                                      </div>
                                     </>
                                   }
                                 >
-                                  <div
-                                    style={{
-                                      display: 'flex',
-                                      gap: '10px',
-                                      'align-items': 'flex-start',
-                                    }}
-                                  >
+                                  <div style={{ display: 'flex', gap: '10px', 'align-items': 'flex-start' }}>
                                     <div
                                       aria-hidden="true"
                                       style={{
@@ -819,21 +707,60 @@ export function ChatView(props: {
                                           display: 'flex',
                                           'align-items': 'center',
                                           gap: '8px',
+                                          'flex-wrap': 'wrap',
                                         }}
                                       >
                                         <span>Mira · {timeOf(m)}</span>
+                                        <Show when={isPinned()}>
+                                          <span class="msg-pinned-badge">📌 pinned</span>
+                                        </Show>
+                                        <Show when={toolCount() > 0}>
+                                          <span style={{ 'font-family': 'var(--font-mono)', color: 'var(--fg-subtle)' }}>
+                                            {toolCount()} tool call{toolCount() === 1 ? '' : 's'} → Activity
+                                          </span>
+                                        </Show>
+                                      </div>
+
+                                      {/* Reasoning (collapsible, not conflated with tool calls) */}
+                                      <For each={reasoningParts()}>{(rp) => <ReasoningBlock text={rp.text ?? ''} />}</For>
+
+                                      <FencedContent text={contentOf(m)} streaming={showCaretHere()} />
+
+                                      <Show when={showCaretHere()}>
+                                        <span class="caret" aria-hidden="true" style={{ display: 'inline-block', width: '8px', height: '14px', background: 'var(--accent)', 'margin-left': '2px', 'vertical-align': 'text-bottom' }} />
+                                      </Show>
+
+                                      {/* Citations / provenance */}
+                                      <Show when={m.provenance && m.provenance.length > 0}>
+                                        <div style={{ display: 'flex', gap: '4px', 'flex-wrap': 'wrap', 'margin-top': '8px' }}>
+                                          <For each={m.provenance ?? []}>
+                                            {(prov) => <CitationChip label={prov.label} source={prov.source} />}
+                                          </For>
+                                        </div>
+                                      </Show>
+
+                                      {/* Message actions */}
+                                      <div class="msg-actions">
+                                        <button type="button" class="msg-action-btn" onClick={() => togglePin(m.id)} aria-label={isPinned() ? 'Unpin message' : 'Pin message'}>
+                                          {isPinned() ? 'Unpin' : '📌 Pin'}
+                                        </button>
+                                        <button type="button" class="msg-action-btn" onClick={() => branchFrom(m)} aria-label="Branch conversation">
+                                          ⎇ Branch
+                                        </button>
                                         <button
                                           type="button"
-                                          class="btn btn-ghost"
-                                          style={{
-                                            padding: '3px 8px',
-                                            'font-size': '10px',
-                                            'min-height': '24px',
-                                            border: '1px solid var(--border)',
-                                            'border-radius': 'var(--r-full)',
+                                          class="msg-action-btn"
+                                          onClick={() => {
+                                            void navigator.clipboard.writeText(contentOf(m))
+                                            toast.success('Copied')
                                           }}
-                                          title="Rewind session to this message"
-                                          aria-label="Rewind session to this message"
+                                          aria-label="Copy message"
+                                        >
+                                          ⧉ Copy
+                                        </button>
+                                        <button
+                                          type="button"
+                                          class="msg-action-btn"
                                           onClick={() => {
                                             const sessionId = props.store.state.currentId
                                             const messageId = m.id
@@ -844,107 +771,24 @@ export function ChatView(props: {
                                                 props.store.loadMessages(sessionId)
                                                 toast.success('Rewound to message')
                                               })
-                                              .catch((e) =>
-                                                toast.error(
-                                                  `Rewind failed: ${(e as Error).message}`,
-                                                ),
-                                              )
+                                              .catch((e) => toast.error(`Rewind failed: ${(e as Error).message}`))
                                           }}
+                                          aria-label="Rewind to this message"
                                         >
                                           ↩ Rewind
                                         </button>
                                       </div>
-                                      <FencedContent text={contentOf(m)} />
-                                      <Show when={showCaretHere()}>
-                                        <span
-                                          class="caret"
-                                          aria-hidden="true"
-                                          style={{
-                                            display: 'inline-block',
-                                            width: '8px',
-                                            height: '14px',
-                                            background: 'var(--accent)',
-                                            'margin-left': '2px',
-                                            'vertical-align': 'text-bottom',
-                                          }}
-                                        />
-                                      </Show>
-                                      <Show
-                                        when={
-                                          m.parts &&
-                                          m.parts.some(
-                                            (p) =>
-                                              p.type === 'tool_call' || p.type === 'tool_result',
-                                          )
-                                        }
-                                      >
-                                        {(() => {
-                                          const calls =
-                                            m.parts?.filter((p) => p.type === 'tool_call') ?? []
-                                          const results =
-                                            m.parts?.filter((p) => p.type === 'tool_result') ?? []
-                                          const counts = new Map<string, number>()
-                                          for (const p of calls) {
-                                            const t = p.tool ?? 'unknown'
-                                            counts.set(t, (counts.get(t) ?? 0) + 1)
-                                          }
-                                          const summary = Array.from(counts.entries())
-                                            .map(([t, c]) => `${c} ${t}`)
-                                            .join(', ')
-                                          return (
-                                            <>
-                                              <div
-                                                style={{
-                                                  'font-size': 'var(--fs-2xs)',
-                                                  color: 'var(--fg-faint)',
-                                                  'margin-top': '6px',
-                                                  'margin-bottom': '4px',
-                                                  'font-family': 'var(--font-mono)',
-                                                }}
-                                              >
-                                                {summary ||
-                                                  `${calls.length} tool${calls.length === 1 ? '' : 's'}`}
-                                                {calls.length > 0
-                                                  ? ` · ${results.length} result${results.length === 1 ? '' : 's'}`
-                                                  : ''}
-                                              </div>
-                                              <div
-                                                style={{
-                                                  'margin-top': '8px',
-                                                  display: 'flex',
-                                                  'flex-direction': 'column',
-                                                  gap: '5px',
-                                                  'align-items': 'flex-start',
-                                                }}
-                                              >
-                                                <For each={m.parts}>
-                                                  {(p) => (
-                                                    <Show
-                                                      when={
-                                                        p.type === 'tool_call' ||
-                                                        p.type === 'tool_result'
-                                                      }
-                                                    >
-                                                      <ToolChip part={p} />
-                                                    </Show>
-                                                  )}
-                                                </For>
-                                              </div>
-                                            </>
-                                          )
-                                        })()}
-                                      </Show>
+
+                                      {/* Feedback */}
+                                      <FeedbackRow messageId={m.id} />
                                     </div>
                                   </div>
                                 </Show>
                               </div>
                             }
                           >
-                            {/* tool-role message */}
-                            <div
-                              class="msg-in"
-                              style={{ display: 'flex', gap: '10px', 'align-items': 'flex-start' }}
-                            >
+                            {/* tool-role message — compact, since ActivityPanel is primary */}
+                            <div class="msg-in" style={{ display: 'flex', gap: '10px', 'align-items': 'flex-start', opacity: '0.7' }}>
                               <div
                                 aria-hidden="true"
                                 style={{
@@ -964,15 +808,7 @@ export function ChatView(props: {
                                 ⚙
                               </div>
                               <div style={{ flex: '1', 'min-width': '0' }}>
-                                <div
-                                  style={{
-                                    'font-size': 'var(--fs-2xs)',
-                                    color: 'var(--fg-faint)',
-                                    'margin-bottom': '3px',
-                                  }}
-                                >
-                                  Tool · {timeOf(m)}
-                                </div>
+                                <div style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'margin-bottom': '3px' }}>Tool · {timeOf(m)} → see Activity</div>
                                 <pre
                                   style={{
                                     margin: '0',
@@ -984,26 +820,15 @@ export function ChatView(props: {
                                     color: 'var(--fg-muted)',
                                   }}
                                 >
-                                  {contentOf(m)}
+                                  {contentOf(m).slice(0, 300)}
+                                  {contentOf(m).length > 300 ? '…' : ''}
                                 </pre>
                               </div>
                             </div>
                           </Show>
                         }
                       >
-                        {/* system-role message */}
-                        <div
-                          class="msg-in"
-                          role="note"
-                          style={{
-                            'align-self': 'center',
-                            'max-width': '60ch',
-                            'font-size': 'var(--fs-xs)',
-                            color: 'var(--fg-subtle)',
-                            'text-align': 'center',
-                            padding: '2px 0',
-                          }}
-                        >
+                        <div class="msg-in" role="note" style={{ 'align-self': 'center', 'max-width': '60ch', 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)', 'text-align': 'center', padding: '2px 0' }}>
                           {contentOf(m)}
                         </div>
                       </Show>
@@ -1011,19 +836,19 @@ export function ChatView(props: {
                   }}
                 </For>
 
-                {/* typing dots while the first tokens are in flight */}
+                {/* ARIA live region for streaming */}
+                <div aria-live="polite" aria-atomic="false" class="sr-only">
+                  <Show when={s().streaming}>{s().streamText.slice(-200)}</Show>
+                </div>
+
+                {/* Typing indicator */}
                 <Show when={typingDots()}>
-                  <div
-                    class="msg-in"
-                    style={{ display: 'flex', gap: '4px', padding: '4px 0 0 32px' }}
-                    aria-label="Mira is responding"
-                  >
-                    {[0, 150, 300].map((d) => (
-                      <span
-                        class="dot dot-pulse"
-                        style={{ background: 'var(--accent)', 'animation-delay': `${d}ms` }}
-                      />
-                    ))}
+                  <div class="msg-in" style={{ display: 'flex', gap: '4px', padding: '4px 0 0 32px' }} aria-label="Mira is responding">
+                    <div class="streaming-indicator">
+                      <span class="streaming-dot" />
+                      <span class="streaming-dot" />
+                      <span class="streaming-dot" />
+                    </div>
                   </div>
                 </Show>
               </Show>
@@ -1032,7 +857,6 @@ export function ChatView(props: {
           </div>
         </div>
 
-        {/* autoscroll paused — hand control back to the reader */}
         <Show when={!pinned()}>
           <button
             type="button"
@@ -1051,47 +875,12 @@ export function ChatView(props: {
       <Show when={s().currentId}>
         <div style={{ padding: '0 var(--sp-4) var(--sp-3)' }}>
           <Show when={runningJobs().length > 0}>
-            <div
-              style={{
-                display: 'flex',
-                'flex-direction': 'column',
-                gap: '6px',
-                'margin-bottom': '8px',
-              }}
-            >
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', 'margin-bottom': '8px' }}>
               <For each={runningJobs()}>
                 {(job) => (
-                  <div
-                    class="card"
-                    style={{
-                      display: 'flex',
-                      'align-items': 'center',
-                      gap: '8px',
-                      padding: '8px 10px',
-                      background: 'var(--warn-soft)',
-                      border: '1px solid var(--warn-border)',
-                    }}
-                  >
-                    <span
-                      class="dot dot-pulse"
-                      style={{
-                        background: 'var(--warn)',
-                        width: '8px',
-                        height: '8px',
-                        flex: 'none',
-                      }}
-                    />
-                    <span
-                      style={{
-                        flex: '1',
-                        'min-width': '0',
-                        'font-size': 'var(--fs-xs)',
-                        color: 'var(--fg)',
-                        'white-space': 'nowrap',
-                        overflow: 'hidden',
-                        'text-overflow': 'ellipsis',
-                      }}
-                    >
+                  <div class="card" style={{ display: 'flex', 'align-items': 'center', gap: '8px', padding: '8px 10px', background: 'var(--warn-soft)', border: '1px solid var(--warn-border)' }}>
+                    <span class="dot dot-pulse" style={{ background: 'var(--warn)', width: '8px', height: '8px', flex: 'none' }} />
+                    <span style={{ flex: '1', 'min-width': '0', 'font-size': 'var(--fs-xs)', color: 'var(--fg)', 'white-space': 'nowrap', overflow: 'hidden', 'text-overflow': 'ellipsis' }}>
                       {job.agent ? `${job.agent}: ` : ''}
                       {job.prompt.slice(0, 100)}
                       {job.prompt.length > 100 ? '…' : ''}
@@ -1110,14 +899,7 @@ export function ChatView(props: {
                       }
                       title="Cancel background job"
                       aria-label="Cancel background job"
-                      style={{
-                        padding: '3px 8px',
-                        'font-size': 'var(--fs-xs)',
-                        border: '1px solid var(--border)',
-                        'border-radius': 'var(--r-full)',
-                        flex: 'none',
-                        'min-height': '28px',
-                      }}
+                      style={{ padding: '3px 8px', 'font-size': 'var(--fs-xs)', border: '1px solid var(--border)', 'border-radius': 'var(--r-full)', flex: 'none', 'min-height': '28px' }}
                     >
                       ✕ cancel
                     </button>
@@ -1130,38 +912,12 @@ export function ChatView(props: {
             {(dl) => {
               const d = dl()
               return (
-                <div
-                  role="alert"
-                  style={{
-                    display: 'flex',
-                    'align-items': 'center',
-                    gap: '8px',
-                    padding: '8px 10px',
-                    'margin-bottom': '8px',
-                    background: 'var(--warn-soft)',
-                    border: '1px solid var(--warn-border)',
-                    'border-radius': 'var(--r-md)',
-                    'font-size': 'var(--fs-xs)',
-                    color: 'var(--fg)',
-                  }}
-                >
+                <div role="alert" style={{ display: 'flex', 'align-items': 'center', gap: '8px', padding: '8px 10px', 'margin-bottom': '8px', background: 'var(--warn-soft)', border: '1px solid var(--warn-border)', 'border-radius': 'var(--r-md)', 'font-size': 'var(--fs-xs)', color: 'var(--fg)' }}>
                   <span style={{ flex: '1', 'min-width': '0' }}>
                     ⚠ Doom-loop detected: {d.reason} — tool "{d.tool}"
                     {d.pattern ? ` · ${d.pattern.slice(0, 3).join(' → ')}` : ''}
                   </span>
-                  <button
-                    type="button"
-                    class="btn btn-warn-ghost"
-                    onClick={() => void props.store.rewindDoomLoop()}
-                    aria-label="Rewind doom-loop"
-                    style={{
-                      padding: '4px 10px',
-                      'font-size': 'var(--fs-xs)',
-                      'border-radius': 'var(--r-md)',
-                      flex: 'none',
-                      'min-height': '28px',
-                    }}
-                  >
+                  <button type="button" class="btn btn-warn-ghost" onClick={() => void props.store.rewindDoomLoop()} aria-label="Rewind doom-loop" style={{ padding: '4px 10px', 'font-size': 'var(--fs-xs)', 'border-radius': 'var(--r-md)', flex: 'none', 'min-height': '28px' }}>
                     ↩ Rewind
                   </button>
                   <button
@@ -1178,30 +934,13 @@ export function ChatView(props: {
                         toast.error(`Failed to add deny rule: ${(e as Error).message}`)
                       }
                     }}
-                    style={{
-                      padding: '4px 10px',
-                      'font-size': 'var(--fs-xs)',
-                      'border-radius': 'var(--r-md)',
-                      flex: 'none',
-                      'min-height': '28px',
-                    }}
+                    style={{ padding: '4px 10px', 'font-size': 'var(--fs-xs)', 'border-radius': 'var(--r-md)', flex: 'none', 'min-height': '28px' }}
                     title="Never repeat this pattern — add deny rule"
                     aria-label="Never repeat this tool"
                   >
                     ⛔ Never repeat
                   </button>
-                  <button
-                    type="button"
-                    class="btn btn-ghost"
-                    onClick={() => props.store.clearDoomLoop()}
-                    aria-label="Dismiss doom-loop warning"
-                    style={{
-                      padding: '4px 8px',
-                      'font-size': 'var(--fs-xs)',
-                      flex: 'none',
-                      'min-height': '28px',
-                    }}
-                  >
+                  <button type="button" class="btn btn-ghost" onClick={() => props.store.clearDoomLoop()} aria-label="Dismiss doom-loop warning" style={{ padding: '4px 8px', 'font-size': 'var(--fs-xs)', flex: 'none', 'min-height': '28px' }}>
                     ✕
                   </button>
                 </div>
@@ -1210,76 +949,31 @@ export function ChatView(props: {
           </Show>
           <Show when={s().budgetWarning}>
             {(msg) => (
-              <div
-                role="alert"
-                style={{
-                  display: 'flex',
-                  'align-items': 'center',
-                  gap: '8px',
-                  padding: '8px 10px',
-                  'margin-bottom': '8px',
-                  background: 'var(--warn-soft)',
-                  border: '1px solid var(--warn-border)',
-                  'border-radius': 'var(--r-md)',
-                  'font-size': 'var(--fs-xs)',
-                  color: 'var(--fg)',
-                }}
-              >
+              <div role="alert" style={{ display: 'flex', 'align-items': 'center', gap: '8px', padding: '8px 10px', 'margin-bottom': '8px', background: 'var(--warn-soft)', border: '1px solid var(--warn-border)', 'border-radius': 'var(--r-md)', 'font-size': 'var(--fs-xs)', color: 'var(--fg)' }}>
                 <span style={{ flex: '1', 'min-width': '0' }}>⚠ {msg()}</span>
-                <button
-                  type="button"
-                  class="btn btn-ghost"
-                  onClick={() => props.store.clearBudgetWarning()}
-                  aria-label="Dismiss budget warning"
-                  style={{
-                    padding: '4px 8px',
-                    'font-size': 'var(--fs-xs)',
-                    flex: 'none',
-                    'min-height': '28px',
-                  }}
-                >
+                <button type="button" class="btn btn-ghost" onClick={() => props.store.clearBudgetWarning()} aria-label="Dismiss budget warning" style={{ padding: '4px 8px', 'font-size': 'var(--fs-xs)', flex: 'none', 'min-height': '28px' }}>
                   ✕
                 </button>
               </div>
             )}
           </Show>
           <Show when={s().queued.length > 0}>
-            <div
-              style={{ padding: '0 2px 6px', 'font-size': 'var(--fs-xs)', color: 'var(--warn)' }}
-              role="status"
-            >
-              ⏳ {s().queued.length} message{s().queued.length === 1 ? '' : 's'} queued — will run
-              after the current turn
+            <div style={{ padding: '0 2px 6px', 'font-size': 'var(--fs-xs)', color: 'var(--warn)' }} role="status">
+              ⏳ {s().queued.length} message{s().queued.length === 1 ? '' : 's'} queued — will run after the current turn
             </div>
           </Show>
           <Show when={s().error}>
-            <div
-              class="alert"
-              role="alert"
-              style={{ 'margin-bottom': '8px', 'font-size': 'var(--fs-xs)' }}
-            >
-              ⚠ {s().error}
+            <div style={{ 'margin-bottom': '8px' }}>
+              <ErrorCard message={s().error!} onDismiss={() => props.store.clearError()} onRetry={() => { props.store.clearError(); }} />
             </div>
           </Show>
           <form
             onSubmit={handleSubmit}
             class="composer"
-            style={{
-              display: 'flex',
-              'flex-direction': 'column',
-              padding: '10px 12px 9px',
-              gap: '8px',
-              position: 'relative',
-            }}
+            style={{ display: 'flex', 'flex-direction': 'column', padding: '10px 12px 9px', gap: '8px', position: 'relative' }}
           >
             <Show when={slashVisible()}>
-              <SlashAutocomplete
-                query={slashQuery()}
-                commands={slashCommands()}
-                selected={slashIndex()}
-                onSelect={handleSlashSelect}
-                onClose={() => setSlashDismissed(true)}
-              />
+              <SlashAutocomplete query={slashQuery()} commands={slashCommands()} selected={slashIndex()} onSelect={handleSlashSelect} onClose={() => setSlashDismissed(true)} />
             </Show>
             <textarea
               ref={inputRef}
@@ -1288,40 +982,19 @@ export function ChatView(props: {
               onInput={(e) => {
                 props.store.setInput(e.currentTarget.value)
                 autoGrow()
-                // Lazy load commands when user types "/"
                 if (e.currentTarget.value.startsWith('/')) void props.settings?.loadAll()
               }}
-              placeholder="Message Mira…  ( / for commands · Ctrl+P palette )"
+              placeholder="Message Mira…  ( / for commands · ⌘K palette · ⌘↵ send )"
               aria-label="Message Mira"
               aria-autocomplete="list"
-              aria-expanded={
-                slashQuery().startsWith('/') && slashFiltered().length > 0 ? 'true' : 'false'
-              }
+              aria-expanded={slashQuery().startsWith('/') && slashFiltered().length > 0 ? 'true' : 'false'}
               rows={1}
               style={{ 'min-height': '24px', 'max-height': '160px' }}
             />
-            <div
-              style={{
-                display: 'flex',
-                'align-items': 'center',
-                'justify-content': 'space-between',
-                gap: '10px',
-              }}
-            >
+            <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', gap: '10px' }}>
               <span class="sr-only">Press Enter to send, Shift+Enter for a newline.</span>
-              <span
-                aria-hidden="true"
-                style={{
-                  'font-size': 'var(--fs-2xs)',
-                  color: 'var(--fg-faint)',
-                  display: 'flex',
-                  gap: '5px',
-                  'align-items': 'center',
-                }}
-              >
-                <span class="kbd">Enter</span> send
-                <span style={{ opacity: 0.5 }}>·</span>
-                <span class="kbd">Shift+Enter</span> newline
+              <span aria-hidden="true" style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', display: 'flex', gap: '5px', 'align-items': 'center' }}>
+                <span class="kbd">↵</span> send <span style={{ opacity: '0.5' }}>·</span> <span class="kbd">⇧↵</span> newline <span style={{ opacity: '0.5' }}>·</span> <span class="kbd">⌘↵</span> send
               </span>
               <Show
                 when={!s().streaming}
@@ -1333,12 +1006,7 @@ export function ChatView(props: {
                       disabled={!props.store.input().trim()}
                       title="Queue this message — it runs after the current turn"
                       aria-label="Queue message"
-                      style={{
-                        padding: '7px 12px',
-                        'font-size': 'var(--fs-sm)',
-                        'border-radius': 'var(--r-md)',
-                        'min-height': '36px',
-                      }}
+                      style={{ padding: '7px 12px', 'font-size': 'var(--fs-sm)', 'border-radius': 'var(--r-md)', 'min-height': '36px' }}
                     >
                       Queue ↵
                     </button>
@@ -1348,12 +1016,7 @@ export function ChatView(props: {
                       onClick={() => props.store.stopStream()}
                       title="Stop the current response"
                       aria-label="Stop response"
-                      style={{
-                        padding: '7px 12px',
-                        'font-size': 'var(--fs-sm)',
-                        'border-radius': 'var(--r-md)',
-                        'min-height': '36px',
-                      }}
+                      style={{ padding: '7px 12px', 'font-size': 'var(--fs-sm)', 'border-radius': 'var(--r-md)', 'min-height': '36px' }}
                     >
                       ■ Stop
                     </button>
@@ -1365,12 +1028,7 @@ export function ChatView(props: {
                   class="btn btn-solid"
                   disabled={!props.store.input().trim()}
                   aria-label="Send message"
-                  style={{
-                    padding: '7px 16px',
-                    'font-size': 'var(--fs-sm)',
-                    flex: 'none',
-                    'min-height': '36px',
-                  }}
+                  style={{ padding: '7px 16px', 'font-size': 'var(--fs-sm)', flex: 'none', 'min-height': '36px' }}
                 >
                   Send ↵
                 </button>

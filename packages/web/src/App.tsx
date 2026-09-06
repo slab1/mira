@@ -4,7 +4,7 @@ import { createAppStore } from './stores/app'
 import { createSettingsStore } from './stores/settings'
 import { SessionList } from './components/SessionList'
 import { ChatView } from './components/ChatView'
-import { ToolView } from './components/ToolView'
+import { ActivityPanel } from './components/ActivityPanel'
 import { SkillSelector } from './components/SkillSelector'
 import { QuestionPrompt } from './components/QuestionPrompt'
 import { SettingsPanel } from './components/SettingsPanel'
@@ -239,6 +239,20 @@ export default function App() {
   // H2-2 Mira Score GA — trace viewer drawer
   const [traceOpen, setTraceOpen] = createSignal(false)
   const [miraScore, setMiraScore] = createSignal<{ score: number; costUSD: number } | null>(null)
+  // Activity panel — collapsible right rail (agentic UX: separate from chat thread)
+  const [activityCollapsed, setActivityCollapsed] = createSignal(false)
+  onMount(() => {
+    try {
+      const stored = localStorage.getItem('mira.activityCollapsed')
+      if (stored === 'true') setActivityCollapsed(true)
+      else if (window.innerWidth < 1100) setActivityCollapsed(true)
+    } catch {}
+  })
+  createEffect(() => {
+    try {
+      localStorage.setItem('mira.activityCollapsed', String(activityCollapsed()))
+    } catch {}
+  })
 
   onMount(() => {
     // Load budget cap from localStorage
@@ -560,6 +574,25 @@ export default function App() {
             <div
               style={{ display: 'flex', gap: '8px', 'align-items': 'center', 'flex-shrink': '0' }}
             >
+              <button
+                type="button"
+                class="btn btn-ghost"
+                onClick={() => setActivityCollapsed(!activityCollapsed())}
+                title="Activity panel — agent tool calls & progress"
+                aria-label="Toggle activity panel"
+                aria-pressed={activityCollapsed() ? 'false' : 'true'}
+                style={{
+                  padding: '5px 9px',
+                  'font-size': 'var(--fs-xs)',
+                  border: '1px solid var(--border)',
+                  'border-radius': 'var(--r-md)',
+                  background: !activityCollapsed() ? 'var(--accent-soft)' : 'transparent',
+                  color: !activityCollapsed() ? 'var(--accent)' : 'var(--fg-subtle)',
+                  'border-color': !activityCollapsed() ? 'var(--accent-border)' : 'var(--border)',
+                }}
+              >
+                ◈ Activity
+              </button>
               <button
                 type="button"
                 class="btn btn-ghost"
@@ -1043,7 +1076,7 @@ export default function App() {
                       }}
                     />
                   </div>
-                  <ToolView store={store} />
+                  <ActivityPanel store={store} collapsed={activityCollapsed()} onToggle={() => setActivityCollapsed(!activityCollapsed())} />
                 </div>
               </Show>
             }
@@ -1067,11 +1100,15 @@ export default function App() {
                   onPaletteOpen={() => setPaletteOpen(true)}
                 />
               </div>
-              <ToolView store={store} />
+              <ActivityPanel store={store} collapsed={activityCollapsed()} onToggle={() => setActivityCollapsed(!activityCollapsed())} />
             </div>
           </Show>
           <QuestionPrompt store={store} />
         </div>
+        {/* Activity scrim on narrow screens */}
+        <Show when={!activityCollapsed()}>
+          <div class="activity-scrim" aria-hidden="true" onClick={() => setActivityCollapsed(true)} />
+        </Show>
       </div>
       <SettingsPanel
         store={settings}
