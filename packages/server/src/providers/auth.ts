@@ -111,6 +111,35 @@ export class KeyRing {
   }
 }
 
+/**
+ * Compute exponential backoff delay with jitter.
+ * Formula: delay = baseMs * 2^attempt + random(0, jitterMs)
+ */
+export function exponentialBackoff(baseMs: number, attempts: number, jitterMs: number): number {
+  const exponential = baseMs * Math.pow(2, attempts)
+  const jitter = Math.random() * jitterMs
+  return Math.floor(exponential + jitter)
+}
+
+/**
+ * Classify an error for retry/fallback decisions.
+ * - 'retryable': transient provider errors (429, 500, 502, 503, timeout) — retry same model with backoff, then fallback
+ * - 'fallback': provider-level errors where retry won't help but another provider might — fallback to next model
+ * - 'none': request-level errors (400, 401, 404) — client mistake, do NOT retry or fallback
+ */
+export function classifyError(status: number, message: string): 'retryable' | 'fallback' | 'none' {
+  // Request-level errors — client mistakes, do NOT retry or fallback
+  if (status === 400 || status === 401 || status === 404) return 'none'
+  // Rate-limited — retry same model with backoff first, then fallback
+  if (status === 429) return 'retryable'
+  // Server errors — retry same model with backoff, then fallback
+  if (status === 500 || status === 502 || status === 503) return 'retryable'
+  if (status === 408 || status === 504) return 'retryable'
+  // Timeout / network errors — retry same model
+  if (/timeout|ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/i.test(message)) return 'retryable'
+  return 'none'
+}
+
 /** Expand a provider's raw options into resolved values */
 export function resolveProviderOptions(raw: {
   baseURL?: string

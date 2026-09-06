@@ -9,6 +9,7 @@ export type ProviderErrorCode =
   | 'NO_API_KEY'
   | 'PROVIDER_NOT_FOUND'
   | 'RATE_LIMITED'
+  | 'CIRCUIT_OPEN'
   | 'UNAUTHORIZED'
   | 'PROVIDER_ERROR'
   | 'TIMEOUT'
@@ -34,6 +35,8 @@ function remediationFor(code: string, provider?: string): string {
       return 'Unauthorized (401) — API key invalid or expired; check provider dashboard and rotate keys'
     case 'PROVIDER_NOT_FOUND':
       return `Provider "${provider ?? 'unknown'}" not configured — add it to mira.json provider section`
+    case 'CIRCUIT_OPEN':
+      return `Circuit breaker OPEN for "${provider ?? 'unknown'}" — too many failures, cooling down 30s before retry`
     case 'TIMEOUT':
       return 'Request timed out — provider slow or network issue; retry with backoff'
     case 'ABORTED':
@@ -74,6 +77,7 @@ export class ProviderError extends Error {
 
 function isRetryable(code: string, status: number | undefined, message: string): boolean {
   if (code === 'RATE_LIMITED') return true
+  if (code === 'CIRCUIT_OPEN') return true
   if (status === 429) return true
   if (status !== undefined && status >= 500 && status < 600) return true
   if (code === 'TIMEOUT') return true
