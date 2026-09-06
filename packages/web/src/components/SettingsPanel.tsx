@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import type { MiraConfig, ThemeChoice } from '../api/client'
 import { ConfirmDialog } from './ConfirmDialog'
 import { toast } from './Toast'
+import { useFocusTrap } from '../hooks/useFocusTrap'
 
 type TabId =
   'general' | 'providers' | 'permissions' | 'connectors' | 'agents' | 'commands' | 'terminal'
@@ -89,8 +90,9 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
   const [budgetCapEnabled, setBudgetCapEnabled] = createSignal(false)
   const [budgetCapAmount, setBudgetCapAmount] = createSignal(100)
 
-  let dialogRef: HTMLDivElement | undefined
-  let titleRef: HTMLDivElement | undefined
+  let dialogRef!: HTMLDivElement
+  let titleRef!: HTMLDivElement
+  let previouslyFocused: HTMLElement | null = null
 
   // Sync form from loaded config — only on modal OPEN transition, not on every config update
   // (the server re-renders config after save and would wipe user edits).
@@ -144,35 +146,24 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     wasOpen = open
   })
 
-  // Focus trap & Escape
+  // Focus trap & Escape — uses shared hook + restores focus on close
+  useFocusTrap(
+    () => props.open,
+    () => dialogRef,
+    () => props.onClose(),
+  )
   createEffect(() => {
-    if (!props.open) return
-    queueMicrotask(() => titleRef?.focus())
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') props.onClose()
-      if (e.key === 'Tab' && dialogRef) {
-        const focusable = dialogRef.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-        )
-        if (focusable.length === 0) return
-        const first = focusable[0]
-        const last = focusable[focusable.length - 1]
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault()
-          last.focus()
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault()
-          first.focus()
-        }
-      }
+    if (props.open) {
+      previouslyFocused = document.activeElement as HTMLElement | null
+      queueMicrotask(() => titleRef?.focus())
+      const prevOverflow = document.body.style.overflow
+      document.body.style.overflow = 'hidden'
+      onCleanup(() => {
+        document.body.style.overflow = prevOverflow
+        // restore focus to trigger
+        queueMicrotask(() => previouslyFocused?.focus())
+      })
     }
-    document.addEventListener('keydown', onKey)
-    const prevOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    onCleanup(() => {
-      document.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prevOverflow
-    })
   })
 
   // Load on open
@@ -180,8 +171,38 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     if (props.open) void props.store.loadAll()
   })
 
+  const [saveError, setSaveError] = createSignal<string | null>(null)
+  const [generalSaving, setGeneralSaving] = createSignal(false)
+
   const handleSaveGeneral = async (e: Event) => {
     e.preventDefault()
+    setSaveError(null)
+    // Validation
+    const errors: string[] = []
+    if (loopMaxSteps().trim()) {
+      const v = parseInt(loopMaxSteps().trim(), 10)
+      if (!Number.isFinite(v) || v <= 0 || v > 200) errors.push('Max steps must be 1–200')
+    }
+    if (loopContextLimit().trim()) {
+      const v = parseInt(loopContextLimit().trim(), 10)
+      if (!Number.isFinite(v) || v < 1000 || v > 1_000_000)
+        errors.push('Context limit must be 1000–1000000')
+    }
+    if (loopThreshold().trim()) {
+      const v = parseFloat(loopThreshold().trim())
+      if (!Number.isFinite(v) || v <= 0 || v > 1) errors.push('Compaction threshold must be 0–1')
+    }
+    if (guardMaxBytes().trim()) {
+      const v = parseInt(guardMaxBytes().trim(), 10)
+      if (!Number.isFinite(v) || v < 1024) errors.push('Max output bytes must be ≥1024')
+    }
+    if (budgetCapAmount() < 0) errors.push('Budget cap must be ≥0')
+    if (errors.length) {
+      setSaveError(errors.join(' · '))
+      toast.error(errors[0])
+      return
+    }
+    setGeneralSaving(true)
     const patch: Partial<MiraConfig> = {}
     if (model().trim()) patch.model = model().trim()
     if (smallModel().trim()) patch.smallModel = smallModel().trim()
@@ -234,16 +255,26 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
       featPatch.perAgentPermissionProfiles = featPerAgent()
     if (Object.keys(featPatch).length > 0) patch.features = { ...feats, ...featPatch }
     // Allow clearing loop fields when user empties them — send explicit null via delete? keep as-is for now
-    if (Object.keys(patch).length > 0) {
-      const res = await props.store.saveConfig(patch)
-      if (res) toast.success('Settings saved')
+    try {
+      if (Object.keys(patch).length > 0) {
+        const res = await props.store.saveConfig(patch)
+        if (res) toast.success('Settings saved')
+        else {
+          setSaveError(props.store.state.error ?? 'Save failed')
+          toast.error(props.store.state.error ?? 'Save failed')
+        }
+      } else {
+        toast.info('No changes to save')
+      }
+    } finally {
+      setGeneralSaving(false)
     }
     // Persist spend cockpit locally
     try {
       localStorage.setItem('mira.budgetCap.enabled', String(budgetCapEnabled()))
       localStorage.setItem('mira.budgetCap.amount', String(budgetCapAmount()))
     } catch {}
-    // Theme is local-only (persisted via store, not server)
+    // Theme is local-only (persisted via store, not server) — apply instantly
     props.store.setTheme(theme())
   }
 
@@ -251,9 +282,26 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     e.preventDefault()
     const name = provName().trim()
     const key = provKey().trim()
-    if (!name || !key) return
+    if (!name || !key) {
+      toast.error('Provider id and API key are required')
+      return
+    }
+    if (!/^[a-z0-9_-]+$/i.test(name)) {
+      toast.error('Provider id must be alphanumeric, dash or underscore')
+      return
+    }
+    const urlTrimmed = provUrl().trim()
+    if (urlTrimmed) {
+      try {
+        const u = new URL(urlTrimmed)
+        if (!['http:', 'https:'].includes(u.protocol)) throw new Error('bad protocol')
+      } catch {
+        toast.error('Base URL must be a valid http(s) URL')
+        return
+      }
+    }
     // Save as provider.<name> via PATCH /config
-    const baseURL = provUrl().trim() || undefined
+    const baseURL = urlTrimmed || undefined
     const providerPatch = {
       provider: {
         ...(s().config?.provider ?? {}),
@@ -271,17 +319,26 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
       setProvKey('')
       setProvUrl('')
       void props.store.loadProviders()
+      toast.success(`Provider "${name}" added`)
+    } else {
+      toast.error(props.store.state.error ?? 'Failed to add provider')
     }
   }
 
   const handleTestProvider = async (id: string) => {
+    if (provTesting()) return
     setProvTesting(id)
-    const r = await props.store.testProvider(id)
-    setProvResult((prev) => ({
-      ...prev,
-      [id]: r.ok ? `✓ ok${r.latencyMs ? ` · ${r.latencyMs}ms` : ''}` : `✗ ${r.error ?? 'failed'}`,
-    }))
-    setProvTesting(null)
+    try {
+      const r = await props.store.testProvider(id)
+      setProvResult((prev) => ({
+        ...prev,
+        [id]: r.ok ? `✓ ok${r.latencyMs ? ` · ${r.latencyMs}ms` : ''}` : `✗ ${r.error ?? 'failed'}`,
+      }))
+      if (r.ok) toast.success(`Provider "${id}" reachable`)
+      else toast.error(`Provider "${id}" test failed: ${r.error ?? 'unknown'}`)
+    } finally {
+      setProvTesting(null)
+    }
   }
 
   const [confirmRemoveProvider, setConfirmRemoveProvider] = createSignal<string | null>(null)
@@ -289,6 +346,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     tool: string
     pattern?: string
   } | null>(null)
+  const [confirmRemoveMcp, setConfirmRemoveMcp] = createSignal<string | null>(null)
 
   const handleRemoveProvider = async (id: string) => {
     setConfirmRemoveProvider(id)
@@ -297,7 +355,29 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
   const handleAddMcp = async (e: Event) => {
     e.preventDefault()
     const name = mcpName().trim()
-    if (!name) return
+    if (!name) {
+      toast.error('MCP server name is required')
+      return
+    }
+    if (!/^[a-z0-9_-]+$/i.test(name)) {
+      toast.error('MCP name must be alphanumeric, dash or underscore')
+      return
+    }
+    // Validate env/headers JSON if provided
+    const validateJsonField = (raw: string, field: string): boolean => {
+      const s = raw.trim()
+      if (!s) return true
+      try {
+        const j = JSON.parse(s)
+        if (j && typeof j === 'object' && !Array.isArray(j)) return true
+      } catch {}
+      // also allow KEY=val format — if it contains '=', consider valid
+      if (s.includes('=')) return true
+      toast.error(`${field} must be valid JSON or KEY=val pairs`)
+      return false
+    }
+    if (!validateJsonField(mcpEnv(), 'Env')) return
+    if (!validateJsonField(mcpHeaders(), 'Headers')) return
     const parseRecord = (raw: string): Record<string, string> | undefined => {
       const s = raw.trim()
       if (!s) return undefined
@@ -335,11 +415,24 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     }
     if (mcpType() === 'local') {
       const cmd = mcpCommand().trim()
-      if (!cmd) return
+      if (!cmd) {
+        toast.error('Command is required for local MCP servers')
+        return
+      }
       body.command = cmd.split(/\s+/).filter(Boolean)
     } else {
       const url = mcpUrl().trim()
-      if (!url) return
+      if (!url) {
+        toast.error('URL is required for remote MCP servers')
+        return
+      }
+      try {
+        const u = new URL(url)
+        if (!['http:', 'https:'].includes(u.protocol)) throw new Error('bad')
+      } catch {
+        toast.error('MCP URL must be a valid http(s) URL')
+        return
+      }
       body.url = url
     }
     const created = await props.store.addMcp(body)
@@ -349,6 +442,9 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
       setMcpUrl('')
       setMcpEnv('')
       setMcpHeaders('')
+      toast.success(`MCP server "${name}" added`)
+    } else {
+      toast.error(props.store.state.error ?? 'Failed to add MCP server')
     }
   }
 
@@ -357,7 +453,14 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     const tool = permTool().trim()
     const pattern = permPattern().trim()
     const action = permAction()
-    if (!tool) return
+    if (!tool) {
+      toast.error('Tool name is required')
+      return
+    }
+    if (!/^[a-z0-9_-]+$/i.test(tool) && tool !== '*') {
+      toast.error('Tool must be alphanumeric or *')
+      return
+    }
     const current = { ...(s().config?.permission ?? {}) } as Record<
       string,
       string | Record<string, string>
@@ -373,9 +476,14 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     } else {
       next = { ...current, [tool]: action }
     }
-    await props.store.saveConfig({ permission: next } as Partial<MiraConfig>)
-    setPermTool('')
-    setPermPattern('')
+    const res = await props.store.saveConfig({ permission: next } as Partial<MiraConfig>)
+    if (res) {
+      setPermTool('')
+      setPermPattern('')
+      toast.success(`Permission ${tool}${pattern ? `:${pattern}` : ''} → ${action}`)
+    } else {
+      toast.error(props.store.state.error ?? 'Failed to save permission')
+    }
   }
 
   const handleRemovePermission = async (tool: string, pattern?: string) => {
@@ -403,25 +511,40 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     if (res) toast.success('Permission removed')
   }
 
+  const [terminalSaving, setTerminalSaving] = createSignal(false)
   const handleSaveTerminal = async (e: Event) => {
     e.preventDefault()
-    const allowed = termAllowed()
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
-    const timeout = parseInt(termTimeout().trim(), 10)
-    const patch = {
-      tools: {
-        ...(s().config as { tools?: Record<string, unknown> })?.tools,
-        terminal: {
-          enabled: termEnabled(),
-          sandbox: termSandbox(),
-          allowedCommands: allowed.length ? allowed : undefined,
-          timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : undefined,
-        },
-      },
+    if (termTimeout().trim()) {
+      const v = parseInt(termTimeout().trim(), 10)
+      if (!Number.isFinite(v) || v < 1000 || v > 300_000) {
+        toast.error('Timeout must be 1000–300000 ms')
+        return
+      }
     }
-    await props.store.saveConfig(patch as Partial<MiraConfig>)
+    setTerminalSaving(true)
+    try {
+      const allowed = termAllowed()
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+      const timeout = parseInt(termTimeout().trim(), 10)
+      const patch = {
+        tools: {
+          ...(s().config as { tools?: Record<string, unknown> })?.tools,
+          terminal: {
+            enabled: termEnabled(),
+            sandbox: termSandbox(),
+            allowedCommands: allowed.length ? allowed : undefined,
+            timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : undefined,
+          },
+        },
+      }
+      const res = await props.store.saveConfig(patch as Partial<MiraConfig>)
+      if (res) toast.success('Terminal settings saved')
+      else toast.error(props.store.state.error ?? 'Save failed')
+    } finally {
+      setTerminalSaving(false)
+    }
   }
 
   const handleTestTerminal = async () => {
@@ -593,7 +716,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
         }}
       >
         <div
-          ref={dialogRef}
+          ref={(el) => (dialogRef = el)}
           class="modal"
           role="dialog"
           aria-modal="true"
@@ -602,7 +725,12 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
         >
           <div class="modal-header">
             <div>
-              <div ref={titleRef} id="settings-title" class="modal-title" tabindex="-1">
+              <div
+                ref={(el) => (titleRef = el)}
+                id="settings-title"
+                class="modal-title"
+                tabindex="-1"
+              >
                 Settings
               </div>
               <div
@@ -616,7 +744,6 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
               </div>
             </div>
             <button
-              ref={undefined}
               type="button"
               class="modal-close"
               onClick={props.onClose}
@@ -632,6 +759,28 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
               role="tablist"
               aria-orientation="vertical"
               aria-label="Settings sections"
+              onKeyDown={(e) => {
+                const idx = TABS.findIndex((t) => t.id === tab())
+                if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+                  e.preventDefault()
+                  const next = TABS[(idx + 1) % TABS.length]!
+                  setTab(next.id)
+                  document.getElementById(`settings-tab-${next.id}`)?.focus()
+                } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+                  e.preventDefault()
+                  const prev = TABS[(idx - 1 + TABS.length) % TABS.length]!
+                  setTab(prev.id)
+                  document.getElementById(`settings-tab-${prev.id}`)?.focus()
+                } else if (e.key === 'Home') {
+                  e.preventDefault()
+                  setTab(TABS[0]!.id)
+                  document.getElementById(`settings-tab-${TABS[0]!.id}`)?.focus()
+                } else if (e.key === 'End') {
+                  e.preventDefault()
+                  setTab(TABS[TABS.length - 1]!.id)
+                  document.getElementById(`settings-tab-${TABS[TABS.length - 1]!.id}`)?.focus()
+                }
+              }}
             >
               <For each={TABS}>
                 {(t) => (
@@ -641,6 +790,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                     id={`settings-tab-${t.id}`}
                     aria-selected={tab() === t.id ? 'true' : 'false'}
                     aria-controls={`settings-panel-${t.id}`}
+                    tabindex={tab() === t.id ? 0 : -1}
                     class="settings-tab"
                     onClick={() => setTab(t.id)}
                   >
@@ -895,13 +1045,19 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                         <span class="settings-hint" style={{ margin: '0' }}>
                           Warn when monthly spend exceeds
                         </span>
+                        <label for="settings-budget-cap" class="sr-only">
+                          Budget cap amount USD
+                        </label>
                         <input
+                          id="settings-budget-cap"
                           type="number"
                           min="0"
                           step="10"
+                          aria-label="Budget cap amount in USD"
                           value={budgetCapAmount()}
                           onInput={(e) => setBudgetCapAmount(Number(e.currentTarget.value) || 0)}
-                          style={{ 'font-size': 'var(--fs-sm)', width: '80px' }}
+                          class="input"
+                          style={{ 'font-size': 'var(--fs-sm)', width: '90px', padding: '6px 8px' }}
                         />
                         USD / month
                       </div>
@@ -1057,11 +1213,14 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                             type="button"
                             class="btn btn-outline"
                             disabled={guardTesting()}
+                            aria-busy={guardTesting() ? 'true' : 'false'}
+                            aria-label="Test guardrails dry-run"
                             onClick={() => void handleTestGuardrails()}
                             style={{
                               padding: '7px 12px',
                               'font-size': 'var(--fs-sm)',
                               height: '36px',
+                              'min-height': '36px',
                             }}
                           >
                             {guardTesting() ? 'Testing…' : 'Test'}
@@ -1172,10 +1331,14 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                             const idx = order.indexOf(theme())
                             if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
                               e.preventDefault()
-                              setThemeLocal(order[(idx + 1) % order.length]!)
+                              const next = order[(idx + 1) % order.length]!
+                              setThemeLocal(next)
+                              props.store.setTheme(next)
                             } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
                               e.preventDefault()
-                              setThemeLocal(order[(idx - 1 + order.length) % order.length]!)
+                              const prev = order[(idx - 1 + order.length) % order.length]!
+                              setThemeLocal(prev)
+                              props.store.setTheme(prev)
                             }
                           }}
                         >
@@ -1186,7 +1349,10 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                                 role="radio"
                                 aria-checked={theme() === choice ? 'true' : 'false'}
                                 tabindex={theme() === choice ? 0 : -1}
-                                onClick={() => setThemeLocal(choice)}
+                                onClick={() => {
+                                  setThemeLocal(choice)
+                                  props.store.setTheme(choice)
+                                }}
                                 style={{
                                   flex: '1',
                                   padding: '8px 10px',
@@ -1222,6 +1388,16 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                       </div>
                     </div>
 
+                    <Show when={saveError()}>
+                      <div class="alert" role="alert" style={{ 'margin-top': '8px' }}>
+                        ⚠ {saveError()}
+                      </div>
+                    </Show>
+                    <Show when={s().error}>
+                      <div class="alert" role="alert" style={{ 'margin-top': '8px' }}>
+                        ⚠ {s().error}
+                      </div>
+                    </Show>
                     <div style={{ display: 'flex', gap: '8px', 'justify-content': 'flex-end' }}>
                       <button
                         type="button"
@@ -1234,10 +1410,14 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                       <button
                         type="submit"
                         class="btn btn-solid"
-                        disabled={props.store.saving()}
-                        style={{ padding: '7px 14px', 'font-size': 'var(--fs-sm)' }}
+                        disabled={generalSaving() || props.store.saving()}
+                        aria-busy={generalSaving() || props.store.saving() ? 'true' : 'false'}
+                        style={{ padding: '7px 14px', 'font-size': 'var(--fs-sm)', gap: '6px' }}
                       >
-                        {props.store.saving() ? 'Saving…' : 'Save'}
+                        <Show when={generalSaving() || props.store.saving()} fallback={null}>
+                          <span class="spinner" aria-hidden="true" />
+                        </Show>
+                        {generalSaving() || props.store.saving() ? 'Saving…' : 'Save'}
                       </button>
                     </div>
 
@@ -1343,8 +1523,14 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                               type="button"
                               class="btn btn-outline"
                               disabled={provTesting() === p.id}
+                              aria-busy={provTesting() === p.id ? 'true' : 'false'}
+                              aria-label={`Test provider ${p.id}`}
                               onClick={() => void handleTestProvider(p.id)}
-                              style={{ padding: '5px 10px', 'font-size': 'var(--fs-xs)' }}
+                              style={{
+                                padding: '5px 10px',
+                                'font-size': 'var(--fs-xs)',
+                                'min-height': '28px',
+                              }}
                             >
                               {provTesting() === p.id ? 'Testing…' : 'Test'}
                             </button>
@@ -1353,10 +1539,12 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                               class="btn btn-ghost"
                               onClick={() => void handleRemoveProvider(p.id)}
                               title={`Remove ${p.id}`}
+                              aria-label={`Remove provider ${p.id}`}
                               style={{
                                 padding: '5px 8px',
                                 'font-size': 'var(--fs-xs)',
                                 color: 'var(--danger)',
+                                'min-height': '28px',
                               }}
                             >
                               Remove
@@ -1444,10 +1632,15 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                       <button
                         type="submit"
                         class="btn btn-solid"
-                        disabled={!provName().trim() || !provKey().trim()}
-                        style={{ padding: '6px 12px', 'font-size': 'var(--fs-sm)' }}
+                        disabled={!provName().trim() || !provKey().trim() || props.store.saving()}
+                        aria-busy={props.store.saving() ? 'true' : 'false'}
+                        style={{
+                          padding: '6px 12px',
+                          'font-size': 'var(--fs-sm)',
+                          'min-height': '32px',
+                        }}
                       >
-                        Add provider
+                        {props.store.saving() ? 'Saving…' : 'Add provider'}
                       </button>
                     </div>
                   </form>
@@ -1689,10 +1882,16 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                       <button
                         type="submit"
                         class="btn btn-solid"
-                        disabled={!permTool().trim()}
-                        style={{ padding: '7px 12px', 'font-size': 'var(--fs-sm)', height: '36px' }}
+                        disabled={!permTool().trim() || props.store.saving()}
+                        aria-busy={props.store.saving() ? 'true' : 'false'}
+                        style={{
+                          padding: '7px 12px',
+                          'font-size': 'var(--fs-sm)',
+                          height: '36px',
+                          'min-height': '36px',
+                        }}
                       >
-                        Add
+                        {props.store.saving() ? 'Saving…' : 'Add'}
                       </button>
                     </div>
                     <span class="settings-hint">
@@ -1788,8 +1987,15 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                         type="button"
                         class="btn btn-outline"
                         disabled={permTesting()}
+                        aria-busy={permTesting() ? 'true' : 'false'}
+                        aria-label="Test permission dry-run"
                         onClick={() => void handleTestPermission()}
-                        style={{ padding: '7px 12px', 'font-size': 'var(--fs-sm)', height: '36px' }}
+                        style={{
+                          padding: '7px 12px',
+                          'font-size': 'var(--fs-sm)',
+                          height: '36px',
+                          'min-height': '36px',
+                        }}
                       >
                         {permTesting() ? 'Testing…' : 'Test'}
                       </button>
@@ -1961,20 +2167,28 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                               type="button"
                               class="btn btn-outline"
                               disabled={mcpTesting() === srv.name}
+                              aria-busy={mcpTesting() === srv.name ? 'true' : 'false'}
+                              aria-label={`Test MCP server ${srv.name}`}
                               onClick={() => void handleTestMcp(srv.name)}
-                              style={{ padding: '5px 10px', 'font-size': 'var(--fs-xs)' }}
+                              style={{
+                                padding: '5px 10px',
+                                'font-size': 'var(--fs-xs)',
+                                'min-height': '28px',
+                              }}
                             >
                               {mcpTesting() === srv.name ? 'Testing…' : 'Test'}
                             </button>
                             <button
                               type="button"
                               class="btn btn-ghost"
-                              onClick={() => void props.store.removeMcp(srv.name)}
+                              onClick={() => setConfirmRemoveMcp(srv.name)}
                               title={`Remove ${srv.name}`}
+                              aria-label={`Remove MCP server ${srv.name}`}
                               style={{
                                 padding: '5px 8px',
                                 'font-size': 'var(--fs-xs)',
                                 color: 'var(--danger)',
+                                'min-height': '28px',
                               }}
                             >
                               Remove
@@ -2118,10 +2332,15 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                       <button
                         type="submit"
                         class="btn btn-solid"
-                        disabled={!mcpName().trim()}
-                        style={{ padding: '6px 12px', 'font-size': 'var(--fs-sm)' }}
+                        disabled={!mcpName().trim() || props.store.saving()}
+                        aria-busy={props.store.saving() ? 'true' : 'false'}
+                        style={{
+                          padding: '6px 12px',
+                          'font-size': 'var(--fs-sm)',
+                          'min-height': '32px',
+                        }}
                       >
-                        Add server
+                        {props.store.saving() ? 'Saving…' : 'Add server'}
                       </button>
                     </div>
                   </form>
@@ -2196,11 +2415,14 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                               type="button"
                               class="btn btn-outline"
                               disabled={agentPreview() === a.name}
+                              aria-busy={agentPreview() === a.name ? 'true' : 'false'}
+                              aria-label={`Test agent ${a.name}`}
                               onClick={() => void handlePreviewAgent(a.name)}
                               style={{
                                 padding: '3px 8px',
                                 'font-size': 'var(--fs-2xs)',
                                 'margin-left': 'auto',
+                                'min-height': '28px',
                               }}
                             >
                               {agentPreview() === a.name ? 'Testing…' : 'Test'}
@@ -2525,8 +2747,14 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                           type="button"
                           class="btn btn-outline"
                           disabled={termTesting()}
+                          aria-busy={termTesting() ? 'true' : 'false'}
+                          aria-label="Test terminal connection"
                           onClick={() => void handleTestTerminal()}
-                          style={{ padding: '6px 12px', 'font-size': 'var(--fs-sm)' }}
+                          style={{
+                            padding: '6px 12px',
+                            'font-size': 'var(--fs-sm)',
+                            'min-height': '32px',
+                          }}
                         >
                           {termTesting() ? 'Testing…' : 'Test terminal'}
                         </button>
@@ -2546,10 +2774,19 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                       <button
                         type="submit"
                         class="btn btn-solid"
-                        disabled={props.store.saving()}
-                        style={{ padding: '7px 14px', 'font-size': 'var(--fs-sm)' }}
+                        disabled={terminalSaving() || props.store.saving()}
+                        aria-busy={terminalSaving() || props.store.saving() ? 'true' : 'false'}
+                        style={{
+                          padding: '7px 14px',
+                          'font-size': 'var(--fs-sm)',
+                          'min-height': '32px',
+                          gap: '6px',
+                        }}
                       >
-                        {props.store.saving() ? 'Saving…' : 'Save terminal'}
+                        <Show when={terminalSaving() || props.store.saving()} fallback={null}>
+                          <span class="spinner" aria-hidden="true" />
+                        </Show>
+                        {terminalSaving() || props.store.saving() ? 'Saving…' : 'Save terminal'}
                       </button>
                     </div>
                   </form>
@@ -2597,6 +2834,27 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
           if (p) void performRemovePermission(p.tool, p.pattern)
         }}
         onCancel={() => setConfirmRemovePermission(null)}
+      />
+      <ConfirmDialog
+        open={() => confirmRemoveMcp() !== null}
+        title="Remove MCP server?"
+        message={
+          confirmRemoveMcp()
+            ? `This will permanently remove the MCP server "${confirmRemoveMcp()!}" from mira.json. This cannot be undone.`
+            : ''
+        }
+        confirmLabel="Remove"
+        danger
+        onConfirm={async () => {
+          const name = confirmRemoveMcp()
+          setConfirmRemoveMcp(null)
+          if (name) {
+            const ok = await props.store.removeMcp(name)
+            if (ok) toast.success(`MCP server "${name}" removed`)
+            else toast.error(props.store.state.error ?? 'Failed to remove MCP server')
+          }
+        }}
+        onCancel={() => setConfirmRemoveMcp(null)}
       />
     </Show>
   )

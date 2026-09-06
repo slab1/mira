@@ -26,9 +26,27 @@ export const permissionValueSchema = z.union([
 export const mcpServerConfigSchema = z.object({
   type: z.enum(['local', 'remote']).describe('local=stdio, remote=http/sse'),
   command: z.array(z.string()).optional().describe('Command + args for local'),
+  args: z
+    .array(z.string())
+    .optional()
+    .describe('Extra args for local (alternative to command slice)'),
   url: z.string().url().optional().describe('URL for remote'),
   enabled: z.boolean().default(true),
   env: z.record(z.string(), z.string()).optional(),
+  headers: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe('Headers for remote (values support {env:VAR})'),
+  timeoutMs: z.number().int().positive().optional().describe('Per-request timeout in ms'),
+  reconnect: z
+    .object({
+      enabled: z.boolean().optional().default(true),
+      maxRetries: z.number().int().min(0).optional().default(5),
+      baseDelayMs: z.number().int().positive().optional().default(1000),
+      maxDelayMs: z.number().int().positive().optional().default(30_000),
+    })
+    .optional()
+    .describe('Reconnect policy for healthCheck'),
 })
 export type MCPServerConfig = z.infer<typeof mcpServerConfigSchema>
 
@@ -42,16 +60,42 @@ export const providerModelSchema = z.object({
   limit: providerModelLimitSchema,
 })
 
+export const providerOptionsSchema = z.object({
+  baseURL: z.string().describe('API base URL (supports {env:VAR} expansion)'),
+  apiKey: z
+    .union([z.string(), z.array(z.string())])
+    .describe('API key or array of keys for rotation (supports {env:VAR} expansion)'),
+  headers: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe('Extra headers (values support {env:VAR} expansion)'),
+  timeout: z.number().int().positive().optional().describe('Request timeout in ms'),
+  kind: z
+    .string()
+    .optional()
+    .describe('Provider kind: openrouter|anthropic|openai|google|deepseek|nvidia'),
+})
+export type ProviderOptions = z.infer<typeof providerOptionsSchema>
+
 export const providerConfigSchema = z.object({
   npm: z.string().optional().describe('NPM package for provider SDK'),
   name: z.string().describe('Display name'),
-  options: z.object({
-    baseURL: z.string().describe('API base URL'),
-    apiKey: z.string().describe('API key (may be empty → env fallback)'),
-  }),
+  options: providerOptionsSchema,
   models: z.record(z.string(), providerModelSchema).default({}),
 })
 export type ProviderConfig = z.infer<typeof providerConfigSchema>
+
+export const routingConfigSchema = z.object({
+  aliases: z.record(z.string(), z.string()).optional().describe('Model alias → canonical model ID'),
+  fallbacks: z.array(z.string()).optional().describe('Fallback model IDs in priority order'),
+  defaultProvider: z.string().optional().describe('Default provider when model has no prefix'),
+  /** Subgateway lane routing: task/agent → lane */
+  lanes: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe('Lane routing: task or agent → subgateway lane'),
+})
+export type RoutingConfig = z.infer<typeof routingConfigSchema>
 
 export const loopConfigSchema = z.object({
   maxSteps: z.number().int().positive().optional(),
@@ -82,6 +126,38 @@ export const costCapConfigSchema = z.object({
   perSession: z.number().positive().optional(),
 })
 export type CostCapConfig = z.infer<typeof costCapConfigSchema>
+
+export const subgatewayConfigSchema = z.object({
+  provider: z.string().optional().describe('Provider key for this lane (e.g. openrouter)'),
+  model: z
+    .string()
+    .optional()
+    .describe('Model ID for this lane (e.g. openrouter/anthropic/claude-sonnet-4)'),
+  fallback: z.array(z.string()).optional().describe('Fallback model IDs for this lane'),
+  rateLimit: z
+    .object({
+      rps: z.number().positive().optional().describe('Requests per second'),
+      burst: z.number().int().positive().optional().describe('Burst capacity'),
+    })
+    .optional(),
+  costCap: costCapConfigSchema.optional().describe('Cost cap per task/session for this lane'),
+  retry: z
+    .object({
+      maxAttempts: z.number().int().positive().optional(),
+      baseMs: z.number().int().positive().optional(),
+      maxMs: z.number().int().positive().optional(),
+    })
+    .optional(),
+  timeout: z.number().int().positive().optional().describe('Request timeout in ms for this lane'),
+  circuitBreaker: z
+    .object({
+      failureThreshold: z.number().int().positive().optional(),
+      resetTimeoutMs: z.number().int().positive().optional(),
+    })
+    .optional(),
+  enabled: z.boolean().optional().describe('Whether this subgateway lane is enabled'),
+})
+export type SubgatewayConfig = z.infer<typeof subgatewayConfigSchema>
 
 export const guardrailsConfigSchema = z.object({
   enforce: z.boolean().optional(),
@@ -134,6 +210,10 @@ export const miraConfigSchema = z.object({
   mcp: z.record(z.string(), mcpServerConfigSchema).default({}),
   /** Provider registry (OpenRouter by default) */
   provider: z.record(z.string(), providerConfigSchema).default({}),
+  /** Routing: aliases, fallbacks, default provider */
+  routing: routingConfigSchema.optional(),
+  /** Subgateways: per-lane isolated gateway configs */
+  subgateways: z.record(z.string(), subgatewayConfigSchema).optional(),
   /** Custom agent definitions */
   agents: z.record(z.string(), agentDefinitionSchema).optional(),
   /** Auto-model routing (Kilo K8: cheap/balanced/max) */
@@ -202,6 +282,10 @@ export const envToConfigMap: Record<string, string> = {
   OPENROUTER_API_KEY: 'provider.openrouter.options.apiKey',
   ANTHROPIC_API_KEY: 'provider.anthropic.options.apiKey',
   OPENAI_API_KEY: 'provider.openai.options.apiKey',
+  GOOGLE_GENERATIVE_AI_API_KEY: 'provider.google.options.apiKey',
+  GOOGLE_API_KEY: 'provider.google.options.apiKey',
+  DEEPSEEK_API_KEY: 'provider.deepseek.options.apiKey',
+  NVIDIA_API_KEY: 'provider.nvidia.options.apiKey',
 }
 
 /** Parse env vars into a partial config (layer 6). Pure — no process access required if env passed. */
@@ -274,8 +358,28 @@ export const DEFAULT_CONFIG: MiraConfig = miraConfigSchema.parse({
       options: {
         baseURL: 'https://openrouter.ai/api/v1',
         apiKey: '',
+        headers: {},
+        timeout: 120_000,
+        kind: 'openrouter',
       },
       models: {},
+    },
+  },
+  routing: {
+    aliases: {},
+    fallbacks: [],
+    defaultProvider: 'openrouter',
+  },
+  subgateways: {
+    default: {
+      provider: 'openrouter',
+      model: 'openrouter/anthropic/claude-sonnet-4',
+      fallback: [],
+      rateLimit: { rps: 10, burst: 20 },
+      retry: { maxAttempts: 3, baseMs: 500, maxMs: 10_000 },
+      timeout: 120_000,
+      circuitBreaker: { failureThreshold: 5, resetTimeoutMs: 30_000 },
+      enabled: true,
     },
   },
 })

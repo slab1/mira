@@ -39,7 +39,10 @@ function redactLayers(
   return layers.map((l) => ({ ...l, config: redactConfig(l.config as MiraConfig) }))
 }
 
-export function mountConfigRoutes(app: Hono<{ Variables: { requestId: string } }>) {
+export function mountConfigRoutes(
+  app: Hono<{ Variables: { requestId: string } }>,
+  opts?: { bus?: { publish: (e: any) => void } },
+) {
   // Flat MiraConfig (redacted) — matches the web Settings store and TUI client contract
   app.get('/config', (c: Context) => {
     return c.json(redactConfig(getConfig() as MiraConfig))
@@ -66,6 +69,13 @@ export function mountConfigRoutes(app: Hono<{ Variables: { requestId: string } }
     }
     try {
       const merged = await saveConfig(patch, layer)
+      try {
+        opts?.bus?.publish({
+          type: 'config.updated',
+          payload: { config: merged },
+          timestamp: Date.now(),
+        })
+      } catch {}
       return c.json(redactConfig(merged))
     } catch (e) {
       return c.json({ error: String(e) }, 400)

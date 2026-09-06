@@ -79,9 +79,11 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
           type="button"
           class="btn btn-solid"
           onClick={() => void props.store.createSession().catch(() => {})}
+          disabled={s().loading}
+          aria-busy={s().loading ? 'true' : 'false'}
           style={{ width: '100%', padding: '8px 12px', 'font-size': 'var(--fs-sm)' }}
         >
-          ＋ New session
+          {s().loading ? 'Creating…' : '＋ New session'}
         </button>
         <div
           style={{
@@ -95,6 +97,9 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
             type="button"
             class="btn btn-ghost"
             onClick={() => void props.store.loadSessions()}
+            disabled={s().loading}
+            aria-busy={s().loading ? 'true' : 'false'}
+            title="Refresh sessions"
             style={{
               flex: '1',
               padding: '5px 8px',
@@ -103,7 +108,7 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
               'border-radius': 'var(--r-md)',
             }}
           >
-            ↻ Refresh
+            {s().loading ? '…' : '↻ Refresh'}
           </button>
           <span
             style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', padding: '0 4px' }}
@@ -185,9 +190,11 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                   type="button"
                   class="btn btn-outline"
                   onClick={() => void props.store.createSession().catch(() => {})}
+                  disabled={s().loading}
+                  aria-busy={s().loading ? 'true' : 'false'}
                   style={{ padding: '6px 12px', 'font-size': 'var(--fs-sm)' }}
                 >
-                  ＋ New session
+                  {s().loading ? 'Creating…' : '＋ New session'}
                 </button>
               </div>
             }
@@ -245,7 +252,7 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                       </button>
                       <button
                         type="button"
-                        class="session-del"
+                        class="session-del btn btn-ghost"
                         onClick={(e) => {
                           e.stopPropagation()
                           setConfirmDelete({
@@ -255,6 +262,12 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                         }}
                         title="Delete session"
                         aria-label={`Delete session ${sess.title || sess.id.slice(0, 6)}`}
+                        style={{
+                          width: '28px',
+                          height: '28px',
+                          'min-height': '28px',
+                          'min-width': '28px',
+                        }}
                       >
                         ×
                       </button>
@@ -279,16 +292,15 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
         >
           ⚠ {s().error}
           <button
+            type="button"
             onClick={() => props.store.clearError()}
-            class="alert-close"
+            class="alert-close btn btn-ghost"
             aria-label="Dismiss error"
             style={{
               'margin-left': '8px',
-              background: 'none',
-              border: 'none',
-              color: 'var(--fg-muted)',
+              padding: '2px 6px',
               'font-size': 'var(--fs-xs)',
-              cursor: 'pointer',
+              'min-height': '28px',
             }}
           >
             ×

@@ -31,6 +31,9 @@ const DEFAULT_CONFIG: MiraConfig = {
       options: {
         baseURL: 'https://openrouter.ai/api/v1',
         apiKey: process.env.OPENROUTER_API_KEY ?? '',
+        headers: {},
+        timeout: 120_000,
+        kind: 'openrouter',
       },
       models: {},
     },
@@ -40,6 +43,9 @@ const DEFAULT_CONFIG: MiraConfig = {
       options: {
         baseURL: 'https://api.anthropic.com/v1',
         apiKey: process.env.ANTHROPIC_API_KEY ?? '',
+        headers: {},
+        timeout: 120_000,
+        kind: 'anthropic',
       },
       models: {
         'claude-sonnet-4': { name: 'Claude Sonnet 4', limit: { context: 200000, output: 8192 } },
@@ -51,35 +57,117 @@ const DEFAULT_CONFIG: MiraConfig = {
       options: {
         baseURL: 'https://api.openai.com/v1',
         apiKey: process.env.OPENAI_API_KEY ?? '',
+        headers: {},
+        timeout: 120_000,
+        kind: 'openai',
       },
       models: { 'gpt-4o': { name: 'GPT-4o', limit: { context: 128000, output: 4096 } } },
     },
-    // NVIDIA NIM — OpenAI-compatible. Enabled when NVIDIA_API_KEY is set.
-    ...(process.env.NVIDIA_API_KEY
-      ? {
-          nvidia: {
-            npm: '@ai-sdk/openai-compatible',
-            name: 'NVIDIA NIM',
-            options: {
-              baseURL: 'https://integrate.api.nvidia.com/v1',
-              apiKey: process.env.NVIDIA_API_KEY,
-            },
-            models: {},
-          },
-        }
-      : {
-          nvidia: {
-            npm: '@ai-sdk/openai-compatible',
-            name: 'NVIDIA NIM',
-            options: {
-              baseURL: 'https://integrate.api.nvidia.com/v1',
-              apiKey: process.env.NVIDIA_API_KEY ?? '',
-            },
-            models: {},
-          },
-        }),
+    google: {
+      npm: '@ai-sdk/google',
+      name: 'Google Generative AI',
+      options: {
+        baseURL: 'https://generativelanguage.googleapis.com/v1beta',
+        apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY ?? process.env.GOOGLE_API_KEY ?? '',
+        headers: {},
+        timeout: 120_000,
+        kind: 'google',
+      },
+      models: {},
+    },
+    deepseek: {
+      npm: '@ai-sdk/openai-compatible',
+      name: 'DeepSeek',
+      options: {
+        baseURL: 'https://api.deepseek.com/v1',
+        apiKey: process.env.DEEPSEEK_API_KEY ?? '',
+        headers: {},
+        timeout: 120_000,
+        kind: 'deepseek',
+      },
+      models: {},
+    },
+    nvidia: {
+      npm: '@ai-sdk/openai-compatible',
+      name: 'NVIDIA NIM',
+      options: {
+        baseURL: 'https://integrate.api.nvidia.com/v1',
+        apiKey: process.env.NVIDIA_API_KEY ?? '',
+        headers: {},
+        timeout: 120_000,
+        kind: 'nvidia',
+      },
+      models: {},
+    },
   },
-}
+  routing: {
+    aliases: {},
+    fallbacks: [],
+    defaultProvider: 'openrouter',
+  },
+  subgateways: {
+    default: {
+      provider: 'openrouter',
+      model: SHARED_DEFAULT.model,
+      fallback: [],
+      rateLimit: { rps: 10, burst: 20 },
+      retry: { maxAttempts: 3, baseMs: 500, maxMs: 10_000 },
+      timeout: 120_000,
+      circuitBreaker: { failureThreshold: 5, resetTimeoutMs: 30_000 },
+      enabled: true,
+    },
+    cheap: {
+      provider: 'openrouter',
+      model: SHARED_DEFAULT.smallModel ?? 'openrouter/deepseek/deepseek-v3.2-exp',
+      fallback: [],
+      rateLimit: { rps: 20, burst: 40 },
+      retry: { maxAttempts: 3, baseMs: 300, maxMs: 5_000 },
+      timeout: 60_000,
+      circuitBreaker: { failureThreshold: 5, resetTimeoutMs: 15_000 },
+      enabled: true,
+    },
+    vision: {
+      provider: 'openai',
+      model: 'openai/gpt-4o',
+      fallback: [],
+      rateLimit: { rps: 5, burst: 10 },
+      retry: { maxAttempts: 3, baseMs: 500, maxMs: 10_000 },
+      timeout: 120_000,
+      circuitBreaker: { failureThreshold: 5, resetTimeoutMs: 30_000 },
+      enabled: true,
+    },
+    local: {
+      provider: 'openrouter',
+      model: SHARED_DEFAULT.model,
+      fallback: [],
+      rateLimit: { rps: 10, burst: 20 },
+      retry: { maxAttempts: 2, baseMs: 500, maxMs: 5_000 },
+      timeout: 30_000,
+      circuitBreaker: { failureThreshold: 3, resetTimeoutMs: 10_000 },
+      enabled: true,
+    },
+    compaction: {
+      provider: 'openrouter',
+      model: SHARED_DEFAULT.smallModel ?? 'openrouter/deepseek/deepseek-v3.2-exp',
+      fallback: [],
+      rateLimit: { rps: 10, burst: 20 },
+      retry: { maxAttempts: 2, baseMs: 300, maxMs: 5_000 },
+      timeout: 45_000,
+      circuitBreaker: { failureThreshold: 3, resetTimeoutMs: 15_000 },
+      enabled: true,
+    },
+    'agent:ask': {
+      provider: 'openrouter',
+      model: 'openrouter/deepseek/deepseek-v3.2-exp',
+      fallback: [],
+      rateLimit: { rps: 20, burst: 40 },
+      retry: { maxAttempts: 3, baseMs: 300, maxMs: 5_000 },
+      timeout: 60_000,
+      circuitBreaker: { failureThreshold: 5, resetTimeoutMs: 15_000 },
+      enabled: true,
+    },
+  },
+} as MiraConfig
 
 let cached: MiraConfig | null = null
 
@@ -109,6 +197,14 @@ export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
             mergeSection(DEFAULT_CONFIG.permission, raw.permission) ?? DEFAULT_CONFIG.permission,
           mcp: mergeSection(DEFAULT_CONFIG.mcp, raw.mcp) ?? DEFAULT_CONFIG.mcp,
           provider: mergeSection(DEFAULT_CONFIG.provider, raw.provider) ?? DEFAULT_CONFIG.provider,
+          routing: mergeSection(
+            DEFAULT_CONFIG.routing,
+            (raw as Record<string, unknown>).routing as typeof DEFAULT_CONFIG.routing,
+          ),
+          subgateways: mergeSection(
+            DEFAULT_CONFIG.subgateways,
+            (raw as Record<string, unknown>).subgateways as typeof DEFAULT_CONFIG.subgateways,
+          ),
           loop: mergeSection(DEFAULT_CONFIG.loop, raw.loop),
           agents: mergeSection(DEFAULT_CONFIG.agents, raw.agents),
           guardrails: mergeSection(DEFAULT_CONFIG.guardrails, raw.guardrails),
@@ -193,9 +289,20 @@ const miraConfigPatchSchema = z
         z.object({
           type: z.enum(['local', 'remote']),
           command: z.array(z.string()).optional(),
+          args: z.array(z.string()).optional(),
           url: z.string().optional(),
           enabled: z.boolean().optional(),
           env: z.record(z.string(), z.string()).optional(),
+          headers: z.record(z.string(), z.string()).optional(),
+          timeoutMs: z.number().int().positive().optional(),
+          reconnect: z
+            .object({
+              enabled: z.boolean().optional(),
+              maxRetries: z.number().int().min(0).optional(),
+              baseDelayMs: z.number().int().positive().optional(),
+              maxDelayMs: z.number().int().positive().optional(),
+            })
+            .optional(),
         }),
       )
       .optional(),
@@ -208,7 +315,10 @@ const miraConfigPatchSchema = z
           options: z
             .object({
               baseURL: z.string().optional(),
-              apiKey: z.string().optional(),
+              apiKey: z.union([z.string(), z.array(z.string())]).optional(),
+              headers: z.record(z.string(), z.string()).optional(),
+              timeout: z.number().int().positive().optional(),
+              kind: z.string().optional(),
             })
             .optional(),
           models: z
@@ -220,6 +330,51 @@ const miraConfigPatchSchema = z
               }),
             )
             .optional(),
+        }),
+      )
+      .optional(),
+    routing: z
+      .object({
+        aliases: z.record(z.string(), z.string()).optional(),
+        fallbacks: z.array(z.string()).optional(),
+        defaultProvider: z.string().optional(),
+        lanes: z.record(z.string(), z.string()).optional(),
+      })
+      .optional(),
+    subgateways: z
+      .record(
+        z.string(),
+        z.object({
+          provider: z.string().optional(),
+          model: z.string().optional(),
+          fallback: z.array(z.string()).optional(),
+          rateLimit: z
+            .object({
+              rps: z.number().positive().optional(),
+              burst: z.number().int().positive().optional(),
+            })
+            .optional(),
+          costCap: z
+            .object({
+              perTask: z.number().positive().optional(),
+              perSession: z.number().positive().optional(),
+            })
+            .optional(),
+          retry: z
+            .object({
+              maxAttempts: z.number().int().positive().optional(),
+              baseMs: z.number().int().positive().optional(),
+              maxMs: z.number().int().positive().optional(),
+            })
+            .optional(),
+          timeout: z.number().int().positive().optional(),
+          circuitBreaker: z
+            .object({
+              failureThreshold: z.number().int().positive().optional(),
+              resetTimeoutMs: z.number().int().positive().optional(),
+            })
+            .optional(),
+          enabled: z.boolean().optional(),
         }),
       )
       .optional(),

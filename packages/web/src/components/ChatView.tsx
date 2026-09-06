@@ -61,13 +61,18 @@ function CodeFence(props: { lang: string; code: string }) {
         <button
           type="button"
           class="btn btn-ghost"
-          onClick={copy}
+          onClick={() => {
+            void copy().then(() => toast.success('Copied to clipboard'))
+          }}
           title="Copy code"
+          aria-label="Copy code to clipboard"
+          aria-live="polite"
           style={{
             padding: '2px 8px',
             'font-size': 'var(--fs-xs)',
             border: '1px solid var(--border)',
             'border-radius': 'var(--r-full)',
+            'min-height': '28px',
           }}
         >
           {copied() ? '✓ copied' : '⧉ copy'}
@@ -820,8 +825,15 @@ export function ChatView(props: {
                                         <button
                                           type="button"
                                           class="btn btn-ghost"
-                                          style={{ padding: '0 6px', 'font-size': '10px' }}
+                                          style={{
+                                            padding: '3px 8px',
+                                            'font-size': '10px',
+                                            'min-height': '24px',
+                                            border: '1px solid var(--border)',
+                                            'border-radius': 'var(--r-full)',
+                                          }}
                                           title="Rewind session to this message"
+                                          aria-label="Rewind session to this message"
                                           onClick={() => {
                                             const sessionId = props.store.state.currentId
                                             const messageId = m.id
@@ -839,7 +851,7 @@ export function ChatView(props: {
                                               )
                                           }}
                                         >
-                                          ↩ Rewind to here
+                                          ↩ Rewind
                                         </button>
                                       </div>
                                       <FencedContent text={contentOf(m)} />
@@ -1090,16 +1102,21 @@ export function ChatView(props: {
                       onClick={() =>
                         void api
                           .cancelJob(job.id)
-                          .then(() => refetchJobs())
-                          .catch(() => {})
+                          .then(() => {
+                            void refetchJobs()
+                            toast.success('Job cancelled')
+                          })
+                          .catch((e) => toast.error(`Cancel failed: ${(e as Error).message}`))
                       }
                       title="Cancel background job"
+                      aria-label="Cancel background job"
                       style={{
                         padding: '3px 8px',
                         'font-size': 'var(--fs-xs)',
                         border: '1px solid var(--border)',
                         'border-radius': 'var(--r-full)',
                         flex: 'none',
+                        'min-height': '28px',
                       }}
                     >
                       ✕ cancel
@@ -1136,11 +1153,13 @@ export function ChatView(props: {
                     type="button"
                     class="btn btn-warn-ghost"
                     onClick={() => void props.store.rewindDoomLoop()}
+                    aria-label="Rewind doom-loop"
                     style={{
                       padding: '4px 10px',
                       'font-size': 'var(--fs-xs)',
                       'border-radius': 'var(--r-md)',
                       flex: 'none',
+                      'min-height': '28px',
                     }}
                   >
                     ↩ Rewind
@@ -1164,8 +1183,10 @@ export function ChatView(props: {
                       'font-size': 'var(--fs-xs)',
                       'border-radius': 'var(--r-md)',
                       flex: 'none',
+                      'min-height': '28px',
                     }}
                     title="Never repeat this pattern — add deny rule"
+                    aria-label="Never repeat this tool"
                   >
                     ⛔ Never repeat
                   </button>
@@ -1173,7 +1194,13 @@ export function ChatView(props: {
                     type="button"
                     class="btn btn-ghost"
                     onClick={() => props.store.clearDoomLoop()}
-                    style={{ padding: '4px 8px', 'font-size': 'var(--fs-xs)', flex: 'none' }}
+                    aria-label="Dismiss doom-loop warning"
+                    style={{
+                      padding: '4px 8px',
+                      'font-size': 'var(--fs-xs)',
+                      flex: 'none',
+                      'min-height': '28px',
+                    }}
                   >
                     ✕
                   </button>
@@ -1203,7 +1230,13 @@ export function ChatView(props: {
                   type="button"
                   class="btn btn-ghost"
                   onClick={() => props.store.clearBudgetWarning()}
-                  style={{ padding: '4px 8px', 'font-size': 'var(--fs-xs)', flex: 'none' }}
+                  aria-label="Dismiss budget warning"
+                  style={{
+                    padding: '4px 8px',
+                    'font-size': 'var(--fs-xs)',
+                    flex: 'none',
+                    'min-height': '28px',
+                  }}
                 >
                   ✕
                 </button>
@@ -1299,10 +1332,12 @@ export function ChatView(props: {
                       class="btn btn-warn-ghost"
                       disabled={!props.store.input().trim()}
                       title="Queue this message — it runs after the current turn"
+                      aria-label="Queue message"
                       style={{
                         padding: '7px 12px',
                         'font-size': 'var(--fs-sm)',
                         'border-radius': 'var(--r-md)',
+                        'min-height': '36px',
                       }}
                     >
                       Queue ↵
@@ -1312,10 +1347,12 @@ export function ChatView(props: {
                       class="btn btn-danger-ghost"
                       onClick={() => props.store.stopStream()}
                       title="Stop the current response"
+                      aria-label="Stop response"
                       style={{
                         padding: '7px 12px',
                         'font-size': 'var(--fs-sm)',
                         'border-radius': 'var(--r-md)',
+                        'min-height': '36px',
                       }}
                     >
                       ■ Stop
@@ -1327,7 +1364,13 @@ export function ChatView(props: {
                   type="submit"
                   class="btn btn-solid"
                   disabled={!props.store.input().trim()}
-                  style={{ padding: '7px 16px', 'font-size': 'var(--fs-sm)', flex: 'none' }}
+                  aria-label="Send message"
+                  style={{
+                    padding: '7px 16px',
+                    'font-size': 'var(--fs-sm)',
+                    flex: 'none',
+                    'min-height': '36px',
+                  }}
                 >
                   Send ↵
                 </button>

@@ -1,4 +1,4 @@
-import type { JsonValue } from "../types/index.js"
+import type { JsonValue } from '../types/index.js'
 /**
  * Mira MCP HTTP Client — JSON-RPC 2.0 over HTTP, supporting both transports
  *
@@ -39,6 +39,13 @@ export interface MCPToolDef {
   inputSchema?: Record<string, JsonValue>
 }
 
+export interface MCPResourceDef {
+  uri: string
+  name: string
+  description?: string
+  mimeType?: string
+}
+
 export interface McpHttpOptions {
   url: string
   headers?: Record<string, string>
@@ -53,7 +60,7 @@ interface Pending {
   timer: ReturnType<typeof setTimeout>
 }
 
-type TransportMode = "streamable" | "legacy-sse"
+type TransportMode = 'streamable' | 'legacy-sse'
 
 export class McpHttpClient {
   public serverInfo: Record<string, JsonValue> = {}
@@ -69,9 +76,11 @@ export class McpHttpClient {
   private nextId = 1
   private pending = new Map<number, Pending>()
   private sseReader?: ReadableStreamDefaultReader<Uint8Array>
-  private sseBuf = ""
+  private sseBuf = ''
   private messageEndpointResolve!: (url: string) => void
-  private messageEndpointReady: Promise<string> = new Promise((res) => { this.messageEndpointResolve = res })
+  private messageEndpointReady: Promise<string> = new Promise((res) => {
+    this.messageEndpointResolve = res
+  })
 
   private constructor(name: string, opts: McpHttpOptions, transport: TransportMode) {
     this.name = name
@@ -82,14 +91,14 @@ export class McpHttpClient {
 
   static async connect(name: string, opts: McpHttpOptions): Promise<McpHttpClient> {
     // 1) Try the modern Streamable HTTP transport first (POST single endpoint).
-    const streamable = new McpHttpClient(name, opts, "streamable")
+    const streamable = new McpHttpClient(name, opts, 'streamable')
     try {
       await streamable.handshakeStreamable()
       return streamable
     } catch {
       await streamable.shutdown()
       // 2) Fall back to the legacy HTTP+SSE transport (2024-11-05).
-      const legacy = new McpHttpClient(name, opts, "legacy-sse")
+      const legacy = new McpHttpClient(name, opts, 'legacy-sse')
       await legacy.handshakeLegacy(opts.signal)
       return legacy
     }
@@ -99,16 +108,21 @@ export class McpHttpClient {
 
   /** Real Streamable HTTP handshake: initialize → capture session id → initialized */
   private async handshakeStreamable(): Promise<void> {
-    const result = await this.request<Record<string, JsonValue>>("initialize", {
-      protocolVersion: "2024-11-05",
-      capabilities: {},
-      clientInfo: { name: "mira", version: "0.1.0" },
-    }, undefined, new Set(["json"]))
+    const result = await this.request<Record<string, JsonValue>>(
+      'initialize',
+      {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'mira', version: '0.1.0' },
+      },
+      undefined,
+      new Set(['json']),
+    )
     if (result?.serverInfo) this.serverInfo = result.serverInfo as Record<string, JsonValue>
     if (result?.capabilities) this.capabilities = result.capabilities as Record<string, JsonValue>
     // notifications/initialized — no response body expected; tolerate 204/empty
     await this.send(
-      { jsonrpc: "2.0", method: "notifications/initialized", params: {} },
+      { jsonrpc: '2.0', method: 'notifications/initialized', params: {} },
       { expectBody: false },
     ).catch(() => {}) // best-effort; some servers drop notifications without reply
   }
@@ -130,13 +144,22 @@ export class McpHttpClient {
     // response after we POST it to /message.
     await this.openSseStream(signal)
 
-    const initP = this.requestLegacy<Record<string, JsonValue>>("initialize", {
-      protocolVersion: "2024-11-05",
-      capabilities: {},
-      clientInfo: { name: "mira", version: "0.1.0" },
-    }, 20_000, signal)
+    const initP = this.requestLegacy<Record<string, JsonValue>>(
+      'initialize',
+      {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'mira', version: '0.1.0' },
+      },
+      20_000,
+      signal,
+    )
     // notifications/initialized is best-effort; send right after the stream is up.
-    await this.postMessage({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }).catch(() => {})
+    await this.postMessage({
+      jsonrpc: '2.0',
+      method: 'notifications/initialized',
+      params: {},
+    }).catch(() => {})
 
     const result = await initP
     if (result?.serverInfo) this.serverInfo = result.serverInfo as Record<string, JsonValue>
@@ -152,21 +175,23 @@ export class McpHttpClient {
     const onOuterAbort = () => controller.abort()
     if (signal) {
       if (signal.aborted) throw new Error(`MCP request aborted: ${this.name}`)
-      signal.addEventListener("abort", onOuterAbort, { once: true })
+      signal.addEventListener('abort', onOuterAbort, { once: true })
     }
     try {
       const res = await fetch(this.url, {
-        method: "GET",
-        headers: { Accept: "text/event-stream", ...this.headers },
+        method: 'GET',
+        headers: { Accept: 'text/event-stream', ...this.headers },
         signal: controller.signal,
       })
       if (!res.ok || !res.body) {
-        throw new Error(`Legacy SSE listen failed (HTTP ${res.status}) from MCP server ${this.name}`)
+        throw new Error(
+          `Legacy SSE listen failed (HTTP ${res.status}) from MCP server ${this.name}`,
+        )
       }
       this.sseReader = res.body.getReader()
       void this.sseReadLoop()
     } finally {
-      if (signal) signal.removeEventListener("abort", onOuterAbort)
+      if (signal) signal.removeEventListener('abort', onOuterAbort)
     }
   }
 
@@ -196,7 +221,7 @@ export class McpHttpClient {
   private drainSseBuffer(): void {
     let idx: number
     // SSE frames are separated by a blank line (\n\n)
-    while ((idx = this.sseBuf.indexOf("\n\n")) !== -1) {
+    while ((idx = this.sseBuf.indexOf('\n\n')) !== -1) {
       const frame = this.sseBuf.slice(0, idx)
       this.sseBuf = this.sseBuf.slice(idx + 2)
       this.handleSseFrame(frame)
@@ -204,27 +229,37 @@ export class McpHttpClient {
   }
 
   private handleSseFrame(frame: string): void {
-    let event = ""
+    let event = ''
     const dataLines: string[] = []
     for (const rawLine of frame.split(/\r?\n/)) {
       const line = rawLine.trim()
-      if (line.startsWith("event:")) { event = line.slice(6).trim(); continue }
-      if (line.startsWith("data:")) { dataLines.push(line.slice(5).trimStart()); continue }
+      if (line.startsWith('event:')) {
+        event = line.slice(6).trim()
+        continue
+      }
+      if (line.startsWith('data:')) {
+        dataLines.push(line.slice(5).trimStart())
+        continue
+      }
       // `id:`, `retry:`, `:` comment, and blank lines are ignored for dispatch.
     }
     if (dataLines.length === 0) return
-    const data = dataLines.join("\n")
-    if (event === "endpoint") {
+    const data = dataLines.join('\n')
+    if (event === 'endpoint') {
       // The /message POST url for this session.
       this.messageEndpoint = data
       this.messageEndpointResolve(data)
       return
     }
-    if (event !== "message") return
+    if (event !== 'message') return
     let msg: Record<string, JsonValue | undefined>
-    try { msg = JSON.parse(data) } catch { return }
+    try {
+      msg = JSON.parse(data)
+    } catch {
+      return
+    }
     const id = msg.id
-    if (typeof id !== "number") return // notification — not request-correlated
+    if (typeof id !== 'number') return // notification — not request-correlated
     const p = this.pending.get(id)
     if (!p) return
     clearTimeout(p.timer)
@@ -252,7 +287,7 @@ export class McpHttpClient {
     }, timeoutMs)
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve: (v) => resolve(v as T), reject, timer })
-      this.postMessage({ jsonrpc: "2.0", id, method, params }, signal).catch((e) => {
+      this.postMessage({ jsonrpc: '2.0', id, method, params }, signal).catch((e) => {
         clearTimeout(timer)
         this.pending.delete(id)
         reject(e as Error)
@@ -266,26 +301,26 @@ export class McpHttpClient {
     const endpoint = await this.messageEndpointReady
     const controller = new AbortController()
     const onOuterAbort = () => controller.abort()
-    if (signal) signal.addEventListener("abort", onOuterAbort, { once: true })
+    if (signal) signal.addEventListener('abort', onOuterAbort, { once: true })
     try {
       const res = await fetch(endpoint, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
           ...this.headers,
         },
         body: JSON.stringify(body),
         signal: controller.signal,
       })
       if (!res.ok) {
-        const text = await res.text().catch(() => "")
+        const text = await res.text().catch(() => '')
         throw new Error(`HTTP ${res.status} from MCP server ${this.name}: ${text.slice(0, 300)}`)
       }
       // 202 Accepted with empty body is expected; the response is delivered on
       // the GET stream, so we intentionally do NOT read/publish the body here.
     } finally {
-      if (signal) signal.removeEventListener("abort", onOuterAbort)
+      if (signal) signal.removeEventListener('abort', onOuterAbort)
     }
   }
 
@@ -296,9 +331,10 @@ export class McpHttpClient {
   }
 
   async listTools(timeoutMs = 20_000): Promise<MCPToolDef[]> {
-    const r = this.transport === "legacy-sse"
-      ? await this.requestLegacy<Record<string, JsonValue>>("tools/list", {}, timeoutMs)
-      : await this.request<Record<string, JsonValue>>("tools/list", {}, timeoutMs)
+    const r =
+      this.transport === 'legacy-sse'
+        ? await this.requestLegacy<Record<string, JsonValue>>('tools/list', {}, timeoutMs)
+        : await this.request<Record<string, JsonValue>>('tools/list', {}, timeoutMs)
     return this.mapTools(r)
   }
 
@@ -308,15 +344,42 @@ export class McpHttpClient {
     timeoutMs = 60_000,
     signal?: AbortSignal,
   ): Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }> {
-    return this.transport === "legacy-sse"
-      ? await this.requestLegacy("tools/call", { name, arguments: args }, timeoutMs, signal)
-      : await this.request("tools/call", { name, arguments: args }, timeoutMs, undefined, signal)
+    return this.transport === 'legacy-sse'
+      ? await this.requestLegacy('tools/call', { name, arguments: args }, timeoutMs, signal)
+      : await this.request('tools/call', { name, arguments: args }, timeoutMs, undefined, signal)
+  }
+
+  async listResources(timeoutMs = 20_000): Promise<MCPResourceDef[]> {
+    try {
+      const r =
+        this.transport === 'legacy-sse'
+          ? await this.requestLegacy<Record<string, JsonValue>>('resources/list', {}, timeoutMs)
+          : await this.request<Record<string, JsonValue>>('resources/list', {}, timeoutMs)
+      return this.mapResources(r)
+    } catch {
+      return []
+    }
+  }
+
+  async readResource(
+    uri: string,
+    timeoutMs = 20_000,
+    signal?: AbortSignal,
+  ): Promise<{
+    contents: Array<{ uri: string; text?: string; blob?: string; mimeType?: string }>
+  }> {
+    if (signal?.aborted) return Promise.reject(new Error(`MCP request aborted: ${this.name}`))
+    return this.transport === 'legacy-sse'
+      ? await this.requestLegacy('resources/read', { uri }, timeoutMs, signal)
+      : await this.request('resources/read', { uri }, timeoutMs, undefined, signal)
   }
 
   async shutdown(): Promise<void> {
     this.closed = true
     if (this.sseReader) {
-      try { await this.sseReader.cancel() } catch {}
+      try {
+        await this.sseReader.cancel()
+      } catch {}
       this.sseReader = undefined
     }
     const err = new Error(`MCP server closed: ${this.name}`)
@@ -335,11 +398,26 @@ export class McpHttpClient {
   private mapTools(r: Record<string, JsonValue>): MCPToolDef[] {
     const tools = r?.tools
     if (!Array.isArray(tools)) return []
-    return (tools as Array<Record<string, JsonValue>>).map(t => ({
-      name: String(t.name ?? ""),
-      description: typeof t.description === "string" ? t.description : undefined,
-      inputSchema: t.inputSchema as Record<string, JsonValue> | undefined,
-    })).filter(t => t.name.length > 0)
+    return (tools as Array<Record<string, JsonValue>>)
+      .map((t) => ({
+        name: String(t.name ?? ''),
+        description: typeof t.description === 'string' ? t.description : undefined,
+        inputSchema: t.inputSchema as Record<string, JsonValue> | undefined,
+      }))
+      .filter((t) => t.name.length > 0)
+  }
+
+  private mapResources(r: Record<string, JsonValue>): MCPResourceDef[] {
+    const resources = r?.resources
+    if (!Array.isArray(resources)) return []
+    return (resources as Array<Record<string, JsonValue>>)
+      .map((res) => ({
+        uri: String(res.uri ?? ''),
+        name: String(res.name ?? res.uri ?? ''),
+        description: typeof res.description === 'string' ? res.description : undefined,
+        mimeType: typeof res.mimeType === 'string' ? res.mimeType : undefined,
+      }))
+      .filter((r) => r.uri.length > 0)
   }
 
   // ── Streamable HTTP protocol (POST single endpoint) ─────────────────
@@ -353,14 +431,15 @@ export class McpHttpClient {
   ): Promise<T> {
     if (this.closed) return Promise.reject(new Error(`MCP server closed: ${this.name}`))
     const id = Date.now() + Math.floor(Math.random() * 1_000_000)
-    return this.send({ jsonrpc: "2.0", id, method, params }, { timeoutMs, modes, signal })
-      .then(async (body) => {
+    return this.send({ jsonrpc: '2.0', id, method, params }, { timeoutMs, modes, signal }).then(
+      async (body) => {
         // Parse the (single-JSON or first-SSE) response message
         const msg = await this.parseResponse(body)
         const errObj = msg.error as { code?: JsonValue; message?: JsonValue } | undefined
         if (errObj) throw new Error(`MCP error ${String(errObj.code)}: ${String(errObj.message)}`)
         return msg.result as T
-      })
+      },
+    )
   }
 
   /**
@@ -371,10 +450,15 @@ export class McpHttpClient {
    */
   private async send(
     message: object,
-    opts: { timeoutMs?: number; modes?: Set<string>; signal?: AbortSignal; expectBody?: boolean } = {},
+    opts: {
+      timeoutMs?: number
+      modes?: Set<string>
+      signal?: AbortSignal
+      expectBody?: boolean
+    } = {},
   ): Promise<string> {
     const timeoutMs = opts.timeoutMs ?? 30_000
-    const modes = opts.modes ?? new Set(["json", "sse"])
+    const modes = opts.modes ?? new Set(['json', 'sse'])
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -384,23 +468,23 @@ export class McpHttpClient {
         clearTimeout(timer)
         throw new Error(`MCP request aborted: ${this.name}`)
       }
-      opts.signal.addEventListener("abort", onOuterAbort, { once: true })
+      opts.signal.addEventListener('abort', onOuterAbort, { once: true })
     }
 
     const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
       ...this.headers,
     }
     // Echo the session id assigned during initialize on every request.
     // The initialize request itself is excluded from session (fresh session).
-    const isInitialize = (message as { method?: string }).method === "initialize"
-    if (this.sessionId && !isInitialize) headers["Mcp-Session-Id"] = this.sessionId
+    const isInitialize = (message as { method?: string }).method === 'initialize'
+    if (this.sessionId && !isInitialize) headers['Mcp-Session-Id'] = this.sessionId
     // The handshake request sets no Mcp-Session-Id, so nothing to clear here.
 
     try {
       const res = await fetch(this.url, {
-        method: "POST",
+        method: 'POST',
         headers,
         body: JSON.stringify(message),
         signal: controller.signal,
@@ -408,12 +492,12 @@ export class McpHttpClient {
 
       // Capture session id from the initialize response header.
       if (isInitialize) {
-        const sid = res.headers.get("mcp-session-id")
+        const sid = res.headers.get('mcp-session-id')
         if (sid) this.sessionId = sid
       }
 
       if (!res.ok) {
-        const text = await res.text().catch(() => "")
+        const text = await res.text().catch(() => '')
         throw new Error(`HTTP ${res.status} from MCP server ${this.name}: ${text.slice(0, 300)}`)
       }
 
@@ -425,7 +509,7 @@ export class McpHttpClient {
       return body
     } finally {
       clearTimeout(timer)
-      if (opts.signal) opts.signal.removeEventListener("abort", onOuterAbort)
+      if (opts.signal) opts.signal.removeEventListener('abort', onOuterAbort)
     }
   }
 
@@ -440,7 +524,7 @@ export class McpHttpClient {
       // Treated as a missing result — callers surface generic error.
       return {} as Record<string, JsonValue | undefined>
     }
-    if (trimmed.startsWith("{")) {
+    if (trimmed.startsWith('{')) {
       // Single JSON-RPC document
       try {
         return JSON.parse(trimmed) as Record<string, JsonValue | undefined>
@@ -455,14 +539,22 @@ export class McpHttpClient {
       let inMessage = false
       for (const rawLine of frame.split(/\r?\n/)) {
         const line = rawLine.trim()
-        if (line === "event: message") { inMessage = true; continue }
-        if (line.startsWith("event:")) { inMessage = false; continue }
-        if (line.startsWith("id:")) continue // priming/event id — skip
-        if (line.startsWith("data:")) {
+        if (line === 'event: message') {
+          inMessage = true
+          continue
+        }
+        if (line.startsWith('event:')) {
+          inMessage = false
+          continue
+        }
+        if (line.startsWith('id:')) continue // priming/event id — skip
+        if (line.startsWith('data:')) {
           if (inMessage) dataLines.push(line.slice(5).trimStart())
           continue
         }
-        if (line === "") { inMessage = false }
+        if (line === '') {
+          inMessage = false
+        }
       }
       if (dataLines.length) break // first message event wins
     }
@@ -470,7 +562,7 @@ export class McpHttpClient {
       throw new Error(`No JSON-RPC message in SSE stream from MCP server ${this.name}`)
     }
     try {
-      return JSON.parse(dataLines.join("")) as Record<string, JsonValue | undefined>
+      return JSON.parse(dataLines.join('')) as Record<string, JsonValue | undefined>
     } catch {
       throw new Error(`Invalid JSON in SSE message from MCP server ${this.name}`)
     }

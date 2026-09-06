@@ -26,6 +26,8 @@ import type { Bus } from '../bus/index.js'
 import type { ToolRegistry } from '../tools/registry.js'
 import type { PermissionManager } from '../permission/index.js'
 import type { Gateway } from '../gateway/index.js'
+import type { GatewayRouter } from '../gateway/router.js'
+import type { SubgatewayRegistry } from '../gateway/registry.js'
 import { buildSystemPrompt, getLoopLimits, getConfig } from '../config/index.js'
 import { DoomLoopDetector } from './doom-loop-detector.js'
 import { needsCompaction, compactMessages, estimateTokens } from './compaction.js'
@@ -55,6 +57,8 @@ export interface SessionPromptDeps {
   db: MiraDB
   bus: Bus
   gateway: Gateway
+  registry?: SubgatewayRegistry
+  router?: GatewayRouter
   tools: ToolRegistry
   permissions: PermissionManager
   /** shared hierarchical memory (injected from learning system) */
@@ -100,6 +104,53 @@ export interface LoopOptions {
   compactionThreshold?: number // 0.8 = compact at 80% context
   signal?: AbortSignal
   agent?: string | null // per-turn agent override (Kilo K1 parity)
+}
+
+// ── Subgateway routing helpers ─────────────────────────────────────
+
+function getRouter(gateway: Gateway): GatewayRouter | null {
+  return (gateway as unknown as { router?: GatewayRouter }).router ?? null
+}
+
+function getRegistry(gateway: Gateway): SubgatewayRegistry | null {
+  return (gateway as unknown as { registry?: SubgatewayRegistry }).registry ?? null
+}
+
+function resolveLane(
+  gateway: Gateway,
+  ctx: {
+    model?: string
+    agent?: string | null
+    messages?: Array<{ role: string; content: string }>
+    task?: 'summarize' | 'stream' | 'complete' | 'vision'
+  },
+): string {
+  const router = getRouter(gateway)
+  if (!router) return 'default'
+  return router.resolve(ctx as never)
+}
+
+function laneCostCap(
+  gateway: Gateway,
+  lane: string,
+): { perTask?: number; perSession?: number } | undefined {
+  const registry = getRegistry(gateway)
+  if (!registry) return undefined
+  const gw = registry.get(lane) as unknown as {
+    subConfig?: { costCap?: { perTask?: number; perSession?: number } }
+  }
+  // Subgateway exposes config via private subConfig; fallback to global
+  try {
+    const sub = registry.get(lane) as unknown as { statsCollector?: unknown; lane?: string }
+    // Try to read costCap from subgateway's config via sync
+    const cfg = (
+      getConfig() as MiraConfig & {
+        subgateways?: Record<string, { costCap?: { perTask?: number; perSession?: number } }>
+      }
+    ).subgateways?.[lane]?.costCap
+    if (cfg) return cfg
+  } catch {}
+  return undefined
 }
 
 // ── Auto-Model + Cost Cap helpers (Kilo K8) ──────────────────────────
@@ -664,34 +715,53 @@ export class SessionPrompt {
         break loop
       }
 
-      // ── Cost cap guard (Kilo K8) — perTask / perSession in USD ───────
+      // ── Cost cap guard (Kilo K8) — perTask / perSession in USD, per subgateway ───────
       try {
-        const cfg = getConfig() as MiraConfig & {
-          costCap?: { perTask?: number; perSession?: number }
-        }
+        const lane = resolveLane(this.deps.gateway, {
+          model,
+          agent: opts.agent ?? null,
+          task: 'stream',
+        })
+        const laneCap = laneCostCap(this.deps.gateway, lane)
+        const globalCap = (
+          getConfig() as MiraConfig & { costCap?: { perTask?: number; perSession?: number } }
+        ).costCap
+        const cap = laneCap ?? globalCap
+        // Also check subgateway's own costCap via registry if laneCap not found
+        const effectiveCap = cap ?? globalCap
         const curCost = estimateCostUSD(model, totalTokensIn, totalTokensOut)
-        if (cfg.costCap?.perTask !== undefined && curCost > cfg.costCap.perTask) {
-          const msg = `Cost cap exceeded: $${curCost.toFixed(4)} > $${cfg.costCap.perTask.toFixed(4)} per-task limit (model ${model}, step ${step}). Aborting.`
+        if (effectiveCap?.perTask !== undefined && curCost > effectiveCap.perTask) {
+          const msg = `Cost cap exceeded: $${curCost.toFixed(4)} > $${effectiveCap.perTask.toFixed(4)} per-task limit (model ${model}, lane ${lane}, step ${step}). Aborting.`
           send('error', { error: msg })
           this.deps.bus.publish({
             type: 'server.error',
             sessionID,
-            payload: { error: msg, source: 'cost-cap', cap: cfg.costCap.perTask } as JsonValue,
+            payload: {
+              error: msg,
+              source: 'cost-cap',
+              cap: effectiveCap.perTask,
+              lane,
+            } as JsonValue,
             timestamp: Date.now(),
           })
           accumulatedText += `\n\n[System: ${msg}]\n`
           await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
           break loop
         }
-        if (cfg.costCap?.perSession !== undefined) {
+        if (effectiveCap?.perSession !== undefined) {
           const sessCost = sessionBaseCost + curCost
-          if (sessCost > cfg.costCap.perSession) {
-            const msg = `Cost cap exceeded: $${sessCost.toFixed(4)} > $${cfg.costCap.perSession.toFixed(4)} per-session limit (model ${model}, step ${step}). Aborting.`
+          if (sessCost > effectiveCap.perSession) {
+            const msg = `Cost cap exceeded: $${sessCost.toFixed(4)} > $${effectiveCap.perSession.toFixed(4)} per-session limit (model ${model}, lane ${lane}, step ${step}). Aborting.`
             send('error', { error: msg })
             this.deps.bus.publish({
               type: 'server.error',
               sessionID,
-              payload: { error: msg, source: 'cost-cap', cap: cfg.costCap.perSession } as JsonValue,
+              payload: {
+                error: msg,
+                source: 'cost-cap',
+                cap: effectiveCap.perSession,
+                lane,
+              } as JsonValue,
               timestamp: Date.now(),
             })
             accumulatedText += `\n\n[System: ${msg}]\n`
@@ -711,7 +781,16 @@ export class SessionPrompt {
       )
       if (needed) {
         send('compaction', { step, tokenEstimate, ratio })
-        const result = await compactMessages(this.deps.gateway, messages, {
+        // Compaction uses cheap lane (oracle: summarize→compaction, compaction uses cheap model)
+        const compactionGateway = (() => {
+          const router = getRouter(this.deps.gateway)
+          if (router) return router.getCompactionGateway()
+          // Fallback: use cheap lane via registry if available
+          const reg = getRegistry(this.deps.gateway)
+          if (reg) return reg.getOrDefault('compaction')
+          return this.deps.gateway
+        })()
+        const result = await compactMessages(compactionGateway, messages, {
           smallModel: limits.smallModel,
           contextLimit,
           threshold,
@@ -912,6 +991,7 @@ export class SessionPrompt {
           result = await this.deps.tools.execute(tc.name, tc.args, {
             sessionID,
             messageID: assistantMessageID,
+            signal: opts.signal,
           })
           send('tool_result', { toolCallID: tc.id, name: tc.name, result })
         } catch (err) {

@@ -13,22 +13,46 @@ const shortcuts = [
   { key: 'Enter', desc: 'Send prompt' },
   { key: 'Shift+Enter', desc: 'New line in input' },
   { key: 'Esc', desc: 'Stop streaming / close overlay' },
-  { key: '/', desc: 'Open command palette' },
+  { key: 'Ctrl+P / ⌘P', desc: 'Open command palette' },
+  { key: '/', desc: 'Slash autocomplete (inline)' },
   { key: '?', desc: 'Toggle help' },
   { key: 'Tab', desc: 'Cycle focus sidebar → messages → input' },
+  { key: 'i', desc: 'Toggle Inspector' },
+  { key: 'G', desc: 'Toggle Memory Graph' },
   { key: '1-9', desc: 'Quick session pick' },
+  { key: '↑ / ↓', desc: 'Navigate session list (roving tabindex)' },
   { key: 'a / A', desc: 'Allow permission' },
   { key: 'd / D', desc: 'Deny permission' },
   { key: '1 / 2', desc: 'Number pick in PermissionView' },
   { key: '1-9', desc: 'Quick pick in QuestionView / CommandPalette' },
   { key: '↩ undo', desc: 'Undo last mutation (header)' },
+  { key: '⤓ export', desc: 'Export session (per-row + header)' },
+  { key: '⎘ fork', desc: 'Fork session (per-row + /fork)' },
+  { key: '▣ Terminal', desc: 'Open PTY terminal (WS /terminal)' },
 ]
 
 export default function HelpOverlay(props: Props) {
+  let dialogRef: HTMLDivElement | undefined
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
       e.preventDefault()
       props.onClose()
+      return
+    }
+    if (e.key === 'Tab' && dialogRef) {
+      const focusable = dialogRef.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      )
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
     }
   }
 
@@ -52,6 +76,11 @@ export default function HelpOverlay(props: Props) {
         onClick={props.onClose}
       >
         <div
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Keyboard shortcuts"
+          tabindex="-1"
           style={{
             width: 'min(520px, 92vw)',
             'border-radius': '12px',

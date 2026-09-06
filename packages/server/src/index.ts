@@ -23,7 +23,8 @@ import { Hono } from 'hono'
 import { timingSafeEqual } from 'node:crypto'
 import { Bus } from './bus/index.js'
 import { createDatabase, migrate } from './storage/db.js'
-import { createGateway } from './gateway/index.js'
+import { SubgatewayRegistry } from './gateway/registry.js'
+import { GatewayRouter, createRoutingGateway } from './gateway/router.js'
 import { ToolRegistry } from './tools/registry.js'
 import { PermissionManager } from './permission/index.js'
 import { SessionPrompt } from './session/prompt.js'
@@ -291,8 +292,24 @@ async function main() {
     `[mira] guardrails: enforce=${(config.guardrails?.enforce ?? (process.env.NODE_ENV === 'production' || process.env.HOST === '0.0.0.0')) ? 'enabled' : 'disabled'} (DB mirror: audit_entries)`,
   )
 
-  const gateway = createGateway(config)
-  console.log(`[mira] gateway ready — providers: ${Object.keys(config.provider).join(', ')}`)
+  const registry = new SubgatewayRegistry(config)
+  const router = new GatewayRouter(registry, config)
+  const gateway = createRoutingGateway(registry, router)
+  console.log(
+    `[mira] gateway ready — providers: ${Object.keys(config.provider).join(', ')} lanes: ${registry.lanes().join(', ')}`,
+  )
+
+  // Hot-reload subgateways when config changes (PATCH /config)
+  bus.subscribe('config.updated', (event) => {
+    try {
+      const newConfig = (event.payload as { config?: MiraConfig })?.config ?? getConfig()
+      registry.syncFromConfig(newConfig)
+      router.syncConfig(newConfig)
+      console.log(`[mira] subgateways reloaded from config.updated`)
+    } catch (e) {
+      console.warn('[mira] failed to reload subgateways:', String(e))
+    }
+  })
 
   const learning = createLearningSystem({ db, bus, gateway })
   await learning.knowledge.load()
@@ -306,12 +323,15 @@ async function main() {
   await tools.registerAll()
   const mcp = new MCPManager({ bus, tools, config: config.mcp })
   await mcp.connectAll()
+  mcp.startHealthCheck(30_000)
   console.log(`[mira] tools: ${tools.count()} registered (${mcp.count()} from MCP)`)
 
   const prompt = new SessionPrompt({
     db,
     bus,
     gateway,
+    registry,
+    router,
     tools,
     permissions,
     knowledge: learning.knowledge,
@@ -410,7 +430,7 @@ async function main() {
   })
 
   mountMcpRoutes(app, mcp)
-  mountConfigRoutes(app)
+  mountConfigRoutes(app, { bus })
   mountToolsRoutes(app, { tools, permissions, guardrails, gateway })
   mountLearningRoutes(app, learning)
 
@@ -811,7 +831,7 @@ async function main() {
       server.stop(true)
     } catch {}
     try {
-      mcp.disconnectAll()
+      await mcp.disconnectAll()
     } catch {}
     try {
       const { shutdownAllServers } = await import('./lsp/client.js')
@@ -826,7 +846,7 @@ async function main() {
   process.on('SIGTERM', () => void shutdown('SIGTERM'))
   process.on('beforeExit', () => {
     try {
-      mcp.disconnectAll()
+      void mcp.disconnectAll()
     } catch {}
   })
 }

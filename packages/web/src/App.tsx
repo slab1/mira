@@ -614,7 +614,9 @@ export default function App() {
                   type="button"
                   onClick={() => void store.undoLastMutation()}
                   title="Undo the agent's last file change (snapshot restore)"
+                  aria-label="Undo last change"
                   class="pill pill-warn pill-btn"
+                  style={{ 'min-height': '28px' }}
                 >
                   ↩ undo
                 </button>
@@ -639,18 +641,21 @@ export default function App() {
                         a.download = `mira-${id.slice(0, 8)}.md`
                         a.click()
                         URL.revokeObjectURL(url)
+                        toast.success('Export downloaded')
                       } catch (e) {
                         toast.error(`Export failed: ${(e as Error).message}`)
                       }
                     })()
                   }
                   disabled={store.state.messages.length === 0}
+                  aria-label="Export conversation"
                   title={
                     store.state.messages.length === 0
                       ? 'No messages to export'
                       : 'Export conversation transcript as Markdown'
                   }
                   class="pill pill-btn"
+                  style={{ 'min-height': '28px' }}
                 >
                   ⤓ export
                 </button>
@@ -831,11 +836,13 @@ export default function App() {
                       <button
                         type="button"
                         class="btn btn-ghost"
+                        aria-label="Undo last change"
                         style={{
                           width: '100%',
                           'text-align': 'left',
                           padding: '6px 8px',
                           'font-size': 'var(--fs-xs)',
+                          'min-height': '32px',
                         }}
                         onClick={() => {
                           setMoreOpen(false)
@@ -848,11 +855,13 @@ export default function App() {
                         type="button"
                         class="btn btn-ghost"
                         disabled={store.state.messages.length === 0}
+                        aria-label="Export conversation"
                         style={{
                           width: '100%',
                           'text-align': 'left',
                           padding: '6px 8px',
                           'font-size': 'var(--fs-xs)',
+                          'min-height': '32px',
                         }}
                         onClick={() => {
                           setMoreOpen(false)
@@ -872,6 +881,7 @@ export default function App() {
                               a.download = `mira-${id.slice(0, 8)}.md`
                               a.click()
                               URL.revokeObjectURL(url)
+                              toast.success('Export downloaded')
                             } catch (e) {
                               toast.error(`Export failed: ${(e as Error).message}`)
                             }
@@ -967,13 +977,19 @@ export default function App() {
                         type="button"
                         class="btn btn-solid"
                         disabled={!store.input().trim()}
+                        aria-label="Send message"
                         onClick={() => {
                           const v = store.input().trim()
                           if (!v) return
                           setViewMode('chat')
                           store.sendPrompt(v)
                         }}
-                        style={{ padding: '7px 14px', 'font-size': 'var(--fs-sm)', flex: 'none' }}
+                        style={{
+                          padding: '7px 14px',
+                          'font-size': 'var(--fs-sm)',
+                          flex: 'none',
+                          'min-height': '36px',
+                        }}
                       >
                         Send ↵
                       </button>
@@ -982,12 +998,14 @@ export default function App() {
                         class="btn btn-ghost"
                         onClick={() => setViewMode('chat')}
                         title="Back to chat (G)"
+                        aria-label="Back to chat"
                         style={{
                           padding: '7px 10px',
                           'font-size': 'var(--fs-xs)',
                           border: '1px solid var(--border)',
                           'border-radius': 'var(--r-md)',
                           flex: 'none',
+                          'min-height': '36px',
                         }}
                       >
                         ← chat

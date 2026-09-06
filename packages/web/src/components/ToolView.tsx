@@ -111,14 +111,16 @@ export function ToolView(props: { store: AppStore }) {
             class="btn btn-ghost"
             onClick={() => setCollapsed(true)}
             title="Collapse inspector"
+            aria-label="Collapse inspector"
             aria-expanded="true"
             aria-controls="inspector-panel"
             style={{
-              width: '26px',
+              width: '28px',
               height: '28px',
               padding: '0',
               'border-radius': 'var(--r-sm)',
               flex: 'none',
+              'min-height': '28px',
             }}
           >
             »
@@ -172,14 +174,19 @@ export function ToolView(props: { store: AppStore }) {
                   class="btn btn-ghost"
                   onClick={() => {
                     const id = s().currentId
-                    if (id) props.store.loadTodos(id)
+                    if (id) {
+                      void props.store.loadTodos(id)
+                      toast.info('Todos refreshed')
+                    }
                   }}
                   title="Refresh todos"
+                  aria-label="Refresh todos"
                   style={{
                     padding: '2px 7px',
                     'font-size': 'var(--fs-xs)',
                     border: '1px solid var(--border)',
                     'border-radius': 'var(--r-full)',
+                    'min-height': '28px',
                   }}
                 >
                   ↻
@@ -331,15 +338,19 @@ export function ToolView(props: { store: AppStore }) {
                 class="btn btn-ghost"
                 onClick={() => {
                   api.invalidateToolCache()
+                  toast.info('Refreshing tools…')
                   location.reload()
                 }}
                 title="Refresh tools (bypass 30s cache)"
+                aria-label="Refresh tools"
+                disabled={tools.loading}
                 style={{
                   padding: '2px 7px',
                   'font-size': 'var(--fs-xs)',
                   border: '1px solid var(--border)',
                   'border-radius': 'var(--r-full)',
                   'margin-left': 'auto',
+                  'min-height': '28px',
                 }}
               >
                 ↻
@@ -508,14 +519,18 @@ export function ToolView(props: { store: AppStore }) {
                   class="btn btn-ghost"
                   onClick={() => refetchSnaps()}
                   title="Refresh snapshots"
+                  aria-label="Refresh snapshots"
+                  disabled={snapshots.loading}
+                  aria-busy={snapshots.loading ? 'true' : 'false'}
                   style={{
                     padding: '2px 7px',
                     'font-size': 'var(--fs-xs)',
                     border: '1px solid var(--border)',
                     'border-radius': 'var(--r-full)',
+                    'min-height': '28px',
                   }}
                 >
-                  ↻
+                  {snapshots.loading ? '…' : '↻'}
                 </button>
               </Show>
             </div>
@@ -631,12 +646,16 @@ export function ToolView(props: { store: AppStore }) {
                                 })()
                               }
                               title="Preview diff"
+                              aria-label="Preview diff"
+                              disabled={loadingDetail()}
+                              aria-busy={loadingDetail() ? 'true' : 'false'}
                               style={{
                                 padding: '4px 8px',
                                 'font-size': 'var(--fs-xs)',
                                 border: '1px solid var(--border)',
                                 'border-radius': 'var(--r-full)',
                                 flex: 'none',
+                                'min-height': '28px',
                               }}
                             >
                               {loadingDetail() ? '…' : 'diff'}
@@ -742,14 +761,18 @@ export function ToolView(props: { store: AppStore }) {
                 class="btn btn-ghost"
                 onClick={() => refetchFindings()}
                 title="Refresh findings"
+                aria-label="Refresh findings"
+                disabled={findings.loading}
+                aria-busy={findings.loading ? 'true' : 'false'}
                 style={{
                   padding: '2px 7px',
                   'font-size': 'var(--fs-xs)',
                   border: '1px solid var(--border)',
                   'border-radius': 'var(--r-full)',
+                  'min-height': '28px',
                 }}
               >
-                ↻
+                {findings.loading ? '…' : '↻'}
               </button>
             </div>
             <Show
@@ -881,9 +904,11 @@ export function ToolView(props: { store: AppStore }) {
                             })()
                           }
                           title="Mark resolved"
+                          aria-label="Mark finding resolved"
                           style={{
                             padding: '4px 8px',
                             'font-size': 'var(--fs-xs)',
+                            'min-height': '28px',
                             border: '1px solid var(--border)',
                             'border-radius': 'var(--r-full)',
                             flex: 'none',
@@ -926,14 +951,18 @@ export function ToolView(props: { store: AppStore }) {
                 class="btn btn-ghost"
                 onClick={() => refetchJobs()}
                 title="Refresh jobs"
+                aria-label="Refresh jobs"
+                disabled={jobs.loading}
+                aria-busy={jobs.loading ? 'true' : 'false'}
                 style={{
                   padding: '2px 7px',
                   'font-size': 'var(--fs-xs)',
                   border: '1px solid var(--border)',
                   'border-radius': 'var(--r-full)',
+                  'min-height': '28px',
                 }}
               >
-                ↻
+                {jobs.loading ? '…' : '↻'}
               </button>
             </div>
             <Show
@@ -1113,12 +1142,14 @@ export function ToolView(props: { store: AppStore }) {
                                 })()
                               }
                               title="Cancel job"
+                              aria-label="Cancel job"
                               style={{
                                 padding: '4px 8px',
                                 'font-size': 'var(--fs-xs)',
                                 border: '1px solid var(--border)',
                                 'border-radius': 'var(--r-full)',
                                 flex: 'none',
+                                'min-height': '28px',
                               }}
                             >
                               ✕ cancel

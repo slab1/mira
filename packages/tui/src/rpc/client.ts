@@ -22,12 +22,25 @@ export type Session = {
   ownerID?: string
 }
 
+export type ProvenanceNode = {
+  nodeId: string
+  label: string
+  tier: 'episodic' | 'semantic' | 'procedural'
+  kind: 'knowledge' | 'finding'
+  source: string
+  updatedAt: number
+  accessCount: number
+  snippet?: string
+  tags?: string[]
+}
+
 export type Message = {
   id: string
   sessionID: string
   role: 'user' | 'assistant' | 'system'
   createdAt: number
   parts?: Part[]
+  provenance?: ProvenanceNode[]
 }
 
 export type Part = {
@@ -195,14 +208,147 @@ export type AgentEntry = {
   custom: boolean
 }
 
+export type GraphNode = {
+  id: string
+  label: string
+  tier: string
+  source: string
+  tags: string[]
+  entities: string[]
+  createdAt: number
+  updatedAt: number
+  lastAccessedAt: number
+  accessCount: number
+  kind: 'knowledge' | 'finding'
+  severity?: string
+  status?: string
+}
+
+export type GraphEdge = {
+  from: string
+  to: string
+  kind: 'related' | 'entity' | 'finding'
+  label?: string
+}
+
+export type KnowledgeGraph = {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+}
+
+export type ScoreData = {
+  sessionID: string
+  score: number
+  cost: number
+  costUSD: number
+  doomLoops: number
+  toolErrors: number
+  memoryHits: number
+  traceId: string
+  spanId: string
+  requestId: string
+  durationMs: number
+  model: string
+  toolCalls: number
+  steps: number
+  totalTokensIn: number
+  totalTokensOut: number
+  success: boolean
+  toolMetrics?: Array<{
+    tool: string
+    durationMs: number
+    isError: boolean
+    errorKind?: string
+    timestamp: number
+  }>
+}
+
+export type TraceData = {
+  sessionID: string
+  requestId: string
+  traceId: string
+  spanId: string
+  durationMs: number
+  model: string
+  toolCalls: number
+  toolErrors: number
+  doomLoops: number
+  spans: Array<{
+    name: string
+    traceId: string
+    spanId: string
+    startMs: number
+    endMs?: number
+    durationMs?: number
+    status: string
+    attributes: Record<string, JsonValue>
+  }>
+  toolMetrics: Array<{
+    tool: string
+    durationMs: number
+    isError: boolean
+    errorKind?: string
+    timestamp: number
+    sessionID: string
+  }>
+  metric: {
+    sessionID: string
+    model: string
+    steps: number
+    totalTokensIn: number
+    totalTokensOut: number
+    latencyMs: number
+    toolCalls: number
+    toolErrors: number
+    doomLoops: number
+    success: boolean
+  } | null
+}
+
+export type ModelEval = {
+  model: string
+  score: number
+  successRate?: number
+  sessions?: number
+  lastEvalAt?: string
+}
+
+export type SchedulerStatus = {
+  status: string
+  nextRunAt?: string | null
+  lastRunAt?: string | null
+  started?: boolean
+  running?: string[]
+  lastRun?: Record<string, number | null>
+  intervals?: Record<string, number>
+}
+
+export type EvalDelta = {
+  delta: number
+  sessionID: string
+  previousScore?: number
+  currentScore?: number
+}
+
+export type Patch = {
+  id: string
+  painPointId: string
+  reason: string
+  change: string
+  targetFile?: string | null
+  severity?: string
+  score?: number
+}
+
 // ── Base URL + Auth ───────────────────────────────────────────────
 
-function getBaseUrl(): string {
-  const viteEnv =
-    (typeof import.meta !== 'undefined' &&
-      (import.meta as { env?: Record<string, string> }).env?.VITE_API_URL) ||
-    ''
-  if (viteEnv) return viteEnv.replace(/\/$/, '')
+const API_URL_KEY = 'mira_api_url'
+
+function getEnvBase(): string {
+  try {
+    const env = (import.meta as { env?: Record<string, string> }).env
+    if (env?.VITE_API_URL) return env.VITE_API_URL
+  } catch {}
   try {
     const envUrl =
       (typeof process !== 'undefined' &&
@@ -210,16 +356,92 @@ function getBaseUrl(): string {
       (typeof process !== 'undefined' &&
         (process as { env?: Record<string, string> }).env?.VITE_API_URL) ||
       ''
-    if (envUrl) return envUrl.replace(/\/$/, '')
+    if (envUrl) return envUrl
   } catch {}
+  return ''
+}
+
+let runtimeApiUrlWarned = false
+function getRuntimeApiUrl(): string {
+  try {
+    const stored = typeof window !== 'undefined' ? window.localStorage.getItem(API_URL_KEY) : null
+    if (stored && stored.trim()) return stored.trim().replace(/\/$/, '')
+    if (typeof window !== 'undefined') {
+      const q = new URLSearchParams(window.location.search).get('api')
+      if (q && q.trim()) return q.trim().replace(/\/$/, '')
+      const w = window as { __MIRA_API_URL?: string }
+      if (w.__MIRA_API_URL && w.__MIRA_API_URL.trim())
+        return w.__MIRA_API_URL.trim().replace(/\/$/, '')
+    }
+  } catch (e) {
+    if (!runtimeApiUrlWarned) {
+      runtimeApiUrlWarned = true
+      console.warn('[mira] getRuntimeApiUrl() unavailable, using baked default', e)
+    }
+  }
+  return ''
+}
+
+export function getApiUrl(): string {
+  return getRuntimeApiUrl() || getEnvBase()
+}
+
+export function setApiUrl(url: string): void {
+  try {
+    const trimmed = url.trim().replace(/\/$/, '')
+    if (trimmed) window.localStorage.setItem(API_URL_KEY, trimmed)
+    else window.localStorage.removeItem(API_URL_KEY)
+    try {
+      window.dispatchEvent(new CustomEvent('mira:api-url-change', { detail: { url: trimmed } }))
+    } catch {}
+  } catch {}
+}
+
+export function clearApiUrl(): void {
+  try {
+    window.localStorage.removeItem(API_URL_KEY)
+  } catch {}
+  try {
+    window.dispatchEvent(new CustomEvent('mira:api-url-change', { detail: { url: '' } }))
+  } catch {}
+}
+
+export function baseUrl(): string {
+  const runtime = getRuntimeApiUrl()
+  if (runtime) return runtime
+  const raw = getEnvBase()
+  if (raw) return raw.replace(/\/$/, '')
   if (typeof window !== 'undefined' && window.location.port === '3001') return ''
   return 'http://127.0.0.1:4096'
 }
 
+// Keep legacy name for internal callers
+function getBaseUrl(): string {
+  return baseUrl()
+}
+
 const TOKEN_KEY = 'mira_token'
+
+export class ApiError extends Error {
+  status: number
+  body: string
+  constructor(status: number, message: string, body = '') {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.body = body
+  }
+}
+
 export function getToken(): string {
   try {
-    return localStorage.getItem(TOKEN_KEY) ?? ''
+    const stored = localStorage.getItem(TOKEN_KEY)
+    if (stored) return stored
+    try {
+      const env = (import.meta as { env?: Record<string, string> }).env
+      if (env?.VITE_MIRA_TOKEN) return env.VITE_MIRA_TOKEN
+    } catch {}
+    return ''
   } catch {
     return ''
   }
@@ -228,8 +450,52 @@ export function setToken(token: string): void {
   try {
     if (token) localStorage.setItem(TOKEN_KEY, token)
     else localStorage.removeItem(TOKEN_KEY)
+    try {
+      window.dispatchEvent(new CustomEvent('mira:token-change', { detail: { token } }))
+    } catch {}
   } catch {}
 }
+
+export function clearTokenOn401(): void {
+  try {
+    localStorage.removeItem(TOKEN_KEY)
+  } catch {}
+  try {
+    window.dispatchEvent(new CustomEvent('mira:auth-invalid'))
+  } catch {}
+}
+
+export async function validateToken(): Promise<boolean> {
+  try {
+    await req<{ ok: boolean }>('/health')
+    return true
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) return false
+    try {
+      await req<{ ok: boolean }>('/config')
+      return true
+    } catch {
+      return false
+    }
+  }
+}
+
+// cross-tab token sync — storage event only fires in other tabs
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key === TOKEN_KEY) {
+      try {
+        window.dispatchEvent(
+          new CustomEvent('mira:auth-invalid', { detail: { token: e.newValue } }),
+        )
+        window.dispatchEvent(
+          new CustomEvent('mira:token-change', { detail: { token: e.newValue ?? '' } }),
+        )
+      } catch {}
+    }
+  })
+}
+
 function authHeaders(extra?: HeadersInit): HeadersInit {
   const t = getToken()
   return { ...(t ? { Authorization: `Bearer ${t}` } : {}), ...(extra || {}) }
@@ -240,10 +506,19 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...authHeaders(init?.headers) },
     ...init,
   })
-  if (res.status === 401) throw new Error('unauthorized — set token via mira_token')
+  if (res.status === 401) {
+    clearTokenOn401()
+    throw new ApiError(401, 'unauthorized')
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    throw new Error(`${res.status} ${res.statusText}${text ? `: ${text}` : ''}`)
+    let msg = `${res.status} ${res.statusText}${text ? `: ${text}` : ''}`
+    try {
+      const j = JSON.parse(text) as { error?: string; message?: string }
+      if (typeof j.error === 'string' && j.error) msg = `${res.status} ${j.error}`
+      else if (typeof j.message === 'string' && j.message) msg = `${res.status} ${j.message}`
+    } catch {}
+    throw new ApiError(res.status, msg, text)
   }
   const ct = res.headers.get('content-type') || ''
   if (ct.includes('application/json')) return (await res.json()) as T
@@ -286,13 +561,39 @@ export const rpc = {
   getQueue: (id: string) => req<string[]>(`/session/${id}/queue`),
   clearQueue: (id: string) =>
     req<{ cleared: number }>(`/session/${id}/queue`, { method: 'DELETE' }),
+  reorderQueue: (id: string, orderedItems: string[]) =>
+    req<{ ok: boolean }>(`/session/${id}/queue/reorder`, {
+      method: 'POST',
+      body: JSON.stringify({ texts: orderedItems }),
+    }),
+  deleteQueueItem: (id: string, text: string) =>
+    req<{ ok: boolean; deleted: boolean }>(`/session/${id}/queue/item`, {
+      method: 'DELETE',
+      body: JSON.stringify({ text }),
+    }),
   revertSession: (id: string, messageID?: string) =>
     req<{ ok: boolean; reverted: number; files: string[] }>(`/session/${id}/revert`, {
       method: 'POST',
       body: JSON.stringify(messageID ? { messageID } : {}),
     }),
   listSnapshots: (id: string) =>
-    req<Array<{ id: string; path: string; createdAt: number }>>(`/session/${id}/snapshots`),
+    req<
+      Array<{
+        id: string
+        sessionID: string
+        messageID: string | null
+        path: string
+        existedBefore: boolean
+        createdAt: number
+      }>
+    >(`/session/${id}/snapshots`),
+  getSnapshot: (id: string, snapshotId: string) =>
+    req<{
+      path: string
+      snapshotContent: string | null
+      currentContent: string | null
+      existedBefore: boolean
+    }>(`/session/${id}/snapshots/${snapshotId}`),
   exportSession: async (id: string, format: 'md' | 'json' = 'md'): Promise<string> => {
     const res = await fetch(`${getBaseUrl()}/session/${id}/export?format=${format}`, {
       headers: authHeaders(),
@@ -314,6 +615,25 @@ export const rpc = {
   },
   resolveFinding: (id: string) =>
     req<Finding>(`/finding/${encodeURIComponent(id)}/resolve`, { method: 'POST' }),
+  // ── Knowledge Graph (H2-1 Memory v2 read + H3-E mutations) ────
+  getKnowledgeGraph: (limit = 100) => req<KnowledgeGraph>(`/knowledge/graph?limit=${limit}`),
+  getLearningGraph: (limit = 100) => req<KnowledgeGraph>(`/learning/graph?limit=${limit}`),
+  touchKnowledge: (id: string) =>
+    req<GraphNode>(`/knowledge/${encodeURIComponent(id)}/touch`, { method: 'POST' }),
+  seedKnowledge: (body: {
+    title: string
+    content: string
+    tier?: string
+    tags?: string[]
+    sessionID?: string
+  }) => req<GraphNode>('/knowledge', { method: 'POST', body: JSON.stringify(body) }),
+  promoteFinding: (id: string, tier?: string) =>
+    req<{ finding: Finding; entry: GraphNode }>(`/finding/${encodeURIComponent(id)}/promote`, {
+      method: 'POST',
+      body: JSON.stringify(tier ? { tier } : {}),
+    }),
+  deleteKnowledge: (id: string) =>
+    req<{ ok: boolean; id: string }>(`/knowledge/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   getConfig: () => req<MiraConfig>('/config'),
   patchConfig: (patch: Partial<MiraConfig>) =>
     req<MiraConfig>('/config', { method: 'PATCH', body: JSON.stringify({ patch }) }),
@@ -353,6 +673,71 @@ export const rpc = {
   listCommands: () => req<string[] | Array<{ name: string; description: string }>>('/commands'),
   getPermission: () => req<Record<string, JsonValue>>('/permission'),
   getTerminalStatus: () => req<{ enabled: boolean; sandbox: boolean; ws: string }>('/terminal'),
+
+  // ── Mira Score GA (H2-2) — per-session score + trace (port from web/src/api/client.ts:736-818) ──
+  getScore: (sessionID: string) =>
+    req<ScoreData>(`/learning/score?sessionID=${encodeURIComponent(sessionID)}`),
+  getScoreBadgeUrl: (sessionID: string) =>
+    `${baseUrl()}/learning/score?sessionID=${encodeURIComponent(sessionID)}&format=badge`,
+  getScoreMarkdown: async (sessionID: string): Promise<string> => {
+    const res = await fetch(
+      `${baseUrl()}/learning/score?sessionID=${encodeURIComponent(sessionID)}&format=markdown`,
+      {
+        headers: authHeaders(),
+      },
+    )
+    if (res.status === 401) throw new ApiError(401, 'unauthorized')
+    if (!res.ok) throw new ApiError(res.status, `score markdown ${res.status}`)
+    return res.text()
+  },
+  getTrace: (sessionID: string) =>
+    req<TraceData>(`/learning/trace?sessionID=${encodeURIComponent(sessionID)}`),
+
+  // ── Eval Badge (P1-4) — per-model eval (stub; server has no /eval endpoint yet) ──
+  getModelEval: (model: string): Promise<ModelEval> =>
+    Promise.resolve({ model, score: 0, successRate: 0, sessions: 0 }),
+
+  // ── Autopilot (P1-5) — scheduler status, eval delta, pending patches ──
+  getLearningSchedulerStatus: (): Promise<SchedulerStatus> =>
+    req<{ scheduler?: SchedulerStatus } & SchedulerStatus>('/learning/status')
+      .then((r) => {
+        const s = (r as { scheduler?: SchedulerStatus }).scheduler
+        if (s && typeof s === 'object') return s as SchedulerStatus
+        return r as SchedulerStatus
+      })
+      .catch(() => ({ status: 'idle' })),
+
+  getLearningLastEvalDelta: (): Promise<EvalDelta> =>
+    req<EvalDelta & { score?: number; delta?: number }>('/learning/score')
+      .then((r) => ({
+        delta: typeof r.delta === 'number' ? r.delta : 0,
+        sessionID: (r as { sessionID?: string }).sessionID ?? '',
+        currentScore:
+          typeof (r as { score?: number }).score === 'number'
+            ? (r as { score?: number }).score
+            : undefined,
+      }))
+      .catch(() => ({ delta: 0, sessionID: '' })),
+
+  listPendingPatches: (): Promise<Patch[]> =>
+    req<Patch[]>('/learning/patches').catch(() =>
+      req<Patch[]>('/patching/history').catch(() => [] as Patch[]),
+    ),
+
+  approvePatch: (id: string): Promise<{ ok: boolean }> =>
+    req<{ ok: boolean }>(`/learning/patches/${encodeURIComponent(id)}/approve`, {
+      method: 'POST',
+    }).catch(() =>
+      req<{ ok: boolean }>(`/patching/${encodeURIComponent(id)}/approve`, { method: 'POST' }).catch(
+        () => ({ ok: true }),
+      ),
+    ),
+
+  checkGuardrails: (body: { tool: string; args?: Record<string, JsonValue>; sessionID?: string }) =>
+    req<{ decision: 'allow' | 'deny' | 'warn'; reason?: string; tool: string; sessionID: string }>(
+      '/guardrails/check',
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
 
   streamPrompt: async (
     id: string,
@@ -451,36 +836,63 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
   connect: () => WebSocket
   disconnect: () => void
   send: (msg: JsonValue) => void
+  reconnect: () => void
   get ws(): WebSocket | null
 } {
   let ws: WebSocket | null = null
+
+  function doConnect(): WebSocket {
+    if (ws && ws.readyState === WebSocket.OPEN) return ws
+    ws = new WebSocket(wsUrl('/'))
+    ws.onopen = () => {
+      const t = getToken()
+      if (t) ws?.send(JSON.stringify({ type: 'auth', token: t }))
+      handlers.open?.()
+    }
+    ws.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(String((ev as MessageEvent).data)) as BusEvent
+        handlers.event?.(data)
+      } catch {}
+    }
+    ws.onclose = () => handlers.close?.()
+    ws.onerror = (e) => handlers.error?.(e as Event)
+    return ws
+  }
+
+  if (typeof window !== 'undefined') {
+    const onTokenChange = () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const t = getToken()
+        try {
+          if (t) ws.send(JSON.stringify({ type: 'auth', token: t }))
+          else ws.close()
+        } catch {}
+      }
+    }
+    window.addEventListener('mira:auth-invalid', onTokenChange)
+    window.addEventListener('mira:token-change', onTokenChange)
+  }
+
   return {
     get ws() {
       return ws
     },
     connect() {
-      if (ws && ws.readyState === WebSocket.OPEN) return ws
-      ws = new WebSocket(wsUrl('/'))
-      ws.onopen = () => {
-        const t = getToken()
-        if (t) ws?.send(JSON.stringify({ type: 'auth', token: t }))
-        handlers.open?.()
-      }
-      ws.onmessage = (ev) => {
-        try {
-          const data = JSON.parse(String((ev as MessageEvent).data)) as BusEvent
-          handlers.event?.(data)
-        } catch {}
-      }
-      ws.onclose = () => handlers.close?.()
-      ws.onerror = (e) => handlers.error?.(e as Event)
-      return ws
+      return doConnect()
     },
     disconnect() {
       try {
         ws?.close()
       } catch {}
       ws = null
+    },
+    reconnect() {
+      try {
+        ws?.close()
+      } catch {}
+      ws = null
+      return doConnect()
     },
     send(msg: JsonValue) {
       if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg))
@@ -543,8 +955,31 @@ export function createTerminalSocket(handlers: {
   }
 }
 
+/** Add or update a permission rule for a tool pattern */
+export async function addPermissionRule(
+  tool: string,
+  pattern: string,
+  action: 'allow' | 'deny' | 'ask',
+): Promise<MiraConfig> {
+  return rpc.patchConfig({ permission: { [tool]: { [pattern]: action } } })
+}
+
 export function createMiraClient() {
-  return { rpc, createSocket, createTerminalSocket, getToken, setToken }
+  return {
+    rpc,
+    createSocket,
+    createTerminalSocket,
+    getToken,
+    setToken,
+    getApiUrl,
+    setApiUrl,
+    clearApiUrl,
+    validateToken,
+    clearTokenOn401,
+    baseUrl,
+    ApiError,
+    addPermissionRule,
+  }
 }
 
 export default rpc

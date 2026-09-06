@@ -1,6 +1,6 @@
 /**
  * Context compaction for long-running Mira sessions
- * 
+ *
  * Uses hierarchical summarization:
  * - Keep system prompt + recent context
  * - Summarize middle history with small model
@@ -8,9 +8,9 @@
  * - Track compaction history to avoid double-compaction
  */
 
-import type { JsonValue } from "../types/index.js"
-import type { GatewayMessage } from "../gateway/index.js"
-import type { Gateway } from "../gateway/index.js"
+import type { JsonValue } from '../types/index.js'
+import type { GatewayMessage } from '../gateway/index.js'
+import type { Gateway } from '../gateway/index.js'
 
 export interface CompactionOptions {
   threshold?: number // 0.8 = compact at 80% of limit
@@ -41,12 +41,18 @@ let cachedEnc: { encode: (s: string) => number[] } | null = null
 function getEnc(): { encode: (s: string) => number[] } | null {
   // js-tiktoken disabled for test stability — fallback to heuristic (len/4)
   // Enable by setting MIRA_TIKTOKEN=1 and ensuring js-tiktoken is installed
-  if (process.env.MIRA_TIKTOKEN !== "1") return null
+  if (process.env.MIRA_TIKTOKEN !== '1') return null
   if (cachedEnc) return cachedEnc
   try {
-    const { getEncoding } = (globalThis as { require: (m: string) => { getEncoding?: () => { encode: (s: string) => number[] } } }).require?.("js-tiktoken") as { getEncoding: (n: string) => { encode: (s: string) => number[] } } | undefined ?? {}
+    const { getEncoding } =
+      ((
+        globalThis as {
+          require: (m: string) => { getEncoding?: () => { encode: (s: string) => number[] } }
+        }
+      ).require?.('js-tiktoken') as
+        { getEncoding: (n: string) => { encode: (s: string) => number[] } } | undefined) ?? {}
     if (getEncoding) {
-      cachedEnc = getEncoding("cl100k_base")
+      cachedEnc = getEncoding('cl100k_base')
       return cachedEnc
     }
   } catch {}
@@ -61,7 +67,7 @@ export function estimateTokens(messages: CompactionMessage[]): number {
   const enc = getEnc()
   return messages.reduce((total, m) => {
     const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '')
-    let extra = ""
+    let extra = ''
     if (m.toolCalls?.length) extra += JSON.stringify(m.toolCalls)
     if (m.toolResults?.length) extra += JSON.stringify(m.toolResults)
     if (m.toolCallID) extra += m.toolCallID
@@ -77,7 +83,7 @@ export function estimateTokens(messages: CompactionMessage[]): number {
 export async function needsCompaction(
   messages: CompactionMessage[],
   contextLimit: number,
-  threshold = 0.8
+  threshold = 0.8,
 ): Promise<{ needed: boolean; tokenEstimate: number; ratio: number }> {
   const tokenEstimate = estimateTokens(messages)
   const ratio = tokenEstimate / contextLimit
@@ -94,7 +100,7 @@ export async function needsCompaction(
 export async function compactMessages(
   gateway: Gateway,
   messages: CompactionMessage[],
-  opts: CompactionOptions = {}
+  opts: CompactionOptions = {},
 ): Promise<CompactionResult> {
   const {
     keepTailRatio = 0.25,
@@ -113,8 +119,8 @@ export async function compactMessages(
   }
 
   // Keep system messages separate
-  const systemMessages = messages.filter(m => m.role === 'system')
-  const conversation = messages.filter(m => m.role !== 'system')
+  const systemMessages = messages.filter((m) => m.role === 'system')
+  const conversation = messages.filter((m) => m.role !== 'system')
 
   let keepCount = Math.max(1, Math.ceil(conversation.length * keepTailRatio))
   let tail = conversation.slice(-keepCount)
@@ -140,15 +146,46 @@ export async function compactMessages(
     }
   }
 
-  // Build summarization prompt with context boundaries
-  const summary = await gateway.summarize(head.filter(m => typeof m.content === "string") as GatewayMessage[], smallModel)
+  // Build summarization prompt with context boundaries — fallback to extractive if provider unavailable
+  let summary: string
+  try {
+    summary = await gateway.summarize(
+      head.filter((m) => typeof m.content === 'string') as GatewayMessage[],
+      smallModel,
+    )
+  } catch (e) {
+    // ProviderError (no key) → extractive fallback so compaction still works offline
+    const msg = (e as Error).message ?? ''
+    if (
+      msg.includes('No API key') ||
+      (e as { code?: string }).code === 'NO_API_KEY' ||
+      (e as { name?: string }).name === 'ProviderError'
+    ) {
+      const lines: string[] = []
+      const firstUser = head.find((m) => m.role === 'user')
+      if (firstUser) lines.push(`Original task: ${String(firstUser.content).slice(0, 300)}`)
+      let toolsUsed = 0
+      for (const m of head) if (Array.isArray(m.toolCalls)) toolsUsed += m.toolCalls.length
+      if (toolsUsed) lines.push(`Tool calls in this span: ${toolsUsed}`)
+      const lastAssistant = [...head]
+        .reverse()
+        .find((m) => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim())
+      if (lastAssistant) lines.push(`Last state: ${lastAssistant.content.slice(0, 300)}`)
+      lines.push(
+        `(${head.length} messages condensed extractively — set an API key for abstractive summaries)`,
+      )
+      summary = lines.join('\n')
+    } else {
+      throw e
+    }
+  }
 
   const compacted: CompactionMessage[] = [
     ...systemMessages,
     {
       role: 'system',
       content: `## Conversation Summary (compacted at ${new Date().toISOString()})\n${summary}\n\n---\nThis summary replaces ${head.length} earlier messages.`,
-      __meta: { compacted: true, originalCount: head.length }
+      __meta: { compacted: true, originalCount: head.length },
     },
     ...tail,
   ]
@@ -169,14 +206,18 @@ export async function compactMessages(
 export async function progressiveCompact(
   gateway: Gateway,
   messages: CompactionMessage[],
-  opts: CompactionOptions = {}
+  opts: CompactionOptions = {},
 ): Promise<CompactionResult> {
   let current = messages
   let iterations = 0
   const maxIterations = 3
 
   while (iterations < maxIterations) {
-    const { needed, tokenEstimate, ratio } = await needsCompaction(current, opts.contextLimit ?? 128_000, opts.threshold ?? 0.8)
+    const { needed, tokenEstimate, ratio } = await needsCompaction(
+      current,
+      opts.contextLimit ?? 128_000,
+      opts.threshold ?? 0.8,
+    )
     if (!needed) {
       return {
         messages: current,
@@ -209,7 +250,7 @@ export async function progressiveCompact(
 export async function smartCompact(
   gateway: Gateway,
   messages: CompactionMessage[],
-  opts: CompactionOptions = {}
+  opts: CompactionOptions = {},
 ): Promise<CompactionResult> {
   // Group messages into tool-call boundaries
   const toolBoundaries: number[] = []
@@ -227,7 +268,7 @@ export async function smartCompact(
   if (toolBoundaries.length > 2) {
     const keepTail = Math.ceil(messages.length * (opts.keepTailRatio ?? 0.25))
     const cutoff = messages.length - keepTail
-    
+
     // Find last tool boundary before cutoff
     let lastBoundary = cutoff
     for (let i = toolBoundaries.length - 1; i >= 0; i--) {
@@ -236,21 +277,33 @@ export async function smartCompact(
         break
       }
     }
-    
+
     const head = messages.slice(0, lastBoundary)
     const tail = messages.slice(lastBoundary)
-    
+
     if (head.length > 1) {
-      const summary = await gateway.summarize(head.filter(m => typeof m.content === "string") as GatewayMessage[], opts.smallModel)
+      let summary: string
+      try {
+        summary = await gateway.summarize(
+          head.filter((m) => typeof m.content === 'string') as GatewayMessage[],
+          opts.smallModel,
+        )
+      } catch (e) {
+        const msg = (e as Error).message ?? ''
+        if (
+          msg.includes('No API key') ||
+          (e as { code?: string }).code === 'NO_API_KEY' ||
+          (e as { name?: string }).name === 'ProviderError'
+        ) {
+          summary = `Extractive summary of ${head.length} messages — set API key for abstractive`
+        } else throw e
+      }
       return {
-        messages: [
-          { role: 'system', content: `## Conversation Summary\n${summary}` },
-          ...tail,
-        ],
+        messages: [{ role: 'system', content: `## Conversation Summary\n${summary}` }, ...tail],
         summary,
         originalCount: messages.length,
         compactedCount: tail.length + 1,
-        tokenEstimate: estimateTokens([...tail, { role: "user", content: summary }]),
+        tokenEstimate: estimateTokens([...tail, { role: 'user', content: summary }]),
       }
     }
   }

@@ -62,7 +62,7 @@ export {
 export type { Skill, AgentsContext, AgentsFileName } from './agents/index.js'
 
 // Utils
-export { expandEnv } from './utils/env.js'
+export { expandEnv, expandEnvTemplate, sanitizeForLog } from './utils/env.js'
 export { createLogger } from './utils/logger.js'
 export { createClient, ApiError } from './utils/client.js'
 export type { Logger, LogLevel } from './utils/logger.js'

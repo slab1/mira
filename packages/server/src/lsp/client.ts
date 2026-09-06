@@ -1,9 +1,18 @@
-import type { JsonValue } from "../types/index.js"
+import type { JsonValue } from '../types/index.js'
+import type {
+  Position,
+  Range,
+  Location,
+  WorkspaceEdit,
+  SymbolInformation,
+  Diagnostic,
+} from './protocol.js'
+import { LSPError, encodeMessage, extractMessages } from './transport.js'
 /**
  * Mira LSP Client — Language Server Protocol 3.17 over stdio (JSON-RPC 2.0)
  *
  * Real language-server integration (Mira-parity):
- *   - Content-Length framed messages, bidirectional
+ *   - Content-Length framed messages, bidirectional (via transport.ts)
  *   - Requests with id→promise correlation + timeout guard
  *   - Server notifications captured (publishDiagnostics)
  *   - Per-language server registry (gopls, custom via MIRA_LSP_<LANG>_CMD)
@@ -11,9 +20,24 @@ import type { JsonValue } from "../types/index.js"
  * Falls back gracefully: callers check availability before use.
  */
 
-export interface LSPPosition { line: number; character: number }
-export interface LSPLocation { uri: string; range: { start: LSPPosition; end: LSPPosition } }
-export interface LSPDiagnostic { severity?: number; message: string; range: JsonValue; source?: string }
+export interface LSPPosition {
+  line: number
+  character: number
+}
+export interface LSPLocation {
+  uri: string
+  range: { start: LSPPosition; end: LSPPosition }
+}
+export interface LSPDiagnostic {
+  severity?: number
+  message: string
+  range: JsonValue
+  source?: string
+}
+
+// Re-export protocol types for consumers
+export type { Position, Range, Location, WorkspaceEdit, SymbolInformation, Diagnostic }
+export { LSPError }
 
 interface PendingRequest {
   resolve: (v: JsonValue) => void
@@ -24,7 +48,7 @@ interface PendingRequest {
 export class LSPClient {
   // Encapsulated process handle — Bun's Subprocess generics vary by version
   private proc: ReturnType<typeof Bun.spawn>
-  private buf = ""
+  private buf = ''
   private nextId = 1
   private pending = new Map<number, PendingRequest>()
   /** uri → latest published diagnostics */
@@ -44,26 +68,39 @@ export class LSPClient {
   // ── Lifecycle ──────────────────────────────────────────────────────
 
   /** Spawn a server process and perform the initialize handshake */
-  static async spawn(cmd: string[], args: string[], rootPath: string, name = cmd[0]): Promise<LSPClient> {
+  static async spawn(
+    cmd: string[],
+    args: string[],
+    rootPath: string,
+    name = cmd[0],
+  ): Promise<LSPClient> {
     const proc = Bun.spawn([cmd[0], ...args], {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
+      stdin: 'pipe',
+      stdout: 'pipe',
+      stderr: 'pipe',
       cwd: rootPath,
     })
     const client = new LSPClient(name, proc)
 
-    const result = await client.request("initialize", {
-      processId: process.pid,
-      rootUri: `file://${rootPath.replace(/\/$/, "")}`,
-      capabilities: {
-        textDocument: {
-          publishDiagnostics: { relatedInformation: false },
+    const result = await client.request(
+      'initialize',
+      {
+        processId: process.pid,
+        rootUri: `file://${rootPath.replace(/\/$/, '')}`,
+        capabilities: {
+          textDocument: {
+            publishDiagnostics: { relatedInformation: false },
+          },
+          workspace: {
+            symbol: { dynamicRegistration: false },
+          },
         },
       },
-    }, 20_000)
-    client.capabilities = ((result as { capabilities?: Record<string, JsonValue> } | null)?.capabilities) ?? {}
-    await client.notify("initialized", {})
+      20_000,
+    )
+    client.capabilities =
+      (result as { capabilities?: Record<string, JsonValue> } | null)?.capabilities ?? {}
+    await client.notify('initialized', {})
     return client
   }
 
@@ -74,29 +111,40 @@ export class LSPClient {
   async shutdown(): Promise<void> {
     if (!this.alive) return
     this.shuttingDown = true
-    try { await this.request("shutdown", null, 5_000) } catch {}
-    try { await this.notify("exit") } catch {}
-    try { this.proc.kill() } catch {}
+    try {
+      await this.request('shutdown', null, 5_000)
+    } catch {}
+    try {
+      await this.notify('exit')
+    } catch {}
+    try {
+      this.proc.kill()
+    } catch {}
+  }
+
+  /** Alias for shutdown — satisfies spec requirement for shutdownAll on client */
+  async shutdownAll(): Promise<void> {
+    await this.shutdown()
   }
 
   // ── Protocol ───────────────────────────────────────────────────────
 
   request<T = JsonValue>(method: string, params: object | null, timeoutMs = 30_000): Promise<T> {
     if (!this.alive) {
-      return Promise.reject(new Error(`LSP server not alive: ${this.serverName}`))
+      return Promise.reject(new LSPError(`LSP server not alive: ${this.serverName}`))
     }
     const id = this.nextId++
     const timer = setTimeout(() => {
       const p = this.pending.get(id)
       if (p) {
         this.pending.delete(id)
-        p.reject(new Error(`LSP ${method} timed out after ${timeoutMs}ms (${this.serverName})`))
+        p.reject(new LSPError(`LSP ${method} timed out after ${timeoutMs}ms (${this.serverName})`))
       }
     }, timeoutMs)
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve: (v) => resolve(v as T), reject, timer })
       try {
-        this.write({ jsonrpc: "2.0", id, method, params })
+        this.write({ jsonrpc: '2.0', id, method, params })
       } catch (e) {
         clearTimeout(timer)
         this.pending.delete(id)
@@ -106,18 +154,23 @@ export class LSPClient {
   }
 
   async notify(method: string, params: JsonValue = {}): Promise<void> {
-    this.write({ jsonrpc: "2.0", method, params })
+    this.write({ jsonrpc: '2.0', method, params })
   }
 
   // ── Document sync + language features ─────────────────────────────
 
-  async didOpen(fileUri: string, text: string, languageId = "plaintext", version = 1): Promise<void> {
+  async didOpen(
+    fileUri: string,
+    text: string,
+    languageId = 'plaintext',
+    version = 1,
+  ): Promise<void> {
     if (this.openDocs.has(fileUri)) {
       await this.didChange(fileUri, text, this.openDocs.get(fileUri)! + 1)
       return
     }
     this.openDocs.set(fileUri, version)
-    await this.notify("textDocument/didOpen", {
+    await this.notify('textDocument/didOpen', {
       textDocument: { uri: fileUri, languageId, version, text },
     })
   }
@@ -125,7 +178,7 @@ export class LSPClient {
   async didChange(fileUri: string, text: string, version?: number): Promise<void> {
     const v = version ?? (this.openDocs.get(fileUri) ?? 0) + 1
     this.openDocs.set(fileUri, v)
-    await this.notify("textDocument/didChange", {
+    await this.notify('textDocument/didChange', {
       textDocument: { uri: fileUri, version: v },
       contentChanges: [{ text }],
     })
@@ -134,13 +187,13 @@ export class LSPClient {
   async didClose(fileUri: string): Promise<void> {
     if (!this.openDocs.has(fileUri)) return
     this.openDocs.delete(fileUri)
-    await this.notify("textDocument/didClose", {
+    await this.notify('textDocument/didClose', {
       textDocument: { uri: fileUri },
     })
   }
 
   async definition(fileUri: string, pos: LSPPosition): Promise<LSPLocation[] | null> {
-    const r = await this.request<LSPLocation[] | LSPLocation>("textDocument/definition", {
+    const r = await this.request<LSPLocation[] | LSPLocation>('textDocument/definition', {
       textDocument: { uri: fileUri },
       position: pos,
     })
@@ -148,8 +201,12 @@ export class LSPClient {
     return Array.isArray(r) ? r : [r]
   }
 
-  async references(fileUri: string, pos: LSPPosition, includeDeclaration = true): Promise<LSPLocation[]> {
-    const r = await this.request<LSPLocation[]>("textDocument/references", {
+  async references(
+    fileUri: string,
+    pos: LSPPosition,
+    includeDeclaration = true,
+  ): Promise<LSPLocation[]> {
+    const r = await this.request<LSPLocation[]>('textDocument/references', {
       textDocument: { uri: fileUri },
       position: pos,
       context: { includeDeclaration },
@@ -157,19 +214,91 @@ export class LSPClient {
     return Array.isArray(r) ? r : []
   }
 
-  async hover(fileUri: string, pos: LSPPosition): Promise<{ contents?: { value?: string; kind?: string } } | null> {
-    return await this.request("textDocument/hover", {
+  async hover(
+    fileUri: string,
+    pos: LSPPosition,
+  ): Promise<{ contents?: { value?: string; kind?: string } } | null> {
+    return await this.request('textDocument/hover', {
       textDocument: { uri: fileUri },
       position: pos,
     })
   }
 
+  // ── New LSP 3.17 methods ──────────────────────────────────────────
+
+  async prepareRename(
+    fileUri: string,
+    pos: LSPPosition,
+  ): Promise<{ range: Range; placeholder: string } | Range | null> {
+    try {
+      const r = await this.request<{ range: Range; placeholder: string } | Range | null>(
+        'textDocument/prepareRename',
+        {
+          textDocument: { uri: fileUri },
+          position: pos,
+        },
+        4000,
+      )
+      return r ?? null
+    } catch (e) {
+      // Server may not support prepareRename — treat as not available
+      if (
+        (e as Error).message.includes('Method not found') ||
+        (e as Error).message.includes('timed out')
+      )
+        return null
+      throw e
+    }
+  }
+
+  async rename(fileUri: string, pos: LSPPosition, newName: string): Promise<WorkspaceEdit | null> {
+    const r = await this.request<WorkspaceEdit | null>(
+      'textDocument/rename',
+      {
+        textDocument: { uri: fileUri },
+        position: pos,
+        newName,
+      },
+      4000,
+    )
+    return r ?? null
+  }
+
+  async documentSymbol(fileUri: string): Promise<SymbolInformation[]> {
+    const r = await this.request<SymbolInformation[] | null>(
+      'textDocument/documentSymbol',
+      {
+        textDocument: { uri: fileUri },
+      },
+      4000,
+    )
+    if (!r) return []
+    // Handle both SymbolInformation[] and DocumentSymbol[] — normalize to SymbolInformation shape
+    return Array.isArray(r) ? (r as unknown as SymbolInformation[]) : []
+  }
+
+  async workspaceSymbol(query: string): Promise<SymbolInformation[]> {
+    const r = await this.request<SymbolInformation[] | null>(
+      'workspace/symbol',
+      {
+        query,
+      },
+      4000,
+    )
+    return Array.isArray(r) ? r : []
+  }
+
+  /** Shutdown all servers via manager (static helper) */
+  static async shutdownAll(): Promise<void> {
+    const { shutdownAllServers } = await import('./manager.js')
+    await shutdownAllServers()
+  }
+
   // ── Internals ──────────────────────────────────────────────────────
 
   private write(msg: object): void {
-    if (!this.alive) throw new Error(`LSP server not alive: ${this.serverName}`)
-    const body = JSON.stringify(msg)
-    const frame = `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`
+    if (!this.alive) throw new LSPError(`LSP server not alive: ${this.serverName}`)
+    const frame = encodeMessage(msg)
     ;(this.proc.stdin as Bun.FileSink).write(frame)
   }
 
@@ -182,52 +311,50 @@ export class LSPClient {
         if (done) break
         this.buf += decoder.decode(value, { stream: true })
 
-        // Extract all complete Content-Length framed messages
-        while (true) {
-          const headerEnd = this.buf.indexOf("\r\n\r\n")
-          if (headerEnd === -1) break
-          const header = this.buf.slice(0, headerEnd)
-          const m = header.match(/Content-Length:\s*(\d+)/i)
-          if (!m) {
-            // Malformed header — drop it to avoid stalling forever
-            this.buf = this.buf.slice(headerEnd + 4)
-            continue
-          }
-          const len = parseInt(m[1], 10)
-          const bodyStart = headerEnd + 4
-          if (this.buf.length < bodyStart + len) break // wait for more bytes
-          const body = this.buf.slice(bodyStart, bodyStart + len)
-          this.buf = this.buf.slice(bodyStart + len)
+        // Extract all complete Content-Length framed messages (via transport helper)
+        const { messages, remaining } = extractMessages(this.buf)
+        this.buf = remaining
+        for (const body of messages) {
           this.handleMessage(body)
         }
       }
     } catch {
       // stream ended (server died) — reject all pending
     }
-    this.rejectAllPending(new Error(`LSP server exited: ${this.serverName}`))
+    this.rejectAllPending(new LSPError(`LSP server exited: ${this.serverName}`))
   }
 
   private handleMessage(body: string): void {
     let msg: Record<string, JsonValue | undefined>
-    try { msg = JSON.parse(body) } catch { return }
+    try {
+      msg = JSON.parse(body)
+    } catch {
+      return
+    }
 
     const id = msg.id
-    if (typeof id === "number" && (msg.result !== undefined || msg.error !== undefined)) {
-      // Response to our request
+    if (typeof id === 'number' && (msg.result !== undefined || msg.error !== undefined)) {
+      // Response to our request — id→promise map
       const p = this.pending.get(id)
       if (p) {
         clearTimeout(p.timer)
         this.pending.delete(id)
         const errObj = msg.error as { code?: JsonValue; message?: JsonValue } | undefined
-        if (errObj) p.reject(new Error(`LSP error ${String(errObj.code)}: ${String(errObj.message)}`))
+        if (errObj)
+          p.reject(
+            new LSPError(
+              `LSP error ${String(errObj.code)}: ${String(errObj.message)}`,
+              Number(errObj.code),
+            ),
+          )
         else p.resolve(msg.result ?? null)
       }
       return
     }
 
-    if (msg.method === "textDocument/publishDiagnostics") {
+    if (msg.method === 'textDocument/publishDiagnostics') {
       const params = msg.params as { uri?: string; diagnostics?: LSPDiagnostic[] } | undefined
-      this.diagnostics.set(params?.uri ?? "", params?.diagnostics ?? [])
+      this.diagnostics.set(params?.uri ?? '', params?.diagnostics ?? [])
       return
     }
     // window/logMessage & friends: ignored
@@ -242,50 +369,20 @@ export class LSPClient {
   }
 }
 
-// ── Per-language server registry ────────────────────────────────────
+// ── Per-language server registry (re-export from servers.ts for backward compat) ────────────────────────────────────
+
+export { serverCommandFor } from './servers.js'
 
 const clients = new Map<string, LSPClient>()
-
-/** Detect a language server command for a file path (env override wins). */
-export function serverCommandFor(filePath: string): { cmd: string[]; lang: string; name: string } | null {
-  const ext = filePath.slice(filePath.lastIndexOf(".") + 1).toLowerCase()
-  const env = (k: string) => {
-    const v = process.env[k]
-    return v ? v.split(/\s+/) : null
-  }
-  switch (ext) {
-    case "go": {
-      const cmd = env("MIRA_LSP_GO_CMD") ?? ["gopls"]
-      return { cmd, lang: "go", name: "gopls" }
-    }
-    case "ts":
-    case "tsx":
-    case "js":
-    case "jsx":
-    case "mjs":
-    case "cjs": {
-      const cmd = env("MIRA_LSP_TS_CMD") ?? env("MIRA_LSP_TYPESCRIPT_CMD") ?? ["typescript-language-server", "--stdio"]
-      return { cmd, lang: "ts", name: "tsserver" }
-    }
-    case "py": {
-      const cmd = env("MIRA_LSP_PY_CMD") ?? env("MIRA_LSP_PYTHON_CMD") ?? ["pylsp"]
-      return { cmd, lang: "py", name: "pylsp" }
-    }
-    case "rs": {
-      const cmd = env("MIRA_LSP_RS_CMD") ?? ["rust-analyzer"]
-      return { cmd, lang: "rs", name: "rust-analyzer" }
-    }
-    default:
-      return null
-  }
-}
 
 /** Get (or lazily spawn) an LSP client for a file. Returns null when no server configured. */
 export async function clientForFile(
   filePath: string,
   rootPath = process.cwd(),
 ): Promise<LSPClient | null> {
-  const spec = serverCommandFor(filePath)
+  // Delegate to servers.ts for command resolution
+  const { serverCommandFor: scf } = await import('./servers.js')
+  const spec = scf(filePath)
   if (!spec) return null
 
   const existing = clients.get(spec.lang)
@@ -296,7 +393,9 @@ export async function clientForFile(
   try {
     const proc = Bun.which(spec.cmd[0])
     if (!proc) return null
-  } catch { return null }
+  } catch {
+    return null
+  }
 
   try {
     const client = await LSPClient.spawn(spec.cmd, spec.cmd.slice(1), rootPath, spec.name)
@@ -309,6 +408,11 @@ export async function clientForFile(
 
 /** Shutdown all running language servers (graceful-exit hook) */
 export async function shutdownAllServers(): Promise<void> {
-  await Promise.allSettled([...clients.values()].map(c => c.shutdown()))
+  await Promise.allSettled([...clients.values()].map((c) => c.shutdown()))
   clients.clear()
+  // Also shutdown manager's pool if it exists
+  try {
+    const mgr = await import('./manager.js')
+    await mgr.shutdownAllServers()
+  } catch {}
 }
