@@ -1,5 +1,5 @@
 /**
- * Mira TUI — SolidJS + @opentui/solid terminal UI
+ * Mira TUI — SolidJS + @opentui/solid terminal UI (keyboard-first rebuild)
  *
  * Architecture:
  *   TUI (SolidJS)  ⇄  WebSocket RPC (GlobalBus)  ⇄  Mira Server (Hono + SessionPrompt.loop)
@@ -7,20 +7,24 @@
  *   - Prompt via SSE: POST /session/:id/prompt streams text_delta/tool_call/tool_result
  *   - Permission HITL: server emits permission.ask → PermissionView → permission.reply via WS
  *
- * Layout:
- *   ┌─ Header (Mira, connection, model, health) ─────────────────────┐
- *   │ SessionView (sidebar + messages)                                 │
- *   │ PermissionView (overlay when pending)                            │
- *   │ Input bar + status                                               │
- *   └──────────────────────────────────────────────────────────────────┘
+ * Focus topology (2026 TUI Standard):
+ *   sidebar (TabGroup) → messages (TabGroup) → input (TabStop) → inspector (TabGroup)
+ *   Tab / Shift+Tab cycles groups; j/k or arrows navigate within group; Enter selects.
  *
- * Run: `bun run dev` (Vite on :3001 → proxy to :4096) or `bun src/index.ts` for native TUI via @opentui/solid renderer.
+ * Global keybindings:
+ *   Tab / Shift+Tab  cycle focus groups
+ *   j / k / ↑ / ↓    list navigation (when sidebar/messages focused)
+ *   Enter            select / send
+ *   n                new session
+ *   d                delete session (with confirm)
+ *   /                search (focus search input)
+ *   ?                help overlay
+ *   :                command palette
+ *   q                quit (when no modal)
+ *   Esc              cancel / close modal / stop streaming
  */
 
 import { Show, createEffect, createSignal, onMount, onCleanup } from 'solid-js'
-// @opentui/solid — SolidJS renderer for terminal (Box/Text primitives, Yoga layout)
-// Vite preview renders to DOM (#root); native TUI uses renderTui → stdout.
-import { render } from '@opentui/solid'
 import { createSessionStore } from './stores/session'
 import { createSettingsStore } from './stores/settings'
 import SessionView from './components/SessionView'
@@ -42,13 +46,19 @@ import AutopilotView from './components/AutopilotView'
 import { SkillSelector } from './components/SkillSelector'
 import { ToastViewport } from './components/Toast'
 import TerminalView from './components/TerminalView'
+import { Header, Shell, Banner } from './components/Layout'
+import { createFocusManager } from './lib/focus'
+import { getColorMode } from './lib/a11y'
 import { getToken, validateToken } from './rpc/client'
 
 export default function App() {
   const store = createSessionStore()
-  const [health, setHealth] = createSignal<{ ok: boolean; version: string; tools: number } | null>(
-    null,
-  )
+  const settingsStore = createSettingsStore()
+  const focusMgr = createFocusManager('input')
+  const colorMode = getColorMode()
+
+  // ── UI state ──────────────────────────────────────────────────
+  const [health, setHealth] = createSignal<{ ok: boolean; version: string; tools: number } | null>(null)
   const [cost, setCost] = createSignal<{
     requests: number
     inputTokens: number
@@ -60,7 +70,6 @@ export default function App() {
   const [jobsOpen, setJobsOpen] = createSignal(false)
   const [exportOpen, setExportOpen] = createSignal(false)
   const [queueOpen, setQueueOpen] = createSignal(false)
-  const [focusRing, setFocusRing] = createSignal<'sidebar' | 'messages' | 'input'>('input')
   const [authorized, setAuthorized] = createSignal(false)
   const [budgetCapEnabled, setBudgetCapEnabled] = createSignal(false)
   const [budgetCapAmount, setBudgetCapAmount] = createSignal(100)
@@ -72,10 +81,9 @@ export default function App() {
   const [selectedAgent, setSelectedAgent] = createSignal('')
   const [autopilotOpen, setAutopilotOpen] = createSignal(false)
   const [terminalOpen, setTerminalOpen] = createSignal(false)
-  const settingsStore = createSettingsStore()
   let inputRef: HTMLTextAreaElement | undefined
 
-  // ── Slash autocomplete (P1-7) ──────────────────────────────────────
+  // ── Slash autocomplete ────────────────────────────────────────
   const slashQuery = () => {
     const v = store.input()
     return v.startsWith('/') ? v : ''
@@ -94,13 +102,13 @@ export default function App() {
   const handleSlashSelect = (name: string) => {
     store.setInput(name + ' ')
     inputRef?.focus()
-    // auto-grow if needed
     if (inputRef) {
       inputRef.style.height = 'auto'
       inputRef.style.height = Math.min(inputRef.scrollHeight, 160) + 'px'
     }
   }
 
+  // ── Mount: auth probe + health + palette listener ─────────────
   onMount(() => {
     try {
       const e = localStorage.getItem('mira.budgetCap.enabled')
@@ -136,26 +144,20 @@ export default function App() {
     const onAuthInvalid = () => setAuthorized(false)
     window.addEventListener('mira:auth-invalid', onAuthInvalid)
     onCleanup(() => window.removeEventListener('mira:auth-invalid', onAuthInvalid))
-    // health
+
     import('./rpc/client').then(({ rpc }) => {
-      rpc
-        .health()
-        .then(setHealth)
-        .catch(() => {})
+      rpc.health().then(setHealth).catch(() => {})
     })
-    // palette open via Ctrl+P dispatch
     const onOpenPalette = () => setCommandMode(true)
     window.addEventListener('mira:open-palette', onOpenPalette as EventListener)
     onCleanup(() => window.removeEventListener('mira:open-palette', onOpenPalette as EventListener))
   })
 
-  // keep local cost in sync with store for header display
+  // ── Cost + score sync ─────────────────────────────────────────
   createEffect(() => {
     const c = store.state.cost
     if (c) setCost(c)
   })
-
-  // P1-3: fetch Mira Score for current session (score pill in header)
   createEffect(() => {
     const id = store.state.currentId
     if (!id) {
@@ -169,7 +171,6 @@ export default function App() {
         .catch(() => setMiraScore(null))
     })
   })
-  // Refresh score after each turn finishes (streaming → false)
   createEffect(() => {
     const streaming = store.state.streaming
     const id = store.state.currentId
@@ -184,13 +185,10 @@ export default function App() {
       }, 800)
     }
   })
-  // P1-4: keep agent picker in sync with active session's lane
   createEffect(() => {
     const sess = store.state.sessions.find((s) => s.id === store.state.currentId)
     setSelectedAgent(sess?.agent ?? '')
   })
-
-  // Budget cap HITL – trigger warning when cost exceeds cap
   createEffect(() => {
     const c = store.state.cost
     if (!c || !budgetCapEnabled() || !store.state.currentId) return
@@ -204,72 +202,241 @@ export default function App() {
     }
   })
 
-  // Keyboard shortcuts: a = allow, d = deny when permission pending
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (!store.state.pendingPermission) return
-    if (e.key === 'a' || e.key === 'A') store.replyPermission('allow')
-    if (e.key === 'd' || e.key === 'D' || e.key === 'Escape') store.replyPermission('deny')
+  // ── Helpers ───────────────────────────────────────────────────
+  const isModalOpen = () =>
+    commandMode() ||
+    helpOpen() ||
+    jobsOpen() ||
+    exportOpen() ||
+    queueOpen() ||
+    settingsOpen() ||
+    traceOpen() ||
+    autopilotOpen() ||
+    terminalOpen() ||
+    Boolean(store.state.pendingPermission) ||
+    Boolean(store.state.pendingQuestion)
+
+  const closeAllModals = () => {
+    setCommandMode(false)
+    setHelpOpen(false)
+    setJobsOpen(false)
+    setExportOpen(false)
+    setQueueOpen(false)
+    setSettingsOpen(false)
+    setTraceOpen(false)
+    setAutopilotOpen(false)
+    setTerminalOpen(false)
   }
 
-  // Global TUI shortcuts
+  // ── Global keyboard handler (keyboard-first, focus-aware) ─────
   const onGlobalKey = (e: KeyboardEvent) => {
-    const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase()
+    const target = e.target as HTMLElement | null
+    const tag = target?.tagName?.toLowerCase()
     const isTyping =
-      targetTag === 'input' ||
-      targetTag === 'textarea' ||
-      (e.target as HTMLElement)?.isContentEditable
-    if (e.key === '?' && !isTyping) {
+      tag === 'input' ||
+      tag === 'textarea' ||
+      tag === 'select' ||
+      (target?.isContentEditable ?? false)
+
+    // ── Modal / permission / question take priority ─────────────
+    if (store.state.pendingPermission) {
+      if (e.key === 'a' || e.key === 'A') {
+        e.preventDefault()
+        store.replyPermission('allow')
+        return
+      }
+      if (e.key === 'd' || e.key === 'D' || e.key === 'Escape') {
+        e.preventDefault()
+        store.replyPermission('deny')
+        return
+      }
+      // Don't handle other keys when permission pending
+      return
+    }
+
+    // When any modal is open, Esc closes it; other keys handled by modal
+    if (isModalOpen()) {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        // Close topmost modal first
+        if (commandMode()) setCommandMode(false)
+        else if (helpOpen()) setHelpOpen(false)
+        else if (settingsOpen()) setSettingsOpen(false)
+        else if (traceOpen()) setTraceOpen(false)
+        else if (autopilotOpen()) setAutopilotOpen(false)
+        else if (terminalOpen()) setTerminalOpen(false)
+        else if (jobsOpen()) setJobsOpen(false)
+        else if (exportOpen()) setExportOpen(false)
+        else if (queueOpen()) setQueueOpen(false)
+        else closeAllModals()
+        return
+      }
+      // Let modals handle their own keys
+      return
+    }
+
+    // ── Streaming: Esc stops ────────────────────────────────────
+    if (e.key === 'Escape' && store.state.streaming) {
       e.preventDefault()
-      setHelpOpen((v) => !v)
-    }
-    // Tab focus cycle
-    if (e.key === 'Tab' && !isTyping) {
-      e.preventDefault()
-      setFocusRing((f) => {
-        if (f === 'sidebar') return 'messages'
-        if (f === 'messages') return 'input'
-        return 'sidebar'
-      })
-    }
-    // Session quick pick 1-9
-    if (!isTyping && e.key >= '1' && e.key <= '9') {
-      const sessions = store.state.sessions
-      const idx = Number(e.key) - 1
-      const s = sessions?.[idx]
-      if (s) store.selectSession(s.id)
-    }
-    // Esc stops streaming globally
-    if (e.key === 'Escape' && store.state.streaming && !store.state.pendingPermission) {
       store.stopStream()
+      return
     }
-    // i toggles inspector
-    if (!isTyping && (e.key === 'i' || e.key === 'I')) {
-      e.preventDefault()
-      setInspectorCollapsed((v) => !v)
+
+    // ── When typing in input, only handle specific global keys ─
+    if (isTyping) {
+      // Ctrl+P / Cmd+P → palette even when typing
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+        e.preventDefault()
+        setCommandMode(true)
+        return
+      }
+      // Esc when typing but not streaming → blur or clear
+      if (e.key === 'Escape' && !store.state.streaming) {
+        // Let input handle it (slash dismiss etc.)
+        return
+      }
+      return
     }
-    // G toggles Memory Graph
-    if (!isTyping && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'g') {
-      e.preventDefault()
-      setViewMode((v) => (v === 'chat' ? 'graph' : 'chat'))
+
+    // ── Global shortcuts (not typing, no modal) ─────────────────
+    switch (e.key) {
+      case '?': {
+        e.preventDefault()
+        setHelpOpen((v) => !v)
+        break
+      }
+      case ':': {
+        e.preventDefault()
+        setCommandMode(true)
+        break
+      }
+      case 'Tab': {
+        e.preventDefault()
+        if (e.shiftKey) focusMgr.cycle(-1)
+        else focusMgr.cycle(1)
+        // Focus the newly active group's container
+        queueMicrotask(() => {
+          const active = focusMgr.active()
+          if (active === 'input') inputRef?.focus()
+          else if (active === 'sidebar') {
+            const el = document.querySelector<HTMLElement>('[data-tab-group="sidebar"] [role="listbox"]')
+            el?.focus()
+          } else if (active === 'messages') {
+            const el = document.querySelector<HTMLElement>('[data-tab-group="main"]')
+            // Focus messages container for scroll nav
+            ;(el as HTMLElement)?.focus?.()
+          } else if (active === 'inspector') {
+            const el = document.getElementById('inspector-panel')
+            el?.focus()
+          }
+        })
+        break
+      }
+      case 'n':
+      case 'N': {
+        e.preventDefault()
+        void store.createSessionWithAgent({
+          agent: selectedAgent() || undefined,
+          title: selectedAgent() ? `${selectedAgent()} session` : undefined,
+        })
+        break
+      }
+      case 'd':
+      case 'D': {
+        // Delete current session (with confirm via SessionView)
+        if (store.state.currentId) {
+          e.preventDefault()
+          // Dispatch event for SessionView to show confirm
+          window.dispatchEvent(new CustomEvent('mira:delete-session', { detail: { id: store.state.currentId } }))
+        }
+        break
+      }
+      case '/': {
+        e.preventDefault()
+        // Focus search in sidebar or messages depending on active group
+        const active = focusMgr.active()
+        if (active === 'sidebar') {
+          const el = document.querySelector<HTMLInputElement>('[data-tab-group="sidebar"] input[type="text"]')
+          el?.focus()
+          el?.select()
+        } else if (active === 'messages') {
+          window.dispatchEvent(new CustomEvent('mira:search-messages'))
+        } else {
+          // Default: focus sidebar search
+          const el = document.querySelector<HTMLInputElement>('[data-tab-group="sidebar"] input[type="text"]')
+          if (el) {
+            focusMgr.setActive('sidebar')
+            el.focus()
+            el.select()
+          } else {
+            inputRef?.focus()
+          }
+        }
+        break
+      }
+      case 'q':
+      case 'Q': {
+        // Quit: only when no modal and not typing — dispatch quit event
+        e.preventDefault()
+        window.dispatchEvent(new CustomEvent('mira:quit'))
+        break
+      }
+      case 'i':
+      case 'I': {
+        e.preventDefault()
+        setInspectorCollapsed((v) => !v)
+        break
+      }
+      case 'g':
+      case 'G': {
+        if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault()
+          setViewMode((v) => (v === 'chat' ? 'graph' : 'chat'))
+        }
+        break
+      }
+      default: {
+        // Session quick pick 1-9
+        if (e.key >= '1' && e.key <= '9' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          const sessions = store.state.sessions
+          const idx = Number(e.key) - 1
+          const s = sessions?.[idx]
+          if (s) {
+            e.preventDefault()
+            void store.selectSession(s.id)
+          }
+        }
+        break
+      }
     }
   }
 
-  // Attach global key handler when permission is pending
-  createEffect(() => {
-    if (store.state.pendingPermission) window.addEventListener('keydown', onKeyDown)
-    else window.removeEventListener('keydown', onKeyDown)
-  })
-  onCleanup(() => window.removeEventListener('keydown', onKeyDown))
-
-  // Global shortcuts always on
+  // ── Attach global key handler ─────────────────────────────────
   onMount(() => {
     window.addEventListener('keydown', onGlobalKey)
-    return () => window.removeEventListener('keydown', onGlobalKey)
+    onCleanup(() => window.removeEventListener('keydown', onGlobalKey))
   })
 
+  // ── Permission a/d handler (separate, always active when pending) ──
+  createEffect(() => {
+    if (store.state.pendingPermission) {
+      const handler = (e: KeyboardEvent) => {
+        if (e.key === 'a' || e.key === 'A') {
+          e.preventDefault()
+          store.replyPermission('allow')
+        } else if (e.key === 'd' || e.key === 'D' || e.key === 'Escape') {
+          e.preventDefault()
+          store.replyPermission('deny')
+        }
+      }
+      window.addEventListener('keydown', handler)
+      onCleanup(() => window.removeEventListener('keydown', handler))
+    }
+  })
+
+  // ── Send / input handlers ─────────────────────────────────────
   const handleSend = () => {
     const raw = store.input().trim()
-    // Intercept local slash commands (P1-5 autopilot)
     if (raw === '/autopilot' || raw.startsWith('/autopilot ')) {
       store.setInput('')
       setAutopilotOpen(true)
@@ -279,7 +446,6 @@ export default function App() {
   }
 
   const handleInputKeyDown = (e: KeyboardEvent) => {
-    // Slash autocomplete navigation (P1-7)
     const q = slashQuery()
     const filtered = slashFiltered()
     const hasSlash = slashVisible()
@@ -318,28 +484,15 @@ export default function App() {
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {
-      // If slash autocomplete is visible and Enter would autocomplete, we already handled above.
-      // Otherwise send.
       e.preventDefault()
       handleSend()
     }
     if (e.key === 'Escape' && store.state.streaming) {
+      e.preventDefault()
       store.stopStream()
     }
-    // Intercept leading '/' to open command palette (only when input empty)
     if (e.key === '/' && store.input() === '') {
-      // Let the character be typed first, then palette will be triggered via slash dropdown.
-      // Keep palette shortcut for Ctrl+P; '/' now shows inline autocomplete instead.
       void settingsStore.loadAll()
-    }
-    // Intercept '?' to toggle help
-    if (e.key === '?' && !e.shiftKey && !hasSlash) {
-      // avoid conflict with slash nav
-      const target = e.target as HTMLTextAreaElement
-      if (target.value === '') {
-        e.preventDefault()
-        setHelpOpen((v) => !v)
-      }
     }
   }
 
@@ -379,13 +532,16 @@ export default function App() {
         setAutopilotOpen(true)
         break
       default: {
-        // For any other slash command (including skills), insert into input
         store.setInput(`/${cmd} `)
         inputRef?.focus()
         break
       }
     }
   }
+
+  // ── Derived ───────────────────────────────────────────────────
+  const currentModel = () =>
+    store.state.sessions.find((s) => s.id === store.state.currentId)?.model ?? ''
 
   return (
     <Show
@@ -399,351 +555,144 @@ export default function App() {
         />
       }
     >
-      <div
-        style={{
-          display: 'flex',
-          'flex-direction': 'column',
-          height: '100vh',
-          'min-height': '420px',
-          background: '#0a0a0f',
-          color: '#e5e7eb',
-          'font-family':
-            'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial',
-          'font-size': '13px',
-          overflow: 'hidden',
-        }}
-      >
-        {/* ── Header ── */}
-        <div
-          style={{
-            display: 'flex',
-            'align-items': 'center',
-            'justify-content': 'space-between',
-            padding: '10px 14px',
-            border: '1px solid rgba(255,255,255,0.08)',
-            'border-radius': '10px',
-            margin: '8px 8px 0 8px',
-            background: 'linear-gradient(135deg, rgba(99,102,241,0.14), rgba(168,85,247,0.10))',
-          }}
+      <Shell narrow={false}>
+        {/* ── Header (Layout.Header) ── */}
+        <Header
+          connected={store.state.connected}
+          model={currentModel()}
+          version={health()?.version}
+          tools={health()?.tools}
+          costUSD={cost()?.costUSD}
+          score={miraScore()?.score ?? null}
+          queued={store.state.queued.length}
+          hasSession={Boolean(store.state.currentId)}
+          onUndo={() => void store.undoLast()}
         >
-          <div style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
-            <span
-              style={{
-                width: '28px',
-                height: '28px',
-                display: 'inline-flex',
-                'align-items': 'center',
-                'justify-content': 'center',
-                'border-radius': '8px',
-                background: 'rgba(99,102,241,0.9)',
-                color: 'white',
-                'font-weight': '800',
-                'font-size': '14px',
-                'letter-spacing': '-0.02em',
-              }}
-            >
-              M
-            </span>
-            <div style={{ display: 'flex', 'flex-direction': 'column' }}>
-              <span
-                style={{ 'font-weight': '800', 'letter-spacing': '-0.02em', 'font-size': '14px' }}
-              >
-                Mira
-              </span>
-              <span style={{ 'font-size': '11px', opacity: '0.6' }}>
-                better than all — agent platform
-              </span>
-            </div>
-            <span
-              style={{
-                margin: '0 8px',
-                padding: '3px 8px',
-                'border-radius': '999px',
-                background: store.state.connected
-                  ? 'rgba(16,185,129,0.15)'
-                  : 'rgba(239,68,68,0.12)',
-                border: store.state.connected
-                  ? '1px solid rgba(16,185,129,0.25)'
-                  : '1px solid rgba(239,68,68,0.25)',
-                color: store.state.connected ? '#6ee7b7' : '#fca5a5',
-                'font-size': '11px',
-                'font-weight': '600',
-              }}
-              title={
-                store.state.connected
-                  ? 'WebSocket connected (GlobalBus)'
-                  : 'WebSocket disconnected — reconnecting…'
-              }
-            >
-              {store.state.connected ? '● live' : '○ offline'}
-            </span>
-          </div>
-
-          <div
-            style={{ display: 'flex', 'align-items': 'center', gap: '10px', 'font-size': '11px' }}
-          >
-            <Show when={store.state.queued.length > 0}>
-              <span style={{ color: '#c4b5fd', 'font-weight': '600' }}>
-                ⏳ {store.state.queued.length} queued
-              </span>
-            </Show>
-            <Show when={store.state.currentId}>
-              <span
-                onClick={() => void store.undoLast()}
-                title="Undo last file mutation"
-                style={{ cursor: 'pointer', color: '#fdba74', 'font-weight': '600' }}
-              >
-                ↩ undo
-              </span>
-            </Show>
-            <Show when={miraScore()}>
-              {(s) => (
-                <button
-                  type="button"
-                  onClick={() => setTraceOpen(true)}
-                  title={`Mira Score ${s().score}/100 — click to open trace viewer (cost $${s().costUSD.toFixed(4)})`}
-                  style={{
-                    padding: '3px 8px',
-                    'border-radius': '999px',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    background:
-                      s().score >= 80
-                        ? 'rgba(52,211,153,0.15)'
-                        : s().score >= 60
-                          ? 'rgba(251,191,36,0.15)'
-                          : 'rgba(248,113,113,0.15)',
-                    color: s().score >= 80 ? '#6ee7b7' : s().score >= 60 ? '#fbbf24' : '#fca5a5',
-                    'font-size': '11px',
-                    'font-weight': '700',
-                    cursor: 'pointer',
-                    'font-family': 'ui-monospace, monospace',
-                  }}
-                >
-                  ◈ {s().score}/100
-                </button>
-              )}
-            </Show>
-            <Show when={cost()}>
-              {(c) => (
-                <span
-                  title={`Gateway: ${c().requests} requests · ${c().inputTokens} in / ${c().outputTokens} out`}
-                  style={{
-                    padding: '3px 8px',
-                    'border-radius': '999px',
-                    background: 'rgba(59,130,246,0.15)',
-                    border: '1px solid rgba(59,130,246,0.25)',
-                    color: '#93c5fd',
-                    'font-family': 'ui-monospace, monospace',
-                    'font-weight': '600',
-                  }}
-                >
-                  ${c().costUSD.toFixed(4)}
-                </span>
-              )}
-            </Show>
-            <Show when={health()}>
-              {(h) => (
-                <span style={{ opacity: '0.7' }}>
-                  v{h().version} · {h().tools} tools
-                </span>
-              )}
-            </Show>
-            <Show when={store.state.currentId}>
-              <span
-                style={{
-                  opacity: '0.55',
-                  'max-width': '220px',
-                  overflow: 'hidden',
-                  'text-overflow': 'ellipsis',
-                  'white-space': 'nowrap',
-                }}
-              >
-                {store.state.sessions.find((s) => s.id === store.state.currentId)?.model ?? ''}
-              </span>
-            </Show>
-            <ModelPicker
-              value={selectedAgent()}
-              onChange={setSelectedAgent}
-              onCreateSession={(agent) =>
-                void store.createSessionWithAgent({
-                  agent: agent || undefined,
-                  title: agent ? `${agent} session` : undefined,
-                })
-              }
-            />
-            <SkillSelector
-              selectedAgent={selectedAgent()}
-              onSelectSkill={(skill) =>
-                void store.createSessionWithAgent({
-                  title: `${skill} session`,
-                  agent: selectedAgent() || undefined,
-                })
-              }
-              onSelectAgent={setSelectedAgent}
-              onCreateSession={(opts) =>
-                void store.createSessionWithAgent({
-                  agent: opts.agent || selectedAgent() || undefined,
-                  title: opts.skill
-                    ? `${opts.skill} session`
-                    : opts.agent
-                      ? `${opts.agent} session`
-                      : undefined,
-                })
-              }
-            />
-            <button
-              type="button"
-              onClick={() => setViewMode((v) => (v === 'chat' ? 'graph' : 'chat'))}
-              title="Memory Graph (G) — toggle graph / chat"
-              aria-label="Toggle Memory Graph"
-              aria-pressed={viewMode() === 'graph' ? 'true' : 'false'}
-              style={{
-                padding: '4px 8px',
-                'border-radius': '6px',
-                border: '1px solid rgba(255,255,255,0.10)',
-                background:
-                  viewMode() === 'graph' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.06)',
-                color: viewMode() === 'graph' ? '#a5b4fc' : '#9ca3af',
-                cursor: 'pointer',
-                'font-size': '11px',
-                'font-weight': '600',
-              }}
-            >
-              ◈ Memory
-            </button>
-            <button
-              type="button"
-              onClick={() => setInspectorCollapsed((v) => !v)}
-              title={inspectorCollapsed() ? 'Expand inspector (i)' : 'Collapse inspector (i)'}
-              aria-expanded={inspectorCollapsed() ? 'false' : 'true'}
-              aria-controls="inspector-panel"
-              style={{
-                padding: '4px 8px',
-                'border-radius': '6px',
-                border: '1px solid rgba(255,255,255,0.10)',
-                background: inspectorCollapsed()
-                  ? 'rgba(255,255,255,0.06)'
-                  : 'rgba(99,102,241,0.15)',
-                color: inspectorCollapsed() ? '#9ca3af' : '#a5b4fc',
-                cursor: 'pointer',
-                'font-size': '11px',
-                'font-weight': '600',
-              }}
-            >
-              {inspectorCollapsed() ? '◧ Inspector' : '◨ Inspector'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setSettingsOpen(true)}
-              title="Open settings (⚙)"
-              aria-label="Open settings"
-              aria-haspopup="dialog"
-              style={{
-                padding: '4px 8px',
-                'border-radius': '6px',
-                border: '1px solid rgba(255,255,255,0.10)',
-                background: settingsOpen() ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.06)',
-                color: settingsOpen() ? '#a5b4fc' : '#9ca3af',
-                cursor: 'pointer',
-                'font-size': '11px',
-                'font-weight': '600',
-              }}
-            >
-              ⚙ Settings
-            </button>
-            <button
-              type="button"
-              onClick={() => setTerminalOpen(true)}
-              title="Open terminal (PTY)"
-              aria-label="Open terminal"
-              aria-haspopup="dialog"
-              style={{
-                padding: '4px 8px',
-                'border-radius': '6px',
-                border: '1px solid rgba(255,255,255,0.10)',
-                background: terminalOpen() ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.06)',
-                color: terminalOpen() ? '#a5b4fc' : '#9ca3af',
-                cursor: 'pointer',
-                'font-size': '11px',
-                'font-weight': '600',
-              }}
-            >
-              ▣ Terminal
-            </button>
-            <Show when={store.state.loading}>
-              <span style={{ opacity: '0.5' }}>loading…</span>
-            </Show>
-          </div>
-        </div>
-
-        {/* ── Budget warning banner ── */}
-        <Show when={store.state.budgetWarning}>
-          <div
+          <ModelPicker
+            value={selectedAgent()}
+            onChange={setSelectedAgent}
+            onCreateSession={(agent) =>
+              void store.createSessionWithAgent({
+                agent: agent || undefined,
+                title: agent ? `${agent} session` : undefined,
+              })
+            }
+          />
+          <SkillSelector
+            selectedAgent={selectedAgent()}
+            onSelectSkill={(skill) =>
+              void store.createSessionWithAgent({
+                title: `${skill} session`,
+                agent: selectedAgent() || undefined,
+              })
+            }
+            onSelectAgent={setSelectedAgent}
+            onCreateSession={(opts) =>
+              void store.createSessionWithAgent({
+                agent: opts.agent || selectedAgent() || undefined,
+                title: opts.skill
+                  ? `${opts.skill} session`
+                  : opts.agent
+                    ? `${opts.agent} session`
+                    : undefined,
+              })
+            }
+          />
+          <button
+            type="button"
+            onClick={() => setViewMode((v) => (v === 'chat' ? 'graph' : 'chat'))}
+            title="Memory Graph (G) — toggle graph / chat"
+            aria-label="Toggle Memory Graph"
+            aria-pressed={viewMode() === 'graph' ? 'true' : 'false'}
             style={{
-              margin: '8px 8px 0 8px',
-              padding: '8px 12px',
-              'border-radius': '8px',
-              background: 'rgba(251,191,36,0.12)',
-              border: '1px solid rgba(251,191,36,0.30)',
-              color: '#fde68a',
-              'font-size': '12px',
-              display: 'flex',
-              'justify-content': 'space-between',
-              'align-items': 'center',
+              padding: '4px 8px',
+              'border-radius': '6px',
+              border: '1px solid rgba(255,255,255,0.10)',
+              background:
+                viewMode() === 'graph' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.06)',
+              color: viewMode() === 'graph' ? '#a5b4fc' : '#9ca3af',
+              cursor: 'pointer',
+              'font-size': '11px',
+              'font-weight': '600',
             }}
           >
-            <span>⚠ {store.state.budgetWarning}</span>
-            <button
-              onClick={() => store.clearBudgetWarning()}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#fde68a',
-                cursor: 'pointer',
-                'font-size': '12px',
-              }}
-            >
-              ✕
-            </button>
-          </div>
-        </Show>
+            ◈ Memory
+          </button>
+          <button
+            type="button"
+            onClick={() => setInspectorCollapsed((v) => !v)}
+            title={inspectorCollapsed() ? 'Expand inspector (i)' : 'Collapse inspector (i)'}
+            aria-expanded={inspectorCollapsed() ? 'false' : 'true'}
+            aria-controls="inspector-panel"
+            style={{
+              padding: '4px 8px',
+              'border-radius': '6px',
+              border: '1px solid rgba(255,255,255,0.10)',
+              background: inspectorCollapsed()
+                ? 'rgba(255,255,255,0.06)'
+                : 'rgba(99,102,241,0.15)',
+              color: inspectorCollapsed() ? '#9ca3af' : '#a5b4fc',
+              cursor: 'pointer',
+              'font-size': '11px',
+              'font-weight': '600',
+            }}
+          >
+            {inspectorCollapsed() ? '◧ Inspector' : '◨ Inspector'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            title="Open settings (⚙)"
+            aria-label="Open settings"
+            aria-haspopup="dialog"
+            style={{
+              padding: '4px 8px',
+              'border-radius': '6px',
+              border: '1px solid rgba(255,255,255,0.10)',
+              background: settingsOpen() ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.06)',
+              color: settingsOpen() ? '#a5b4fc' : '#9ca3af',
+              cursor: 'pointer',
+              'font-size': '11px',
+              'font-weight': '600',
+            }}
+          >
+            ⚙ Settings
+          </button>
+          <button
+            type="button"
+            onClick={() => setTerminalOpen(true)}
+            title="Open terminal (PTY)"
+            aria-label="Open terminal"
+            aria-haspopup="dialog"
+            style={{
+              padding: '4px 8px',
+              'border-radius': '6px',
+              border: '1px solid rgba(255,255,255,0.10)',
+              background: terminalOpen() ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.06)',
+              color: terminalOpen() ? '#a5b4fc' : '#9ca3af',
+              cursor: 'pointer',
+              'font-size': '11px',
+              'font-weight': '600',
+            }}
+          >
+            ▣ Terminal
+          </button>
+          <Show when={store.state.loading}>
+            <span style={{ opacity: '0.5', 'font-size': '11px' }}>loading…</span>
+          </Show>
+        </Header>
 
+        {/* ── Banners ── */}
+        <Show when={store.state.budgetWarning}>
+          <Banner kind="warn" message={store.state.budgetWarning!} onDismiss={() => store.clearBudgetWarning()} />
+        </Show>
         <DoomLoopBanner
           doomLoop={store.state.doomLoop}
           onRewind={() => void store.rewindDoomLoop()}
           onDismiss={() => store.clearDoomLoop()}
         />
-
-        {/* ── Error banner ── */}
         <Show when={store.state.error}>
-          <div
-            style={{
-              margin: '8px 8px 0 8px',
-              padding: '8px 12px',
-              'border-radius': '8px',
-              background: 'rgba(239,68,68,0.10)',
-              border: '1px solid rgba(239,68,68,0.22)',
-              color: '#fecaca',
-              'font-size': '12px',
-              display: 'flex',
-              'justify-content': 'space-between',
-              'align-items': 'center',
-            }}
-          >
-            <span>{store.state.error}</span>
-            <button
-              onClick={() => store.clearError()}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#fecaca',
-                cursor: 'pointer',
-                'font-size': '12px',
-              }}
-            >
-              ✕
-            </button>
-          </div>
+          <Banner kind="error" message={store.state.error!} onDismiss={() => store.clearError()} />
         </Show>
 
         {/* ── Main: SessionView + Inspector / MemoryGraph ── */}
@@ -799,6 +748,8 @@ export default function App() {
                 }
                 onDelete={(id) => void store.deleteSession(id)}
                 onRewind={(messageID) => void store.undoLast(messageID)}
+                focusGroup={focusMgr.active()}
+                onFocusGroupChange={focusMgr.setActive}
               />
 
               {/* ── Permission overlay ── */}
@@ -832,19 +783,31 @@ export default function App() {
           </div>
         </Show>
 
-        {/* ── Input bar ── */}
+        {/* ── Input bar (TabStop) ── */}
         <div
+          data-tab-stop="input"
+          data-focused={focusMgr.active() === 'input' ? 'true' : 'false'}
           style={{
             display: 'flex',
             gap: '8px',
             padding: '10px',
-            border: '1px solid rgba(255,255,255,0.08)',
+            border:
+              focusMgr.active() === 'input'
+                ? '1px solid rgba(99,102,241,0.45)'
+                : '1px solid rgba(255,255,255,0.08)',
             'border-radius': '10px',
             margin: '0 8px 8px 8px',
-            background: 'rgba(255,255,255,0.03)',
+            background:
+              focusMgr.active() === 'input' ? 'rgba(99,102,241,0.06)' : 'rgba(255,255,255,0.03)',
             'align-items': 'flex-end',
             position: 'relative',
+            'box-shadow':
+              focusMgr.active() === 'input' ? '0 0 0 1px rgba(99,102,241,0.15)' : 'none',
+            transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
           }}
+          role="group"
+          aria-label="Prompt input"
+          onClick={() => focusMgr.setActive('input')}
         >
           <Show when={slashVisible()}>
             <SlashAutocomplete
@@ -861,11 +824,11 @@ export default function App() {
             onInput={(e) => {
               store.setInput(e.currentTarget.value)
               if (e.currentTarget.value.startsWith('/')) void settingsStore.loadAll()
-              // auto-grow
               e.currentTarget.style.height = 'auto'
               e.currentTarget.style.height = Math.min(e.currentTarget.scrollHeight, 160) + 'px'
             }}
             onKeyDown={handleInputKeyDown}
+            onFocus={() => focusMgr.setActive('input')}
             placeholder={
               !store.state.currentId
                 ? 'Create or select a session to start…'
@@ -875,6 +838,7 @@ export default function App() {
             }
             disabled={!store.state.currentId || Boolean(store.state.pendingPermission)}
             rows={2}
+            aria-label="Prompt input"
             style={{
               flex: '1',
               padding: '9px 11px',
@@ -893,7 +857,9 @@ export default function App() {
               when={!store.state.streaming}
               fallback={
                 <button
+                  type="button"
                   onClick={() => store.stopStream()}
+                  aria-label="Stop streaming"
                   style={{
                     padding: '9px 14px',
                     'border-radius': '8px',
@@ -910,8 +876,10 @@ export default function App() {
               }
             >
               <button
+                type="button"
                 onClick={handleSend}
                 disabled={!store.state.currentId || !store.input().trim()}
+                aria-label="Send prompt"
                 style={{
                   padding: '9px 16px',
                   'border-radius': '8px',
@@ -945,14 +913,19 @@ export default function App() {
             'font-size': '10px',
             opacity: '0.42',
           }}
+          role="contentinfo"
         >
           <span>
             Mira TUI · SolidJS + @opentui/solid · WS RPC to :4096 · {store.state.sessions.length}{' '}
             sessions
+            <Show when={colorMode !== 'full'}>
+              <span> · {colorMode} mode</span>
+            </Show>
           </span>
-          <span>Enter send · Esc stop · a/d on permission · “better than all”</span>
+          <span>Tab switch · ? help · : palette · n new · / search · q quit · Enter send · Esc stop</span>
         </div>
 
+        {/* ── Overlays ── */}
         <CommandPalette
           open={commandMode()}
           onClose={() => setCommandMode(false)}
@@ -989,7 +962,9 @@ export default function App() {
         <AutopilotView open={autopilotOpen()} onClose={() => setAutopilotOpen(false)} />
         <TerminalView open={terminalOpen()} onClose={() => setTerminalOpen(false)} />
         <ToastViewport />
-      </div>
+        {/* a11y announcer */}
+        <div id="a11y-announcer" aria-live="polite" aria-atomic="true" style={{ position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clip: 'rect(0,0,0,0)', 'white-space': 'nowrap' }} />
+      </Shell>
     </Show>
   )
 }

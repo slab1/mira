@@ -10,6 +10,7 @@ import { createSignal, createEffect, For, Show, onCleanup } from 'solid-js'
 import type { SettingsStore, ThemeChoice } from '../stores/settings'
 import { rpc } from '../rpc/client'
 import type { MiraConfig, SchedulerStatus, EvalDelta, Patch } from '../rpc/client'
+import { getColorMode } from '../lib/a11y'
 
 type TabId =
   | 'general'
@@ -519,7 +520,7 @@ export default function SettingsView(props: {
     wasOpen = open
   })
 
-  // Focus trap & Escape + Tab/1-7 nav
+  // Focus trap & keyboard nav: Tab, 1-8, arrows, Escape
   createEffect(() => {
     if (!props.open) return
     queueMicrotask(() => titleRef?.focus())
@@ -529,54 +530,54 @@ export default function SettingsView(props: {
         props.onClose()
         return
       }
-      // 1-7 quick tab pick when not typing
       const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase()
       const isTyping =
         targetTag === 'input' ||
         targetTag === 'textarea' ||
         targetTag === 'select' ||
         (e.target as HTMLElement)?.isContentEditable
-      if (!isTyping && e.key >= '1' && e.key <= '7') {
+
+      // 1-8 quick tab pick when not typing
+      if (!isTyping && e.key >= '1' && e.key <= '8') {
         e.preventDefault()
         const idx = Number(e.key) - 1
         const t = TABS[idx]
-        if (t) setTab(t.id)
+        if (t) {
+          setTab(t.id)
+          // Move focus to the newly active tab
+          queueMicrotask(() => {
+            const el = dialogRef?.querySelector<HTMLElement>(`#settings-tab-${t.id}`)
+            el?.focus()
+          })
+        }
         return
       }
-      if (!isTyping && e.key === 'Tab' && !e.shiftKey) {
-        // Tab cycles tabs when focus is on tab bar or body
-        const activeInsideDialog = dialogRef?.contains(document.activeElement)
+
+      // Arrow keys to cycle tabs when tablist is focused or body
+      if (!isTyping && (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        const tablist = dialogRef?.querySelector('[role="tablist"]')
+        const activeInsideTablist = tablist?.contains(document.activeElement)
         const activeIsBody = document.activeElement === document.body
-        if (
-          activeIsBody ||
-          dialogRef?.querySelector('[role="tablist"]')?.contains(document.activeElement)
-        ) {
-          // Let focus trap handle it, but also cycle tab if on tablist
-          if (dialogRef?.querySelector('[role="tablist"]')?.contains(document.activeElement)) {
+        if (activeInsideTablist || activeIsBody || dialogRef?.contains(document.activeElement) && !isTyping) {
+          // Only cycle if focus is on tablist or no input focused
+          const focusedTab = document.activeElement?.getAttribute('role') === 'tab'
+          if (focusedTab || activeIsBody || activeInsideTablist) {
             e.preventDefault()
             const idx = TABS.findIndex((t) => t.id === tab())
-            const next = (idx + 1) % TABS.length
+            const dir = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : -1
+            const next = (idx + dir + TABS.length) % TABS.length
             setTab(TABS[next].id)
+            queueMicrotask(() => {
+              const el = dialogRef?.querySelector<HTMLElement>(`#settings-tab-${TABS[next].id}`)
+              el?.focus()
+            })
             return
           }
         }
-        // Focus trap for dialog
-        if (dialogRef) {
-          const focusable = dialogRef.querySelectorAll<HTMLElement>(
-            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-          )
-          if (focusable.length === 0) return
-          const first = focusable[0]
-          const last = focusable[focusable.length - 1]
-          if (e.shiftKey && document.activeElement === first) {
-            e.preventDefault()
-            last.focus()
-          } else if (!e.shiftKey && document.activeElement === last) {
-            e.preventDefault()
-            first.focus()
-          }
-        }
-      } else if (e.key === 'Tab' && dialogRef) {
+      }
+
+      // Focus trap for dialog
+      if (e.key === 'Tab' && dialogRef) {
         const focusable = dialogRef.querySelectorAll<HTMLElement>(
           'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
         )
@@ -1161,7 +1162,29 @@ export default function SettingsView(props: {
                     id={`settings-tab-${t.id}`}
                     aria-selected={active() ? 'true' : 'false'}
                     aria-controls={`settings-panel-${t.id}`}
+                    tabindex={active() ? 0 : -1}
                     onClick={() => setTab(t.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                        e.preventDefault()
+                        const next = (i() + 1) % TABS.length
+                        setTab(TABS[next].id)
+                        queueMicrotask(() => document.getElementById(`settings-tab-${TABS[next].id}`)?.focus())
+                      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                        e.preventDefault()
+                        const prev = (i() - 1 + TABS.length) % TABS.length
+                        setTab(TABS[prev].id)
+                        queueMicrotask(() => document.getElementById(`settings-tab-${TABS[prev].id}`)?.focus())
+                      } else if (e.key === 'Home') {
+                        e.preventDefault()
+                        setTab(TABS[0].id)
+                        queueMicrotask(() => document.getElementById(`settings-tab-${TABS[0].id}`)?.focus())
+                      } else if (e.key === 'End') {
+                        e.preventDefault()
+                        setTab(TABS[TABS.length - 1].id)
+                        queueMicrotask(() => document.getElementById(`settings-tab-${TABS[TABS.length - 1].id}`)?.focus())
+                      }
+                    }}
                     style={{
                       display: 'flex',
                       'align-items': 'center',

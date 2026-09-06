@@ -1,20 +1,27 @@
 /**
- * ToolCallView — Renders a single tool-call / tool-result part
+ * ToolCallView — Collapsible tool-call / tool-result with keyboard nav (2026 rebuild)
  *
- * P1-6 Tool Transparency: collapsed chip, diffPreview for edit/write/patch (red/green),
- * checkGuardrails audit on expand, per-tool latency.
- * Colors: success (teal), error (red), pending (amber).
+ * - Collapsible sections: tool name + status icon + elapsed, expand to show inputs/outputs
+ * - Keyboard: Enter/Space to toggle, arrow keys to navigate between tool calls
+ * - Status colors: running (amber), done (ok), error (danger) — respect NO_COLOR
+ * - Diff view for edit/write/patch tools (red/green)
+ * - Copy button for outputs
  */
 
-import { Show, createMemo, createSignal, createEffect } from 'solid-js'
+import { Show, createMemo, createSignal, createEffect, onMount, onCleanup } from 'solid-js'
 import type { Part } from '../rpc/client'
 import { rpc } from '../rpc/client'
+import { getColorMode } from '../lib/a11y'
+import { font, text } from '../lib/tokens'
 
 type Props = {
   part: Part
   expanded?: boolean
   latencyMs?: number
   toolMetrics?: Array<{ tool: string; durationMs: number; isError: boolean }>
+  focused?: boolean
+  onFocusNext?: () => void
+  onFocusPrev?: () => void
 }
 
 function pretty(obj: unknown): string {
@@ -59,14 +66,17 @@ export default function ToolCallView(props: Props) {
   const isError = createMemo(() => Boolean(part().isError))
   const icon = createMemo(() => TOOL_ICON[part().tool ?? ''] ?? '▸')
   const title = createMemo(() => part().tool ?? 'tool')
+  const colorMode = getColorMode()
+  const isNoColor = colorMode !== 'full'
 
-  // P1-6: collapsed by default, respect expanded? prop as initial
   const [open, setOpen] = createSignal(props.expanded ?? false)
   createEffect(() => {
     if (props.expanded !== undefined) setOpen(props.expanded)
   })
 
-  // Normalize args: TUI uses args/result, web uses input/output
+  const [copied, setCopied] = createSignal(false)
+  let containerRef: HTMLDivElement | undefined
+
   const rawArgs = createMemo(() => {
     const p = part() as unknown as Record<string, unknown>
     return (p.args ?? p.input ?? null) as Record<string, unknown> | null
@@ -108,21 +118,19 @@ export default function ToolCallView(props: Props) {
     return ''
   })
 
-  // P1-6: per-tool latency
   const latency = createMemo(() => {
     if (typeof props.latencyMs === 'number') return props.latencyMs
     const metrics = props.toolMetrics
     if (metrics && metrics.length) {
       const m = metrics.find((x) => x.tool === part().tool)
       if (m) return m.durationMs
-      // fallback: last metric for this tool
       const filtered = metrics.filter((x) => x.tool === part().tool)
       if (filtered.length) return filtered[filtered.length - 1].durationMs
     }
     return null
   })
 
-  // P1-6: checkGuardrails on expand
+  // Guardrails on expand
   const [audit, setAudit] = createSignal<{
     decision: 'allow' | 'deny' | 'warn'
     reason?: string
@@ -146,34 +154,97 @@ export default function ToolCallView(props: Props) {
     }
   })
 
+  const handleCopy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // Fallback: select text
+      const ta = document.createElement('textarea')
+      ta.value = text
+      document.body.appendChild(ta)
+      ta.select()
+      try {
+        document.execCommand('copy')
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1500)
+      } catch {}
+      ta.remove()
+    }
+  }
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      setOpen(!open())
+    } else if (e.key === 'ArrowDown' || e.key === 'j') {
+      if (props.onFocusNext) {
+        e.preventDefault()
+        props.onFocusNext()
+      }
+    } else if (e.key === 'ArrowUp' || e.key === 'k') {
+      if (props.onFocusPrev) {
+        e.preventDefault()
+        props.onFocusPrev()
+      }
+    }
+  }
+
+  // Status colors — respect NO_COLOR
+  const statusBg = () => {
+    if (isNoColor) return 'transparent'
+    if (isError()) return 'rgba(239,68,68,0.08)'
+    if (isCall()) return 'rgba(251,191,36,0.07)'
+    return 'rgba(16,185,129,0.08)'
+  }
+  const statusBorder = () => {
+    if (isNoColor) return '1px solid rgba(255,255,255,0.12)'
+    if (isError()) return '1px solid rgba(239,68,68,0.22)'
+    if (isCall()) return '1px solid rgba(251,191,36,0.18)'
+    return '1px solid rgba(16,185,129,0.18)'
+  }
+  const statusLabel = () => (isCall() ? 'call' : isError() ? 'error' : 'result')
+  const statusColor = () => {
+    if (isNoColor) return '#e5e7eb'
+    if (isCall()) return '#fcd34d'
+    if (isError()) return '#fca5a5'
+    return '#6ee7b7'
+  }
+
   return (
     <div
+      ref={containerRef}
+      tabindex={0}
+      role="button"
+      aria-expanded={open() ? 'true' : 'false'}
+      aria-label={`${title()} ${statusLabel()} — press Enter to ${open() ? 'collapse' : 'expand'}`}
+      onKeyDown={onKeyDown}
+      onFocus={() => {
+        // Announce focus for screen readers
+      }}
       style={{
         display: 'flex',
         'flex-direction': 'column',
         gap: '6px',
         padding: '8px 10px',
         'border-radius': '8px',
-        background: isError()
-          ? 'rgba(239,68,68,0.08)'
-          : isCall()
-            ? 'rgba(251,191,36,0.07)'
-            : 'rgba(16,185,129,0.08)',
-        border: isError()
-          ? '1px solid rgba(239,68,68,0.22)'
-          : isCall()
-            ? '1px solid rgba(251,191,36,0.18)'
-            : '1px solid rgba(16,185,129,0.18)',
-        'font-family': 'ui-monospace, SFMono-Regular, Menlo, monospace',
-        'font-size': '12px',
+        background: statusBg(),
+        border: props.focused ? '1px solid rgba(99,102,241,0.45)' : statusBorder(),
+        'box-shadow': props.focused ? '0 0 0 1px rgba(99,102,241,0.15)' : 'none',
+        'font-family': font.mono,
+        'font-size': text.base,
+        outline: 'none',
+        transition: 'border-color 0.15s, box-shadow 0.15s',
       }}
     >
-      {/* Collapsed chip — always visible, toggles expanded */}
+      {/* Header — always visible, toggles expanded */}
       <button
         type="button"
         onClick={() => setOpen(!open())}
         aria-expanded={open() ? 'true' : 'false'}
-        title={isCall() ? 'Show tool input' : 'Show tool output'}
+        aria-label={`${title()} ${statusLabel()} — ${open() ? 'collapse' : 'expand'}`}
+        title={isCall() ? 'Show tool input (Enter to toggle)' : 'Show tool output (Enter to toggle)'}
         style={{
           display: 'flex',
           'align-items': 'center',
@@ -210,6 +281,7 @@ export default function ToolCallView(props: Props) {
               'font-size': '13px',
               flex: 'none',
             }}
+            aria-hidden="true"
           >
             {icon()}
           </span>
@@ -224,11 +296,11 @@ export default function ToolCallView(props: Props) {
                 : isError()
                   ? 'rgba(239,68,68,0.18)'
                   : 'rgba(16,185,129,0.18)',
-              color: isCall() ? '#fcd34d' : isError() ? '#fca5a5' : '#6ee7b7',
+              color: statusColor(),
               flex: 'none',
             }}
           >
-            {isCall() ? 'call' : isError() ? 'error' : 'result'}
+            {statusLabel()}
           </span>
           <Show when={isDiffTool() && diffPreview()}>
             <span
@@ -236,7 +308,7 @@ export default function ToolCallView(props: Props) {
                 'font-size': '10px',
                 color: 'rgba(255,255,255,0.45)',
                 'margin-left': '4px',
-                'font-family': 'ui-monospace, monospace',
+                'font-family': font.mono,
                 overflow: 'hidden',
                 'text-overflow': 'ellipsis',
                 'white-space': 'nowrap',
@@ -259,7 +331,7 @@ export default function ToolCallView(props: Props) {
                 background: 'rgba(255,255,255,0.06)',
                 border: '1px solid rgba(255,255,255,0.08)',
                 color: '#9ca3af',
-                'font-family': 'ui-monospace, monospace',
+                'font-family': font.mono,
               }}
               title={`Tool latency ${latency()}ms`}
             >
@@ -278,6 +350,7 @@ export default function ToolCallView(props: Props) {
               transform: open() ? 'rotate(90deg)' : 'rotate(0deg)',
               transition: 'transform 0.15s',
             }}
+            aria-hidden="true"
           >
             ▶
           </span>
@@ -311,6 +384,7 @@ export default function ToolCallView(props: Props) {
                     : '#fcd34d',
               border: '1px solid rgba(255,255,255,0.08)',
             }}
+            role="status"
           >
             Guardrail: <b>{audit()?.decision}</b>
             {audit()?.reason ? ` — ${audit()?.reason}` : ''}
@@ -323,16 +397,28 @@ export default function ToolCallView(props: Props) {
             <>
               <Show when={argsText()}>
                 <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
-                  <span
-                    style={{
-                      'font-size': '10px',
-                      opacity: '0.5',
-                      'letter-spacing': '0.04em',
-                      'font-weight': '600',
-                    }}
-                  >
-                    ARGS
-                  </span>
+                  <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
+                    <span style={{ 'font-size': '10px', opacity: '0.5', 'letter-spacing': '0.04em', 'font-weight': '600' }}>
+                      ARGS
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(argsText())}
+                      title="Copy args"
+                      aria-label="Copy args to clipboard"
+                      style={{
+                        padding: '2px 6px',
+                        'font-size': '10px',
+                        border: '1px solid rgba(255,255,255,0.12)',
+                        'border-radius': '4px',
+                        background: 'rgba(255,255,255,0.06)',
+                        color: copied() ? '#6ee7b7' : '#9ca3af',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {copied() ? '✓ copied' : '⎘ copy'}
+                    </button>
+                  </div>
                   <pre
                     style={{
                       margin: '0',
@@ -351,16 +437,28 @@ export default function ToolCallView(props: Props) {
               </Show>
               <Show when={!isCall() && resultText()}>
                 <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
-                  <span
-                    style={{
-                      'font-size': '10px',
-                      opacity: '0.5',
-                      'letter-spacing': '0.04em',
-                      'font-weight': '600',
-                    }}
-                  >
-                    {isError() ? 'ERROR' : 'RESULT'}
-                  </span>
+                  <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
+                    <span style={{ 'font-size': '10px', opacity: '0.5', 'letter-spacing': '0.04em', 'font-weight': '600' }}>
+                      {isError() ? 'ERROR' : 'RESULT'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(resultText())}
+                      title="Copy result"
+                      aria-label="Copy result to clipboard"
+                      style={{
+                        padding: '2px 6px',
+                        'font-size': '10px',
+                        border: '1px solid rgba(255,255,255,0.12)',
+                        'border-radius': '4px',
+                        background: 'rgba(255,255,255,0.06)',
+                        color: copied() ? '#6ee7b7' : '#9ca3af',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {copied() ? '✓ copied' : '⎘ copy'}
+                    </button>
+                  </div>
                   <pre
                     style={{
                       margin: '0',
@@ -390,7 +488,7 @@ export default function ToolCallView(props: Props) {
               'border-radius': '6px',
               background: 'rgba(0,0,0,0.28)',
               border: '1px solid rgba(255,255,255,0.06)',
-              'font-family': 'ui-monospace, monospace',
+              'font-family': font.mono,
               'font-size': '11px',
               'line-height': '1.5',
               overflow: 'auto',
@@ -398,80 +496,52 @@ export default function ToolCallView(props: Props) {
             }}
           >
             <Show when={part().tool === 'edit'}>
-              <div
-                style={{
-                  'font-size': '10px',
-                  color: 'rgba(255,255,255,0.45)',
-                  'margin-bottom': '2px',
-                }}
-              >
+              <div style={{ 'font-size': '10px', color: 'rgba(255,255,255,0.45)', 'margin-bottom': '2px' }}>
                 {String((rawArgs() as Record<string, unknown> | null)?.path ?? '')}
               </div>
-              <Show
-                when={
-                  String((rawArgs() as Record<string, unknown> | null)?.oldString ?? '').length > 0
-                }
-              >
+              <Show when={String((rawArgs() as Record<string, unknown> | null)?.oldString ?? '').length > 0}>
                 <div
                   style={{
-                    background: 'rgba(239,68,68,0.12)',
-                    color: '#fca5a5',
+                    background: isNoColor ? 'transparent' : 'rgba(239,68,68,0.12)',
+                    color: isNoColor ? '#e5e7eb' : '#fca5a5',
                     padding: '4px 6px',
                     'border-radius': '4px',
                     'white-space': 'pre-wrap',
                     'word-break': 'break-word',
+                    border: isNoColor ? '1px solid rgba(255,255,255,0.12)' : 'none',
                   }}
                 >
                   −{' '}
-                  {String((rawArgs() as Record<string, unknown> | null)?.oldString ?? '').slice(
-                    0,
-                    800,
-                  )}
+                  {String((rawArgs() as Record<string, unknown> | null)?.oldString ?? '').slice(0, 800)}
                 </div>
               </Show>
               <div
                 style={{
-                  background: 'rgba(16,185,129,0.14)',
-                  color: '#6ee7b7',
+                  background: isNoColor ? 'transparent' : 'rgba(16,185,129,0.14)',
+                  color: isNoColor ? '#e5e7eb' : '#6ee7b7',
                   padding: '4px 6px',
                   'border-radius': '4px',
                   'white-space': 'pre-wrap',
                   'word-break': 'break-word',
+                  border: isNoColor ? '1px solid rgba(255,255,255,0.12)' : 'none',
                 }}
               >
                 +{' '}
-                {String((rawArgs() as Record<string, unknown> | null)?.newString ?? '').slice(
-                  0,
-                  800,
-                )}
+                {String((rawArgs() as Record<string, unknown> | null)?.newString ?? '').slice(0, 800)}
               </div>
               <Show
                 when={
-                  String((rawArgs() as Record<string, unknown> | null)?.oldString ?? '').length >
-                    800 ||
-                  String((rawArgs() as Record<string, unknown> | null)?.newString ?? '').length >
-                    800
+                  String((rawArgs() as Record<string, unknown> | null)?.oldString ?? '').length > 800 ||
+                  String((rawArgs() as Record<string, unknown> | null)?.newString ?? '').length > 800
                 }
               >
-                <div
-                  style={{
-                    'font-size': '10px',
-                    color: 'rgba(255,255,255,0.35)',
-                    'margin-top': '2px',
-                  }}
-                >
+                <div style={{ 'font-size': '10px', color: 'rgba(255,255,255,0.35)', 'margin-top': '2px' }}>
                   … truncated, expand JSON for full
                 </div>
               </Show>
             </Show>
             <Show when={part().tool === 'write'}>
-              <div
-                style={{
-                  'font-size': '10px',
-                  color: 'rgba(255,255,255,0.45)',
-                  'margin-bottom': '2px',
-                }}
-              >
+              <div style={{ 'font-size': '10px', color: 'rgba(255,255,255,0.45)', 'margin-bottom': '2px' }}>
                 {String((rawArgs() as Record<string, unknown> | null)?.path ?? '')} · new file
               </div>
               <pre
@@ -486,48 +556,44 @@ export default function ToolCallView(props: Props) {
                   border: '1px solid rgba(255,255,255,0.06)',
                 }}
               >
-                {String((rawArgs() as Record<string, unknown> | null)?.content ?? '').slice(
-                  0,
-                  1200,
-                )}
+                {String((rawArgs() as Record<string, unknown> | null)?.content ?? '').slice(0, 1200)}
               </pre>
-              <Show
-                when={
-                  String((rawArgs() as Record<string, unknown> | null)?.content ?? '').length > 1200
-                }
-              >
-                <div
-                  style={{
-                    'font-size': '10px',
-                    color: 'rgba(255,255,255,0.35)',
-                    'margin-top': '2px',
-                  }}
-                >
+              <Show when={String((rawArgs() as Record<string, unknown> | null)?.content ?? '').length > 1200}>
+                <div style={{ 'font-size': '10px', color: 'rgba(255,255,255,0.35)', 'margin-top': '2px' }}>
                   … truncated
                 </div>
               </Show>
             </Show>
             <Show when={part().tool === 'patch'}>
-              <pre
-                style={{ margin: '0', 'white-space': 'pre', overflow: 'auto', color: '#e5e7eb' }}
-              >
+              <pre style={{ margin: '0', 'white-space': 'pre', overflow: 'auto', color: '#e5e7eb' }}>
                 {String((rawArgs() as Record<string, unknown> | null)?.patch ?? '').slice(0, 2000)}
               </pre>
             </Show>
           </div>
-          {/* Also show result if present for diff tools */}
           <Show when={!isCall() && resultText()}>
             <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
-              <span
-                style={{
-                  'font-size': '10px',
-                  opacity: '0.5',
-                  'letter-spacing': '0.04em',
-                  'font-weight': '600',
-                }}
-              >
-                {isError() ? 'ERROR' : 'RESULT'}
-              </span>
+              <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
+                <span style={{ 'font-size': '10px', opacity: '0.5', 'letter-spacing': '0.04em', 'font-weight': '600' }}>
+                  {isError() ? 'ERROR' : 'RESULT'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleCopy(resultText())}
+                  title="Copy result"
+                  aria-label="Copy result to clipboard"
+                  style={{
+                    padding: '2px 6px',
+                    'font-size': '10px',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    'border-radius': '4px',
+                    background: 'rgba(255,255,255,0.06)',
+                    color: copied() ? '#6ee7b7' : '#9ca3af',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {copied() ? '✓ copied' : '⎘ copy'}
+                </button>
+              </div>
               <pre
                 style={{
                   margin: '0',

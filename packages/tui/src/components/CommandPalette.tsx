@@ -1,16 +1,17 @@
 /**
- * CommandPalette — TUI command mode for Mira
+ * CommandPalette — TUI command mode (keyboard-first rebuild)
  *
- * Ported from web/src/components/CommandPalette.tsx:
- *  - fuzzyScore + filterCommands (fuzzy matching with prefix/consecutive bonuses)
- *  - Global palette (Ctrl+P) + SlashAutocomplete inline 8-item dropdown
- *  - SettingsStore.allCommands() merges commands+skills via rpc listCommands/listSkills
+ * - Fuzzy search, arrow keys, Enter to execute, Esc to close
+ * - Focus trap, Tab navigation within palette
+ * - Triggered by : or Ctrl+P
+ * - Respects NO_COLOR / TERM=dumb
  */
 
 import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from 'solid-js'
 import type { SettingsStore } from '../stores/settings'
 import { rpc } from '../rpc/client'
 import type { CommandEntry } from '../stores/settings'
+import { getColorMode } from '../lib/a11y'
 
 type Props = {
   open: boolean
@@ -21,11 +22,6 @@ type Props = {
 
 // ── Fuzzy ──────────────────────────────────────────────────────────
 
-/**
- * Simple fuzzy score: characters of `query` must appear in order in `target`.
- * Higher score = better match. Prefix and consecutive bonuses.
- * Returns 0 if no match.
- */
 export function fuzzyScore(query: string, target: string): number {
   const q = query.toLowerCase()
   const t = target.toLowerCase()
@@ -71,7 +67,6 @@ export function filterCommands(query: string, commands: CommandEntry[]): Command
   return scored.slice(0, 20).map((x) => x.c)
 }
 
-// Fallback hardcoded commands when server fetch fails / offline
 const FALLBACK_COMMANDS: CommandEntry[] = [
   { name: '/cost', description: 'Show current spend & token usage', source: 'command' },
   { name: '/undo', description: 'Undo last file mutation', source: 'command' },
@@ -79,17 +74,15 @@ const FALLBACK_COMMANDS: CommandEntry[] = [
   { name: '/jobs', description: 'List background jobs', source: 'command' },
   { name: '/fork', description: 'Fork current session', source: 'command' },
   { name: '/export', description: 'Export session transcript', source: 'command' },
-  {
-    name: '/autopilot',
-    description: 'Autopilot — scheduler, eval delta, patches',
-    source: 'command',
-  },
+  { name: '/autopilot', description: 'Autopilot — scheduler, eval delta, patches', source: 'command' },
 ]
 
 export default function CommandPalette(props: Props) {
   const [query, setQuery] = createSignal('')
   const [index, setIndex] = createSignal(0)
   const [fetched, setFetched] = createSignal<CommandEntry[] | null>(null)
+  let dialogRef: HTMLDivElement | undefined
+  let inputRef: HTMLInputElement | undefined
 
   const commands = (): CommandEntry[] => {
     if (props.settings) {
@@ -101,7 +94,6 @@ export default function CommandPalette(props: Props) {
 
   const filtered = createMemo(() => filterCommands(query(), commands()))
 
-  // Fetch commands+skills via rpc when palette opens and settings has no data
   const ensureCommands = async () => {
     if (props.settings) {
       if (props.settings.allCommands().length === 0) {
@@ -153,13 +145,12 @@ export default function CommandPalette(props: Props) {
   })
 
   const execute = (cmd: string) => {
-    // strip leading '/' for onExecute compatibility (App handleCommand expects id without slash)
     const id = cmd.replace(/^\//, '')
     props.onExecute(id)
     props.onClose()
   }
 
-  let dialogRef: HTMLDivElement | undefined
+  // ── Keyboard: focus trap + nav ──────────────────────────────────
   const onKeyDown = (e: KeyboardEvent) => {
     const items = filtered()
     if (e.key === 'Escape') {
@@ -184,12 +175,16 @@ export default function CommandPalette(props: Props) {
         return
       }
     }
-    if (e.key === 'ArrowDown') {
+    // Arrow nav — also handle j/k
+    if (e.key === 'ArrowDown' || e.key === 'j') {
+      // Only if not typing in input with cursor movement
+      if (e.target === inputRef && e.key === 'j') return
       e.preventDefault()
       setIndex((i) => (items.length === 0 ? 0 : (i + 1) % items.length))
       return
     }
-    if (e.key === 'ArrowUp') {
+    if (e.key === 'ArrowUp' || e.key === 'k') {
+      if (e.target === inputRef && e.key === 'k') return
       e.preventDefault()
       setIndex((i) => (items.length === 0 ? 0 : (i - 1 + items.length) % items.length))
       return
@@ -200,7 +195,7 @@ export default function CommandPalette(props: Props) {
       if (item) execute(item.name)
       return
     }
-    if (/^[1-9]$/.test(e.key)) {
+    if (/^[1-9]$/.test(e.key) && e.target !== inputRef) {
       const n = Number(e.key) - 1
       const item = items[n]
       if (item) {
@@ -210,29 +205,28 @@ export default function CommandPalette(props: Props) {
     }
   }
 
-  onMount(() => {
-    if (props.open) {
-      setQuery('')
-      setIndex(0)
-      window.addEventListener('keydown', onKeyDown)
-    }
-  })
-
-  onCleanup(() => window.removeEventListener('keydown', onKeyDown))
-
-  // Re-attach when open changes
+  // Attach/detach listener when open changes
   createEffect(() => {
     if (props.open) {
       setQuery('')
       setIndex(0)
+      queueMicrotask(() => inputRef?.focus())
       window.addEventListener('keydown', onKeyDown)
       void ensureCommands()
+      // Prevent body scroll
+      const prev = document.body.style.overflow
+      document.body.style.overflow = 'hidden'
+      onCleanup(() => {
+        document.body.style.overflow = prev
+      })
     } else {
       window.removeEventListener('keydown', onKeyDown)
     }
   })
 
-  // Global Ctrl+P / Cmd+P listener
+  onCleanup(() => window.removeEventListener('keydown', onKeyDown))
+
+  // Global Ctrl+P / Cmd+P + : listener
   createEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const isModP = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p'
@@ -240,6 +234,15 @@ export default function CommandPalette(props: Props) {
         e.preventDefault()
         if (props.open) props.onClose()
         else window.dispatchEvent(new CustomEvent('mira:open-palette'))
+      }
+      // : opens palette when not typing
+      if (!props.open && e.key === ':' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const tag = (e.target as HTMLElement)?.tagName?.toLowerCase()
+        const isTyping = tag === 'input' || tag === 'textarea' || tag === 'select' || (e.target as HTMLElement)?.isContentEditable
+        if (!isTyping) {
+          e.preventDefault()
+          window.dispatchEvent(new CustomEvent('mira:open-palette'))
+        }
       }
     }
     window.addEventListener('keydown', handler)
@@ -259,14 +262,15 @@ export default function CommandPalette(props: Props) {
           'padding-top': '20vh',
           'z-index': '1000',
         }}
+        role="presentation"
         onClick={props.onClose}
       >
         <div
           ref={dialogRef}
           role="dialog"
           aria-modal="true"
-          aria-label="Command palette"
-          tabindex="-1"
+          aria-label="Command palette — fuzzy search, arrow keys to navigate, Enter to execute"
+          tabindex={-1}
           style={{
             width: 'min(560px, 92vw)',
             'border-radius': '12px',
@@ -290,15 +294,18 @@ export default function CommandPalette(props: Props) {
               background: 'rgba(255,255,255,0.02)',
             }}
           >
-            <span style={{ 'font-size': '16px' }}>⌘</span>
+            <span style={{ 'font-size': '16px' }} aria-hidden="true">⌘</span>
             <input
-              autofocus
+              ref={inputRef}
               value={query()}
               onInput={(e) => {
                 setQuery(e.currentTarget.value)
                 setIndex(0)
               }}
               placeholder="Type a command or skill…  (/ for slash commands)"
+              aria-label="Command search"
+              aria-autocomplete="list"
+              aria-controls="palette-listbox"
               style={{
                 flex: '1',
                 background: 'transparent',
@@ -311,14 +318,23 @@ export default function CommandPalette(props: Props) {
             <span style={{ 'font-size': '11px', opacity: '0.5' }}>ESC to close</span>
           </div>
 
-          <div style={{ 'max-height': '320px', overflow: 'auto', padding: '6px' }}>
+          <div
+            id="palette-listbox"
+            role="listbox"
+            aria-label="Commands"
+            style={{ 'max-height': '320px', overflow: 'auto', padding: '6px' }}
+          >
             <For each={filtered()}>
               {(cmd, i) => {
                 const active = () => index() === i()
                 return (
                   <div
+                    role="option"
+                    aria-selected={active() ? 'true' : 'false'}
+                    tabindex={active() ? 0 : -1}
                     onMouseEnter={() => setIndex(i())}
                     onClick={() => execute(cmd.name)}
+                    onFocus={() => setIndex(i())}
                     style={{
                       display: 'flex',
                       'align-items': 'center',
@@ -327,33 +343,16 @@ export default function CommandPalette(props: Props) {
                       'border-radius': '8px',
                       cursor: 'pointer',
                       background: active() ? 'rgba(99,102,241,0.18)' : 'transparent',
-                      border: active()
-                        ? '1px solid rgba(99,102,241,0.35)'
-                        : '1px solid transparent',
+                      border: active() ? '1px solid rgba(99,102,241,0.35)' : '1px solid transparent',
+                      outline: 'none',
                     }}
                   >
-                    <span
-                      style={{
-                        display: 'flex',
-                        'flex-direction': 'column',
-                        gap: '2px',
-                        flex: '1',
-                        'min-width': '0',
-                      }}
-                    >
-                      <span
-                        style={{
-                          'font-family': 'ui-monospace, monospace',
-                          'font-weight': '700',
-                          color: '#a5b4fc',
-                        }}
-                      >
+                    <span style={{ display: 'flex', 'flex-direction': 'column', gap: '2px', flex: '1', 'min-width': '0' }}>
+                      <span style={{ 'font-family': 'ui-monospace, monospace', 'font-weight': '700', color: '#a5b4fc' }}>
                         {cmd.name}
                       </span>
                       <Show when={cmd.description}>
-                        <span style={{ 'font-size': '12px', opacity: '0.7' }}>
-                          {cmd.description}
-                        </span>
+                        <span style={{ 'font-size': '12px', opacity: '0.7' }}>{cmd.description}</span>
                       </Show>
                     </span>
                     <span
@@ -368,13 +367,7 @@ export default function CommandPalette(props: Props) {
                     >
                       {cmd.source}
                     </span>
-                    <span
-                      style={{
-                        'font-size': '11px',
-                        opacity: '0.45',
-                        'font-family': 'ui-monospace',
-                      }}
-                    >
+                    <span style={{ 'font-size': '11px', opacity: '0.45', 'font-family': 'ui-monospace' }}>
                       {i() + 1}
                     </span>
                   </div>
@@ -382,16 +375,8 @@ export default function CommandPalette(props: Props) {
               }}
             </For>
             <Show when={filtered().length === 0}>
-              <div
-                style={{
-                  padding: '20px',
-                  'text-align': 'center',
-                  opacity: '0.5',
-                  'font-size': '13px',
-                }}
-              >
-                No commands match “{query()}” — try{' '}
-                <code style={{ 'font-family': 'ui-monospace' }}>/</code> to see all.
+              <div style={{ padding: '20px', 'text-align': 'center', opacity: '0.5', 'font-size': '13px' }}>
+                No commands match “{query()}” — try <code style={{ 'font-family': 'ui-monospace' }}>/</code> to see all.
               </div>
             </Show>
           </div>
@@ -406,8 +391,8 @@ export default function CommandPalette(props: Props) {
               'justify-content': 'space-between',
             }}
           >
-            <span>↑↓ navigate · Enter insert · 1-9 quick pick</span>
-            <span>{filtered().length} results · ⌘P to open</span>
+            <span>↑↓ / j/k navigate · Enter execute · 1-9 quick pick · Esc close</span>
+            <span>{filtered().length} results · : or ⌘P to open</span>
           </div>
         </div>
       </div>
@@ -446,16 +431,7 @@ export function SlashAutocomplete(props: {
           'z-index': '20',
         }}
       >
-        <div
-          style={{
-            display: 'flex',
-            'flex-direction': 'column',
-            padding: '6px',
-            gap: '2px',
-            'max-height': '280px',
-            overflow: 'auto',
-          }}
-        >
+        <div style={{ display: 'flex', 'flex-direction': 'column', padding: '6px', gap: '2px', 'max-height': '280px', overflow: 'auto' }}>
           <For each={filtered()}>
             {(cmd, i) => (
               <button
@@ -469,47 +445,19 @@ export function SlashAutocomplete(props: {
                   gap: '10px',
                   padding: '8px 10px',
                   'border-radius': '8px',
-                  border:
-                    selected() === i()
-                      ? '1px solid rgba(99,102,241,0.35)'
-                      : '1px solid transparent',
+                  border: selected() === i() ? '1px solid rgba(99,102,241,0.35)' : '1px solid transparent',
                   background: selected() === i() ? 'rgba(99,102,241,0.18)' : 'transparent',
                   cursor: 'pointer',
                   'text-align': 'left',
                   width: '100%',
                 }}
               >
-                <span
-                  style={{
-                    display: 'flex',
-                    'flex-direction': 'column',
-                    gap: '1px',
-                    'min-width': '0',
-                    flex: '1',
-                    'text-align': 'left',
-                  }}
-                >
-                  <span
-                    style={{
-                      'font-family': 'ui-monospace, monospace',
-                      'font-size': '13px',
-                      'font-weight': '600',
-                      color: '#a5b4fc',
-                    }}
-                  >
+                <span style={{ display: 'flex', 'flex-direction': 'column', gap: '1px', 'min-width': '0', flex: '1', 'text-align': 'left' }}>
+                  <span style={{ 'font-family': 'ui-monospace, monospace', 'font-size': '13px', 'font-weight': '600', color: '#a5b4fc' }}>
                     {cmd.name}
                   </span>
                   <Show when={cmd.description}>
-                    <span
-                      style={{
-                        'font-size': '11px',
-                        color: 'rgba(229,231,235,0.6)',
-                        'white-space': 'nowrap',
-                        overflow: 'hidden',
-                        'text-overflow': 'ellipsis',
-                        'max-width': '36ch',
-                      }}
-                    >
+                    <span style={{ 'font-size': '11px', color: 'rgba(229,231,235,0.6)', 'white-space': 'nowrap', overflow: 'hidden', 'text-overflow': 'ellipsis', 'max-width': '36ch' }}>
                       {cmd.description}
                     </span>
                   </Show>
@@ -531,16 +479,7 @@ export function SlashAutocomplete(props: {
             )}
           </For>
         </div>
-        <div
-          style={{
-            padding: '6px 10px',
-            'border-top': '1px solid rgba(255,255,255,0.06)',
-            'font-size': '10px',
-            color: 'rgba(229,231,235,0.45)',
-            display: 'flex',
-            gap: '6px',
-          }}
-        >
+        <div style={{ padding: '6px 10px', 'border-top': '1px solid rgba(255,255,255,0.06)', 'font-size': '10px', color: 'rgba(229,231,235,0.45)', display: 'flex', gap: '6px' }}>
           <span>↑↓ nav</span>
           <span>·</span>
           <span>Tab complete</span>

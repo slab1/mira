@@ -11,7 +11,7 @@
 
 import { Show, type JSX } from 'solid-js'
 import { Box, Text } from '../shim/opentui-solid'
-import { surface, space, font, text, focus, grid } from '../lib/tokens'
+import { surface, space, font, text, focus, grid, semantic } from '../lib/tokens'
 import { getColorMode } from '../lib/a11y'
 import type { FocusGroup } from '../lib/focus'
 import { focusGroupStyle } from '../lib/focus'
