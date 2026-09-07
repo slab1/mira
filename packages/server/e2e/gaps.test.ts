@@ -21,10 +21,11 @@ async function waitForHealth(timeoutMs = 15_000) {
 }
 
 beforeAll(async () => {
+  const { MIRA_TOKEN: _mt, MIRA_API_KEYS: _mak, ...cleanEnv } = process.env as Record<string, string | undefined>
   proc = Bun.spawn(["bun", "src/index.ts"], {
     cwd: import.meta.dir + "/..",
     env: {
-      ...process.env,
+      ...cleanEnv,
       PORT: String(PORT),
       MIRA_DB: "/tmp/mira-gaps-e2e.db",
       CORS_ORIGINS: "https://slab1.github.io,https://mira.example.com",
@@ -42,7 +43,12 @@ afterAll(() => proc?.kill())
 
 describe("gaps: providers expandEnv", () => {
   test("GET /providers hasKey reflects expanded {env:VAR}", async () => {
-    const list = (await (await fetch(`${BASE}/providers`)).json()) as Array<{ id: string; hasKey: boolean }>
+    const res = await fetch(`${BASE}/providers`)
+    const data = await res.json() as unknown
+    const list = Array.isArray(data) ? data as Array<{ id: string; hasKey: boolean }> : []
+    if (!Array.isArray(data)) {
+      console.error("GET /providers did not return array:", JSON.stringify(data).slice(0, 500))
+    }
     const or = list.find(p => p.id === "openrouter")
     expect(or).toBeDefined()
     expect(or!.hasKey).toBe(true) // OPENROUTER_API_KEY=sk-test-gaps → expanded true
