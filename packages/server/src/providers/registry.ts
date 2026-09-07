@@ -16,9 +16,10 @@ import {
   type ProviderHealth,
   type RouteResult,
 } from './types.js'
-import { expandEnv, expandEnvArray, expandHeaders, KeyRing, exponentialBackoff } from './auth.js'
+import { expandEnv, expandEnvArray, expandHeaders, KeyRing, exponentialBackoff, classifyError } from './auth.js'
 import { priceFor } from './pricing.js'
 import { RateLimiter } from './rate-limiter.js'
+import { CircuitBreaker, createCircuitBreaker } from './circuit-breaker.js'
 
 // ── Capability → model matching patterns ──────────────────────────────────
 
@@ -61,24 +62,13 @@ export interface RegistryOptions {
   rateLimiter?: RateLimiter
 }
 
-/** Simple circuit breaker state tracker */
-interface Breaker {
-  state: CircuitBreakerState
-  failureCount: number
-  successCount: number
-  lastFailureTime: number | null
-  lastSuccessTime: number | null
-  consecutiveFailures: number
-  cooldownUntil: number | null
-}
-
+/** Provider registry uses per-provider CircuitBreaker from circuit-breaker.ts */
 export class ProviderRegistry {
   private providers = new Map<string, ProviderConfig>()
   private keyRings = new Map<string, KeyRing>()
   private aliases: Record<string, string>
   private fallbacks: string[]
   private defaultProvider: string
-  private health: Map<string, Breaker>
   private onTrace?: RegistryOptions['onTrace']
   private rateLimiter?: RateLimiter
 
@@ -90,7 +80,6 @@ export class ProviderRegistry {
     this.aliases = opts?.aliases ?? {}
     this.fallbacks = opts?.fallbacks ?? []
     this.defaultProvider = opts?.defaultProvider ?? 'openrouter'
-    this.health = new Map()
     this.onTrace = opts?.onTrace
     this.rateLimiter = opts?.rateLimiter
   }
@@ -282,20 +271,15 @@ export class ProviderRegistry {
   // ── 3. Error classification for fallback ───────────────────────────────
 
   /**
-   * Returns true for provider-level errors (429/500/502/503/timeout) that
-   * SHOULD trigger fallback. Returns false for request-level errors (400/401/404)
-   * that should NOT trigger fallback — these are client mistakes.
+   * Returns true for provider-level errors that SHOULD trigger fallback.
+   * Delegates to classifyError for consistent classification.
    */
   static shouldFallback(error: ProviderError): boolean {
-    const status = error.status
-    // Request-level errors — do NOT fallback
-    if (status === 400 || status === 401 || status === 404) return false
-    // Provider-level transient errors — DO fallback
-    if (status === 429 || status === 500 || status === 502 || status === 503) return true
-    if (status === 408 || status === 504) return true
-    // Timeout / network errors
-    if (/timeout|ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/i.test(error.message)) return true
-    // Check retryable flag as fallback
+    const status = error.status ?? 0
+    const cls = classifyError(status, error.message)
+    // retryable errors should fallback after retries exhausted
+    if (cls === 'retryable') return true
+    // also check explicit codes
     if (error.code === 'RATE_LIMITED' || error.code === 'TIMEOUT') return true
     return false
   }
@@ -421,56 +405,29 @@ export class ProviderRegistry {
    * Check if a provider is healthy (circuit breaker not OPEN).
    */
   isHealthy(providerKey: string): boolean {
-    const breaker = this.health.get(providerKey)
-    if (!breaker) return true // No history = healthy
-
-    // Check cooldown
-    if (breaker.cooldownUntil !== null && Date.now() < breaker.cooldownUntil) {
-      return false
-    }
-
-    // If OPEN but cooldown expired, transition to HALF_OPEN
-    if (breaker.state === 'OPEN' && breaker.cooldownUntil !== null && Date.now() >= breaker.cooldownUntil) {
-      breaker.state = 'HALF_OPEN'
-      return true // Allow one trial request
-    }
-
-    return breaker.state !== 'OPEN'
+    const breaker = createCircuitBreaker(providerKey)
+    return breaker.getState() !== 'OPEN'
   }
 
   /**
    * Get health status for a provider.
    */
   getHealth(providerKey: string): ProviderHealth {
-    const breaker = this.health.get(providerKey)
-    if (!breaker) {
-      return {
-        providerKey,
-        state: 'CLOSED',
-        status: 'healthy',
-        latencyMs: 0,
-        lastCheck: null,
-        failureCount: 0,
-        successCount: 0,
-        lastFailureTime: null,
-        lastSuccessTime: null,
-        consecutiveFailures: 0,
-        cooldownUntil: null,
-      }
-    }
-    const status = breaker.state === 'OPEN' ? 'down' as const : breaker.state === 'HALF_OPEN' ? 'degraded' as const : 'healthy' as const
+    const breaker = createCircuitBreaker(providerKey)
+    const state = breaker.getState()
+    const status = state === 'OPEN' ? 'down' as const : state === 'HALF_OPEN' ? 'degraded' as const : 'healthy' as const
     return {
       providerKey,
-      state: breaker.state,
+      state,
       status,
       latencyMs: 0,
-      lastCheck: breaker.lastSuccessTime ?? breaker.lastFailureTime,
-      failureCount: breaker.failureCount,
-      successCount: breaker.successCount,
-      lastFailureTime: breaker.lastFailureTime,
-      lastSuccessTime: breaker.lastSuccessTime,
-      consecutiveFailures: breaker.consecutiveFailures,
-      cooldownUntil: breaker.cooldownUntil,
+      lastCheck: null,
+      failureCount: breaker.getFailureCount(),
+      successCount: breaker.getSuccessCount(),
+      lastFailureTime: null,
+      lastSuccessTime: null,
+      consecutiveFailures: breaker.getFailureCount(),
+      cooldownUntil: null,
     }
   }
 
@@ -483,25 +440,16 @@ export class ProviderRegistry {
     return result
   }
 
-  /** Record success — public for health checker integration */
+  /** Record success — delegates to per-provider CircuitBreaker. */
   recordSuccess(providerKey: string): void {
-    const breaker = this.getOrCreateBreaker(providerKey)
-    breaker.successCount++
-    breaker.lastSuccessTime = Date.now()
-    breaker.consecutiveFailures = 0
-    breaker.state = 'CLOSED'
+    const breaker = createCircuitBreaker(providerKey)
+    breaker.recordSuccess()
   }
 
-  /** Record failure — public for health checker integration */
+  /** Record failure — delegates to per-provider CircuitBreaker. */
   recordFailure(providerKey: string): void {
-    const breaker = this.getOrCreateBreaker(providerKey)
-    breaker.failureCount++
-    breaker.consecutiveFailures++
-    breaker.lastFailureTime = Date.now()
-    if (breaker.consecutiveFailures >= 3) {
-      breaker.state = 'OPEN'
-      breaker.cooldownUntil = Date.now() + 30_000
-    }
+    const breaker = createCircuitBreaker(providerKey)
+    breaker.recordFailure()
   }
 
   /** Check rate limit for an identity without consuming */
@@ -629,21 +577,7 @@ export class ProviderRegistry {
     })
   }
 
-  /** Get or create a circuit breaker for a provider key */
-  private getOrCreateBreaker(providerKey: string): Breaker {
-    if (!this.health.has(providerKey)) {
-      this.health.set(providerKey, {
-        state: 'CLOSED',
-        failureCount: 0,
-        successCount: 0,
-        lastFailureTime: null,
-        lastSuccessTime: null,
-        consecutiveFailures: 0,
-        cooldownUntil: null,
-      })
-    }
-    return this.health.get(providerKey)!
-  }
+
 
   /** Emit a trace event if onTrace callback is configured */
   private emitTrace(

@@ -8,45 +8,8 @@ import type { MiraConfig } from '../types/index.js'
 import type { ProviderConfig } from '../providers/types.js'
 import { ProviderRegistry } from '../providers/registry.js'
 
-export function expandEnv(value: string): string {
-  if (!value) return value
-  return value.replace(/\{env:([^}]+)\}/g, (_, name: string) => process.env[name] ?? '')
-}
-
-export function expandEnvArray(value: string | string[] | undefined): string[] {
-  if (!value) return []
-  if (Array.isArray(value)) {
-    const out: string[] = []
-    for (const v of value) {
-      const expanded = expandEnv(v)
-      if (expanded.includes(',') && /^\{env:[^}]+\}$/.test(v.trim())) {
-        for (const part of expanded.split(',')) {
-          const t = part.trim()
-          if (t) out.push(t)
-        }
-      } else if (expanded) {
-        out.push(expanded)
-      }
-    }
-    return out
-  }
-  const expanded = expandEnv(value)
-  if (!expanded) return []
-  if (expanded.includes(',') && /^\{env:[^}]+\}$/.test(value.trim())) {
-    return expanded
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
-  }
-  return [expanded]
-}
-
-export function expandHeaders(headers: Record<string, string> | undefined): Record<string, string> {
-  if (!headers) return {}
-  const out: Record<string, string> = {}
-  for (const [k, v] of Object.entries(headers)) out[k] = expandEnv(v)
-  return out
-}
+// Re-export from providers/auth.ts — single source of truth for env expansion
+export { expandEnv, expandEnvArray, expandHeaders } from '../providers/auth.js'
 
 /**
  * Build a ProviderRegistry from MiraConfig.

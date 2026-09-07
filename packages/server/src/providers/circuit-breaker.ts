@@ -25,7 +25,7 @@ export class CircuitBreaker {
   private successCount = 0
   private lastFailureTime: number | null = null
   private halfOpenCalls = 0
-  private readonly config: CircuitBreakerConfig
+  readonly config: CircuitBreakerConfig
 
   constructor(config?: Partial<CircuitBreakerConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config }
