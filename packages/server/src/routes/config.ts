@@ -126,26 +126,36 @@ export function mountConfigRoutes(
     })
   })
   app.get('/providers', async (c: Context) => {
-    const cfg = getConfig() as MiraConfig
-    const providers = (cfg as MiraConfig).provider ?? {}
-    const list = Object.entries(providers).map(([id, p]) => {
-      const prov = p as MiraConfig['provider'][string]
-      const rawKey = (prov as { options?: { apiKey?: string } }).options?.apiKey ?? ''
-      const apiKey = expandEnv(rawKey)
-      const rawBase = (prov as { options?: { baseURL?: string } }).options?.baseURL ?? ''
-      return {
-        id,
-        name: (prov as { name?: string }).name ?? id,
-        hasKey: !!apiKey,
-        masked: apiKey ? maskApiKey(apiKey) : '',
-        baseURL: expandEnv(rawBase),
-        rawBaseURL: rawBase,
-        modelCount: (prov as { models?: Record<string, JsonValue> }).models
-          ? Object.keys((prov as { models: Record<string, JsonValue> }).models).length
-          : 0,
-      }
-    })
-    return c.json(list)
+    try {
+      const cfg = getConfig() as MiraConfig
+      const providers = (cfg as MiraConfig).provider ?? {}
+      const list = Object.entries(providers).map(([id, p]) => {
+        try {
+          const prov = p as MiraConfig['provider'][string]
+          const rawKey = (prov as { options?: { apiKey?: string } }).options?.apiKey ?? ''
+          const apiKey = expandEnv(rawKey)
+          const rawBase = (prov as { options?: { baseURL?: string } }).options?.baseURL ?? ''
+          return {
+            id,
+            name: (prov as { name?: string }).name ?? id,
+            hasKey: !!apiKey,
+            masked: apiKey ? maskApiKey(apiKey) : '',
+            baseURL: expandEnv(rawBase),
+            rawBaseURL: rawBase,
+            modelCount: (prov as { models?: Record<string, JsonValue> }).models
+              ? Object.keys((prov as { models: Record<string, JsonValue> }).models).length
+              : 0,
+          }
+        } catch (e) {
+          console.error(`[providers] error for ${id}:`, e)
+          return { id, name: id, hasKey: false, masked: '', baseURL: '', rawBaseURL: '', modelCount: 0, error: String(e) }
+        }
+      })
+      return c.json(list)
+    } catch (e) {
+      console.error('[providers] fatal:', e)
+      return c.json({ error: String(e), stack: (e as Error).stack?.slice(0, 500) }, 500)
+    }
   })
   app.post('/providers/:id/test', async (c: Context) => {
     const id = c.req.param('id')
