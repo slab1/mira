@@ -443,10 +443,14 @@ export function createSettingsStore() {
       description: s.description || `Skill: ${s.name}`,
       source: 'skill' as const,
     }))
+    // Synthetic /connect command (always available, even if server doesn't list it)
+    const synthetic: CommandEntry[] = [
+      { name: '/connect', description: 'Connect a provider — add API key (e.g. /connect openai)', source: 'command' as const },
+    ]
     // Deduplicate by name
     const seen = new Set<string>()
     const merged: CommandEntry[] = []
-    for (const c of [...cmds, ...skillCmds]) {
+    for (const c of [...synthetic, ...cmds, ...skillCmds]) {
       if (!seen.has(c.name)) {
         seen.add(c.name)
         merged.push(c)

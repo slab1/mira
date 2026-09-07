@@ -13,6 +13,8 @@ import { MemoryGraph } from './components/MemoryGraph'
 import { TraceViewer } from './components/TraceViewer'
 import { QueueRail } from './components/QueueRail'
 import { ToastViewport, toast } from './components/Toast'
+import { ConnectModal } from './components/ConnectModal'
+import { HeaderModelSelector, HeaderAgentSelector } from './components/HeaderSelectors'
 import { api, getToken, setToken, validateToken, getApiUrl, setApiUrl } from './api/client'
 
 type ViewMode = 'chat' | 'split' | 'graph'
@@ -227,6 +229,13 @@ export default function App() {
   const [budgetCapAmount, setBudgetCapAmount] = createSignal(100)
   const [agents] = createResource(() => api.listAgents().catch(() => []))
   const [selectedAgent, setSelectedAgent] = createSignal('')
+  // /connect modal
+  const [connectOpen, setConnectOpen] = createSignal(false)
+  const [connectProvider, setConnectProvider] = createSignal<string | undefined>(undefined)
+  const openConnect = (provider?: string) => {
+    setConnectProvider(provider?.trim() || undefined)
+    setConnectOpen(true)
+  }
   // Memory Graph 3-state layout: chat | split | graph
   const initialView = (() => {
     try {
@@ -377,6 +386,24 @@ export default function App() {
     }
   })
 
+  // /connect slash → open provider connect flow (supports /connect and /connect <provider>)
+  createEffect(() => {
+    const inp = store.input()
+    const trimmed = inp.trim()
+    if (trimmed === '/connect' || trimmed.startsWith('/connect ')) {
+      const arg = trimmed === '/connect' ? undefined : trimmed.slice('/connect'.length).trim().split(/\s+/)[0]
+      // debounce to avoid races during fast typing
+      const handle = setTimeout(() => {
+        const now = store.input().trim()
+        if (now === trimmed) {
+          openConnect(arg)
+          store.setInput('')
+        }
+      }, 400)
+      onCleanup(() => clearTimeout(handle))
+    }
+  })
+
   const cycleViewMode = () => {
     setViewMode((v) => (v === 'chat' ? 'split' : v === 'split' ? 'graph' : 'chat'))
   }
@@ -430,6 +457,12 @@ export default function App() {
   })
 
   const handlePaletteInsert = (text: string) => {
+    const trimmed = text.trim()
+    if (trimmed === '/connect' || trimmed.startsWith('/connect ') || trimmed.startsWith('/connect\t')) {
+      const arg = trimmed === '/connect' ? undefined : trimmed.slice('/connect'.length).trim().split(/\s+/)[0]
+      openConnect(arg)
+      return
+    }
     store.setInput(text)
     // Focus composer after insert — ChatView's textarea is [aria-label="Message Mira"]
     queueMicrotask(() => {
@@ -741,33 +774,13 @@ export default function App() {
                 })()}
                 <QueueRail store={store} />
               </Show>
-              <Show when={(agents() ?? []).length > 0}>
-                <select
-                  value={selectedAgent()}
-                  onChange={(e) => setSelectedAgent(e.currentTarget.value)}
-                  title="Agent lane — session template (tools + posture)"
-                  aria-label="Agent lane"
-                  class="btn btn-ghost"
-                  style={{
-                    padding: '4px 8px',
-                    'font-size': 'var(--fs-xs)',
-                    border: '1px solid var(--border)',
-                    'border-radius': 'var(--r-md)',
-                    background: 'var(--bg-surface)',
-                    color: 'var(--fg)',
-                  }}
-                >
-                  <option value="">general</option>
-                  <For each={agents() ?? []}>
-                    {(a) => (
-                      <option value={a.name}>
-                        {a.name}
-                        {a.custom ? ' *' : ''}
-                      </option>
-                    )}
-                  </For>
-                </select>
-              </Show>
+              <HeaderModelSelector settings={settings} id="header-model" />
+              <HeaderAgentSelector
+                agents={agents() ?? []}
+                value={selectedAgent()}
+                onChange={setSelectedAgent}
+                id="header-agent"
+              />
               <button
                 type="button"
                 class="btn btn-ghost"
@@ -1127,6 +1140,12 @@ export default function App() {
         sessionID={store.state.currentId}
         open={traceOpen()}
         onClose={() => setTraceOpen(false)}
+      />
+      <ConnectModal
+        open={connectOpen()}
+        onClose={() => setConnectOpen(false)}
+        initialProvider={connectProvider()}
+        settings={settings}
       />
       <ToastViewport />
     </Show>
