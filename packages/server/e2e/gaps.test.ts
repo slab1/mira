@@ -55,8 +55,17 @@ describe("gaps: providers expandEnv", () => {
       await Bun.sleep(500)
     }
     if (!list.find(p => p.id === "openrouter")) {
-      console.error("GET /providers did not return openrouter after retries:", JSON.stringify(lastData).slice(0, 1000))
-      console.error("list:", JSON.stringify(list).slice(0, 1000))
+      console.error("GET /providers did not return openrouter after retries:", JSON.stringify(lastData).slice(0, 2000))
+      console.error("list:", JSON.stringify(list).slice(0, 2000))
+      // Also try fetching /config to see what providers are configured
+      try {
+        const cfgRes = await fetch(`${BASE}/config`)
+        const cfg = await cfgRes.json() as any
+        console.error("config provider keys:", Object.keys(cfg.provider ?? {}))
+        console.error("config provider openrouter:", JSON.stringify(cfg.provider?.openrouter ?? null).slice(0, 500))
+      } catch (e) {
+        console.error("failed to fetch /config:", e)
+      }
     }
     const or = list.find(p => p.id === "openrouter")
     expect(or).toBeDefined()
