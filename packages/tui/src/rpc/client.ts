@@ -406,13 +406,24 @@ export function clearApiUrl(): void {
   } catch {}
 }
 
+/**
+ * Shared default when no explicit URL is configured.
+ * Prefers the browser origin (tunnel / same-origin) → falls back to localhost.
+ */
+export function defaultApiUrl(): string {
+  if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
+    return window.location.origin
+  }
+  return 'http://127.0.0.1:4096'
+}
+
 export function baseUrl(): string {
   const runtime = getRuntimeApiUrl()
   if (runtime) return runtime
   const raw = getEnvBase()
   if (raw) return raw.replace(/\/$/, '')
   if (typeof window !== 'undefined' && window.location.port === '3001') return ''
-  return 'http://127.0.0.1:4096'
+  return defaultApiUrl()
 }
 
 // Keep legacy name for internal callers
@@ -820,7 +831,8 @@ function wsUrl(path: string): string {
   if (!base) {
     const proto =
       typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = typeof window !== 'undefined' ? window.location.host : '127.0.0.1:4096'
+    const host =
+      typeof window !== 'undefined' ? window.location.host : new URL(defaultApiUrl()).host
     return `${proto}//${host}${suffix}`
   }
   try {
@@ -828,7 +840,9 @@ function wsUrl(path: string): string {
     const proto = u.protocol === 'https:' ? 'wss:' : 'ws:'
     return `${proto}//${u.host}${suffix}`
   } catch {
-    return `ws://127.0.0.1:4096${suffix}`
+    const u = new URL(defaultApiUrl())
+    const proto = u.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${proto}//${u.host}${suffix}`
   }
 }
 

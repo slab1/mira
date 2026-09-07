@@ -12,7 +12,14 @@
 import { createSignal, onMount, onCleanup, Show } from 'solid-js'
 // TUI Box/Text via @opentui/solid — shim provides DOM fallback when native TUI not available
 import { Box, Text } from '../shim/opentui-solid'
-import { getToken, setToken, validateToken, getApiUrl, setApiUrl } from '../rpc/client'
+import {
+  getToken,
+  setToken,
+  validateToken,
+  getApiUrl,
+  defaultApiUrl,
+  setApiUrl,
+} from '../rpc/client'
 
 export default function AuthGate(props: { onReady: () => void }) {
   const [value, setValue] = createSignal(getToken())
@@ -57,7 +64,7 @@ export default function AuthGate(props: { onReady: () => void }) {
         msg.includes('timeout')
       )
         setError(
-          `Cannot reach server at ${urlTrimmed || getApiUrl() || 'http://127.0.0.1:4096'} — check API URL / tunnel`,
+          `Cannot reach server at ${urlTrimmed || getApiUrl() || defaultApiUrl()} — check API URL / tunnel`,
         )
       else setError(msg)
     } finally {
@@ -149,7 +156,7 @@ export default function AuthGate(props: { onReady: () => void }) {
           id="mira-api-url"
           type="url"
           value={apiUrl()}
-          placeholder="https://...trycloudflare.com or http://127.0.0.1:4096 (blank = baked default)"
+          placeholder="https://...trycloudflare.com (blank = auto-detect)"
           autocomplete="off"
           spellcheck={false}
           onInput={(e) => setApiUrlValue(e.currentTarget.value)}

@@ -12,7 +12,7 @@ export const PRICING_TABLE: Array<{
 }> = [
   { match: (m) => m.includes('claude-opus'), input: 15, output: 75 },
   { match: (m) => m.includes('claude-sonnet'), input: 3, output: 15 },
-  { match: (m) => m.includes('claude-haiku'), input: 0.8, output: 4 },
+  { match: (m) => m.includes('haiku'), input: 0.8, output: 4 },
   { match: (m) => m.includes('gpt-4o'), input: 2.5, output: 10 },
   { match: (m) => m.includes('gpt-4'), input: 10, output: 30 },
   { match: (m) => m.includes('deepseek'), input: 0.27, output: 1.1 },

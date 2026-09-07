@@ -15,7 +15,15 @@ import { QueueRail } from './components/QueueRail'
 import { ToastViewport, toast } from './components/Toast'
 import { ConnectModal } from './components/ConnectModal'
 import { HeaderModelSelector, HeaderAgentSelector } from './components/HeaderSelectors'
-import { api, getToken, setToken, validateToken, getApiUrl, setApiUrl } from './api/client'
+import {
+  api,
+  getToken,
+  setToken,
+  validateToken,
+  getApiUrl,
+  defaultApiUrl,
+  setApiUrl,
+} from './api/client'
 
 type ViewMode = 'chat' | 'split' | 'graph'
 
@@ -77,7 +85,7 @@ function AuthGate(props: { onReady: () => void }) {
         msg.includes('timeout')
       )
         setError(
-          `Cannot reach server at ${urlTrimmed || getApiUrl() || 'http://127.0.0.1:4096'} — check API URL / tunnel`,
+          `Cannot reach server at ${urlTrimmed || getApiUrl() || defaultApiUrl()} — check API URL / tunnel`,
         )
       else setError(msg)
     } finally {
@@ -152,7 +160,7 @@ function AuthGate(props: { onReady: () => void }) {
           type="url"
           class="input"
           value={apiUrl()}
-          placeholder="https://...trycloudflare.com or http://127.0.0.1:4096 (blank = baked default)"
+          placeholder="https://...trycloudflare.com (blank = auto-detect)"
           autocomplete="off"
           spellcheck={false}
           onInput={(e) => setApiUrlValue(e.currentTarget.value)}
@@ -391,7 +399,8 @@ export default function App() {
     const inp = store.input()
     const trimmed = inp.trim()
     if (trimmed === '/connect' || trimmed.startsWith('/connect ')) {
-      const arg = trimmed === '/connect' ? undefined : trimmed.slice('/connect'.length).trim().split(/\s+/)[0]
+      const arg =
+        trimmed === '/connect' ? undefined : trimmed.slice('/connect'.length).trim().split(/\s+/)[0]
       // debounce to avoid races during fast typing
       const handle = setTimeout(() => {
         const now = store.input().trim()
@@ -458,8 +467,13 @@ export default function App() {
 
   const handlePaletteInsert = (text: string) => {
     const trimmed = text.trim()
-    if (trimmed === '/connect' || trimmed.startsWith('/connect ') || trimmed.startsWith('/connect\t')) {
-      const arg = trimmed === '/connect' ? undefined : trimmed.slice('/connect'.length).trim().split(/\s+/)[0]
+    if (
+      trimmed === '/connect' ||
+      trimmed.startsWith('/connect ') ||
+      trimmed.startsWith('/connect\t')
+    ) {
+      const arg =
+        trimmed === '/connect' ? undefined : trimmed.slice('/connect'.length).trim().split(/\s+/)[0]
       openConnect(arg)
       return
     }
@@ -512,7 +526,8 @@ export default function App() {
           }}
         >
           {/* top bar */}
-          <header data-slot="header"
+          <header
+            data-slot="header"
             style={{
               height: '46px',
               'flex-shrink': '0',
@@ -1091,7 +1106,11 @@ export default function App() {
                       }}
                     />
                   </div>
-                  <ActivityPanel store={store} collapsed={activityCollapsed()} onToggle={() => setActivityCollapsed(!activityCollapsed())} />
+                  <ActivityPanel
+                    store={store}
+                    collapsed={activityCollapsed()}
+                    onToggle={() => setActivityCollapsed(!activityCollapsed())}
+                  />
                 </div>
               </Show>
             }
@@ -1115,14 +1134,22 @@ export default function App() {
                   onPaletteOpen={() => setPaletteOpen(true)}
                 />
               </div>
-              <ActivityPanel store={store} collapsed={activityCollapsed()} onToggle={() => setActivityCollapsed(!activityCollapsed())} />
+              <ActivityPanel
+                store={store}
+                collapsed={activityCollapsed()}
+                onToggle={() => setActivityCollapsed(!activityCollapsed())}
+              />
             </div>
           </Show>
           <QuestionPrompt store={store} />
         </div>
         {/* Activity scrim on narrow screens */}
         <Show when={!activityCollapsed()}>
-          <div class="activity-scrim" aria-hidden="true" onClick={() => setActivityCollapsed(true)} />
+          <div
+            class="activity-scrim"
+            aria-hidden="true"
+            onClick={() => setActivityCollapsed(true)}
+          />
         </Show>
       </div>
       <SettingsPanel

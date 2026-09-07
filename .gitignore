@@ -8,6 +8,7 @@ dist
 
 # runtime config written by PATCH /config during tests/smoke
 mira.json
+.mira/
 .mira/local.json
 
 # runtime SQLite database (sessions, issued api_keys, WAL/SHM) — never commit

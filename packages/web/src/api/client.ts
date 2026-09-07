@@ -322,6 +322,17 @@ export function clearApiUrl(): void {
   } catch {}
 }
 
+/**
+ * Shared default when no explicit URL is configured.
+ * Prefers the browser origin (tunnel / same-origin) → falls back to localhost.
+ */
+export function defaultApiUrl(): string {
+  if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
+    return window.location.origin
+  }
+  return 'http://127.0.0.1:4096'
+}
+
 function baseUrl(): string {
   const runtime = getRuntimeApiUrl()
   if (runtime) return runtime
@@ -330,7 +341,7 @@ function baseUrl(): string {
   // dev proxy: relative urls go through Vite proxy to :4096
   // prod: same origin unless VITE_API_URL set
   if (typeof window !== 'undefined' && window.location.port === '3000') return ''
-  return 'http://127.0.0.1:4096'
+  return defaultApiUrl()
 }
 
 // ── Auth (bearer token; servers with MIRA_TOKEN/MIRA_API_KEYS require it) ──

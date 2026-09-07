@@ -45,6 +45,7 @@ import { mountToolsRoutes } from './routes/tools-routes.js'
 import { mountStaticRoutes } from './routes/static.js'
 import { mountMiddleware } from './middleware/index.js'
 import { boundSend, WS_CLOSE_TOO_SLOW } from './ws-backpressure.js'
+import { log, warn, error } from './util/logger.js'
 
 type PartialMiraConfig = Partial<MiraConfig>
 
@@ -54,7 +55,7 @@ const PORT_RAW =
 const PORT = (() => {
   const n = Number(PORT_RAW)
   if (!Number.isFinite(n) || n <= 0 || n > 65535) {
-    console.error(`[mira] invalid PORT=${PORT_RAW}, falling back to 4096`)
+    error(`invalid PORT=${PORT_RAW}, falling back to 4096`)
     return 4096
   }
   return Math.floor(n)
@@ -76,9 +77,7 @@ if (!GIT_SHA) {
 // ── Security config ────────────────────────────────────────────────
 const REQUIRED_TOKEN = process.env.MIRA_TOKEN ?? ''
 if (REQUIRED_TOKEN === 'change-me-to-a-long-random-secret') {
-  console.warn(
-    '[mira] ⚠️  MIRA_TOKEN is placeholder — set a real secret via /root/.mira/mira.env or env',
-  )
+  warn('⚠️  MIRA_TOKEN is placeholder — set a real secret via /root/.mira/mira.env or env')
 }
 const API_KEY_OWNERS = new Map<string, string>()
 for (const pair of (process.env.MIRA_API_KEYS ?? '')
@@ -94,9 +93,7 @@ if (
   API_KEY_OWNERS.size === 0 &&
   process.env.MIRA_STRICT_AUTH !== '0'
 ) {
-  console.error(
-    '[mira] ❌ MIRA_TOKEN or MIRA_API_KEYS required in production — refusing to start without auth',
-  )
+  error('❌ MIRA_TOKEN or MIRA_API_KEYS required in production — refusing to start without auth')
   process.exit(1)
 }
 let OWNERSHIP_ENABLED = API_KEY_OWNERS.size > 0
@@ -116,15 +113,15 @@ function tokenEquals(a: string, b: string): boolean {
 const HOST = process.env.HOST ?? '127.0.0.1'
 const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '0.0.0.0', '::1'])
 if (!ALLOWED_HOSTS.has(HOST)) {
-  console.warn(`[mira] ⚠️  HOST=${HOST} not in allowed list, defaulting to 127.0.0.1`)
+  warn(`⚠️  HOST=${HOST} not in allowed list, defaulting to 127.0.0.1`)
 }
 const CORS_ORIGIN_LIST = (process.env.CORS_ORIGINS ?? '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)
 if (process.env.NODE_ENV === 'production' && HOST === '0.0.0.0' && CORS_ORIGIN_LIST.length === 0) {
-  console.error(
-    '[mira] ❌ CORS_ORIGINS must be set when HOST=0.0.0.0 in production — refusing to start with open CORS',
+  error(
+    '❌ CORS_ORIGINS must be set when HOST=0.0.0.0 in production — refusing to start with open CORS',
   )
   if (process.env.MIRA_STRICT_CORS !== '0') process.exit(1)
 }
@@ -196,9 +193,9 @@ async function initOtel() {
       instrumentations: [getNodeAutoInstrumentations()],
     })
     sdk.start()
-    console.log(`[mira] OTel tracing → ${endpoint}`)
+    log(`OTel tracing → ${endpoint}`)
   } catch (e) {
-    console.warn('[mira] OTel init failed:', String(e))
+    warn('OTel init failed:', String(e))
   }
 }
 
@@ -231,15 +228,15 @@ function ownerOfSession(sessionID: string): Promise<string | null> {
 
 async function main() {
   await initOtel()
-  console.log(`[mira] starting server on :${PORT} — Bun ${Bun.version}`)
+  log(`starting server on :${PORT} — Bun ${Bun.version}`)
 
   const config = await loadConfig()
-  console.log(`[mira] model=${config.model}`)
+  log(`model=${config.model}`)
 
   const db = createDatabase(process.env.MIRA_DB ?? './data/mira.db')
   await migrate(db)
   dbRef = db
-  console.log(`[mira] storage ready`)
+  log(`storage ready`)
 
   // Memory Bank init
   try {
@@ -262,10 +259,10 @@ async function main() {
           await Bun.write(`${bankDir}/${name}`, content)
         } catch {}
       }
-      console.log(`[mira] memory_bank initialized at ${bankDir} (5 files)`)
+      log(`memory_bank initialized at ${bankDir} (5 files)`)
     }
   } catch (e) {
-    console.warn('[mira] memory_bank init failed:', String(e))
+    warn('memory_bank init failed:', String(e))
   }
 
   // Load runtime-issued API keys from db
@@ -275,28 +272,28 @@ async function main() {
       owner: string
     }[]
     for (const r of rows) API_KEY_OWNERS.set(r.key, r.owner)
-    if (rows.length) console.log(`[mira] loaded ${rows.length} issued API key(s) from db`)
+    if (rows.length) log(`loaded ${rows.length} issued API key(s) from db`)
     OWNERSHIP_ENABLED = API_KEY_OWNERS.size > 0
   } catch (e) {
-    console.warn('[mira] failed to load issued API keys:', String(e))
+    warn('failed to load issued API keys:', String(e))
   }
 
   const bus = new Bus()
   bus.subscribe('server.heartbeat', () => {})
 
   const permissions = new PermissionManager(config.permission)
-  console.log(`[mira] permissions: ${Object.keys(config.permission).length} rules`)
+  log(`permissions: ${Object.keys(config.permission).length} rules`)
 
   const guardrails = new GuardrailsManager(undefined, config, db)
-  console.log(
-    `[mira] guardrails: enforce=${(config.guardrails?.enforce ?? (process.env.NODE_ENV === 'production' || process.env.HOST === '0.0.0.0')) ? 'enabled' : 'disabled'} (DB mirror: audit_entries)`,
+  log(
+    `guardrails: enforce=${(config.guardrails?.enforce ?? (process.env.NODE_ENV === 'production' || process.env.HOST === '0.0.0.0')) ? 'enabled' : 'disabled'} (DB mirror: audit_entries)`,
   )
 
   const registry = new SubgatewayRegistry(config)
   const router = new GatewayRouter(registry, config)
   const gateway = createRoutingGateway(registry, router)
-  console.log(
-    `[mira] gateway ready — providers: ${Object.keys(config.provider).join(', ')} lanes: ${registry.lanes().join(', ')}`,
+  log(
+    `gateway ready — providers: ${Object.keys(config.provider).join(', ')} lanes: ${registry.lanes().join(', ')}`,
   )
 
   // Hot-reload subgateways when config changes (PATCH /config)
@@ -305,9 +302,9 @@ async function main() {
       const newConfig = (event.payload as { config?: MiraConfig })?.config ?? getConfig()
       registry.syncFromConfig(newConfig)
       router.syncConfig(newConfig)
-      console.log(`[mira] subgateways reloaded from config.updated`)
+      log(`subgateways reloaded from config.updated`)
     } catch (e) {
-      console.warn('[mira] failed to reload subgateways:', String(e))
+      warn('failed to reload subgateways:', String(e))
     }
   })
 
@@ -315,8 +312,8 @@ async function main() {
   await learning.knowledge.load()
   setSharedKnowledge(learning.knowledge)
   learning.scheduler.start()
-  console.log(
-    `[mira] learning ready — knowledge=${learning.knowledge.size()} scheduler=${learning.scheduler.status().running ? 'running' : 'idle'}`,
+  log(
+    `learning ready — knowledge=${learning.knowledge.size()} scheduler=${learning.scheduler.status().running ? 'running' : 'idle'}`,
   )
 
   const tools = new ToolRegistry({ db, bus, permissions, gateway, guardrails })
@@ -324,7 +321,7 @@ async function main() {
   const mcp = new MCPManager({ bus, tools, config: config.mcp })
   await mcp.connectAll()
   mcp.startHealthCheck(30_000)
-  console.log(`[mira] tools: ${tools.count()} registered (${mcp.count()} from MCP)`)
+  log(`tools: ${tools.count()} registered (${mcp.count()} from MCP)`)
 
   const prompt = new SessionPrompt({
     db,
@@ -810,22 +807,20 @@ async function main() {
     },
   })
 
-  console.log(`[mira] ✓ listening on http://${server.hostname}:${server.port}`)
-  console.log(`[mira]   liveness: GET /healthz (no auth) · detail: GET /health`)
-  console.log(`[mira]   prompt:  POST /session/:id/prompt  (SSE)`)
-  console.log(
-    `[mira]   ws:      WS   /  (BusEvent stream)${terminalEnabled() ? ' · WS /terminal (pty)' : ' · terminal disabled'}`,
+  log(`✓ listening on http://${server.hostname}:${server.port}`)
+  log(`  liveness: GET /healthz (no auth) · detail: GET /health`)
+  log(`  prompt:  POST /session/:id/prompt  (SSE)`)
+  log(
+    `  ws:      WS   /  (BusEvent stream)${terminalEnabled() ? ' · WS /terminal (pty)' : ' · terminal disabled'}`,
   )
-  console.log(
-    `[mira]   terminal: GET /terminal → {enabled:${terminalEnabled()}, sandbox:${terminalSandboxed()}}`,
-  )
+  log(`  terminal: GET /terminal → {enabled:${terminalEnabled()}, sandbox:${terminalSandboxed()}}`)
 
   // Graceful shutdown
   let shuttingDown = false
   const shutdown = async (signal: string) => {
     if (shuttingDown) return
     shuttingDown = true
-    console.log(`\n[mira] ${signal} — draining…`)
+    log(`\n${signal} — draining…`)
     clearInterval(rateLimitCleanup)
     try {
       server.stop(true)
@@ -853,7 +848,7 @@ async function main() {
 
 if (import.meta.main) {
   main().catch((err) => {
-    console.error('[mira] fatal:', err)
+    error('fatal:', err)
     process.exit(1)
   })
 }

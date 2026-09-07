@@ -51,11 +51,6 @@ export function createSSEParser(opts: SSEParserOptions) {
       reset()
       return
     }
-    // Empty data with no event is a heartbeat/comment — ignore
-    if (data === '' && !currentEvent) {
-      reset()
-      return
-    }
     opts.onEvent({
       event: currentEvent,
       data,
