@@ -451,6 +451,7 @@ export default function App() {
       }
     >
       <div
+        data-slot="app-layout"
         style={{
           display: 'flex',
           height: '100vh',
@@ -467,6 +468,7 @@ export default function App() {
         </Show>
 
         <div
+          data-slot="main-column"
           style={{
             flex: '1',
             display: 'flex',
@@ -477,7 +479,7 @@ export default function App() {
           }}
         >
           {/* top bar */}
-          <header
+          <header data-slot="header"
             style={{
               height: '46px',
               'flex-shrink': '0',

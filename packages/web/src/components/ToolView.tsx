@@ -2,6 +2,7 @@ import { For, Show, createSignal, createResource } from 'solid-js'
 import type { AppStore } from '../stores/app'
 import { api, type ToolInfo, type Snapshot, type Finding, type Job } from '../api/client'
 import { toast } from './Toast'
+import { DiffViewer } from './MessagePart'
 
 type Tab = 'todos' | 'tools' | 'events' | 'history' | 'findings' | 'jobs'
 
@@ -592,11 +593,13 @@ export function ToolView(props: { store: AppStore }) {
                         return (
                           <div
                             class="card"
+                            data-slot="snapshot-card"
                             style={{
                               padding: '9px 11px',
                               display: 'flex',
                               gap: '9px',
                               'align-items': 'center',
+                              'flex-wrap': 'wrap',
                             }}
                           >
                             <div style={{ flex: '1', 'min-width': '0' }}>
@@ -695,34 +698,38 @@ export function ToolView(props: { store: AppStore }) {
                               ↩ revert
                             </button>
                             <Show when={detail()}>
-                              {(d) => (
-                                <div
-                                  style={{
-                                    'margin-top': '8px',
-                                    'font-family': 'var(--font-mono)',
-                                    'font-size': 'var(--fs-2xs)',
-                                    'white-space': 'pre-wrap',
-                                    background: 'var(--bg-soft)',
-                                    padding: '8px',
-                                    'border-radius': 'var(--r-sm)',
-                                    border: '1px solid var(--border)',
-                                  }}
-                                >
-                                  <div style={{ 'font-weight': '600', 'margin-bottom': '4px' }}>
-                                    Diff preview for {d().path}
+                              {(d) => {
+                                const snapLines = () => (d().snapshotContent ?? '').split('\n').length
+                                const currLines = () => (d().currentContent ?? '').split('\n').length
+                                const added = () => Math.max(0, currLines() - snapLines())
+                                const removed = () => Math.max(0, snapLines() - currLines())
+                                return (
+                                  <div
+                                    data-slot="snapshot-diff"
+                                    style={{
+                                      'margin-top': '8px',
+                                      display: 'flex',
+                                      'flex-direction': 'column',
+                                      gap: '8px',
+                                      width: '100%',
+                                    }}
+                                  >
+                                    <div style={{ display: 'flex', gap: '6px', 'align-items': 'center', 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'font-family': 'var(--font-mono)' }}>
+                                      <span>{d().path}</span>
+                                      <span style={{ 'margin-left': 'auto', display: 'inline-flex', gap: '6px' }}>
+                                        <Show when={added() > 0}>
+                                          <span style={{ color: 'var(--ok)', 'font-weight': '600' }}>+{added()} lines</span>
+                                        </Show>
+                                        <Show when={removed() > 0}>
+                                          <span style={{ color: 'var(--danger)', 'font-weight': '600' }}>-{removed()} lines</span>
+                                        </Show>
+                                        <span>{snapLines()} → {currLines()} lines</span>
+                                      </span>
+                                    </div>
+                                    <DiffViewer path={d().path} before={d().snapshotContent ?? '(empty)'} after={d().currentContent ?? '(file missing)'} />
                                   </div>
-                                  <div style={{ color: 'var(--fg-muted)' }}>
-                                    Snapshot ({d().existedBefore ? 'edit' : 'new file'}):
-                                  </div>
-                                  <pre style={{ margin: '4px 0', 'white-space': 'pre-wrap' }}>
-                                    {d().snapshotContent ?? '(empty)'}
-                                  </pre>
-                                  <div style={{ color: 'var(--fg-muted)' }}>Current:</div>
-                                  <pre style={{ margin: '4px 0', 'white-space': 'pre-wrap' }}>
-                                    {d().currentContent ?? '(file missing)'}
-                                  </pre>
-                                </div>
-                              )}
+                                )
+                              }}
                             </Show>
                           </div>
                         )

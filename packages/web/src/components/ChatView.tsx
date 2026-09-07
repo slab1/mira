@@ -5,6 +5,8 @@ import type { Message, Part, Job, JsonValue } from '../api/client'
 import { api } from '../api/client'
 import { SlashAutocomplete, filterCommands } from './CommandPalette'
 import { toast } from './Toast'
+import { TurnList } from './SessionTurn'
+import { PromptInput, type FilePill } from './PromptInput'
 
 const EXAMPLE_PROMPTS = [
   "Explain this repo's architecture",
@@ -312,6 +314,18 @@ export function ChatView(props: {
     })
   }
 
+  // File pills for @ mentions
+  const [filePills, setFilePills] = createSignal<FilePill[]>([])
+  const addFilePill = (path: string) => {
+    setFilePills((prev) => (prev.some((p) => p.path === path) ? prev : [...prev, { path }]))
+  }
+  const removeFilePill = (index: number) => {
+    setFilePills((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  // Model selector
+  const [selectedModel, setSelectedModel] = createSignal('')
+
   // Slash autocomplete
   const slashQuery = () => {
     const v = props.store.input()
@@ -594,7 +608,7 @@ export function ChatView(props: {
               >
                 {/* Pinned messages strip */}
                 <Show when={pinnedIds().size > 0}>
-                  <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap', 'align-items': 'center', padding: '6px 0', 'border-bottom': '1px solid var(--border)', 'margin-bottom': '4px' }}>
+                  <div data-slot="pinned-strip" style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap', 'align-items': 'center', padding: '6px 0', 'border-bottom': '1px solid var(--border)', 'margin-bottom': '4px' }}>
                     <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'font-weight': '600', 'letter-spacing': '0.04em', 'text-transform': 'uppercase' }}>Pinned</span>
                     <For each={s().messages.filter((m) => pinnedIds().has(m.id))}>
                       {(m) => (
@@ -609,248 +623,33 @@ export function ChatView(props: {
                   </div>
                 </Show>
 
-                <For each={s().messages}>
-                  {(m, i) => {
-                    const isUser = m.role === 'user'
-                    const isLast = () => i() === s().messages.length - 1
-                    const showCaretHere = () => showCaret() && isLast()
-                    const isPinned = () => pinnedIds().has(m.id)
-                    const reasoningParts = () => m.parts?.filter((p) => p.type === 'reasoning') ?? []
-                    const toolCount = () => m.parts?.filter((p) => p.type === 'tool_call' || p.type === 'tool_result').length ?? 0
-
-                    return (
-                      <Show
-                        when={m.role === 'system'}
-                        fallback={
-                          <Show
-                            when={m.role === 'tool'}
-                            fallback={
-                              <div
-                                class="msg-in"
-                                style={{
-                                  display: 'flex',
-                                  'flex-direction': 'column',
-                                  'align-items': isUser ? 'flex-end' : 'stretch',
-                                }}
-                              >
-                                <Show
-                                  when={!isUser}
-                                  fallback={
-                                    <>
-                                      <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'margin-bottom': '3px' }}>
-                                        You · {timeOf(m)}
-                                        {m.queued ? ' · ⏳ queued' : ''}
-                                        <Show when={isPinned()}>
-                                          <span class="msg-pinned-badge" style={{ 'margin-left': '6px' }}>
-                                            📌 pinned
-                                          </span>
-                                        </Show>
-                                      </span>
-                                      <div
-                                        style={{
-                                          'max-width': 'min(100%, 56ch)',
-                                          background: 'var(--accent-soft)',
-                                          border: '1px solid var(--accent-border)',
-                                          'border-radius': 'var(--r-lg)',
-                                          'border-top-right-radius': 'var(--r-sm)',
-                                          padding: '9px 13px',
-                                        }}
-                                      >
-                                        <FencedContent text={contentOf(m)} isUser={true} />
-                                      </div>
-                                      <div class="msg-actions">
-                                        <button type="button" class="msg-action-btn" onClick={() => togglePin(m.id)} aria-label={isPinned() ? 'Unpin message' : 'Pin message'}>
-                                          {isPinned() ? 'Unpin' : '📌 Pin'}
-                                        </button>
-                                        <button type="button" class="msg-action-btn" onClick={() => branchFrom(m)} aria-label="Branch conversation">
-                                          ⎇ Branch
-                                        </button>
-                                        <button
-                                          type="button"
-                                          class="msg-action-btn"
-                                          onClick={() => {
-                                            void navigator.clipboard.writeText(contentOf(m))
-                                            toast.success('Copied')
-                                          }}
-                                          aria-label="Copy message"
-                                        >
-                                          ⧉ Copy
-                                        </button>
-                                      </div>
-                                    </>
-                                  }
-                                >
-                                  <div style={{ display: 'flex', gap: '10px', 'align-items': 'flex-start' }}>
-                                    <div
-                                      aria-hidden="true"
-                                      style={{
-                                        width: '22px',
-                                        height: '22px',
-                                        'border-radius': '7px',
-                                        background: 'var(--grad-brand)',
-                                        display: 'grid',
-                                        'place-items': 'center',
-                                        color: 'var(--on-accent)',
-                                        'font-size': '11px',
-                                        flex: 'none',
-                                        'margin-top': '2px',
-                                      }}
-                                    >
-                                      ✦
-                                    </div>
-                                    <div style={{ flex: '1', 'min-width': '0' }}>
-                                      <div
-                                        style={{
-                                          'font-size': 'var(--fs-2xs)',
-                                          color: 'var(--fg-faint)',
-                                          'margin-bottom': '3px',
-                                          display: 'flex',
-                                          'align-items': 'center',
-                                          gap: '8px',
-                                          'flex-wrap': 'wrap',
-                                        }}
-                                      >
-                                        <span>Mira · {timeOf(m)}</span>
-                                        <Show when={isPinned()}>
-                                          <span class="msg-pinned-badge">📌 pinned</span>
-                                        </Show>
-                                        <Show when={toolCount() > 0}>
-                                          <span style={{ 'font-family': 'var(--font-mono)', color: 'var(--fg-subtle)' }}>
-                                            {toolCount()} tool call{toolCount() === 1 ? '' : 's'} → Activity
-                                          </span>
-                                        </Show>
-                                      </div>
-
-                                      {/* Reasoning (collapsible, not conflated with tool calls) */}
-                                      <For each={reasoningParts()}>{(rp) => <ReasoningBlock text={rp.text ?? ''} />}</For>
-
-                                      <FencedContent text={contentOf(m)} streaming={showCaretHere()} />
-
-                                      <Show when={showCaretHere()}>
-                                        <span class="caret" aria-hidden="true" style={{ display: 'inline-block', width: '8px', height: '14px', background: 'var(--accent)', 'margin-left': '2px', 'vertical-align': 'text-bottom' }} />
-                                      </Show>
-
-                                      {/* Citations / provenance */}
-                                      <Show when={m.provenance && m.provenance.length > 0}>
-                                        <div style={{ display: 'flex', gap: '4px', 'flex-wrap': 'wrap', 'margin-top': '8px' }}>
-                                          <For each={m.provenance ?? []}>
-                                            {(prov) => <CitationChip label={prov.label} source={prov.source} />}
-                                          </For>
-                                        </div>
-                                      </Show>
-
-                                      {/* Message actions */}
-                                      <div class="msg-actions">
-                                        <button type="button" class="msg-action-btn" onClick={() => togglePin(m.id)} aria-label={isPinned() ? 'Unpin message' : 'Pin message'}>
-                                          {isPinned() ? 'Unpin' : '📌 Pin'}
-                                        </button>
-                                        <button type="button" class="msg-action-btn" onClick={() => branchFrom(m)} aria-label="Branch conversation">
-                                          ⎇ Branch
-                                        </button>
-                                        <button
-                                          type="button"
-                                          class="msg-action-btn"
-                                          onClick={() => {
-                                            void navigator.clipboard.writeText(contentOf(m))
-                                            toast.success('Copied')
-                                          }}
-                                          aria-label="Copy message"
-                                        >
-                                          ⧉ Copy
-                                        </button>
-                                        <button
-                                          type="button"
-                                          class="msg-action-btn"
-                                          onClick={() => {
-                                            const sessionId = props.store.state.currentId
-                                            const messageId = m.id
-                                            if (!sessionId || !messageId) return
-                                            void api
-                                              .revertSession(sessionId, messageId)
-                                              .then(() => {
-                                                props.store.loadMessages(sessionId)
-                                                toast.success('Rewound to message')
-                                              })
-                                              .catch((e) => toast.error(`Rewind failed: ${(e as Error).message}`))
-                                          }}
-                                          aria-label="Rewind to this message"
-                                        >
-                                          ↩ Rewind
-                                        </button>
-                                      </div>
-
-                                      {/* Feedback */}
-                                      <FeedbackRow messageId={m.id} />
-                                    </div>
-                                  </div>
-                                </Show>
-                              </div>
-                            }
-                          >
-                            {/* tool-role message — compact, since ActivityPanel is primary */}
-                            <div class="msg-in" style={{ display: 'flex', gap: '10px', 'align-items': 'flex-start', opacity: '0.7' }}>
-                              <div
-                                aria-hidden="true"
-                                style={{
-                                  width: '22px',
-                                  height: '22px',
-                                  'border-radius': '7px',
-                                  background: 'var(--bg-surface)',
-                                  border: '1px solid var(--border-strong)',
-                                  display: 'grid',
-                                  'place-items': 'center',
-                                  color: 'var(--fg-muted)',
-                                  'font-size': '11px',
-                                  flex: 'none',
-                                  'margin-top': '2px',
-                                }}
-                              >
-                                ⚙
-                              </div>
-                              <div style={{ flex: '1', 'min-width': '0' }}>
-                                <div style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'margin-bottom': '3px' }}>Tool · {timeOf(m)} → see Activity</div>
-                                <pre
-                                  style={{
-                                    margin: '0',
-                                    'white-space': 'pre-wrap',
-                                    'word-break': 'break-word',
-                                    'font-family': 'var(--font-mono)',
-                                    'font-size': 'var(--fs-xs)',
-                                    'line-height': '1.55',
-                                    color: 'var(--fg-muted)',
-                                  }}
-                                >
-                                  {contentOf(m).slice(0, 300)}
-                                  {contentOf(m).length > 300 ? '…' : ''}
-                                </pre>
-                              </div>
-                            </div>
-                          </Show>
-                        }
-                      >
-                        <div class="msg-in" role="note" style={{ 'align-self': 'center', 'max-width': '60ch', 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)', 'text-align': 'center', padding: '2px 0' }}>
-                          {contentOf(m)}
-                        </div>
-                      </Show>
-                    )
+                <TurnList
+                  messages={s().messages}
+                  streaming={s().streaming}
+                  error={s().error}
+                  pinnedIds={pinnedIds()}
+                  onCopy={(text) => toast.success('Copied')}
+                  onBranch={branchFrom}
+                  onRewind={(m) => {
+                    const sessionId = props.store.state.currentId
+                    const messageId = m.id
+                    if (!sessionId || !messageId) return
+                    void api
+                      .revertSession(sessionId, messageId)
+                      .then(() => {
+                        props.store.loadMessages(sessionId)
+                        toast.success('Rewound to message')
+                      })
+                      .catch((e) => toast.error(`Rewind failed: ${(e as Error).message}`))
                   }}
-                </For>
+                  onPin={togglePin}
+                  onClearError={() => props.store.clearError()}
+                />
 
                 {/* ARIA live region for streaming */}
                 <div aria-live="polite" aria-atomic="false" class="sr-only">
                   <Show when={s().streaming}>{s().streamText.slice(-200)}</Show>
                 </div>
-
-                {/* Typing indicator */}
-                <Show when={typingDots()}>
-                  <div class="msg-in" style={{ display: 'flex', gap: '4px', padding: '4px 0 0 32px' }} aria-label="Mira is responding">
-                    <div class="streaming-indicator">
-                      <span class="streaming-dot" />
-                      <span class="streaming-dot" />
-                      <span class="streaming-dot" />
-                    </div>
-                  </div>
-                </Show>
               </Show>
               <div style={{ height: '4px', 'flex-shrink': '0' }} />
             </Show>
@@ -970,70 +769,33 @@ export function ChatView(props: {
           <form
             onSubmit={handleSubmit}
             class="composer"
+            data-slot="composer"
             style={{ display: 'flex', 'flex-direction': 'column', padding: '10px 12px 9px', gap: '8px', position: 'relative' }}
           >
             <Show when={slashVisible()}>
               <SlashAutocomplete query={slashQuery()} commands={slashCommands()} selected={slashIndex()} onSelect={handleSlashSelect} onClose={() => setSlashDismissed(true)} />
             </Show>
-            <textarea
-              ref={inputRef}
+            <PromptInput
               value={props.store.input()}
-              onKeyDown={onKeyDown}
-              onInput={(e) => {
-                props.store.setInput(e.currentTarget.value)
-                autoGrow()
-                if (e.currentTarget.value.startsWith('/')) void props.settings?.loadAll()
+              onInput={(v) => {
+                props.store.setInput(v)
+                if (v.startsWith('/')) void props.settings?.loadAll()
               }}
-              placeholder="Message Mira…  ( / for commands · ⌘K palette · ⌘↵ send )"
-              aria-label="Message Mira"
-              aria-autocomplete="list"
-              aria-expanded={slashQuery().startsWith('/') && slashFiltered().length > 0 ? 'true' : 'false'}
-              rows={1}
-              style={{ 'min-height': '24px', 'max-height': '160px' }}
+              onSubmit={() => props.store.sendPrompt()}
+              onQueue={() => {
+                const val = props.store.input().trim()
+                if (val) void props.store.sendPrompt(val)
+              }}
+              onStop={() => props.store.stopStream()}
+              streaming={s().streaming}
+              settings={props.settings}
+              selectedModel={selectedModel()}
+              onModelSelect={setSelectedModel}
+              filePills={filePills()}
+              onRemovePill={removeFilePill}
+              onAddPill={addFilePill}
+              slashCommands={slashCommands()}
             />
-            <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', gap: '10px' }}>
-              <span class="sr-only">Press Enter to send, Shift+Enter for a newline.</span>
-              <span aria-hidden="true" style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', display: 'flex', gap: '5px', 'align-items': 'center' }}>
-                <span class="kbd">↵</span> send <span style={{ opacity: '0.5' }}>·</span> <span class="kbd">⇧↵</span> newline <span style={{ opacity: '0.5' }}>·</span> <span class="kbd">⌘↵</span> send
-              </span>
-              <Show
-                when={!s().streaming}
-                fallback={
-                  <div style={{ display: 'flex', gap: '8px', flex: 'none' }}>
-                    <button
-                      type="submit"
-                      class="btn btn-warn-ghost"
-                      disabled={!props.store.input().trim()}
-                      title="Queue this message — it runs after the current turn"
-                      aria-label="Queue message"
-                      style={{ padding: '7px 12px', 'font-size': 'var(--fs-sm)', 'border-radius': 'var(--r-md)', 'min-height': '36px' }}
-                    >
-                      Queue ↵
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-danger-ghost"
-                      onClick={() => props.store.stopStream()}
-                      title="Stop the current response"
-                      aria-label="Stop response"
-                      style={{ padding: '7px 12px', 'font-size': 'var(--fs-sm)', 'border-radius': 'var(--r-md)', 'min-height': '36px' }}
-                    >
-                      ■ Stop
-                    </button>
-                  </div>
-                }
-              >
-                <button
-                  type="submit"
-                  class="btn btn-solid"
-                  disabled={!props.store.input().trim()}
-                  aria-label="Send message"
-                  style={{ padding: '7px 16px', 'font-size': 'var(--fs-sm)', flex: 'none', 'min-height': '36px' }}
-                >
-                  Send ↵
-                </button>
-              </Show>
-            </div>
           </form>
         </div>
       </Show>

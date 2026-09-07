@@ -2195,6 +2195,48 @@ html {
   }
 }
 
+/* ── SessionTurn + MessagePart ─────────────────────────────────────── */
+.tool-card {
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+.tool-card:hover {
+  border-color: var(--border-strong);
+}
+.tool-card-running {
+  border-color: var(--warn-border);
+  box-shadow: 0 0 0 1px var(--warn-soft);
+}
+.tool-card-error {
+  border-color: var(--danger-border);
+}
+
+/* PromptInput */
+[data-slot='file-pills'] {
+  animation: fade-up var(--dur-fast) var(--ease) both;
+}
+[data-slot='at-autocomplete'] {
+  animation: fade-up var(--dur-fast) var(--ease) both;
+}
+[data-slot='model-selector-dropdown'] {
+  animation: fade-up var(--dur-fast) var(--ease) both;
+}
+
+/* Diff viewer */
+[data-slot='diff-viewer'] {
+  animation: fade-up var(--dur-fast) var(--ease) both;
+}
+[data-slot='diff-content'] span {
+  font-variant-ligatures: none;
+}
+
+/* Turn */
+[data-slot='turn'] + [data-slot='turn'] {
+  border-top: 1px solid var(--border);
+  padding-top: var(--sp-4);
+}
+
 /* Spend cockpit */
 .cost-group {
   display: inline-flex;
