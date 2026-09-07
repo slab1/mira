@@ -17,7 +17,8 @@ export * from './pricing.js'
 export * from './registry.js'
 export * from './circuit-breaker.js'
 export * from './rate-limiter.js'
-export * from './cache.js'
+export { SemanticCache, createSemanticCache } from './cache.js'
+export type { CachedResponse as CacheResponse, CacheStats as CacheStatsFromCache } from './cache.js'
 export * from './health.js'
 
 export function createProviderRegistry(config: MiraConfig): ProviderRegistry {

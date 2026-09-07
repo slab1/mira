@@ -13,6 +13,7 @@ export {
 export type { UsageStats } from '../gateway/pricing.js'
 
 import { priceFor as _priceFor, PRICING_TABLE as _PRICING_TABLE } from '../gateway/pricing.js'
+import type { UsageStats } from '../gateway/pricing.js'
 
 /**
  * Returns the cost in USD for a given model and token counts.
