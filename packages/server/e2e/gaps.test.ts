@@ -43,11 +43,20 @@ afterAll(() => proc?.kill())
 
 describe("gaps: providers expandEnv", () => {
   test("GET /providers hasKey reflects expanded {env:VAR}", async () => {
-    const res = await fetch(`${BASE}/providers`)
-    const data = await res.json() as unknown
-    const list = Array.isArray(data) ? data as Array<{ id: string; hasKey: boolean }> : []
-    if (!Array.isArray(data)) {
-      console.error("GET /providers did not return array:", JSON.stringify(data).slice(0, 500))
+    // Retry a few times — CI can be slow to start server, and /providers may 500 briefly
+    let lastData: unknown = null
+    let list: Array<{ id: string; hasKey: boolean }> = []
+    for (let i = 0; i < 5; i++) {
+      const res = await fetch(`${BASE}/providers`)
+      const data = await res.json() as unknown
+      lastData = data
+      list = Array.isArray(data) ? data as Array<{ id: string; hasKey: boolean }> : []
+      if (list.find(p => p.id === "openrouter")) break
+      await Bun.sleep(500)
+    }
+    if (!list.find(p => p.id === "openrouter")) {
+      console.error("GET /providers did not return openrouter after retries:", JSON.stringify(lastData).slice(0, 1000))
+      console.error("list:", JSON.stringify(list).slice(0, 1000))
     }
     const or = list.find(p => p.id === "openrouter")
     expect(or).toBeDefined()
