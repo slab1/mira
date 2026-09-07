@@ -1,10 +1,609 @@
-import { createSignal, createEffect, For, Show, onCleanup } from 'solid-js'
+import { createSignal, createEffect, createMemo, For, Show, onCleanup } from 'solid-js'
 import type { SettingsStore } from '../stores/settings'
 import { api } from '../api/client'
-import type { MiraConfig, ThemeChoice } from '../api/client'
+import type { MiraConfig, ThemeChoice, ProviderEntry } from '../api/client'
 import { ConfirmDialog } from './ConfirmDialog'
 import { toast } from './Toast'
 import { useFocusTrap } from '../hooks/useFocusTrap'
+
+// ── ModelSelector ────────────────────────────────────────────────────
+
+type KnownModel = {
+  id: string
+  provider: string
+  label: string
+  context: string
+  pricing: string
+  capabilities: string[]
+}
+
+const KNOWN_MODELS: KnownModel[] = [
+  { id: 'openrouter/anthropic/claude-sonnet-4', provider: 'OpenRouter', label: 'Claude Sonnet 4', context: '200k', pricing: '$3/$15', capabilities: ['coding', 'reasoning', 'vision'] },
+  { id: 'openrouter/anthropic/claude-opus-4', provider: 'OpenRouter', label: 'Claude Opus 4', context: '200k', pricing: '$15/$75', capabilities: ['coding', 'reasoning', 'vision'] },
+  { id: 'openrouter/anthropic/claude-haiku-4', provider: 'OpenRouter', label: 'Claude Haiku 4', context: '200k', pricing: '$0.25/$1.25', capabilities: ['speed', 'vision'] },
+  { id: 'openrouter/deepseek/deepseek-v3.2-exp', provider: 'OpenRouter', label: 'DeepSeek V3.2 Exp', context: '128k', pricing: '$0.27/$1.10', capabilities: ['coding', 'reasoning'] },
+  { id: 'openrouter/deepseek/deepseek-chat', provider: 'OpenRouter', label: 'DeepSeek Chat', context: '128k', pricing: '$0.27/$1.10', capabilities: ['coding', 'reasoning'] },
+  { id: 'openrouter/deepseek/deepseek-reasoner', provider: 'OpenRouter', label: 'DeepSeek Reasoner', context: '128k', pricing: '$0.55/$2.19', capabilities: ['reasoning', 'coding'] },
+  { id: 'openrouter/openai/gpt-4o', provider: 'OpenRouter', label: 'GPT-4o', context: '128k', pricing: '$2.50/$10', capabilities: ['coding', 'vision', 'reasoning'] },
+  { id: 'openrouter/openai/gpt-4o-mini', provider: 'OpenRouter', label: 'GPT-4o Mini', context: '128k', pricing: '$0.15/$0.60', capabilities: ['speed', 'vision'] },
+  { id: 'openrouter/google/gemini-2.0-flash', provider: 'OpenRouter', label: 'Gemini 2.0 Flash', context: '1M', pricing: '$0.10/$0.40', capabilities: ['speed', 'vision'] },
+  { id: 'openrouter/google/gemini-2.0-pro', provider: 'OpenRouter', label: 'Gemini 2.0 Pro', context: '2M', pricing: '$1.25/$10', capabilities: ['reasoning', 'vision'] },
+  { id: 'openai/gpt-4o', provider: 'OpenAI', label: 'GPT-4o', context: '128k', pricing: '$2.50/$10', capabilities: ['coding', 'vision', 'reasoning'] },
+  { id: 'openai/gpt-4o-mini', provider: 'OpenAI', label: 'GPT-4o Mini', context: '128k', pricing: '$0.15/$0.60', capabilities: ['speed', 'vision'] },
+  { id: 'openai/gpt-4-turbo', provider: 'OpenAI', label: 'GPT-4 Turbo', context: '128k', pricing: '$10/$30', capabilities: ['coding', 'vision'] },
+  { id: 'openai/o1', provider: 'OpenAI', label: 'o1', context: '200k', pricing: '$15/$60', capabilities: ['reasoning', 'coding'] },
+  { id: 'openai/o1-mini', provider: 'OpenAI', label: 'o1 Mini', context: '128k', pricing: '$3/$12', capabilities: ['reasoning', 'speed'] },
+  { id: 'anthropic/claude-sonnet-4', provider: 'Anthropic', label: 'Claude Sonnet 4', context: '200k', pricing: '$3/$15', capabilities: ['coding', 'reasoning', 'vision'] },
+  { id: 'anthropic/claude-opus-4', provider: 'Anthropic', label: 'Claude Opus 4', context: '200k', pricing: '$15/$75', capabilities: ['coding', 'reasoning', 'vision'] },
+  { id: 'anthropic/claude-haiku-3.5', provider: 'Anthropic', label: 'Claude Haiku 3.5', context: '200k', pricing: '$0.80/$4', capabilities: ['speed', 'vision'] },
+  { id: 'google/gemini-2.0-flash', provider: 'Google', label: 'Gemini 2.0 Flash', context: '1M', pricing: '$0.10/$0.40', capabilities: ['speed', 'vision'] },
+  { id: 'google/gemini-2.0-pro', provider: 'Google', label: 'Gemini 2.0 Pro', context: '2M', pricing: '$1.25/$10', capabilities: ['reasoning', 'vision'] },
+  { id: 'google/gemini-1.5-pro', provider: 'Google', label: 'Gemini 1.5 Pro', context: '2M', pricing: '$1.25/$5', capabilities: ['reasoning', 'vision'] },
+  { id: 'deepseek/deepseek-chat', provider: 'DeepSeek', label: 'DeepSeek Chat', context: '128k', pricing: '$0.27/$1.10', capabilities: ['coding', 'reasoning'] },
+  { id: 'deepseek/deepseek-reasoner', provider: 'DeepSeek', label: 'DeepSeek Reasoner', context: '128k', pricing: '$0.55/$2.19', capabilities: ['reasoning', 'coding'] },
+  { id: 'deepseek/deepseek-coder', provider: 'DeepSeek', label: 'DeepSeek Coder', context: '128k', pricing: '$0.27/$1.10', capabilities: ['coding'] },
+]
+
+function providerDisplayName(raw: string): string {
+  const m: Record<string, string> = {
+    openrouter: 'OpenRouter',
+    anthropic: 'Anthropic',
+    openai: 'OpenAI',
+    google: 'Google',
+    deepseek: 'DeepSeek',
+  }
+  return m[raw.toLowerCase()] ?? raw.charAt(0).toUpperCase() + raw.slice(1)
+}
+
+function inferCapabilities(id: string): string[] {
+  const lower = id.toLowerCase()
+  const caps: string[] = []
+  if (lower.includes('claude') || lower.includes('gpt-4o') || lower.includes('sonnet') || lower.includes('opus') || lower.includes('coder') || lower.includes('deepseek')) caps.push('coding')
+  if (lower.includes('reason') || lower.includes('o1') || lower.includes('opus') || lower.includes('deepseek')) {
+    if (!caps.includes('reasoning')) caps.push('reasoning')
+  }
+  if (lower.includes('vision') || lower.includes('claude') || lower.includes('gpt-4o') || lower.includes('gemini') || lower.includes('vision')) {
+    if (!caps.includes('vision')) caps.push('vision')
+  }
+  if (lower.includes('mini') || lower.includes('haiku') || lower.includes('flash') || lower.includes('speed')) caps.push('speed')
+  // dedupe
+  return [...new Set(caps)].slice(0, 3)
+}
+
+function inferContext(id: string): string {
+  const lower = id.toLowerCase()
+  if (lower.includes('gemini-2')) return '1M+'
+  if (lower.includes('claude')) return '200k'
+  if (lower.includes('gpt-4') || lower.includes('o1') || lower.includes('deepseek')) return '128k'
+  return '—'
+}
+
+function ModelSelector(props: {
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  label: string
+  id: string
+  providers: ProviderEntry[]
+}) {
+  const [open, setOpen] = createSignal(false)
+  const [query, setQuery] = createSignal('')
+  const [highlight, setHighlight] = createSignal(0)
+  const [customMode, setCustomMode] = createSignal(false)
+  const [customValue, setCustomValue] = createSignal(props.value)
+
+  let wrapperRef!: HTMLDivElement
+  let inputRef!: HTMLInputElement
+  let listRef!: HTMLDivElement
+  let customInputRef!: HTMLInputElement
+
+  // Sync customValue when external value changes
+  createEffect(() => {
+    setCustomValue(props.value)
+    // if value is not in known/provider list, keep customMode hint but don't auto-open
+    if (props.value && !customMode()) {
+      setQuery('')
+    }
+  })
+
+  // Build merged model list: known + provider models (dedupe by id)
+  const allModels = createMemo(() => {
+    const seen = new Set<string>()
+    const out: KnownModel[] = []
+    for (const m of KNOWN_MODELS) {
+      if (!seen.has(m.id)) {
+        seen.add(m.id)
+        out.push(m)
+      }
+    }
+    for (const p of props.providers) {
+      const models = p.models ?? []
+      for (const mid of models) {
+        if (!mid || seen.has(mid)) continue
+        seen.add(mid)
+        const provider = providerDisplayName(mid.split('/')[0] ?? p.id)
+        out.push({
+          id: mid,
+          provider,
+          label: mid.split('/').pop() ?? mid,
+          context: inferContext(mid),
+          pricing: '—',
+          capabilities: inferCapabilities(mid),
+        })
+      }
+      // also include provider id as prefix hint if no models but provider exists
+      // (don't add synthetic entries)
+    }
+    // If current value is not in list, add it as a transient entry so it appears selected
+    const cur = props.value.trim()
+    if (cur && !seen.has(cur)) {
+      const provider = providerDisplayName(cur.split('/')[0] ?? 'Custom')
+      out.push({
+        id: cur,
+        provider,
+        label: cur.split('/').pop() ?? cur,
+        context: inferContext(cur),
+        pricing: 'custom',
+        capabilities: inferCapabilities(cur),
+      })
+    }
+    return out
+  })
+
+  const filtered = createMemo(() => {
+    const q = query().trim().toLowerCase()
+    if (!q) return allModels()
+    return allModels().filter(
+      (m) => m.id.toLowerCase().includes(q) || m.provider.toLowerCase().includes(q) || m.label.toLowerCase().includes(q),
+    )
+  })
+
+  const grouped = createMemo(() => {
+    const map = new Map<string, KnownModel[]>()
+    for (const m of filtered()) {
+      const g = m.provider
+      if (!map.has(g)) map.set(g, [])
+      map.get(g)!.push(m)
+    }
+    // Sort groups: OpenRouter first, then alphabetical
+    const order = ['OpenRouter', 'Anthropic', 'OpenAI', 'Google', 'DeepSeek']
+    const entries = [...map.entries()]
+    entries.sort((a, b) => {
+      const ai = order.indexOf(a[0])
+      const bi = order.indexOf(b[0])
+      if (ai !== -1 && bi !== -1) return ai - bi
+      if (ai !== -1) return -1
+      if (bi !== -1) return 1
+      return a[0].localeCompare(b[0])
+    })
+    return entries
+  })
+
+  // Flat list for keyboard navigation (includes custom sentinel at end)
+  const flatList = createMemo(() => filtered())
+
+  const listboxId = () => `${props.id}-listbox`
+
+  const close = () => {
+    setOpen(false)
+    setHighlight(0)
+  }
+
+  const selectModel = (id: string) => {
+    props.onChange(id)
+    setQuery('')
+    setCustomMode(false)
+    close()
+    // keep focus on input
+    queueMicrotask(() => inputRef?.focus())
+  }
+
+  const handleCustomConfirm = () => {
+    const v = customValue().trim()
+    if (v) props.onChange(v)
+    setCustomMode(false)
+    close()
+  }
+
+  // Click outside to close
+  createEffect(() => {
+    if (!open() && !customMode()) return
+    const onDocClick = (e: MouseEvent) => {
+      if (!wrapperRef) return
+      if (wrapperRef.contains(e.target as Node)) return
+      close()
+      if (customMode()) setCustomMode(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        if (customMode()) {
+          setCustomMode(false)
+        } else {
+          close()
+          inputRef?.focus()
+        }
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onKey)
+    onCleanup(() => {
+      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onKey)
+    })
+  })
+
+  // Scroll highlighted into view
+  createEffect(() => {
+    if (!open()) return
+    const idx = highlight()
+    const el = listRef?.querySelector(`[data-idx="${idx}"]`) as HTMLElement | null
+    el?.scrollIntoView({ block: 'nearest' })
+  })
+
+  return (
+    <div class="settings-field">
+      <label for={props.id} class="settings-label">
+        {props.label}
+      </label>
+      <div
+        ref={(el) => (wrapperRef = el)}
+        style={{ position: 'relative' }}
+      >
+        <div style={{ position: 'relative', display: 'flex', 'align-items': 'center' }}>
+          <input
+            ref={(el) => (inputRef = el)}
+            id={props.id}
+            class="input"
+            role="combobox"
+            aria-expanded={open() ? 'true' : 'false'}
+            aria-controls={listboxId()}
+            aria-autocomplete="list"
+            aria-activedescendant={open() ? `${props.id}-opt-${highlight()}` : undefined}
+            value={open() ? query() : props.value}
+            onFocus={() => {
+              setOpen(true)
+              setQuery('')
+              setHighlight(0)
+            }}
+            onInput={(e) => {
+              const v = e.currentTarget.value
+              setQuery(v)
+              setOpen(true)
+              setHighlight(0)
+              // if user types, exit custom mode
+              if (customMode()) setCustomMode(false)
+            }}
+            onKeyDown={(e) => {
+              const len = flatList().length
+              const total = len + 1 // +1 for Custom option
+              if (e.key === 'ArrowDown') {
+                e.preventDefault()
+                if (!open()) {
+                  setOpen(true)
+                  return
+                }
+                setHighlight((h) => (h + 1) % total)
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault()
+                if (!open()) {
+                  setOpen(true)
+                  return
+                }
+                setHighlight((h) => (h - 1 + total) % total)
+              } else if (e.key === 'Enter') {
+                e.preventDefault()
+                if (!open()) {
+                  setOpen(true)
+                  return
+                }
+                const h = highlight()
+                if (h < len) {
+                  const m = flatList()[h]
+                  if (m) selectModel(m.id)
+                } else {
+                  // Custom
+                  setCustomMode(true)
+                  setCustomValue(query().trim() || props.value)
+                  setOpen(false)
+                  queueMicrotask(() => customInputRef?.focus())
+                }
+              } else if (e.key === 'Escape') {
+                if (open()) {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  close()
+                } else if (customMode()) {
+                  e.preventDefault()
+                  setCustomMode(false)
+                }
+              }
+            }}
+            onClick={() => {
+              if (!open()) {
+                setOpen(true)
+                setQuery('')
+              }
+            }}
+            placeholder={props.placeholder}
+            spellcheck={false}
+            autocomplete="off"
+          />
+          <button
+            type="button"
+            aria-label="Toggle model list"
+            aria-expanded={open() ? 'true' : 'false'}
+            aria-controls={listboxId()}
+            onClick={() => {
+              if (open()) close()
+              else {
+                setOpen(true)
+                setQuery('')
+                setHighlight(0)
+                inputRef?.focus()
+              }
+            }}
+            style={{
+              position: 'absolute',
+              right: '6px',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              width: '28px',
+              height: '28px',
+              display: 'grid',
+              'place-items': 'center',
+              border: 'none',
+              background: 'transparent',
+              color: 'var(--fg-subtle)',
+              cursor: 'pointer',
+              'border-radius': 'var(--r-sm)',
+              'font-size': '12px',
+            }}
+          >
+            ▾
+          </button>
+        </div>
+
+        <Show when={open()}>
+          <div
+            ref={(el) => (listRef = el)}
+            id={listboxId()}
+            role="listbox"
+            aria-label={`${props.label} options`}
+            style={{
+              position: 'absolute',
+              top: 'calc(100% + 6px)',
+              left: '0',
+              right: '0',
+              'max-height': '320px',
+              overflow: 'auto',
+              background: 'var(--bg-canvas)',
+              border: '1px solid var(--border-strong)',
+              'border-radius': 'var(--r-md)',
+              'box-shadow': 'var(--shadow-pop)',
+              'z-index': '30',
+              padding: '6px',
+              display: 'flex',
+              'flex-direction': 'column',
+              gap: '8px',
+            }}
+          >
+            <Show
+              when={filtered().length > 0}
+              fallback={
+                <div style={{ padding: '12px', 'text-align': 'center', color: 'var(--fg-faint)', 'font-size': 'var(--fs-sm)' }}>
+                  No models match "{query()}"
+                </div>
+              }
+            >
+              <For each={grouped()}>
+                {([provider, models]) => (
+                  <div>
+                    <div
+                      style={{
+                        'font-size': 'var(--fs-2xs)',
+                        'font-weight': '700',
+                        'letter-spacing': '0.06em',
+                        'text-transform': 'uppercase',
+                        color: 'var(--fg-faint)',
+                        padding: '4px 8px 2px',
+                      }}
+                    >
+                      {provider}
+                    </div>
+                    <div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
+                      <For each={models}>
+                        {(m) => {
+                          const idx = () => flatList().indexOf(m)
+                          const isSelected = () => props.value === m.id
+                          const isHighlighted = () => highlight() === idx()
+                          return (
+                            <button
+                              type="button"
+                              role="option"
+                              id={`${props.id}-opt-${idx()}`}
+                              data-idx={idx()}
+                              aria-selected={isSelected() ? 'true' : 'false'}
+                              onClick={() => selectModel(m.id)}
+                              onMouseEnter={() => setHighlight(idx())}
+                              style={{
+                                display: 'flex',
+                                'flex-direction': 'column',
+                                gap: '3px',
+                                padding: '8px 10px',
+                                'border-radius': 'var(--r-sm)',
+                                border: isHighlighted() ? '1px solid var(--accent-border)' : '1px solid transparent',
+                                background: isHighlighted() ? 'var(--accent-soft)' : isSelected() ? 'var(--bg-surface)' : 'transparent',
+                                cursor: 'pointer',
+                                'text-align': 'left',
+                                width: '100%',
+                              }}
+                            >
+                              <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'flex-wrap': 'wrap' }}>
+                                <span
+                                  style={{
+                                    'font-family': 'var(--font-mono)',
+                                    'font-size': 'var(--fs-xs)',
+                                    'font-weight': '600',
+                                    color: 'var(--fg)',
+                                    'word-break': 'break-all',
+                                  }}
+                                >
+                                  {m.id}
+                                </span>
+                                <Show when={isSelected()}>
+                                  <span style={{ color: 'var(--ok)', 'font-size': '11px' }}>✓</span>
+                                </Show>
+                                <span
+                                  style={{
+                                    'font-size': 'var(--fs-2xs)',
+                                    padding: '1px 6px',
+                                    'border-radius': 'var(--r-full)',
+                                    background: 'var(--bg-surface)',
+                                    border: '1px solid var(--border)',
+                                    color: 'var(--fg-subtle)',
+                                    'font-weight': '600',
+                                  }}
+                                >
+                                  {m.provider}
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', gap: '6px', 'align-items': 'center', 'flex-wrap': 'wrap' }}>
+                                <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'font-family': 'var(--font-mono)' }}>
+                                  {m.context} ctx
+                                </span>
+                                <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)' }}>·</span>
+                                <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'font-family': 'var(--font-mono)' }}>
+                                  {m.pricing} /1k
+                                </span>
+                                <For each={m.capabilities}>
+                                  {(cap) => (
+                                    <span
+                                      style={{
+                                        'font-size': '9px',
+                                        padding: '1px 5px',
+                                        'border-radius': 'var(--r-full)',
+                                        background:
+                                          cap === 'coding'
+                                            ? 'var(--ok-soft)'
+                                            : cap === 'reasoning'
+                                              ? 'var(--accent-soft)'
+                                              : cap === 'vision'
+                                                ? 'var(--warn-soft)'
+                                                : 'var(--bg-active)',
+                                        border: `1px solid ${cap === 'coding' ? 'var(--ok-border)' : cap === 'reasoning' ? 'var(--accent-border)' : cap === 'vision' ? 'var(--warn-border)' : 'var(--border)'}`,
+                                        color:
+                                          cap === 'coding'
+                                            ? 'var(--ok)'
+                                            : cap === 'reasoning'
+                                              ? 'var(--accent)'
+                                              : cap === 'vision'
+                                                ? 'var(--warn)'
+                                                : 'var(--fg-subtle)',
+                                        'font-weight': '600',
+                                        'text-transform': 'uppercase',
+                                        'letter-spacing': '0.04em',
+                                      }}
+                                    >
+                                      {cap}
+                                    </span>
+                                  )}
+                                </For>
+                              </div>
+                            </button>
+                          )
+                        }}
+                      </For>
+                    </div>
+                  </div>
+                )}
+              </For>
+            </Show>
+
+            {/* Custom option */}
+            <div style={{ 'border-top': '1px solid var(--border)', 'margin-top': '4px', 'padding-top': '6px' }}>
+              <button
+                type="button"
+                role="option"
+                id={`${props.id}-opt-${flatList().length}`}
+                data-idx={flatList().length}
+                aria-selected="false"
+                onClick={() => {
+                  setCustomMode(true)
+                  setCustomValue(query().trim() || props.value)
+                  setOpen(false)
+                  queueMicrotask(() => customInputRef?.focus())
+                }}
+                onMouseEnter={() => setHighlight(flatList().length)}
+                style={{
+                  display: 'flex',
+                  'align-items': 'center',
+                  gap: '8px',
+                  padding: '8px 10px',
+                  'border-radius': 'var(--r-sm)',
+                  border: highlight() === flatList().length ? '1px solid var(--accent-border)' : '1px solid transparent',
+                  background: highlight() === flatList().length ? 'var(--accent-soft)' : 'transparent',
+                  cursor: 'pointer',
+                  width: '100%',
+                  'text-align': 'left',
+                }}
+              >
+                <span style={{ 'font-size': 'var(--fs-sm)', 'font-weight': '600', color: 'var(--fg)' }}>✎ Custom</span>
+                <span style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-faint)' }}>— enter any model ID</span>
+              </button>
+            </div>
+          </div>
+        </Show>
+
+        <Show when={customMode()}>
+          <div
+            style={{
+              display: 'flex',
+              gap: '8px',
+              'align-items': 'center',
+              'margin-top': '8px',
+              padding: '8px',
+              background: 'var(--bg-app)',
+              border: '1px solid var(--border)',
+              'border-radius': 'var(--r-md)',
+            }}
+          >
+            <input
+              ref={(el) => (customInputRef = el)}
+              class="input"
+              value={customValue()}
+              onInput={(e) => setCustomValue(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  handleCustomConfirm()
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setCustomMode(false)
+                }
+              }}
+              placeholder="provider/model-id — e.g. openrouter/anthropic/claude-sonnet-4"
+              spellcheck={false}
+              autocomplete="off"
+              aria-label={`${props.label} custom value`}
+              style={{ flex: '1' }}
+            />
+            <button type="button" class="btn btn-solid" onClick={handleCustomConfirm} style={{ padding: '7px 12px', 'font-size': 'var(--fs-sm)', 'min-height': '36px' }}>
+              Use
+            </button>
+            <button type="button" class="btn btn-ghost" onClick={() => setCustomMode(false)} style={{ padding: '7px 10px', 'font-size': 'var(--fs-sm)' }}>
+              Cancel
+            </button>
+          </div>
+        </Show>
+
+        <span class="settings-hint" style={{ display: 'block', 'margin-top': customMode() ? '6px' : '4px' }}>
+          {props.id === 'settings-model' ? 'Primary model for turns. Format: provider/model-id.' : 'Used for context compaction and summaries.'}
+        </span>
+      </div>
+    </div>
+  )
+}
 
 type TabId =
   'general' | 'providers' | 'permissions' | 'connectors' | 'agents' | 'commands' | 'terminal'
@@ -883,41 +1482,23 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                       class="settings-card"
                       style={{ display: 'flex', 'flex-direction': 'column', gap: '14px' }}
                     >
-                      <div class="settings-field">
-                        <label for="settings-model" class="settings-label">
-                          Model
-                        </label>
-                        <input
-                          id="settings-model"
-                          class="input"
-                          value={model()}
-                          onInput={(e) => setModel(e.currentTarget.value)}
-                          placeholder="openrouter/anthropic/claude-sonnet-4"
-                          spellcheck={false}
-                          autocomplete="off"
-                        />
-                        <span class="settings-hint">
-                          Primary model for turns. Format: provider/model-id.
-                        </span>
-                      </div>
+                      <ModelSelector
+                        value={model()}
+                        onChange={setModel}
+                        placeholder="openrouter/anthropic/claude-sonnet-4"
+                        label="Model"
+                        id="settings-model"
+                        providers={s().providers}
+                      />
 
-                      <div class="settings-field">
-                        <label for="settings-small-model" class="settings-label">
-                          Small model (compaction)
-                        </label>
-                        <input
-                          id="settings-small-model"
-                          class="input"
-                          value={smallModel()}
-                          onInput={(e) => setSmallModel(e.currentTarget.value)}
-                          placeholder="openrouter/deepseek/deepseek-v3.2-exp"
-                          spellcheck={false}
-                          autocomplete="off"
-                        />
-                        <span class="settings-hint">
-                          Used for context compaction and summaries.
-                        </span>
-                      </div>
+                      <ModelSelector
+                        value={smallModel()}
+                        onChange={setSmallModel}
+                        placeholder="openrouter/deepseek/deepseek-v3.2-exp"
+                        label="Small model (compaction)"
+                        id="settings-small-model"
+                        providers={s().providers}
+                      />
 
                       <div
                         style={{
