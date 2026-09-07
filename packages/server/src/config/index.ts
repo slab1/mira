@@ -30,7 +30,7 @@ const DEFAULT_CONFIG: MiraConfig = {
       name: 'OpenRouter',
       options: {
         baseURL: 'https://openrouter.ai/api/v1',
-        apiKey: process.env.OPENROUTER_API_KEY ?? '',
+        apiKey: '{env:OPENROUTER_API_KEY}',
         headers: {},
         timeout: 120_000,
         kind: 'openrouter',
@@ -42,7 +42,7 @@ const DEFAULT_CONFIG: MiraConfig = {
       name: 'Anthropic Direct',
       options: {
         baseURL: 'https://api.anthropic.com/v1',
-        apiKey: process.env.ANTHROPIC_API_KEY ?? '',
+        apiKey: '{env:ANTHROPIC_API_KEY}',
         headers: {},
         timeout: 120_000,
         kind: 'anthropic',
@@ -56,7 +56,7 @@ const DEFAULT_CONFIG: MiraConfig = {
       name: 'OpenAI',
       options: {
         baseURL: 'https://api.openai.com/v1',
-        apiKey: process.env.OPENAI_API_KEY ?? '',
+        apiKey: '{env:OPENAI_API_KEY}',
         headers: {},
         timeout: 120_000,
         kind: 'openai',
@@ -68,7 +68,7 @@ const DEFAULT_CONFIG: MiraConfig = {
       name: 'Google Generative AI',
       options: {
         baseURL: 'https://generativelanguage.googleapis.com/v1beta',
-        apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY ?? process.env.GOOGLE_API_KEY ?? '',
+        apiKey: ['{env:GOOGLE_GENERATIVE_AI_API_KEY}', '{env:GOOGLE_API_KEY}'],
         headers: {},
         timeout: 120_000,
         kind: 'google',
@@ -80,7 +80,7 @@ const DEFAULT_CONFIG: MiraConfig = {
       name: 'DeepSeek',
       options: {
         baseURL: 'https://api.deepseek.com/v1',
-        apiKey: process.env.DEEPSEEK_API_KEY ?? '',
+        apiKey: '{env:DEEPSEEK_API_KEY}',
         headers: {},
         timeout: 120_000,
         kind: 'deepseek',
@@ -92,7 +92,7 @@ const DEFAULT_CONFIG: MiraConfig = {
       name: 'NVIDIA NIM',
       options: {
         baseURL: 'https://integrate.api.nvidia.com/v1',
-        apiKey: process.env.NVIDIA_API_KEY ?? '',
+        apiKey: '{env:NVIDIA_API_KEY}',
         headers: {},
         timeout: 120_000,
         kind: 'nvidia',
