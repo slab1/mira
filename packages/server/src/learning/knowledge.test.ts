@@ -1,6 +1,7 @@
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
 import { embedKeyword, cosine } from './knowledge.js'
+import { KNOWLEDGE_SEED_ENTRIES, seedDefaultKnowledge, KnowledgeBase } from './knowledge.js'
 import { createLearningSystem, mountLearningRoutes, type LearningSystem } from './index.js'
 import { createDatabase, migrate } from '../storage/db.js'
 import { writeFinding } from '../tools/findings.js'
@@ -215,5 +216,36 @@ describe('H3-E knowledge graph write paths', () => {
     expect(second.status).toBe(409)
     const body = (await second.json()) as { error?: string }
     expect(body.error).toBe('already resolved')
+  })
+})
+
+describe('designer des-1 docs-memory seed', () => {
+  test('seed defines 8 entries with titles ≤80ch and content 200–800ch', () => {
+    expect(KNOWLEDGE_SEED_ENTRIES).toHaveLength(8)
+    for (const e of KNOWLEDGE_SEED_ENTRIES) {
+      expect(e.title.length).toBeGreaterThan(0)
+      expect(e.title.length).toBeLessThanOrEqual(80)
+      expect(e.content.length).toBeGreaterThanOrEqual(200)
+      expect(e.content.length).toBeLessThanOrEqual(800)
+      expect(['episodic', 'semantic', 'procedural']).toContain(e.tier)
+    }
+  })
+
+  test('seedDefaultKnowledge stores 8 and retrieval finds them', async () => {
+    const kb = new KnowledgeBase()
+    const stored = await seedDefaultKnowledge(kb)
+    expect(stored).toHaveLength(8)
+    expect(kb.size()).toBe(8)
+
+    const opencode = await kb.retrieve({ query: 'opencode MCP custom tools setup', limit: 5 })
+    expect(opencode.length).toBeGreaterThan(0)
+    expect(opencode.some((e) => e.title.toLowerCase().includes('opencode'))).toBe(true)
+
+    const mira = await kb.retrieve({
+      query: 'Mira KnowledgeBase hybrid retrieval scoring',
+      limit: 5,
+    })
+    expect(mira.length).toBeGreaterThan(0)
+    expect(mira.some((e) => e.tags.includes('retrieval') || e.title.includes('hybrid'))).toBe(true)
   })
 })

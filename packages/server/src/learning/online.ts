@@ -104,6 +104,12 @@ export const DEFAULT_TOPICS: Array<{ query: string; category: InsightCategory }>
     query: 'agent memory architecture Mem0 Zep pgvector hybrid retrieval',
     category: 'agent-technique',
   },
+  {
+    query: 'opencode docs agent configuration opencode.json permissions 2026',
+    category: 'documentation',
+  },
+  { query: 'opencode docs custom tools commands MCP setup 2026', category: 'documentation' },
+  { query: 'opencode docs TUI session share best practices 2026', category: 'documentation' },
 ]
 
 // ── OnlineLearner ────────────────────────────────────────────────────

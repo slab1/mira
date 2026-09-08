@@ -6,6 +6,7 @@ import {
   jaccardTokens,
   PATTERN_SIMILARITY_FLOOR,
   buildDynamicTopicsFromAnalysis,
+  DEFAULT_TOPICS,
 } from './online.js'
 import type { Insight } from './online.js'
 import { KnowledgeBase } from './knowledge.js'
@@ -327,5 +328,15 @@ describe('buildDynamicTopicsFromAnalysis — failure-driven queries', () => {
       generatedAt: Date.now(),
     })
     expect(topics).toHaveLength(0)
+  })
+})
+
+describe('DEFAULT_TOPICS — designer des-1 docs seeding', () => {
+  test('contains the 3 opencode docs queries with category documentation', () => {
+    const docs = DEFAULT_TOPICS.filter((t) => t.category === 'documentation')
+    const queries = docs.map((t) => t.query)
+    expect(queries).toContain('opencode docs agent configuration opencode.json permissions 2026')
+    expect(queries).toContain('opencode docs custom tools commands MCP setup 2026')
+    expect(queries).toContain('opencode docs TUI session share best practices 2026')
   })
 })

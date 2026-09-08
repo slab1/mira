@@ -826,6 +826,95 @@ export function cosine(a: number[], b: number[]): number {
   return dot // already normalized
 }
 
+// ── Designer des-1 docs-memory seed (additive-only) ────────────────────
+// Bounded mechanical seeding: 8 entries, titles ≤80ch, content 200–800ch.
+// No auto-run on import — call seedDefaultKnowledge(kb) explicitly.
+// Preserves existing transports/permissions/theme behavior.
+
+export const KNOWLEDGE_SEED_ENTRIES: StoreInput[] = [
+  {
+    tier: 'semantic',
+    source: 'system',
+    title: 'opencode agent config: opencode.json permissions',
+    content:
+      'opencode.json defines the agent, permissions, and MCP servers in one file. Set explicit allow/ask/deny per tool, keep destructive bash behind ask, and scope file edits with glob patterns. Pattern: declare least-privilege defaults first, then narrow allows for trusted paths. Source: opencode docs configuration guide with permission examples.',
+    tags: ['opencode', 'docs', 'permissions'],
+    links: [],
+  },
+  {
+    tier: 'procedural',
+    source: 'system',
+    title: 'opencode custom tools via MCP setup',
+    content:
+      'Add custom tools to opencode by registering an MCP server in opencode.json, then expose commands as tools. Steps: add server command/URL, restart session, verify with tools list, then bind slash commands. Pattern: prefer MCP over ad-hoc scripts so tools get schemas, permissions, and auditing. Source: opencode docs custom tools and MCP setup.',
+    tags: ['opencode', 'mcp', 'tools'],
+    links: [],
+  },
+  {
+    tier: 'procedural',
+    source: 'system',
+    title: 'opencode TUI session share workflow',
+    content:
+      'Share opencode sessions from the TUI by opening the session, running share, and sending the link. Keep secrets out of transcripts, fork before risky edits, and export logs for review. Pattern: share early for pair review, keep main session clean, continue in fork. Source: opencode docs TUI sessions and sharing best practices.',
+    tags: ['opencode', 'tui', 'sessions'],
+    links: [],
+  },
+  {
+    tier: 'semantic',
+    source: 'system',
+    title: 'Mira OnlineLearner default topics rotation',
+    content:
+      'OnlineLearner rotates DEFAULT_TOPICS hourly and caps queries/docs per cycle to bound cost. Documentation topics route to keyless HN fallback when no search keys exist. Pattern: static pool plus failure-driven dynamic topics, dedupe by URL, then fetch and extract insights. Source: packages/server/src/learning/online.ts default query bank.',
+    tags: ['mira', 'online', 'learning'],
+    links: [],
+  },
+  {
+    tier: 'semantic',
+    source: 'system',
+    title: 'Mira KnowledgeBase hybrid retrieval scoring',
+    content:
+      'KnowledgeBase.retrieve blends cosine on keyword embeddings with tag overlap, entity overlap, temporal decay, access bonus, and graph centrality. Hybrid expansion pulls 1-hop graph and entity neighbors, then touches returned entries. Pattern: rank then expand then touch, minScore 0.15 default. Source: packages/server/src/learning/knowledge.ts.',
+    tags: ['mira', 'memory', 'retrieval'],
+    links: [],
+  },
+  {
+    tier: 'semantic',
+    source: 'system',
+    title: 'Mira scheduler online to knowledge flow',
+    content:
+      'LearningScheduler runs online search hourly, stores each insight via storeInsight, and throttles improvement to every 4h. Usage analysis runs bus-driven after sessions. Pattern: online stores semantic memory, usage stores episodic plus failure facts, improvement consumes both. Source: packages/server/src/learning/scheduler.ts.',
+    tags: ['mira', 'scheduler', 'knowledge'],
+    links: [],
+  },
+  {
+    tier: 'semantic',
+    source: 'system',
+    title: 'Mira permission first-match wins order',
+    content:
+      'PermissionManager checks tool rules in order and returns the first match, like Mira. Explicit tool rules beat wildcard and MCP prefix rules; bash falls back to BashArity, then default ask. Preserve visuals and do not flip matching. Pattern: first match wins, unmatched asks. Source: packages/server/src/permission/index.ts.',
+    tags: ['mira', 'permissions'],
+    links: [],
+  },
+  {
+    tier: 'semantic',
+    source: 'system',
+    title: 'Mira theme tokens preserve index.css',
+    content:
+      'Mira web uses packages/web/src/index.css tokens as the single source of truth, with dark default and light override via data-theme plus system fallback. Future change is system-inherit only. Preserve visuals, do not restyle in this lane. Pattern: components use var tokens, no scattered hex. Source: packages/web/src/index.css.',
+    tags: ['mira', 'web', 'theme'],
+    links: [],
+  },
+]
+
+/** Store the 8 designer seed entries into the given KnowledgeBase. */
+export async function seedDefaultKnowledge(kb: KnowledgeBase): Promise<MemoryEntry[]> {
+  const out: MemoryEntry[] = []
+  for (const input of KNOWLEDGE_SEED_ENTRIES) {
+    out.push(await kb.store(input))
+  }
+  return out
+}
+
 /** Singleton for prompt injection — one KB per process, loaded once from SQLite */
 let _sharedKB: KnowledgeBase | undefined
 export function setSharedKnowledge(kb: KnowledgeBase): void {

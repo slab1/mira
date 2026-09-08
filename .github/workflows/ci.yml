@@ -91,7 +91,7 @@ jobs:
             exit 1
           fi
           # Server must refuse to start with STRICT_AUTH and no token (fail-closed)
-          MIRA_STRICT_AUTH=1 MIRA_TOKEN="" timeout 5 bun run --cwd packages/server src/index.ts 2>&1 | grep -q "refusing to start without auth" || (echo "STRICT_AUTH fail-closed check failed" && exit 1)
+          MIRA_STRICT_AUTH=1 MIRA_TOKEN="" NODE_ENV=production timeout 5 bun run --cwd packages/server src/index.ts 2>&1 | grep -q "refusing to start without auth" || (echo "STRICT_AUTH fail-closed check failed" && exit 1)
           echo "auth guard passed"
 
   typecheck:
