@@ -71,6 +71,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
       - name: Verify auth hygiene (MIRA_TOKEN placeholder + gen script + no real secrets)
         run: |
           test -x scripts/gen-mira-token.sh || (echo "missing scripts/gen-mira-token.sh (chmod +x)" && exit 1)
