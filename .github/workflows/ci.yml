@@ -66,6 +66,26 @@ jobs:
               - 'package.json'
               - 'bunfig.toml'
 
+  auth-guard:
+    name: auth-guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify auth hygiene (MIRA_TOKEN placeholder + gen script + no real secrets)
+        run: |
+          test -x scripts/gen-mira-token.sh || (echo "missing scripts/gen-mira-token.sh (chmod +x)" && exit 1)
+          grep -q "change-me-to-a-long-random-secret" .env.example || (echo ".env.example must keep placeholder" && exit 1)
+          grep -q "scripts/gen-mira-token.sh" .env.example || (echo ".env.example must reference gen script" && exit 1)
+          # Fail if a real-looking secret is committed (96-hex API key pattern) outside .env.example comments
+          if grep -R --include="*.ts" --include="*.js" -E "[0-9a-f]{64,96}" packages/server/src/config packages/server/src/routes 2>/dev/null | grep -v "change-me" | grep -qv "test\|spec\|mock"; then
+            echo "real secret committed — rotate and remove"
+            grep -R --include="*.ts" -E "[0-9a-f]{64,96}" packages/server/src/config packages/server/src/routes 2>/dev/null | head
+            exit 1
+          fi
+          # Server must refuse to start with STRICT_AUTH and no token (fail-closed)
+          MIRA_STRICT_AUTH=1 MIRA_TOKEN="" timeout 5 bun run --cwd packages/server src/index.ts 2>&1 | grep -q "refusing to start without auth" || (echo "STRICT_AUTH fail-closed check failed" && exit 1)
+          echo "auth guard passed"
+
   typecheck:
     name: typecheck
     runs-on: ubuntu-latest
