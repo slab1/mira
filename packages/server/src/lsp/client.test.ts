@@ -1,8 +1,10 @@
 import { describe, test, expect, afterAll } from "bun:test"
 import { join } from "node:path"
 import { LSPClient } from "./client.js"
+import { resolveBunBinary } from "../../../shared/src/utils/paths.js"
 
 const MOCK = join(import.meta.dir, "mock-server.ts")
+const BUN_BIN = resolveBunBinary()
 let client: LSPClient | null = null
 
 afterAll(async () => {
@@ -11,7 +13,7 @@ afterAll(async () => {
 
 describe("LSPClient (real JSON-RPC framing against mock server)", () => {
   test("initialize handshake returns capabilities", async () => {
-    client = await LSPClient.spawn(["bun"], ["run", MOCK], import.meta.dir, "mock-lsp")
+    client = await LSPClient.spawn([BUN_BIN], ["run", MOCK], import.meta.dir, "mock-lsp")
     expect(client.alive).toBe(true)
     expect(client.capabilities.hoverProvider).toBe(true)
     expect(client.capabilities.definitionProvider).toBe(true)
@@ -72,7 +74,7 @@ describe("LSPClient (real JSON-RPC framing against mock server)", () => {
   }, 10_000)
 
   test("server-exited rejects pending requests", async () => {
-    const dying = await LSPClient.spawn(["bun"], ["run", MOCK], import.meta.dir, "dying-lsp")
+    const dying = await LSPClient.spawn([BUN_BIN], ["run", MOCK], import.meta.dir, "dying-lsp")
     // Kill the process, then any request should reject with exit error
     dying.shutdown().catch(() => {})
     let err: Error | null = null

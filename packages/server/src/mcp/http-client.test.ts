@@ -21,7 +21,8 @@ async function startMock(opts: { sse?: boolean; requireSession?: boolean; legacy
   if (opts.sse) env.MOCK_MCP_SSE = "1"
   if (opts.requireSession) env.MOCK_MCP_REQUIRE_SESSION = "1"
   if (opts.legacy) env.MOCK_MCP_LEGACY = "1"
-  const proc = Bun.spawn(["bun", "run", MOCK], { env, stdout: "pipe", stderr: "pipe" })
+  const { resolveBunBinary } = await import("../../../shared/src/utils/paths.js")
+  const proc = Bun.spawn([resolveBunBinary(), "run", MOCK], { env, stdout: "pipe", stderr: "pipe" })
   procs.push(proc)
 
   const url = await new Promise<string>((resolve, reject) => {

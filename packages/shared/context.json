@@ -1,0 +1,77 @@
+{
+  "version": "1.0",
+  "decisions": [
+    {
+      "id": "dec_mtsfhm5r_lkku",
+      "decision": "bootstrap workflow trace",
+      "context": "gap 12-15 fixer",
+      "at": "2026-09-08T08:49:26.903Z",
+      "by": "fixer"
+    }
+  ],
+  "strategy_log": [
+    {
+      "strategy_chosen": "critic",
+      "agent_target": "critic",
+      "outcome": "APPROVE",
+      "reason": "packages/server/src/tools/edit.ts:23 \u2014 safe rename",
+      "file_line": null,
+      "sim_id": "sim_test123",
+      "durationMs": 120,
+      "at": "2026-09-08T09:03:47.511488+00:00"
+    },
+    {
+      "strategy_chosen": "critic",
+      "agent_target": "critic",
+      "outcome": "REJECT",
+      "reason": "packages/server/src/storage/snapshots.ts:36 \u2014 would bypass snapshot",
+      "file_line": null,
+      "sim_id": null,
+      "durationMs": 80,
+      "at": "2026-09-08T09:04:07.501309+00:00"
+    },
+    {
+      "strategy_chosen": "critic",
+      "agent_target": "critic",
+      "outcome": "REVISE",
+      "reason": "shared/simulation_sandbox.ts:15 \u2014 add bounds check at file:line",
+      "file_line": null,
+      "sim_id": null,
+      "durationMs": 95,
+      "at": "2026-09-08T09:04:07.720317+00:00"
+    }
+  ],
+  "active_tasks": [
+    {
+      "id": "trace-init",
+      "task": "Workflow trace initialized",
+      "status": "completed",
+      "priority": "high",
+      "updatedAt": "2026-09-08T08:49:26.918Z"
+    }
+  ],
+  "artifacts": {
+    "files_created": [
+      "shared/simulation_sandbox.ts"
+    ],
+    "files_modified": [
+      "packages/server/src/learning/ledger.ts"
+    ]
+  },
+  "checkpoints": {
+    "enabled": true,
+    "dir": "shared/checkpoints",
+    "retentionHours": 168,
+    "keep": 5
+  },
+  "strategy_effectiveness": {
+    "critic": {
+      "count": 3,
+      "completed": 3,
+      "successes": 1,
+      "success_rate": 0.33,
+      "last_updated": "2026-09-08T09:04:07.720317+00:00"
+    }
+  },
+  "last_updated": "2026-09-08T09:04:07.720317+00:00"
+}

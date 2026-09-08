@@ -53,7 +53,8 @@ export const patchTool = {
   needsPermission: true,
   schema: patchSchema,
   async execute({ patch, cwd }, _ctx) {
-    const tmp = `/tmp/mira-patch-${Date.now()}.diff`
+    const { safeTempFile } = await import("../../../shared/src/utils/paths.js")
+    const tmp = safeTempFile(`mira-patch-${Date.now()}.diff`)
     await Bun.write(tmp, patch)
     const proc = Bun.spawn(["patch", "-p1", "--forward"], {
       cwd: cwd ?? process.cwd(),

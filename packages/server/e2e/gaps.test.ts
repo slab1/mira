@@ -21,13 +21,15 @@ async function waitForHealth(timeoutMs = 15_000) {
 }
 
 beforeAll(async () => {
+  const { resolveBunBinary, safeTempFile } = await import("../../shared/src/utils/paths.js")
+  const BUN_BIN = resolveBunBinary()
   const { MIRA_TOKEN: _mt, MIRA_API_KEYS: _mak, ...cleanEnv } = process.env as Record<string, string | undefined>
-  proc = Bun.spawn(["bun", "src/index.ts"], {
+  proc = Bun.spawn([BUN_BIN, "src/index.ts"], {
     cwd: import.meta.dir + "/..",
     env: {
       ...cleanEnv,
       PORT: String(PORT),
-      MIRA_DB: "/tmp/mira-gaps-e2e.db",
+      MIRA_DB: safeTempFile("mira-gaps-e2e.db"),
       CORS_ORIGINS: "https://slab1.github.io,https://mira.example.com",
       MIRA_TERMINAL_ENABLED: "1",
       MIRA_TERMINAL_SANDBOX: "0",

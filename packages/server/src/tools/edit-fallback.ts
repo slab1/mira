@@ -524,7 +524,8 @@ export async function applyEditWithFallback(
       `-${oldString.split('\n')[0]}`,
       `+${newString.split('\n')[0]}`,
     ].join('\n')
-    const tmpDiff = `/tmp/mira-patch-${Date.now()}.diff`
+    const { safeTempFile } = await import("../../../shared/src/utils/paths.js")
+    const tmpDiff = safeTempFile(`mira-patch-${Date.now()}.diff`)
     await Bun.write(tmpDiff, diffLines)
     // Note: actual patch application requires proper context; this is graceful degradation
     // We'll attempt a simple replace as last resort

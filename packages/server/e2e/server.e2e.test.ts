@@ -24,9 +24,11 @@ async function waitForHealth(timeoutMs = 15_000) {
 }
 
 beforeAll(async () => {
-  serverProc = Bun.spawn(['bun', 'src/index.ts'], {
+  const { resolveBunBinary, safeTempFile } = await import("../../shared/src/utils/paths.js")
+  const BUN_BIN = resolveBunBinary()
+  serverProc = Bun.spawn([BUN_BIN, 'src/index.ts'], {
     cwd: import.meta.dir + '/..',
-    env: { ...process.env, PORT: String(PORT), MIRA_DB: '/tmp/mira-e2e-test.db' },
+    env: { ...process.env, PORT: String(PORT), MIRA_DB: safeTempFile('mira-e2e-test.db') },
     stdout: 'pipe',
     stderr: 'pipe',
   })
@@ -106,8 +108,8 @@ describe('Mira server E2E', () => {
   })
 
   test('file snapshots + undo roundtrip via REST', async () => {
-    // Create session, snapshot a file through the write path
-    const target = '/tmp/mira-e2e-undo.txt'
+    const { safeTempFile } = await import("../../shared/src/utils/paths.js")
+    const target = safeTempFile('mira-e2e-undo.txt')
     await Bun.write(target, 'before-mira')
 
     const created = await fetch(`${BASE}/session`, {

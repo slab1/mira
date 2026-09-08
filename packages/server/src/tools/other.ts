@@ -194,6 +194,8 @@ const diagnoseSchema = z.object({
   cwd: z.string().optional().describe('Working directory (default: project cwd)'),
 })
 
+import { resolveBunBinary } from '../../../shared/src/utils/paths.js'
+
 export const diagnoseTool = {
   name: 'diagnose',
   description: 'Run diagnostics: typecheck, test, build. Aggregates real errors for fix loops.',
@@ -201,10 +203,12 @@ export const diagnoseTool = {
   schema: diagnoseSchema,
   async execute({ checks = ['typecheck'], cwd }, _ctx) {
     const workdir = cwd ?? process.cwd()
+    const bunBin = resolveBunBinary()
+    const bunxBin = process.platform === 'win32' ? bunBin.replace(/bun\.exe$/i, 'bunx.exe').replace(/bun$/i, 'bunx.exe') : bunBin.replace(/bun$/i, 'bunx')
     const commands: Record<string, string[]> = {
-      typecheck: ['bunx', 'tsc', '--noEmit'],
-      test: ['bun', 'test'],
-      build: ['bun', 'run', 'build'],
+      typecheck: [bunxBin, 'tsc', '--noEmit'],
+      test: [bunBin, 'test'],
+      build: [bunBin, 'run', 'build'],
     }
     const results: Array<{ check: string; ok: boolean; output?: string; error?: string }> = []
     for (const check of checks) {

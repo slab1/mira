@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test"
 import { join } from "node:path"
 import { MCPManager } from "./index.js"
+import { resolveBunBinary } from "../../../shared/src/utils/paths.js"
 import { ToolRegistry } from "../tools/registry.js"
 import { createDatabase } from "../storage/db.js"
 import { PermissionManager } from "../permission/index.js"
@@ -33,7 +34,7 @@ describe("MCPManager end-to-end (stdio)", () => {
       config: {
         mock: {
           type: "local",
-          command: ["bun", "run", MOCK],
+          command: [resolveBunBinary(), "run", MOCK],
           enabled: true,
         },
         off: { type: "local", command: ["whatever"], enabled: false },

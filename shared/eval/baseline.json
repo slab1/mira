@@ -1,0 +1,20 @@
+﻿{
+  "meta": {
+    "version": "1.0",
+    "description": "Mira RCSI baseline for shadow eval verifier gate (port logic_evolve.py:152-242)",
+    "created_at": "2026-09-08T00:00:00Z",
+    "provider": "mock"
+  },
+  "pass_rate": 0.8,
+  "eval": {
+    "pass_rate": 0.8,
+    "total_tests": 50,
+    "passed": 40
+  },
+  "pr": {
+    "pass_rate": 0.8,
+    "tier": "pr",
+    "blocking": true
+  },
+  "threshold": 0.8
+}

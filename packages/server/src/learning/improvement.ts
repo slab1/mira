@@ -225,7 +225,8 @@ export class ImprovementEngine {
     // For TS engine/tool patches we run the relevant test suite; MD patches skip
     if (process.env.MIRA_SHADOW_RUN_TESTS !== '0' && imp.targetFile?.endsWith('.ts')) {
       try {
-        const proc = Bun.spawn(['bun', 'test', '--timeout', '15000'], {
+        const { resolveBunBinary } = await import("../../../shared/src/utils/paths.js")
+        const proc = Bun.spawn([resolveBunBinary(), 'test', '--timeout', '15000'], {
           cwd: this.config.rootDir,
           stdout: 'pipe',
           stderr: 'pipe',

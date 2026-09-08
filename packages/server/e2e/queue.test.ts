@@ -6,9 +6,11 @@ const BASE = `http://localhost:${PORT}`
 let serverProc: ReturnType<typeof Bun.spawn> | null = null
 
 beforeAll(async () => {
-  serverProc = Bun.spawn(['bun', 'src/index.ts'], {
+  const { resolveBunBinary, safeTempFile } = await import("../../shared/src/utils/paths.js")
+  const BUN_BIN = resolveBunBinary()
+  serverProc = Bun.spawn([BUN_BIN, 'src/index.ts'], {
     cwd: import.meta.dir + '/..',
-    env: { ...process.env, PORT: String(PORT), MIRA_DB: '/tmp/mira-e2e-queue.db' },
+    env: { ...process.env, PORT: String(PORT), MIRA_DB: safeTempFile('mira-e2e-queue.db') },
     stdout: 'pipe',
     stderr: 'pipe',
   })

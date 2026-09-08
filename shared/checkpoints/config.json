@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "dir": "shared/checkpoints",
+  "retentionHours": 168,
+  "keep": 5,
+  "retention": "168h",
+  "description": "Checkpoint retention: 168h (7 days), keep last 5 per session. Created per gap-map bullet 15."
+}

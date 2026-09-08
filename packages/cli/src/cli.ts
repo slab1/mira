@@ -132,9 +132,10 @@ async function cmdServe(opts: Record<string, string | boolean>): Promise<void> {
   // Delegate to server's main — set env so server picks correct host/port
   process.env.PORT = port
   process.env.HOST = host
-  // Spawn server entry as child (avoids import side-effects)
+  // Spawn server entry as child (avoids import side-effects) — cross-machine safe binary
   const serverDir = new URL("../../server", import.meta.url).pathname
-  const proc = Bun.spawn(["bun", "run", "src/index.ts"], {
+  const { resolveBunBinary } = await import("../../shared/src/utils/paths.js")
+  const proc = Bun.spawn([resolveBunBinary(), "run", "src/index.ts"], {
     cwd: serverDir,
     env: { ...process.env, PORT: port, HOST: host },
     stdout: "inherit",
