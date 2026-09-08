@@ -426,9 +426,25 @@ export function baseUrl(): string {
   return defaultApiUrl()
 }
 
+function baseUrlCandidates(): string[] {
+  const b = baseUrl()
+  if (!b) return [b]
+  if (getRuntimeApiUrl() || getEnvBase()) return [b]
+  if (!b.includes('127.0.0.1:4096') && !b.includes('localhost:4096')) return [b]
+  const cands = [b]
+  for (let p = 4097; p <= 4106; p++) {
+    const u = b.replace(':4096', `:${p}`)
+    if (!cands.includes(u)) cands.push(u)
+  }
+  return cands
+}
+
 // Keep legacy name for internal callers
 function getBaseUrl(): string {
   return baseUrl()
+}
+function getBaseUrlCandidates(): string[] {
+  return baseUrlCandidates()
 }
 
 const TOKEN_KEY = 'mira_token'
@@ -513,27 +529,42 @@ function authHeaders(extra?: HeadersInit): HeadersInit {
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${getBaseUrl()}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...authHeaders(init?.headers) },
-    ...init,
-  })
-  if (res.status === 401) {
-    clearTokenOn401()
-    throw new ApiError(401, 'unauthorized')
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    let msg = `${res.status} ${res.statusText}${text ? `: ${text}` : ''}`
+  const bases = getBaseUrlCandidates()
+  let lastErr: unknown = null
+  for (const base of bases) {
     try {
-      const j = JSON.parse(text) as { error?: string; message?: string }
-      if (typeof j.error === 'string' && j.error) msg = `${res.status} ${j.error}`
-      else if (typeof j.message === 'string' && j.message) msg = `${res.status} ${j.message}`
-    } catch {}
-    throw new ApiError(res.status, msg, text)
+      const res = await fetch(`${base}${path}`, {
+        headers: { 'Content-Type': 'application/json', ...authHeaders(init?.headers) },
+        ...init,
+      })
+      if (res.status === 401) {
+        clearTokenOn401()
+        throw new ApiError(401, 'unauthorized')
+      }
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        let msg = `${res.status} ${res.statusText}${text ? `: ${text}` : ''}`
+        try {
+          const j = JSON.parse(text) as { error?: string; message?: string }
+          if (typeof j.error === 'string' && j.error) msg = `${res.status} ${j.error}`
+          else if (typeof j.message === 'string' && j.message) msg = `${res.status} ${j.message}`
+        } catch {}
+        throw new ApiError(res.status, msg, text)
+      }
+      const ct = res.headers.get('content-type') || ''
+      if (ct.includes('application/json')) return (await res.json()) as T
+      return (await res.json().catch(() => ({}) as T)) as T
+    } catch (e) {
+      if (e instanceof ApiError) throw e
+      const msg = String((e as Error)?.message ?? e)
+      const isConn = e instanceof TypeError || msg.includes('ECONNREFUSED') || msg.includes('Failed to fetch') || msg.includes('Connection refused') || msg.includes('fetch failed')
+      if (!isConn) throw e
+      lastErr = e
+      if (bases.indexOf(base) < bases.length - 1) continue
+      throw e
+    }
   }
-  const ct = res.headers.get('content-type') || ''
-  if (ct.includes('application/json')) return (await res.json()) as T
-  return (await res.json().catch(() => ({}) as T)) as T
+  throw (lastErr as Error) ?? new Error('request failed')
 }
 
 // ── REST ───────────────────────────────────────────────────────────

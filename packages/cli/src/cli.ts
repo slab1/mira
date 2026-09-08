@@ -5,6 +5,7 @@ declare const Bun: {
   file(path: string): { text(): Promise<string> }
 }
 declare const process: { env: Record<string, string | undefined>; argv: string[]; exit(code: number): never; stdout: { write(s: string): void } }
+declare const require: (m: string) => unknown
 
 /**
  * Mira CLI — thin wrapper around @mira/server
@@ -31,8 +32,38 @@ type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string
 const VERSION = "0.1.0"
 const DEFAULT_API = process.env.MIRA_API_URL ?? process.env.MIRA_APIURL ?? "http://127.0.0.1:4096"
 
+// ── Port rotation fallback: read .mira/port or scan 4097-4106 on ECONNREFUSED ──
+let cachedMiraPort: number | null | undefined
+function getMiraPortCached(): number | null {
+  if (cachedMiraPort !== undefined) return cachedMiraPort
+  try {
+    const { readFileSync, existsSync } = require("node:fs") as typeof import("node:fs")
+    const cands = [".mira/port", "../.mira/port", "../../.mira/port"]
+    try {
+      const u = new URL(import.meta.url).pathname
+      const dir = u.slice(0, u.lastIndexOf("/"))
+      cands.push(`${dir}/../../.mira/port`, `${dir}/../../../.mira/port`)
+    } catch {}
+    for (const p of cands) {
+      try {
+        if (existsSync(p)) {
+          const n = Number(readFileSync(p, "utf-8").trim())
+          if (Number.isFinite(n) && n > 0 && n <= 65535) { cachedMiraPort = n; return n }
+        }
+      } catch {}
+    }
+  } catch {}
+  cachedMiraPort = null
+  return null
+}
+
 function apiUrl(): string {
-  return (process.env.MIRA_API_URL ?? DEFAULT_API).replace(/\/$/, "")
+  const envUrl = process.env.MIRA_API_URL ?? process.env.MIRA_APIURL
+  if (envUrl) return envUrl.replace(/\/$/, "")
+  // respect rotation: .mira/port overrides default 4096 when no explicit env
+  const port = getMiraPortCached()
+  if (port) return `http://127.0.0.1:${port}`
+  return DEFAULT_API.replace(/\/$/, "")
 }
 function token(): string {
   return process.env.MIRA_TOKEN ?? ""
@@ -42,11 +73,36 @@ function authHeaders(): Record<string, string> {
   return t ? { Authorization: `Bearer ${t}` } : {}
 }
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  const res = await fetch(`${apiUrl()}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...authHeaders(), ...(init?.headers as Record<string, string> | undefined) },
-  })
-  return res
+  const primary = apiUrl()
+  const headers = { "Content-Type": "application/json", ...authHeaders(), ...(init?.headers as Record<string, string> | undefined) }
+  const usingDefault = !process.env.MIRA_API_URL && !process.env.MIRA_APIURL
+  // build candidate list when no explicit MIRA_API_URL — scan .mira/port + 4096-4106
+  const candidates: string[] = [primary]
+  if (usingDefault) {
+    const filePort = getMiraPortCached()
+    if (filePort) {
+      const u = `http://127.0.0.1:${filePort}`
+      if (!candidates.includes(u)) candidates.push(u)
+    }
+    for (let p = 4096; p <= 4106; p++) {
+      const u = `http://127.0.0.1:${p}`
+      if (!candidates.includes(u)) candidates.push(u)
+    }
+  }
+  let lastErr: unknown = null
+  for (const base of candidates) {
+    try {
+      const res = await fetch(`${base}${path}`, { ...init, headers })
+      return res
+    } catch (e) {
+      const msg = String((e as Error)?.message ?? e)
+      const isConn = e instanceof TypeError || msg.includes("ECONNREFUSED") || msg.includes("Failed to fetch") || msg.includes("Connection refused") || msg.includes("fetch failed") || msg.includes("ECONNRESET")
+      lastErr = e
+      if (!isConn) throw e
+      continue
+    }
+  }
+  throw lastErr ?? new Error("fetch failed")
 }
 function printHelp(): void {
   const help = `

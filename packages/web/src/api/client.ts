@@ -344,6 +344,19 @@ function baseUrl(): string {
   return defaultApiUrl()
 }
 
+function baseUrlCandidates(): string[] {
+  const b = baseUrl()
+  if (!b) return [b]
+  if (getRuntimeApiUrl() || getEnvBase()) return [b]
+  if (!b.includes('127.0.0.1:4096') && !b.includes('localhost:4096')) return [b]
+  const cands = [b]
+  for (let p = 4097; p <= 4106; p++) {
+    const u = b.replace(':4096', `:${p}`)
+    if (!cands.includes(u)) cands.push(u)
+  }
+  return cands
+}
+
 // ── Auth (bearer token; servers with MIRA_TOKEN/MIRA_API_KEYS require it) ──
 // Token sources (in priority order):
 //  1. localStorage `mira_token` — written by AuthGate via setToken(), survives reload,
@@ -437,83 +450,86 @@ function authHeaders(extra?: HeadersInit): HeadersInit {
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const timeoutMs = 100_000
-  const maxRetries = 3
+  const bases = baseUrlCandidates()
   let lastErr: Error | null = null
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
-    // combine caller signal + timeout signal
-    let signal: AbortSignal = controller.signal
-    if (init?.signal) {
-      const caller = init.signal as AbortSignal
-      if (caller.aborted) {
-        clearTimeout(timer)
-        controller.abort((caller as AbortSignal & { reason?: string }).reason)
-      } else {
-        try {
-          const anyFn = (AbortSignal as { any?: (s: AbortSignal[]) => AbortSignal }).any
-          if (typeof anyFn === 'function') signal = anyFn([controller.signal, caller])
-          else {
+  for (const base of bases) {
+    const timeoutMs = 100_000
+    const maxRetries = 3
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), timeoutMs)
+      let signal: AbortSignal = controller.signal
+      if (init?.signal) {
+        const caller = init.signal as AbortSignal
+        if (caller.aborted) {
+          clearTimeout(timer)
+          controller.abort((caller as AbortSignal & { reason?: string }).reason)
+        } else {
+          try {
+            const anyFn = (AbortSignal as { any?: (s: AbortSignal[]) => AbortSignal }).any
+            if (typeof anyFn === 'function') signal = anyFn([controller.signal, caller])
+            else {
+              caller.addEventListener(
+                'abort',
+                () => controller.abort((caller as AbortSignal & { reason?: string }).reason),
+                { once: true },
+              )
+            }
+          } catch {
             caller.addEventListener(
               'abort',
               () => controller.abort((caller as AbortSignal & { reason?: string }).reason),
               { once: true },
             )
           }
-        } catch {
-          caller.addEventListener(
-            'abort',
-            () => controller.abort((caller as AbortSignal & { reason?: string }).reason),
-            { once: true },
-          )
         }
       }
-    }
-    try {
-      const res = await fetch(`${baseUrl()}${path}`, {
-        ...init,
-        mode: 'cors',
-        signal,
-        headers: { 'Content-Type': 'application/json', ...authHeaders(init?.headers) },
-      })
-      clearTimeout(timer)
-      if (res.status === 401) {
-        clearTokenOn401()
-        throw new ApiError(401, 'unauthorized')
+      try {
+        const res = await fetch(`${base}${path}`, {
+          ...init,
+          mode: 'cors',
+          signal,
+          headers: { 'Content-Type': 'application/json', ...authHeaders(init?.headers) },
+        })
+        clearTimeout(timer)
+        if (res.status === 401) {
+          clearTokenOn401()
+          throw new ApiError(401, 'unauthorized')
+        }
+        if (!res.ok) {
+          const text = await res.text().catch(() => '')
+          let msg = `${res.status} ${res.statusText}${text ? `: ${text}` : ''}`
+          try {
+            const j = JSON.parse(text) as { error?: string; message?: string }
+            if (typeof j.error === 'string' && j.error) msg = `${res.status} ${j.error}`
+            else if (typeof j.message === 'string' && j.message) msg = `${res.status} ${j.message}`
+          } catch {}
+          throw new ApiError(res.status, msg, text)
+        }
+        const ct = res.headers.get('content-type') || ''
+        if (ct.includes('application/json')) return (await res.json()) as T
+        return (await res.json().catch(() => ({}) as T)) as T
+      } catch (e) {
+        clearTimeout(timer)
+        if (e instanceof ApiError) throw e
+        const err = e as Error
+        const callerAborted = init?.signal ? (init.signal as AbortSignal).aborted : false
+        if (callerAborted && err.name === 'AbortError') throw e
+        const isAbort = err.name === 'AbortError'
+        const shouldRetry = attempt < maxRetries && !isAbort && err instanceof TypeError
+        if (shouldRetry) {
+          lastErr = err
+          await new Promise((r) => setTimeout(r, 300))
+          continue
+        }
+        if (isAbort) throw new Error(`request timeout after ${timeoutMs}ms: ${path}`)
+        // Network TypeError — try next port candidate if any remain
+        if (err instanceof TypeError && bases.indexOf(base) < bases.length - 1) {
+          lastErr = err
+          break
+        }
+        throw e
       }
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        let msg = `${res.status} ${res.statusText}${text ? `: ${text}` : ''}`
-        try {
-          const j = JSON.parse(text) as { error?: string; message?: string }
-          if (typeof j.error === 'string' && j.error) msg = `${res.status} ${j.error}`
-          else if (typeof j.message === 'string' && j.message) msg = `${res.status} ${j.message}`
-        } catch {}
-        throw new ApiError(res.status, msg, text)
-      }
-      // 204 / empty
-      const ct = res.headers.get('content-type') || ''
-      if (ct.includes('application/json')) return (await res.json()) as T
-      return (await res.json().catch(() => ({}) as T)) as T
-    } catch (e) {
-      clearTimeout(timer)
-      if (e instanceof ApiError) throw e
-      const err = e as Error
-      const callerAborted = init?.signal ? (init.signal as AbortSignal).aborted : false
-      // caller explicitly aborted — don't retry
-      if (callerAborted && err.name === 'AbortError') throw e
-      const isAbort = err.name === 'AbortError'
-      // Internal timeout (AbortError) is fatal — do NOT retry (3 retries ≈ 30s dead wait).
-      // Only transient network failures (TypeError from fetch) are worth retrying.
-      const shouldRetry = attempt < maxRetries && !isAbort && err instanceof TypeError
-      if (shouldRetry) {
-        lastErr = err
-        await new Promise((r) => setTimeout(r, 300))
-        continue
-      }
-      if (isAbort) throw new Error(`request timeout after ${timeoutMs}ms: ${path}`)
-      throw e
     }
   }
   throw lastErr ?? new Error('request failed')

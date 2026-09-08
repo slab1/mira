@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import solid from 'vite-plugin-solid'
 import { fileURLToPath } from 'node:url'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -12,9 +12,23 @@ const opentuiAlias: Record<string, string> = hasOpentuiSolid
   ? {}
   : { '@opentui/solid': resolve(__dirname, 'src/shim/opentui-solid.tsx') }
 
+function miraPortFallback(): string {
+  const cands = ['.mira/port', '../.mira/port', '../../.mira/port', resolve('.mira/port'), resolve('../.mira/port'), resolve('../../.mira/port')]
+  for (const p of cands) {
+    try {
+      if (existsSync(p)) {
+        const raw = readFileSync(p, 'utf-8').trim()
+        const n = Number(raw)
+        if (Number.isFinite(n) && n > 0 && n <= 65535) return String(n)
+      }
+    } catch {}
+  }
+  return '4096'
+}
+
 // Dev-server API target: MIRA_DEV_API (full URL) or MIRA_DEV_PORT (port only).
 const API_TARGET =
-  process.env.MIRA_DEV_API ?? `http://127.0.0.1:${process.env.MIRA_DEV_PORT ?? '4096'}`
+  process.env.MIRA_DEV_API ?? `http://127.0.0.1:${process.env.MIRA_DEV_PORT ?? miraPortFallback()}`
 
 export default defineConfig({
   plugins: [solid()],

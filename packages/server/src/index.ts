@@ -609,10 +609,14 @@ async function main() {
     })
   }
 
-  // ── Bun.serve ────────────────────────────────────────────────────
-  const server = Bun.serve<MiraWSData>({
-    port: PORT,
-    hostname: HOST,
+  // ── Bun.serve with port rotation (4096 → 4106 if in use) ─────────
+  let server: ReturnType<typeof Bun.serve> | null = null
+  let actualPort = PORT
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      server = Bun.serve<MiraWSData>({
+        port: actualPort,
+        hostname: HOST,
     idleTimeout: 180,
     fetch(req, srv) {
       bunServer = srv
@@ -805,8 +809,45 @@ async function main() {
         } catch {}
       },
     },
-  })
-
+      })
+      break
+    } catch (e) {
+      const msg = String((e as Error)?.message ?? e)
+      if (msg.includes('EADDRINUSE') || msg.includes('address already in use') || msg.includes('Failed to start server')) {
+        if (attempt < 9) {
+          warn(`port ${actualPort} in use — trying ${actualPort + 1}`)
+          actualPort++
+          continue
+        }
+      }
+      throw e
+    }
+  }
+  if (!server) throw new Error(`failed to bind after 10 attempts from ${PORT}`)
+  // Export actual port so child processes and clients can discover rotation
+  try {
+    process.env.PORT = String(server.port)
+  } catch {}
+  try {
+    const { mkdirSync, writeFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    // Write .mira/port relative to cwd (repo root in normal runs) and also to
+    // repo root resolved from file location — handles `bun --cwd packages/server`.
+    const candidates = new Set<string>(['.mira/port'])
+    try {
+      const repoRoot = join(import.meta.dir, '../../..')
+      candidates.add(join(repoRoot, '.mira/port'))
+    } catch {}
+    for (const p of candidates) {
+      try {
+        const slash = p.lastIndexOf('/')
+        const dir = slash >= 0 ? p.slice(0, slash) : '.'
+        // node:fs mkdirSync handles both relative and absolute
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(p, String(server.port), 'utf-8')
+      } catch {}
+    }
+  } catch {}
   log(`✓ listening on http://${server.hostname}:${server.port}`)
   log(`  liveness: GET /healthz (no auth) · detail: GET /health`)
   log(`  prompt:  POST /session/:id/prompt  (SSE)`)
