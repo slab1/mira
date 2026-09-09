@@ -236,6 +236,7 @@ export default function App() {
   // Mobile: session sidebar is an off-canvas drawer; toggled by the hamburger.
   const [sidebarOpen, setSidebarOpen] = createSignal(false)
   const [moreOpen, setMoreOpen] = createSignal(false)
+  // Budget cap now wired from config.costCap (perSession) — localStorage fallback for UI toggle
   const [budgetCapEnabled, setBudgetCapEnabled] = createSignal(false)
   const [budgetCapAmount, setBudgetCapAmount] = createSignal(100)
   const [agents] = createResource(authorized, () => api.listAgents().catch(() => []))
@@ -275,13 +276,21 @@ export default function App() {
   })
 
   onMount(() => {
-    // Load budget cap from localStorage
+    // Load budget cap from config.costCap (wired to gateway) with localStorage fallback
     try {
       const e = localStorage.getItem('mira.budgetCap.enabled')
       const a = localStorage.getItem('mira.budgetCap.amount')
       if (e != null) setBudgetCapEnabled(e === 'true')
       if (a != null) setBudgetCapAmount(Number(a) || 100)
     } catch {}
+    // Sync from server config.costCap when available (gateway wiring)
+    createEffect(() => {
+      const cap = store.state.costCap
+      if (cap?.perSession != null) {
+        setBudgetCapAmount(cap.perSession)
+        setBudgetCapEnabled(true)
+      }
+    })
     // Probe stored token without flashing the gate:
     // - No token → keep gate visible (user must Connect; empty allowed for open dev servers)
     // - Token present → validate first; only on success load sessions and authorize
@@ -360,18 +369,27 @@ export default function App() {
     })
   })
 
-  // Budget cap HITL – trigger warning when cost exceeds cap
+  // Preload slash commands/skills as soon as we're authorized — ensures first "/" shows palette
+  // without waiting for the async load triggered by the keystroke. The onInput fallback remains.
   createEffect(() => {
-    const cost = store.state.cost
-    if (!cost || !budgetCapEnabled() || !store.state.currentId) return
-    if (cost.costUSD >= budgetCapAmount()) {
+    if (authorized()) {
+      void settings.loadAll()
+    }
+  })
+
+  // Budget cap HITL – trigger warning when per-session cost exceeds cap (config.costCap → gateway)
+  createEffect(() => {
+    const sess = currentSession()
+    const cap =
+      store.state.costCap?.perSession ?? (budgetCapEnabled() ? budgetCapAmount() : undefined)
+    const cost = sess?.costUsd ?? store.state.cost?.costUSD
+    if (cost == null || cap == null || !store.state.currentId) return
+    if (cost >= cap) {
       // Avoid spamming: only trigger once per session
       const key = `mira.budgetCap.warned.${store.state.currentId}`
       if (localStorage.getItem(key)) return
       localStorage.setItem(key, '1')
-      store.setBudgetWarning(
-        `Budget cap reached: $${cost.costUSD.toFixed(4)} ≥ $${budgetCapAmount()}`,
-      )
+      store.setBudgetWarning(`Budget cap reached: $${cost.toFixed(4)} ≥ $${cap} (per-session)`)
     }
   })
 
@@ -770,30 +788,134 @@ export default function App() {
                   </button>
                 )}
               </Show>
-              <Show when={store.state.cost}>
+              <Show
+                when={currentSession()?.costUsd != null || store.state.cost}
+                fallback={
+                  <Show when={store.state.cost}>
+                    {(() => {
+                      const cost = store.state.cost!.costUSD
+                      const cap =
+                        store.state.costCap?.perSession ??
+                        (budgetCapEnabled() ? budgetCapAmount() : undefined)
+                      const over = cap != null && cost >= cap
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => setTraceOpen(true)}
+                          title={`Gateway: ${store.state.cost!.requests} requests · ${store.state.cost!.inputTokens.toLocaleString()} in / ${store.state.cost!.outputTokens.toLocaleString()} out · avg ${store.state.cost!.avgLatencyMs}ms — click for trace${over ? ' · ⚠ Budget cap exceeded' : ''}${cap ? ` · cap $${cap}` : ''}`}
+                          class={`pill pill-cost ${over ? 'pill-danger' : ''}`}
+                          style={{
+                            cursor: 'pointer',
+                            background: over
+                              ? 'color-mix(in srgb, var(--danger) 14%, var(--bg-surface))'
+                              : undefined,
+                          }}
+                        >
+                          ${cost.toFixed(4)}
+                          {over ? ' ⚠' : ''}
+                        </button>
+                      )
+                    })()}
+                  </Show>
+                }
+              >
                 {(() => {
-                  const cost = store.state.cost!.costUSD
-                  const over = budgetCapEnabled() && cost >= budgetCapAmount()
+                  const sess = currentSession()
+                  const cost = sess?.costUsd ?? store.state.cost?.costUSD ?? 0
+                  const cap =
+                    store.state.costCap?.perSession ??
+                    (budgetCapEnabled() ? budgetCapAmount() : undefined)
+                  const over = cap != null && cost >= cap
+                  const pct = cap ? Math.min(100, (cost / cap) * 100) : 0
+                  // Sparkline: 4-point history synthesized from cost (simple bar)
+                  const sparkW = 24
+                  const sparkH = 8
+                  const points = cap
+                    ? [0, cost * 0.3, cost * 0.6, cost].map(
+                        (v, i) => `${(i * sparkW) / 3},${sparkH - (v / cap) * sparkH}`,
+                      )
+                    : []
                   return (
                     <button
                       type="button"
                       onClick={() => setTraceOpen(true)}
-                      title={`Gateway: ${store.state.cost!.requests} requests · ${store.state.cost!.inputTokens.toLocaleString()} in / ${store.state.cost!.outputTokens.toLocaleString()} out · avg ${store.state.cost!.avgLatencyMs}ms — click for trace${over ? ' · ⚠ Budget cap exceeded' : ''}`}
+                      title={`Session $${cost.toFixed(4)}${sess?.tokensIn != null ? ` · ${sess.tokensIn} in / ${sess.tokensOut ?? 0} out` : ''}${store.state.cost ? ` · gateway $${store.state.cost.costUSD.toFixed(4)} total` : ''}${cap ? ` · cap $${cap} (${pct.toFixed(0)}%)` : ''} — click for trace${over ? ' · ⚠ Budget cap exceeded' : ''}`}
                       class={`pill pill-cost ${over ? 'pill-danger' : ''}`}
                       style={{
                         cursor: 'pointer',
+                        display: 'inline-flex',
+                        'align-items': 'center',
+                        gap: '6px',
                         background: over
                           ? 'color-mix(in srgb, var(--danger) 14%, var(--bg-surface))'
                           : undefined,
+                        'padding-right': cap ? '6px' : undefined,
                       }}
                     >
-                      ${cost.toFixed(4)}
-                      {over ? ' ⚠' : ''}
+                      <span>${cost.toFixed(4)}</span>
+                      <Show when={cap != null}>
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            'align-items': 'center',
+                            gap: '4px',
+                            'font-size': 'var(--fs-2xs)',
+                            opacity: '0.9',
+                          }}
+                        >
+                          <span
+                            style={{
+                              width: '32px',
+                              height: '4px',
+                              background: 'var(--border)',
+                              'border-radius': '2px',
+                              overflow: 'hidden',
+                              display: 'inline-block',
+                            }}
+                          >
+                            <span
+                              style={{
+                                display: 'block',
+                                height: '100%',
+                                width: `${pct}%`,
+                                background: over
+                                  ? 'var(--danger)'
+                                  : pct > 80
+                                    ? 'var(--warn)'
+                                    : 'var(--accent)',
+                                'border-radius': '2px',
+                              }}
+                            />
+                          </span>
+                          <Show when={points.length}>
+                            <svg
+                              width={sparkW}
+                              height={sparkH}
+                              viewBox={`0 0 ${sparkW} ${sparkH}`}
+                              style={{ display: 'block' }}
+                              aria-hidden="true"
+                            >
+                              <polyline
+                                fill="none"
+                                stroke={over ? 'var(--danger)' : 'var(--accent)'}
+                                stroke-width="1.2"
+                                points={points.join(' ')}
+                              />
+                            </svg>
+                          </Show>
+                          {over ? ' ⚠' : ` ${pct.toFixed(0)}%`}
+                        </span>
+                      </Show>
+                      <Show when={cap == null && sess?.costUsd != null}>
+                        <span style={{ 'font-size': 'var(--fs-2xs)', opacity: '0.7' }}>
+                          session
+                        </span>
+                      </Show>
                     </button>
                   )
                 })()}
-                <QueueRail store={store} />
               </Show>
+              <QueueRail store={store} />
               <HeaderModelSelector settings={settings} id="header-model" />
               <HeaderAgentSelector
                 agents={agents() ?? []}

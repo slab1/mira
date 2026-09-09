@@ -30,9 +30,10 @@ export function mountMiddleware(
   const metrics = new MetricsCollector()
 
   // Security: CORS origin allowlist
-  // When an explicit list is configured, honour it as-is.
   // When the list is empty (dev/default), reflect any localhost/127.0.0.1 origin so
   // a Vite dev server on a different port can reach the API directly.
+  // When an explicit list is configured (prod), only origins in the list are
+  // allowed; localhost is denied unless MIRA_ALLOW_LOCALHOST=1.
   const isLocalDevOrigin = (origin: string): boolean => {
     try {
       const u = new URL(origin)
@@ -45,13 +46,38 @@ export function mountMiddleware(
       return false
     }
   }
+  const normalizedAllowSet = new Set(
+    CORS_ORIGIN_LIST.map((o) => {
+      try {
+        return new URL(o).origin
+      } catch {
+        return o
+      }
+    }),
+  )
   const corsOrigin =
     CORS_ORIGIN_LIST.length > 0
-      ? { origin: CORS_ORIGIN_LIST }
+      ? {
+          // Prod: allow only origins in CORS_ORIGIN_LIST (normalized) or
+          // localhost when explicitly gated by MIRA_ALLOW_LOCALHOST=1.
+          // Return normalized origin to prevent header-smuggling.
+          origin: (origin: string | undefined) => {
+            if (!origin) return ''
+            let normalized: string
+            try {
+              normalized = new URL(origin).origin
+            } catch {
+              return ''
+            }
+            if (normalizedAllowSet.has(normalized)) return normalized
+            if (isLocalDevOrigin(origin) && process.env.MIRA_ALLOW_LOCALHOST === '1')
+              return normalized
+            return ''
+          },
+        }
       : {
-          // Reflect the NORMALIZED origin (scheme://host:port) rather than the raw
-          // Origin header, so a crafted header can't smuggle extra bytes into the
-          // Access-Control-Allow-Origin response header.
+          // Dev default (empty list): reflect localhost via normalized origin.
+          // Preserve header-smuggling protection by returning u.origin.
           origin: (origin: string | undefined) => {
             if (!origin || !isLocalDevOrigin(origin)) return ''
             try {

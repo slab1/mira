@@ -165,6 +165,9 @@ const server = serve({
   port: PORT,
   fetch(req) {
     const url = new URL(req.url)
+    if (req.method === 'HEAD' && url.pathname === '/mcp') {
+      return new Response(null, { status: 200 })
+    }
     if (LEGACY) {
       if (req.method === 'GET' && url.pathname === '/mcp') {
         // Persistent SSE listen stream. Emit the `endpoint` event (the /message
@@ -209,13 +212,7 @@ const server = serve({
       return new Response('Not Found', { status: 404 })
     }
     if (req.method === 'GET') {
-      // Optional SSE listen stream — no server-initiated messages
-      const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode(''))
-        },
-      })
-      return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+      return new Response('Not Found', { status: 404 })
     }
     if (req.method !== 'POST') {
       return new Response('Method Not Allowed', { status: 405 })
@@ -232,5 +229,6 @@ const server = serve({
   },
 })
 
+await Bun.sleep(10)
 // Signal readiness with the actual port
 console.log(JSON.stringify({ ready: true, port: server.port }))

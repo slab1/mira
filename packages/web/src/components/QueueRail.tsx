@@ -1,4 +1,4 @@
-import { createSignal, createEffect, Show, For } from 'solid-js'
+import { createSignal, createEffect, Show, For, onCleanup, onMount } from 'solid-js'
 import type { AppStore } from '../stores/app'
 import { api } from '../api/client'
 
@@ -28,6 +28,15 @@ export function QueueRail(props: { store: AppStore }) {
 
   createEffect(() => {
     load()
+  })
+
+  onMount(() => {
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+      if (!sessionId()) return
+      load()
+    }, 3000)
+    onCleanup(() => clearInterval(timer))
   })
 
   const move = async (idx: number, dir: number) => {

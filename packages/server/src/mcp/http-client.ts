@@ -183,9 +183,15 @@ export class McpHttpClient {
         headers: { Accept: 'text/event-stream', ...this.headers },
         signal: controller.signal,
       })
-      if (!res.ok || !res.body) {
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
         throw new Error(
-          `Legacy SSE listen failed (HTTP ${res.status}) from MCP server ${this.name}`,
+          `Legacy SSE listen failed (HTTP ${res.status}) from MCP server ${this.name}: ${text.slice(0, 300)}`,
+        )
+      }
+      if (!res.body) {
+        throw new Error(
+          `Legacy SSE listen failed: empty body (HTTP ${res.status}) from MCP server ${this.name}`,
         )
       }
       this.sseReader = res.body.getReader()

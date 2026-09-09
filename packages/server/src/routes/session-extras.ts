@@ -110,6 +110,15 @@ export function mountSessionExtrasRoutes(
     })
   })
 
+  // Abort streaming prompt — client fire-and-forget (actual abort via SSE signal)
+  app.post('/session/:id/abort', async (c: Context) => {
+    const id = requireId(c)
+    if (!id) return c.json({ error: 'not found' }, 404)
+    if (!(await deps.authorizedSession(id, c))) return c.json({ error: 'not found' }, 404)
+    bus.publish({ type: 'session.abort', sessionID: id, payload: {}, timestamp: Date.now() })
+    return c.json({ ok: true })
+  })
+
   // Messages & parts
   app.get('/session/:id/message', async (c: Context) => {
     const id = requireId(c)

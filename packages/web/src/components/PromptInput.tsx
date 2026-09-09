@@ -1,8 +1,8 @@
-import { For, Show, createSignal, createEffect, createMemo, onCleanup } from 'solid-js'
+import { For, Show, createSignal, createEffect, createMemo, onCleanup, onMount } from 'solid-js'
 import type { SettingsStore } from '../stores/settings'
 import { filterCommands } from './CommandPalette'
 import type { CommandEntry } from '../api/client'
-import { providerModelId } from '../api/client'
+import { providerModelId, api } from '../api/client'
 
 // ── File pill ────────────────────────────────────────────────────────
 
@@ -457,6 +457,31 @@ export function PromptInput(props: {
   const [atIndex, setAtIndex] = createSignal(0)
   const [atVisible, setAtVisible] = createSignal(false)
   const [atDismissed, setAtDismissed] = createSignal(false)
+  const [workspaceFiles, setWorkspaceFiles] = createSignal<string[]>(MOCK_FILES)
+  let workspaceFetched = false
+  let workspaceFetching: Promise<void> | null = null
+  const fetchWorkspaceFiles = () => {
+    if (workspaceFetched || workspaceFetching) return workspaceFetching ?? Promise.resolve()
+    workspaceFetching = api
+      .getWorkspaceTree()
+      .then((files) => {
+        if (files.length > 0) setWorkspaceFiles(files)
+        workspaceFetched = true
+      })
+      .catch(() => {
+        workspaceFetched = true
+      })
+      .finally(() => {
+        workspaceFetching = null
+      })
+    return workspaceFetching
+  }
+  onMount(() => {
+    fetchWorkspaceFiles()
+  })
+  createEffect(() => {
+    if (atVisible()) fetchWorkspaceFiles()
+  })
 
   // Detect @ mention in progress
   const detectAtMention = (text: string, cursorPos: number): string | null => {
@@ -508,7 +533,7 @@ export function PromptInput(props: {
     queueMicrotask(autoGrow)
   }
 
-  const atFiltered = createMemo(() => filterFiles(atQuery(), MOCK_FILES))
+  const atFiltered = createMemo(() => filterFiles(atQuery(), workspaceFiles()))
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (atVisible() && atFiltered().length > 0) {
@@ -583,7 +608,7 @@ export function PromptInput(props: {
       <Show when={atVisible() && atFiltered().length > 0 && !atDismissed()}>
         <AtMentionAutocomplete
           query={atQuery()}
-          files={MOCK_FILES}
+          files={workspaceFiles()}
           selected={atIndex()}
           onSelect={handleAtSelect}
           onClose={() => {
@@ -600,6 +625,7 @@ export function PromptInput(props: {
         value={props.value}
         onInput={handleInput}
         onKeyDown={handleKeyDown}
+        onFocus={() => fetchWorkspaceFiles()}
         placeholder={
           props.placeholder ??
           'Message Mira…  ( / for commands · @ for files · ⌘K palette · ⌘↵ send )'
@@ -683,14 +709,11 @@ export function PromptInput(props: {
           }
         >
           <button
-            type="submit"
+            type="button"
             data-slot="prompt-send"
             class="btn btn-solid"
             disabled={!props.value.trim() || props.disabled}
-            onClick={(e) => {
-              e.preventDefault()
-              props.onSubmit()
-            }}
+            onClick={() => props.onSubmit()}
             aria-label="Send message"
             style={{
               padding: '7px 16px',

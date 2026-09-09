@@ -1067,11 +1067,12 @@ export class SessionPrompt {
     // Persist per-session spend (tokens observed from provider usage chunks)
     if (totalTokensIn || totalTokensOut) {
       try {
+        const costDelta = estimateCostUSD(model, totalTokensIn, totalTokensOut)
         this.deps.db.sqlite
           .prepare(
-            `UPDATE sessions SET tokens_in = COALESCE(tokens_in, 0) + ?, tokens_out = COALESCE(tokens_out, 0) + ? WHERE id = ?`,
+            `UPDATE sessions SET tokens_in = COALESCE(tokens_in, 0) + ?, tokens_out = COALESCE(tokens_out, 0) + ?, cost_usd = COALESCE(cost_usd, 0) + ?, updated_at = ? WHERE id = ?`,
           )
-          .run(totalTokensIn, totalTokensOut, sessionID)
+          .run(totalTokensIn, totalTokensOut, costDelta, Date.now(), sessionID)
       } catch {}
     }
     try {

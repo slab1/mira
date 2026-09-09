@@ -1,6 +1,6 @@
-import { createSignal, createEffect, For, Show, onCleanup } from "solid-js"
-import type { SettingsStore } from "../stores/settings"
-import type { CommandEntry } from "../api/client"
+import { createSignal, createEffect, For, Show, onCleanup } from 'solid-js'
+import type { SettingsStore } from '../stores/settings'
+import type { CommandEntry } from '../api/client'
 
 // ── Fuzzy ──────────────────────────────────────────────────────────
 
@@ -41,11 +41,11 @@ export function fuzzyScore(query: string, target: string): number {
 }
 
 export function filterCommands(query: string, commands: CommandEntry[]): CommandEntry[] {
-  const q = query.trim().toLowerCase().replace(/^\//, "")
+  const q = query.trim().toLowerCase().replace(/^\//, '')
   if (!q) return commands.slice(0, 20)
   const scored = commands
     .map((c) => {
-      const nameScore = fuzzyScore(q, c.name.replace(/^\//, ""))
+      const nameScore = fuzzyScore(q, c.name.replace(/^\//, ''))
       const descScore = fuzzyScore(q, c.description) * 0.5
       const s = Math.max(nameScore, descScore)
       return { c, s }
@@ -63,7 +63,7 @@ export function CommandPalette(props: {
   onClose: () => void
   onInsert: (text: string) => void
 }) {
-  const [query, setQuery] = createSignal("")
+  const [query, setQuery] = createSignal('')
   const [selected, setSelected] = createSignal(0)
   let inputRef: HTMLInputElement | undefined
 
@@ -72,7 +72,7 @@ export function CommandPalette(props: {
 
   createEffect(() => {
     if (props.open) {
-      setQuery("")
+      setQuery('')
       setSelected(0)
       queueMicrotask(() => inputRef?.focus())
       // Ensure commands are loaded
@@ -83,20 +83,20 @@ export function CommandPalette(props: {
   // Keyboard nav inside palette
   const onKeyDown = (e: KeyboardEvent) => {
     const list = filtered()
-    if (e.key === "ArrowDown") {
+    if (e.key === 'ArrowDown') {
       e.preventDefault()
       setSelected((i) => Math.min(i + 1, list.length - 1))
-    } else if (e.key === "ArrowUp") {
+    } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setSelected((i) => Math.max(i - 1, 0))
-    } else if (e.key === "Enter") {
+    } else if (e.key === 'Enter') {
       e.preventDefault()
       const item = list[selected()]
       if (item) {
-        props.onInsert(item.name + " ")
+        props.onInsert(item.name + ' ')
         props.onClose()
       }
-    } else if (e.key === "Escape") {
+    } else if (e.key === 'Escape') {
       e.preventDefault()
       props.onClose()
     }
@@ -105,19 +105,19 @@ export function CommandPalette(props: {
   // Global Ctrl+P / Cmd+P listener — also "/" when not in input
   createEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const isModP = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p"
+      const isModP = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p'
       if (isModP) {
         e.preventDefault()
         if (props.open) props.onClose()
         else {
           // Open palette — parent controls open state via App
           // Dispatch custom event so App can react even if this component isn't mounted open
-          window.dispatchEvent(new CustomEvent("mira:open-palette"))
+          window.dispatchEvent(new CustomEvent('mira:open-palette'))
         }
       }
     }
-    window.addEventListener("keydown", handler)
-    onCleanup(() => window.removeEventListener("keydown", handler))
+    window.addEventListener('keydown', handler)
+    onCleanup(() => window.removeEventListener('keydown', handler))
   })
 
   return (
@@ -129,9 +129,15 @@ export function CommandPalette(props: {
           if (e.target === e.currentTarget) props.onClose()
         }}
       >
-        <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette" onClick={(e) => e.stopPropagation()}>
+        <div
+          class="palette"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Command palette"
+          onClick={(e) => e.stopPropagation()}
+        >
           <div class="palette-input-wrap">
-            <span aria-hidden="true" style={{ color: "var(--fg-faint)", "font-size": "14px" }}>
+            <span aria-hidden="true" style={{ color: 'var(--fg-faint)', 'font-size': '14px' }}>
               ⌘
             </span>
             <input
@@ -155,9 +161,17 @@ export function CommandPalette(props: {
             <Show
               when={filtered().length > 0}
               fallback={
-                <div class="palette-empty">
-                  No commands match “{query()}”. Try <code style={{ "font-family": "var(--font-mono)" }}>/</code> to see all.
-                </div>
+                <Show
+                  when={props.settings.state.loading}
+                  fallback={
+                    <div class="palette-empty">
+                      No commands match “{query()}”. Try{' '}
+                      <code style={{ 'font-family': 'var(--font-mono)' }}>/</code> to see all.
+                    </div>
+                  }
+                >
+                  <div class="palette-empty">Loading commands…</div>
+                </Show>
               }
             >
               <For each={filtered()}>
@@ -165,22 +179,36 @@ export function CommandPalette(props: {
                   <button
                     type="button"
                     role="option"
-                    aria-selected={selected() === i() ? "true" : "false"}
+                    aria-selected={selected() === i() ? 'true' : 'false'}
                     class="palette-item"
                     onMouseEnter={() => setSelected(i())}
                     onClick={() => {
-                      props.onInsert(cmd.name + " ")
+                      props.onInsert(cmd.name + ' ')
                       props.onClose()
                     }}
                   >
-                    <span style={{ display: "flex", "flex-direction": "column", gap: "2px", "min-width": "0" }}>
+                    <span
+                      style={{
+                        display: 'flex',
+                        'flex-direction': 'column',
+                        gap: '2px',
+                        'min-width': '0',
+                      }}
+                    >
                       <span class="palette-item-name">{cmd.name}</span>
                       <Show when={cmd.description}>
                         <span class="palette-item-desc">{cmd.description}</span>
                       </Show>
                     </span>
-                    <span style={{ display: "flex", gap: "6px", "align-items": "center", "flex-shrink": "0" }}>
-                      <span class="pill" style={{ "font-size": "var(--fs-2xs)" }}>
+                    <span
+                      style={{
+                        display: 'flex',
+                        gap: '6px',
+                        'align-items': 'center',
+                        'flex-shrink': '0',
+                      }}
+                    >
+                      <span class="pill" style={{ 'font-size': 'var(--fs-2xs)' }}>
                         {cmd.source}
                       </span>
                       <span class="palette-kbd">↵</span>
@@ -191,7 +219,17 @@ export function CommandPalette(props: {
             </Show>
           </div>
 
-          <div style={{ padding: "8px 12px", "border-top": "1px solid var(--border)", display: "flex", gap: "8px", "align-items": "center", "font-size": "var(--fs-2xs)", color: "var(--fg-faint)" }}>
+          <div
+            style={{
+              padding: '8px 12px',
+              'border-top': '1px solid var(--border)',
+              display: 'flex',
+              gap: '8px',
+              'align-items': 'center',
+              'font-size': 'var(--fs-2xs)',
+              color: 'var(--fg-faint)',
+            }}
+          >
             <span>
               <span class="kbd">↑↓</span> navigate
             </span>
@@ -203,7 +241,9 @@ export function CommandPalette(props: {
             <span>
               <span class="kbd">/</span> slash commands
             </span>
-            <span style={{ "margin-left": "auto", "font-family": "var(--font-mono)" }}>{filtered().length} results</span>
+            <span style={{ 'margin-left': 'auto', 'font-family': 'var(--font-mono)' }}>
+              {filtered().length} results
+            </span>
           </div>
         </div>
       </div>
@@ -225,7 +265,7 @@ export function SlashAutocomplete(props: {
 
   // Arrow nav is handled by parent textarea; this is click-only + keyboard via prop
   return (
-    <Show when={props.query.startsWith("/") && filtered().length > 0}>
+    <Show when={props.query.startsWith('/') && filtered().length > 0}>
       <div class="slash-dropdown" role="listbox" aria-label="Slash commands">
         <div class="slash-list">
           <For each={filtered().slice(0, 8)}>
@@ -233,24 +273,61 @@ export function SlashAutocomplete(props: {
               <button
                 type="button"
                 role="option"
-                aria-selected={selected() === i() ? "true" : "false"}
+                aria-selected={selected() === i() ? 'true' : 'false'}
                 class="slash-item"
                 onClick={() => props.onSelect(cmd.name)}
               >
-                <span style={{ display: "flex", "flex-direction": "column", gap: "1px", "min-width": "0", "text-align": "left" }}>
-                  <span style={{ "font-family": "var(--font-mono)", "font-size": "var(--fs-sm)", "font-weight": "600", color: "var(--fg)" }}>{cmd.name}</span>
+                <span
+                  style={{
+                    display: 'flex',
+                    'flex-direction': 'column',
+                    gap: '1px',
+                    'min-width': '0',
+                    'text-align': 'left',
+                  }}
+                >
+                  <span
+                    style={{
+                      'font-family': 'var(--font-mono)',
+                      'font-size': 'var(--fs-sm)',
+                      'font-weight': '600',
+                      color: 'var(--fg)',
+                    }}
+                  >
+                    {cmd.name}
+                  </span>
                   <Show when={cmd.description}>
-                    <span style={{ "font-size": "var(--fs-xs)", color: "var(--fg-subtle)", "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis", "max-width": "36ch" }}>{cmd.description}</span>
+                    <span
+                      style={{
+                        'font-size': 'var(--fs-xs)',
+                        color: 'var(--fg-subtle)',
+                        'white-space': 'nowrap',
+                        overflow: 'hidden',
+                        'text-overflow': 'ellipsis',
+                        'max-width': '36ch',
+                      }}
+                    >
+                      {cmd.description}
+                    </span>
                   </Show>
                 </span>
-                <span class="pill" style={{ "font-size": "var(--fs-2xs)", "flex-shrink": "0" }}>
+                <span class="pill" style={{ 'font-size': 'var(--fs-2xs)', 'flex-shrink': '0' }}>
                   {cmd.source}
                 </span>
               </button>
             )}
           </For>
         </div>
-        <div style={{ padding: "6px 10px", "border-top": "1px solid var(--border)", "font-size": "var(--fs-2xs)", color: "var(--fg-faint)", display: "flex", gap: "6px" }}>
+        <div
+          style={{
+            padding: '6px 10px',
+            'border-top': '1px solid var(--border)',
+            'font-size': 'var(--fs-2xs)',
+            color: 'var(--fg-faint)',
+            display: 'flex',
+            gap: '6px',
+          }}
+        >
           <span>
             <span class="kbd">↑↓</span> nav
           </span>

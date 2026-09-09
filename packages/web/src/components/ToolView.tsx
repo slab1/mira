@@ -580,161 +580,288 @@ export function ToolView(props: { store: AppStore }) {
                     </div>
                   }
                 >
-                  <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
-                    <For each={snapshots() ?? []}>
-                      {(snap) => {
-                        const [detail, setDetail] = createSignal<{
-                          path: string
-                          snapshotContent: string | null
-                          currentContent: string | null
-                          existedBefore: boolean
-                        } | null>(null)
-                        const [loadingDetail, setLoadingDetail] = createSignal(false)
-                        return (
-                          <div
-                            class="card"
-                            data-slot="snapshot-card"
-                            style={{
-                              padding: '9px 11px',
-                              display: 'flex',
-                              gap: '9px',
-                              'align-items': 'center',
-                              'flex-wrap': 'wrap',
-                            }}
-                          >
-                            <div style={{ flex: '1', 'min-width': '0' }}>
-                              <div
-                                style={{
-                                  'font-size': '12px',
-                                  'font-weight': '600',
-                                  color: 'var(--fg)',
-                                  'font-family': 'var(--font-mono)',
-                                  'white-space': 'nowrap',
-                                  overflow: 'hidden',
-                                  'text-overflow': 'ellipsis',
-                                }}
-                                title={snap.path}
-                              >
-                                {snap.path}
-                              </div>
-                              <div
-                                style={{
-                                  'font-size': 'var(--fs-2xs)',
-                                  color: 'var(--fg-faint)',
-                                  'margin-top': '2px',
-                                  'font-family': 'var(--font-mono)',
-                                }}
-                              >
-                                {new Date(snap.createdAt).toLocaleTimeString()} ·{' '}
-                                {snap.existedBefore ? 'edit' : 'new file'}
-                                {snap.messageID ? ` · ${snap.messageID.slice(0, 8)}` : ''}
-                              </div>
-                            </div>
-                            <button
-                              type="button"
-                              class="btn btn-ghost"
-                              onClick={() =>
-                                void (async () => {
-                                  const id = s().currentId
-                                  if (!id) return
-                                  setLoadingDetail(true)
-                                  try {
-                                    const d = await api.getSnapshot(id, snap.id)
-                                    setDetail(d)
-                                  } catch (e) {
-                                    toast.error(`Snapshot detail failed: ${(e as Error).message}`)
-                                  } finally {
-                                    setLoadingDetail(false)
-                                  }
-                                })()
-                              }
-                              title="Preview diff"
-                              aria-label="Preview diff"
-                              disabled={loadingDetail()}
-                              aria-busy={loadingDetail() ? 'true' : 'false'}
+                  <div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
+                    {(() => {
+                      const grouped = () => {
+                        const snaps = snapshots() ?? []
+                        const map = new Map<string, Snapshot[]>()
+                        const order: string[] = []
+                        for (const sn of snaps) {
+                          const key = sn.messageID ?? '__no_message__'
+                          if (!map.has(key)) {
+                            map.set(key, [])
+                            order.push(key)
+                          }
+                          map.get(key)!.push(sn)
+                        }
+                        return order.map((k) => ({
+                          messageID: k === '__no_message__' ? null : k,
+                          snaps: map.get(k)!,
+                        }))
+                      }
+                      return (
+                        <For each={grouped()}>
+                          {(group) => (
+                            <div
+                              class="card"
+                              data-slot="snapshot-group"
                               style={{
-                                padding: '4px 8px',
-                                'font-size': 'var(--fs-xs)',
-                                border: '1px solid var(--border)',
-                                'border-radius': 'var(--r-full)',
-                                flex: 'none',
-                                'min-height': '28px',
+                                padding: '8px',
+                                display: 'flex',
+                                'flex-direction': 'column',
+                                gap: '6px',
+                                background: 'var(--bg-surface)',
                               }}
                             >
-                              {loadingDetail() ? '…' : 'diff'}
-                            </button>
-                            <button
-                              type="button"
-                              class="btn btn-ghost"
-                              onClick={() =>
-                                void (async () => {
-                                  const id = s().currentId
-                                  if (!id) return
-                                  try {
-                                    await api.revertSession(id, snap.messageID ?? undefined)
-                                    await refetchSnaps()
-                                    await props.store.loadMessages(id)
-                                    toast.success(
-                                      `Reverted ${snap.messageID ? 'to snapshot' : 'last mutation'}`,
-                                    )
-                                  } catch (e) {
-                                    toast.error(`Revert failed: ${(e as Error).message}`)
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  'align-items': 'center',
+                                  gap: '8px',
+                                  'flex-wrap': 'wrap',
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    'font-size': 'var(--fs-2xs)',
+                                    'font-weight': '700',
+                                    color: 'var(--fg-muted)',
+                                    'font-family': 'var(--font-mono)',
+                                    'letter-spacing': '0.04em',
+                                    'text-transform': 'uppercase',
+                                  }}
+                                >
+                                  {group.messageID
+                                    ? `msg ${group.messageID.slice(0, 8)}`
+                                    : 'no message'}
+                                </span>
+                                <span
+                                  style={{
+                                    'font-size': 'var(--fs-2xs)',
+                                    color: 'var(--fg-faint)',
+                                    'font-family': 'var(--font-mono)',
+                                  }}
+                                >
+                                  {new Date(
+                                    Math.min(...group.snaps.map((s) => s.createdAt)),
+                                  ).toLocaleTimeString()}{' '}
+                                  · {group.snaps.length} file{group.snaps.length === 1 ? '' : 's'}
+                                </span>
+                                <button
+                                  type="button"
+                                  class="btn btn-ghost"
+                                  onClick={() =>
+                                    void (async () => {
+                                      const id = s().currentId
+                                      if (!id) return
+                                      try {
+                                        await api.revertSession(id, group.messageID ?? undefined)
+                                        await refetchSnaps()
+                                        await props.store.loadMessages(id)
+                                        toast.success(
+                                          group.messageID
+                                            ? `Rewound to ${group.messageID.slice(0, 8)} — ${group.snaps.length} file(s) restored`
+                                            : `Reverted last mutation`,
+                                        )
+                                      } catch (e) {
+                                        toast.error(`Rewind failed: ${(e as Error).message}`)
+                                      }
+                                    })()
                                   }
-                                })()
-                              }
-                              title={
-                                snap.messageID
-                                  ? `Rewind to message ${snap.messageID.slice(0, 8)} (reverts this + later)`
-                                  : 'Undo last mutation'
-                              }
-                              style={{
-                                padding: '4px 8px',
-                                'font-size': 'var(--fs-xs)',
-                                border: '1px solid var(--border)',
-                                'border-radius': 'var(--r-full)',
-                                flex: 'none',
-                              }}
-                            >
-                              ↩ revert
-                            </button>
-                            <Show when={detail()}>
-                              {(d) => {
-                                const snapLines = () => (d().snapshotContent ?? '').split('\n').length
-                                const currLines = () => (d().currentContent ?? '').split('\n').length
-                                const added = () => Math.max(0, currLines() - snapLines())
-                                const removed = () => Math.max(0, snapLines() - currLines())
-                                return (
-                                  <div
-                                    data-slot="snapshot-diff"
-                                    style={{
-                                      'margin-top': '8px',
-                                      display: 'flex',
-                                      'flex-direction': 'column',
-                                      gap: '8px',
-                                      width: '100%',
-                                    }}
-                                  >
-                                    <div style={{ display: 'flex', gap: '6px', 'align-items': 'center', 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'font-family': 'var(--font-mono)' }}>
-                                      <span>{d().path}</span>
-                                      <span style={{ 'margin-left': 'auto', display: 'inline-flex', gap: '6px' }}>
-                                        <Show when={added() > 0}>
-                                          <span style={{ color: 'var(--ok)', 'font-weight': '600' }}>+{added()} lines</span>
-                                        </Show>
-                                        <Show when={removed() > 0}>
-                                          <span style={{ color: 'var(--danger)', 'font-weight': '600' }}>-{removed()} lines</span>
-                                        </Show>
-                                        <span>{snapLines()} → {currLines()} lines</span>
-                                      </span>
+                                  title={
+                                    group.messageID
+                                      ? `↩ rewind to here — reverts this message and all later ones`
+                                      : 'Undo last mutation'
+                                  }
+                                  aria-label={
+                                    group.messageID
+                                      ? `Rewind to message ${group.messageID.slice(0, 8)}`
+                                      : 'Undo last mutation'
+                                  }
+                                  style={{
+                                    padding: '4px 10px',
+                                    'font-size': 'var(--fs-xs)',
+                                    border: '1px solid var(--border)',
+                                    'border-radius': 'var(--r-full)',
+                                    'margin-left': 'auto',
+                                    flex: 'none',
+                                    'min-height': '28px',
+                                    background: group.messageID ? 'var(--accent-soft)' : undefined,
+                                    color: group.messageID ? 'var(--accent)' : undefined,
+                                    'border-color': group.messageID
+                                      ? 'var(--accent-border)'
+                                      : undefined,
+                                    'font-weight': '600',
+                                  }}
+                                >
+                                  ↩ rewind to here
+                                </button>
+                              </div>
+                              <For each={group.snaps}>
+                                {(snap) => {
+                                  const [detail, setDetail] = createSignal<{
+                                    path: string
+                                    snapshotContent: string | null
+                                    currentContent: string | null
+                                    existedBefore: boolean
+                                  } | null>(null)
+                                  const [loadingDetail, setLoadingDetail] = createSignal(false)
+                                  return (
+                                    <div
+                                      class="card"
+                                      data-slot="snapshot-card"
+                                      style={{
+                                        padding: '9px 11px',
+                                        display: 'flex',
+                                        gap: '9px',
+                                        'align-items': 'center',
+                                        'flex-wrap': 'wrap',
+                                        background: 'var(--bg-app)',
+                                      }}
+                                    >
+                                      <div style={{ flex: '1', 'min-width': '0' }}>
+                                        <div
+                                          style={{
+                                            'font-size': '12px',
+                                            'font-weight': '600',
+                                            color: 'var(--fg)',
+                                            'font-family': 'var(--font-mono)',
+                                            'white-space': 'nowrap',
+                                            overflow: 'hidden',
+                                            'text-overflow': 'ellipsis',
+                                          }}
+                                          title={snap.path}
+                                        >
+                                          {snap.path}
+                                        </div>
+                                        <div
+                                          style={{
+                                            'font-size': 'var(--fs-2xs)',
+                                            color: 'var(--fg-faint)',
+                                            'margin-top': '2px',
+                                            'font-family': 'var(--font-mono)',
+                                          }}
+                                        >
+                                          {new Date(snap.createdAt).toLocaleTimeString()} ·{' '}
+                                          {snap.existedBefore ? 'edit' : 'new file'}
+                                        </div>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        class="btn btn-ghost"
+                                        onClick={() =>
+                                          void (async () => {
+                                            const id = s().currentId
+                                            if (!id) return
+                                            setLoadingDetail(true)
+                                            try {
+                                              const d = await api.getSnapshot(id, snap.id)
+                                              setDetail(d)
+                                            } catch (e) {
+                                              toast.error(
+                                                `Snapshot detail failed: ${(e as Error).message}`,
+                                              )
+                                            } finally {
+                                              setLoadingDetail(false)
+                                            }
+                                          })()
+                                        }
+                                        title="Preview diff"
+                                        aria-label="Preview diff"
+                                        disabled={loadingDetail()}
+                                        aria-busy={loadingDetail() ? 'true' : 'false'}
+                                        style={{
+                                          padding: '4px 8px',
+                                          'font-size': 'var(--fs-xs)',
+                                          border: '1px solid var(--border)',
+                                          'border-radius': 'var(--r-full)',
+                                          flex: 'none',
+                                          'min-height': '28px',
+                                        }}
+                                      >
+                                        {loadingDetail() ? '…' : 'diff'}
+                                      </button>
+                                      <Show when={detail()}>
+                                        {(d) => {
+                                          const snapLines = () =>
+                                            (d().snapshotContent ?? '').split('\n').length
+                                          const currLines = () =>
+                                            (d().currentContent ?? '').split('\n').length
+                                          const added = () => Math.max(0, currLines() - snapLines())
+                                          const removed = () =>
+                                            Math.max(0, snapLines() - currLines())
+                                          return (
+                                            <div
+                                              data-slot="snapshot-diff"
+                                              style={{
+                                                'margin-top': '8px',
+                                                display: 'flex',
+                                                'flex-direction': 'column',
+                                                gap: '8px',
+                                                width: '100%',
+                                              }}
+                                            >
+                                              <div
+                                                style={{
+                                                  display: 'flex',
+                                                  gap: '6px',
+                                                  'align-items': 'center',
+                                                  'font-size': 'var(--fs-2xs)',
+                                                  color: 'var(--fg-faint)',
+                                                  'font-family': 'var(--font-mono)',
+                                                }}
+                                              >
+                                                <span>{d().path}</span>
+                                                <span
+                                                  style={{
+                                                    'margin-left': 'auto',
+                                                    display: 'inline-flex',
+                                                    gap: '6px',
+                                                  }}
+                                                >
+                                                  <Show when={added() > 0}>
+                                                    <span
+                                                      style={{
+                                                        color: 'var(--ok)',
+                                                        'font-weight': '600',
+                                                      }}
+                                                    >
+                                                      +{added()} lines
+                                                    </span>
+                                                  </Show>
+                                                  <Show when={removed() > 0}>
+                                                    <span
+                                                      style={{
+                                                        color: 'var(--danger)',
+                                                        'font-weight': '600',
+                                                      }}
+                                                    >
+                                                      -{removed()} lines
+                                                    </span>
+                                                  </Show>
+                                                  <span>
+                                                    {snapLines()} → {currLines()} lines
+                                                  </span>
+                                                </span>
+                                              </div>
+                                              <DiffViewer
+                                                path={d().path}
+                                                before={d().snapshotContent ?? '(empty)'}
+                                                after={d().currentContent ?? '(file missing)'}
+                                              />
+                                            </div>
+                                          )
+                                        }}
+                                      </Show>
                                     </div>
-                                    <DiffViewer path={d().path} before={d().snapshotContent ?? '(empty)'} after={d().currentContent ?? '(file missing)'} />
-                                  </div>
-                                )
-                              }}
-                            </Show>
-                          </div>
-                        )
-                      }}
-                    </For>
+                                  )
+                                }}
+                              </For>
+                            </div>
+                          )}
+                        </For>
+                      )
+                    })()}
                   </div>
                 </Show>
               </Show>

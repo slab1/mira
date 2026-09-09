@@ -651,6 +651,12 @@ export const api = {
   getJob: (id: string) => req<Job>(`/job/${encodeURIComponent(id)}`),
   cancelJob: (id: string) => req<Job>(`/job/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
 
+  /** Abort the current streaming prompt for a session (POST /session/:id/abort) */
+  abortPrompt: (id: string) =>
+    req<{ ok: boolean }>(`/session/${encodeURIComponent(id)}/abort`, { method: 'POST' }).catch(
+      () => ({ ok: false }) as { ok: boolean },
+    ),
+
   /** Export session transcript — markdown or JSON (triggers download in caller) */
   exportSession: async (id: string, format: 'md' | 'json' = 'md'): Promise<string> => {
     const controller = new AbortController()
@@ -761,6 +767,7 @@ export const api = {
   listAgents: () => req<AgentEntry[]>('/agents'),
   listCommands: () => req<CommandEntry[] | string[]>('/commands'),
   listSkills: () => req<SkillEntry[] | string[]>('/skills'),
+  getWorkspaceTree: () => req<{ files: string[] }>('/workspace/tree').then((r) => r.files),
   getPermission: () => req<PermissionMatrix>('/permission'),
 
   // ── Knowledge Graph (H2-1 Memory v2 read + H3-E mutations) ────

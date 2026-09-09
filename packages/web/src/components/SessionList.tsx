@@ -21,11 +21,45 @@ function sessionStatus(session: { id: string }, store: AppStore): StatusInfo {
   const isActive = s.currentId === session.id
   const isStreaming = isActive && s.streaming
   const isQueued = s.queued.length > 0 && isActive
-  if (isStreaming) return { label: 'streaming', color: 'var(--warn)', bg: 'var(--warn-soft)', border: 'var(--warn-border)', icon: '◷' }
-  if (isQueued) return { label: 'queued', color: 'var(--warn)', bg: 'var(--warn-soft)', border: 'var(--warn-border)', icon: '⏳' }
-  if (s.error && isActive) return { label: 'error', color: 'var(--danger)', bg: 'var(--danger-soft)', border: 'var(--danger-border)', icon: '⚠' }
-  if (isActive) return { label: 'active', color: 'var(--ok)', bg: 'var(--ok-soft)', border: 'var(--ok-border)', icon: '●' }
-  return { label: 'idle', color: 'var(--fg-faint)', bg: 'transparent', border: 'var(--border)', icon: '○' }
+  if (isStreaming)
+    return {
+      label: 'streaming',
+      color: 'var(--warn)',
+      bg: 'var(--warn-soft)',
+      border: 'var(--warn-border)',
+      icon: '◷',
+    }
+  if (isQueued)
+    return {
+      label: 'queued',
+      color: 'var(--warn)',
+      bg: 'var(--warn-soft)',
+      border: 'var(--warn-border)',
+      icon: '⏳',
+    }
+  if (s.error && isActive)
+    return {
+      label: 'error',
+      color: 'var(--danger)',
+      bg: 'var(--danger-soft)',
+      border: 'var(--danger-border)',
+      icon: '⚠',
+    }
+  if (isActive)
+    return {
+      label: 'active',
+      color: 'var(--ok)',
+      bg: 'var(--ok-soft)',
+      border: 'var(--ok-border)',
+      icon: '●',
+    }
+  return {
+    label: 'idle',
+    color: 'var(--fg-faint)',
+    bg: 'transparent',
+    border: 'var(--border)',
+    icon: '○',
+  }
 }
 
 export function SessionList(props: { store: AppStore; open?: boolean }) {
@@ -72,7 +106,8 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
     if (sf !== 'all') {
       list = list.filter((sess) => {
         const st = sessionStatus(sess, props.store)
-        if (sf === 'active') return st.label === 'active' || st.label === 'streaming' || st.label === 'queued'
+        if (sf === 'active')
+          return st.label === 'active' || st.label === 'streaming' || st.label === 'queued'
         return st.label === 'idle'
       })
     }
@@ -83,13 +118,21 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
       const bPinned = pinSet.has(b.id)
       if (aPinned && !bPinned) return -1
       if (!aPinned && bPinned) return 1
-      return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
+      return (
+        new Date(b.updatedAt || b.createdAt).getTime() -
+        new Date(a.updatedAt || a.createdAt).getTime()
+      )
     })
   })
 
-  const costLabel = (sess: { costUsd?: number | null; tokensIn?: number | null; tokensOut?: number | null }) => {
+  const costLabel = (sess: {
+    costUsd?: number | null
+    tokensIn?: number | null
+    tokensOut?: number | null
+  }) => {
     if (sess.costUsd != null && sess.costUsd > 0) return `$${sess.costUsd.toFixed(4)}`
-    if (sess.tokensIn != null || sess.tokensOut != null) return `${sess.tokensIn ?? 0}in/${sess.tokensOut ?? 0}out`
+    if (sess.tokensIn != null || sess.tokensOut != null)
+      return `${sess.tokensIn ?? 0}in/${sess.tokensOut ?? 0}out`
     return null
   }
 
@@ -120,19 +163,44 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
       >
         <div style={{ display: 'flex', 'align-items': 'center', gap: '9px' }}>
           <div class="logo-tile">M</div>
-          <span style={{ 'font-weight': '700', 'font-size': 'var(--fs-md)', 'letter-spacing': '-0.02em' }}>Mira</span>
+          <span
+            style={{
+              'font-weight': '700',
+              'font-size': 'var(--fs-md)',
+              'letter-spacing': '-0.02em',
+            }}
+          >
+            Mira
+          </span>
           <span class="pill">web</span>
         </div>
-        <span title={s().connected ? 'WebSocket connected' : 'Disconnected — retrying'} aria-label={s().connected ? 'Connected' : 'Disconnected'} style={{ display: 'inline-flex' }}>
+        <span
+          title={s().connected ? 'WebSocket connected' : 'Disconnected — retrying'}
+          aria-label={s().connected ? 'Connected' : 'Disconnected'}
+          style={{ display: 'inline-flex' }}
+        >
           <span
             class={`dot ${s().connected ? 'dot-pulse' : ''}`}
-            style={{ width: '8px', height: '8px', background: s().connected ? 'var(--ok)' : 'var(--danger)', 'box-shadow': s().connected ? '0 0 8px var(--ok-soft)' : 'none' }}
+            style={{
+              width: '8px',
+              height: '8px',
+              background: s().connected ? 'var(--ok)' : 'var(--danger)',
+              'box-shadow': s().connected ? '0 0 8px var(--ok-soft)' : 'none',
+            }}
           />
         </span>
       </div>
 
       {/* actions */}
-      <div style={{ padding: 'var(--sp-3)', 'border-bottom': '1px solid var(--border)', display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
+      <div
+        style={{
+          padding: 'var(--sp-3)',
+          'border-bottom': '1px solid var(--border)',
+          display: 'flex',
+          'flex-direction': 'column',
+          gap: '8px',
+        }}
+      >
         <button
           type="button"
           class="btn btn-solid"
@@ -157,7 +225,13 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
             aria-label="Search sessions"
           />
           <Show when={search()}>
-            <button type="button" class="btn btn-ghost" onClick={() => setSearch('')} aria-label="Clear search" style={{ padding: '2px 6px', 'font-size': 'var(--fs-xs)', 'min-height': '24px' }}>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              onClick={() => setSearch('')}
+              aria-label="Clear search"
+              style={{ padding: '2px 6px', 'font-size': 'var(--fs-xs)', 'min-height': '24px' }}
+            >
               ✕
             </button>
           </Show>
@@ -165,7 +239,7 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
 
         {/* Status filter */}
         <div style={{ display: 'flex', gap: '4px' }} role="tablist" aria-label="Filter by status">
-          <For each={(['all', 'active', 'idle'] as const)}>
+          <For each={['all', 'active', 'idle'] as const}>
             {(f) => (
               <button
                 type="button"
@@ -200,11 +274,20 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
             disabled={s().loading}
             aria-busy={s().loading ? 'true' : 'false'}
             title="Refresh sessions"
-            style={{ flex: '1', padding: '5px 8px', 'font-size': 'var(--fs-xs)', border: '1px solid var(--border)', 'border-radius': 'var(--r-md)' }}
+            style={{
+              flex: '1',
+              padding: '5px 8px',
+              'font-size': 'var(--fs-xs)',
+              border: '1px solid var(--border)',
+              'border-radius': 'var(--r-md)',
+            }}
           >
             {s().loading ? '…' : '↻ Refresh'}
           </button>
-          <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', padding: '0 4px' }} role="status">
+          <span
+            style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', padding: '0 4px' }}
+            role="status"
+          >
             {filtered().length}/{s().sessions.length}
           </span>
         </div>
@@ -215,7 +298,10 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
         <Show
           when={!s().loading}
           fallback={
-            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px', padding: '4px' }} aria-label="Loading sessions">
+            <div
+              style={{ display: 'flex', 'flex-direction': 'column', gap: '8px', padding: '4px' }}
+              aria-label="Loading sessions"
+            >
               {[0, 1, 2, 3].map(() => (
                 <div class="skeleton" style={{ height: '64px', 'border-radius': 'var(--r-md)' }} />
               ))}
@@ -257,10 +343,33 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                       ✦
                     </div>
                     <div>
-                      <div style={{ 'font-size': 'var(--fs-sm)', 'font-weight': '600', color: 'var(--fg)' }}>No sessions yet</div>
-                      <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)', 'margin-top': '3px' }}>Spin up your first chat to start working with the agent.</div>
+                      <div
+                        style={{
+                          'font-size': 'var(--fs-sm)',
+                          'font-weight': '600',
+                          color: 'var(--fg)',
+                        }}
+                      >
+                        No sessions yet
+                      </div>
+                      <div
+                        style={{
+                          'font-size': 'var(--fs-xs)',
+                          color: 'var(--fg-subtle)',
+                          'margin-top': '3px',
+                        }}
+                      >
+                        Spin up your first chat to start working with the agent.
+                      </div>
                     </div>
-                    <button type="button" class="btn btn-outline" onClick={() => void props.store.createSession().catch(() => {})} disabled={s().loading} aria-busy={s().loading ? 'true' : 'false'} style={{ padding: '6px 12px', 'font-size': 'var(--fs-sm)' }}>
+                    <button
+                      type="button"
+                      class="btn btn-outline"
+                      onClick={() => void props.store.createSession().catch(() => {})}
+                      disabled={s().loading}
+                      aria-busy={s().loading ? 'true' : 'false'}
+                      style={{ padding: '6px 12px', 'font-size': 'var(--fs-sm)' }}
+                    >
                       {s().loading ? 'Creating…' : '＋ New session'}
                     </button>
                   </div>
@@ -275,7 +384,8 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                     'line-height': '1.5',
                   }}
                 >
-                  No sessions match "{search()}"{statusFilter() !== 'all' ? ` · ${statusFilter()}` : ''}.
+                  No sessions match "{search()}"
+                  {statusFilter() !== 'all' ? ` · ${statusFilter()}` : ''}.
                 </div>
               </Show>
             }
@@ -289,9 +399,21 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                   const cost = () => costLabel(sess)
                   return (
                     <div class={`session-row ${active() ? 'active' : ''}`} role="listitem">
-                      <button type="button" class="session-main" aria-current={active() ? 'true' : undefined} onClick={() => props.store.selectSession(sess.id)}>
+                      <button
+                        type="button"
+                        class="session-main"
+                        aria-current={active() ? 'true' : undefined}
+                        onClick={() => props.store.selectSession(sess.id)}
+                      >
                         {/* Status + pin row */}
-                        <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'margin-bottom': '4px' }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            'align-items': 'center',
+                            gap: '6px',
+                            'margin-bottom': '4px',
+                          }}
+                        >
                           <span
                             class="pill"
                             style={{
@@ -303,16 +425,29 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                               gap: '4px',
                             }}
                           >
-                            <span class={`dot ${st().label === 'streaming' ? 'dot-pulse' : ''}`} style={{ background: st().color, width: '6px', height: '6px' }} />
+                            <span
+                              class={`dot ${st().label === 'streaming' ? 'dot-pulse' : ''}`}
+                              style={{ background: st().color, width: '6px', height: '6px' }}
+                            />
                             {st().label}
                           </span>
                           <Show when={sess.agent}>
-                            <span class="pill" style={{ 'font-size': 'var(--fs-2xs)', padding: '1px 6px', 'font-family': 'var(--font-mono)' }}>
+                            <span
+                              class="pill"
+                              style={{
+                                'font-size': 'var(--fs-2xs)',
+                                padding: '1px 6px',
+                                'font-family': 'var(--font-mono)',
+                              }}
+                            >
                               {sess.agent}
                             </span>
                           </Show>
                           <Show when={isPinned()}>
-                            <span style={{ 'font-size': '10px', color: 'var(--accent)' }} title="Pinned">
+                            <span
+                              style={{ 'font-size': '10px', color: 'var(--accent)' }}
+                              title="Pinned"
+                            >
                               📌
                             </span>
                           </Show>
@@ -330,8 +465,16 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                         >
                           {sess.title || `Session ${sess.id.slice(0, 6)}`}
                         </span>
-                        <span style={{ display: 'block', 'margin-top': '3px', 'font-size': 'var(--fs-2xs)', color: 'var(--fg-subtle)' }}>
-                          {sess.model || 'default'} · {new Date(sess.updatedAt || sess.createdAt).toLocaleString()}
+                        <span
+                          style={{
+                            display: 'block',
+                            'margin-top': '3px',
+                            'font-size': 'var(--fs-2xs)',
+                            color: 'var(--fg-subtle)',
+                          }}
+                        >
+                          {sess.model || 'default'} ·{' '}
+                          {new Date(sess.updatedAt || sess.createdAt).toLocaleString()}
                         </span>
                         <span
                           style={{
@@ -348,21 +491,39 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                           {sess.id}
                         </span>
                         <Show when={cost()}>
-                          <span
-                            style={{
-                              display: 'inline-flex',
-                              'margin-top': '4px',
-                              'font-family': 'var(--font-mono)',
-                              'font-size': 'var(--fs-2xs)',
-                              color: 'var(--fg-subtle)',
-                              background: 'var(--bg-surface)',
-                              border: '1px solid var(--border)',
-                              'border-radius': 'var(--r-full)',
-                              padding: '1px 6px',
-                            }}
-                          >
-                            {cost()}
-                          </span>
+                          {(() => {
+                            const cap = props.store.state.costCap?.perSession
+                            const over = cap != null && (sess.costUsd ?? 0) >= cap
+                            return (
+                              <span
+                                title={
+                                  over
+                                    ? `Budget cap $${cap} exceeded`
+                                    : cap
+                                      ? `Cap $${cap}`
+                                      : undefined
+                                }
+                                style={{
+                                  display: 'inline-flex',
+                                  'align-items': 'center',
+                                  gap: '4px',
+                                  'margin-top': '4px',
+                                  'font-family': 'var(--font-mono)',
+                                  'font-size': 'var(--fs-2xs)',
+                                  color: over ? 'var(--danger)' : 'var(--fg-subtle)',
+                                  background: over
+                                    ? 'color-mix(in srgb, var(--danger) 10%, var(--bg-surface))'
+                                    : 'var(--bg-surface)',
+                                  border: `1px solid ${over ? 'var(--danger-border)' : 'var(--border)'}`,
+                                  'border-radius': 'var(--r-full)',
+                                  padding: '1px 6px',
+                                }}
+                              >
+                                {cost()}
+                                {over ? ' ⚠' : ''}
+                              </span>
+                            )
+                          })()}
                         </Show>
                       </button>
                       {/* Pin button */}
@@ -385,11 +546,19 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                         class="session-del btn btn-ghost"
                         onClick={(e) => {
                           e.stopPropagation()
-                          setConfirmDelete({ id: sess.id, title: sess.title || sess.id.slice(0, 6) })
+                          setConfirmDelete({
+                            id: sess.id,
+                            title: sess.title || sess.id.slice(0, 6),
+                          })
                         }}
                         title="Delete session"
                         aria-label={`Delete session ${sess.title || sess.id.slice(0, 6)}`}
-                        style={{ width: '28px', height: '28px', 'min-height': '28px', 'min-width': '28px' }}
+                        style={{
+                          width: '28px',
+                          height: '28px',
+                          'min-height': '28px',
+                          'min-width': '28px',
+                        }}
                       >
                         ×
                       </button>
@@ -403,9 +572,28 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
       </div>
 
       <Show when={s().error}>
-        <div class="alert" role="alert" style={{ margin: '0 var(--sp-3) var(--sp-2)', padding: '8px 10px', 'font-size': 'var(--fs-xs)' }}>
+        <div
+          class="alert"
+          role="alert"
+          style={{
+            margin: '0 var(--sp-3) var(--sp-2)',
+            padding: '8px 10px',
+            'font-size': 'var(--fs-xs)',
+          }}
+        >
           ⚠ {s().error}
-          <button type="button" onClick={() => props.store.clearError()} class="alert-close btn btn-ghost" aria-label="Dismiss error" style={{ 'margin-left': '8px', padding: '2px 6px', 'font-size': 'var(--fs-xs)', 'min-height': '28px' }}>
+          <button
+            type="button"
+            onClick={() => props.store.clearError()}
+            class="alert-close btn btn-ghost"
+            aria-label="Dismiss error"
+            style={{
+              'margin-left': '8px',
+              padding: '2px 6px',
+              'font-size': 'var(--fs-xs)',
+              'min-height': '28px',
+            }}
+          >
             ×
           </button>
         </div>
@@ -424,17 +612,39 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
       >
         <span>Mira Web · SolidJS</span>
         <span
-          title={s().connected ? `Connected to ${serverHost()}` : `Offline — cannot reach ${serverHost()}`}
-          style={{ color: s().connected ? 'var(--fg-faint)' : 'var(--danger)', 'text-decoration': s().connected ? 'none' : 'line-through', display: 'inline-flex', 'align-items': 'center', gap: '4px' }}
+          title={
+            s().connected
+              ? `Connected to ${serverHost()}`
+              : `Offline — cannot reach ${serverHost()}`
+          }
+          style={{
+            color: s().connected ? 'var(--fg-faint)' : 'var(--danger)',
+            'text-decoration': s().connected ? 'none' : 'line-through',
+            display: 'inline-flex',
+            'align-items': 'center',
+            gap: '4px',
+          }}
         >
-          <span aria-hidden="true" style={{ width: '6px', height: '6px', 'border-radius': '50%', background: s().connected ? 'var(--ok)' : 'var(--danger)' }} />
+          <span
+            aria-hidden="true"
+            style={{
+              width: '6px',
+              height: '6px',
+              'border-radius': '50%',
+              background: s().connected ? 'var(--ok)' : 'var(--danger)',
+            }}
+          />
           {serverHost()}
         </span>
       </div>
       <ConfirmDialog
         open={() => confirmDelete() !== null}
         title="Delete session?"
-        message={confirmDelete() ? `This will permanently delete "${confirmDelete()!.title}" and all its messages. This cannot be undone.` : ''}
+        message={
+          confirmDelete()
+            ? `This will permanently delete "${confirmDelete()!.title}" and all its messages. This cannot be undone.`
+            : ''
+        }
         confirmLabel="Delete"
         danger
         onConfirm={() => {

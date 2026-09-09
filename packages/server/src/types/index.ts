@@ -20,6 +20,11 @@ export interface Session {
   createdAt: number
   updatedAt: number
   parentID?: SessionID // for forked sessions
+  agent?: string | null
+  ownerID?: string | null
+  tokensIn?: number | null
+  tokensOut?: number | null
+  costUsd?: number | null
 }
 
 export interface Message {
@@ -94,6 +99,7 @@ export type BusEventType =
   | 'session.created'
   | 'session.updated'
   | 'session.deleted'
+  | 'session.abort'
   | 'message.created'
   | 'message.updated'
   | 'part.created'

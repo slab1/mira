@@ -377,11 +377,18 @@ export function ChatView(props: {
   const [slashIndex, setSlashIndex] = createSignal(0)
   const [slashDismissed, setSlashDismissed] = createSignal(false)
   const slashVisible = () =>
-    slashQuery().startsWith('/') && slashFiltered().length > 0 && !slashDismissed()
+    slashQuery().startsWith('/') &&
+    !slashDismissed() &&
+    (slashFiltered().length > 0 || !!props.settings?.state.loading)
   createEffect(() => {
     void slashQuery()
     setSlashIndex(0)
     setSlashDismissed(false)
+  })
+  // Re-evaluate after commands load (fixes first "/" async race)
+  createEffect(() => {
+    void slashCommands().length
+    void props.settings?.state.loading
   })
   const handleSlashSelect = (name: string) => {
     props.store.setInput(name + ' ')
@@ -469,6 +476,7 @@ export function ChatView(props: {
 
   const handleSubmit = (e: Event) => {
     e.preventDefault()
+    if (s().streaming) return
     props.store.sendPrompt(undefined, selectedModel() || undefined)
     inputRef?.focus()
   }
@@ -1066,13 +1074,17 @@ export function ChatView(props: {
                 props.store.setInput(v)
                 if (v.startsWith('/')) void props.settings?.loadAll()
               }}
-              onSubmit={() => props.store.sendPrompt(undefined, selectedModel() || undefined)}
+              onSubmit={() => {
+                if (s().streaming) return
+                props.store.sendPrompt(undefined, selectedModel() || undefined)
+              }}
               onQueue={() => {
                 const val = props.store.input().trim()
                 if (val) void props.store.sendPrompt(val, selectedModel() || undefined)
               }}
               onStop={() => props.store.stopStream()}
               streaming={s().streaming}
+              disabled={s().streaming}
               settings={props.settings}
               selectedModel={selectedModel()}
               onModelSelect={setSelectedModel}

@@ -57,6 +57,8 @@ type AppState = {
   } | null
   /** budget cap warning — set when spend exceeds configured cap */
   budgetWarning: string | null
+  /** cost cap from config.costCap (perSession/perTask) — wired to gateway */
+  costCap: { perSession?: number; perTask?: number } | null
 }
 
 function uid() {
@@ -79,6 +81,7 @@ export function createAppStore() {
     cost: null,
     doomLoop: null,
     budgetWarning: null,
+    costCap: null,
   })
 
   const [input, setInput] = createSignal('')
@@ -284,6 +287,31 @@ export function createAppStore() {
       const dev = await api.devHealth()
       if (dev.gateway) setState('cost', dev.gateway)
     } catch {}
+    // Also refresh per-session cost for current session + costCap from config
+    try {
+      const cfg = await api.getConfig()
+      if (cfg.costCap) setState('costCap', cfg.costCap)
+    } catch {}
+    // Refresh current session's costUsd/tokens without full list reload
+    if (state.currentId) {
+      try {
+        const sess = await api.getSession(state.currentId)
+        if (sess) {
+          setState('sessions', (prev) =>
+            prev.map((s) =>
+              s.id === sess.id
+                ? {
+                    ...s,
+                    costUsd: sess.costUsd,
+                    tokensIn: sess.tokensIn,
+                    tokensOut: sess.tokensOut,
+                  }
+                : s,
+            ),
+          )
+        }
+      } catch {}
+    }
   }
   loadCost()
   // Pause the interval when the page is hidden to avoid wasted polls + HMR leaks.
@@ -409,6 +437,8 @@ export function createAppStore() {
   }
 
   function stopStream() {
+    const id = state.currentId
+    if (id) void api.abortPrompt(id).catch(() => {})
     abort?.abort()
     setState('streaming', false)
   }

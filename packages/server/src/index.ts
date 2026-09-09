@@ -45,6 +45,7 @@ import { mountAdminRoutes } from './routes/admin.js'
 import { mountFindingRoutes } from './routes/finding.js'
 import { mountSessionExtrasRoutes } from './routes/session-extras.js'
 import { mountToolsRoutes } from './routes/tools-routes.js'
+import { mountWorkspaceRoutes } from './routes/workspace.js'
 import { mountStaticRoutes } from './routes/static.js'
 import { mountMiddleware } from './middleware/index.js'
 import { boundSend, WS_CLOSE_TOO_SLOW } from './ws-backpressure.js'
@@ -487,6 +488,7 @@ async function main() {
   mountConfigRoutes(app, { bus })
   mountToolsRoutes(app, { tools, permissions, guardrails, gateway })
   mountLearningRoutes(app, learning)
+  mountWorkspaceRoutes(app)
 
   // Terminal — HTTP status + browser client hint
   app.get('/terminal', (c) => {

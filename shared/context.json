@@ -51,11 +51,21 @@
     }
   ],
   "artifacts": {
-    "files_created": [
-      "shared/simulation_sandbox.ts"
-    ],
+    "files_created": ["shared/simulation_sandbox.ts"],
     "files_modified": [
-      "packages/server/src/learning/ledger.ts"
+      "packages/server/src/learning/ledger.ts",
+      "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
+      "packages/server/src/mcp/mock-http-mcp-server.ts:168-189 non-legacy GET /mcp 404 + HEAD /mcp 200 + await Bun.sleep(10) before ready",
+      "packages/server/src/mcp/http-client.test.ts:1-80 startMock await Bun.sleep(50) + poll HEAD fallback GET 10x20ms",
+      "packages/server/src/routes/workspace.ts (new) \u2014 GET /workspace/tree via Bun.Glob('**/*') + isPathAllowed/sanitizePath, .gitignore + defaults (.git, node_modules, dist, .turbo, data, *.db, .mira, coverage), sorted 500",
+      "packages/server/src/index.ts \u2014 import mountWorkspaceRoutes + mountWorkspaceRoutes(app)",
+      "packages/web/src/api/client.ts \u2014 getWorkspaceTree: () => req<{files:string[]}>('/workspace/tree').then(r=>r.files)",
+      "packages/web/src/components/PromptInput.tsx \u2014 keep MOCK_FILES fallback, workspaceFiles signal + fetchWorkspaceFiles once via api.getWorkspaceTree, createEffect atVisible, onMount prefetch, onFocus, atFiltered uses workspaceFiles()",
+      "packages/server/src/middleware/index.ts:36-64 corsOrigin function with MIRA_ALLOW_LOCALHOST gate + normalizedAllowSet + header-smuggling protection",
+      ".env.example:28-35 CORS docs dev default (empty=allow localhost) vs prod (list set=deny localhost unless MIRA_ALLOW_LOCALHOST=1)",
+      "packages/web/src/components/QueueRail.tsx:1-35 polling 3s visibility-aware onCleanup + \u2191\u2193 reorder and \u2715 cancel per-item (existing styling)",
+      "packages/web/src/App.tsx:895 QueueRail outside <Show when={store.state.cost}> verified (already outside, preserved)",
+      "packages/web/src/api/client.ts:967-976 reorderQueue/deleteQueueItem signatures verified vs session-extras.ts POST /session/:id/queue/reorder {texts} + DELETE /session/:id/queue/item {text}"
     ]
   },
   "checkpoints": {
@@ -73,5 +83,115 @@
       "last_updated": "2026-09-08T09:04:07.720317+00:00"
     }
   },
-  "last_updated": "2026-09-08T09:04:07.720317+00:00"
+  "last_updated": "2026-09-09T20:58:58.684555+00:00",
+  "workflow_trace": [
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_l45vab",
+      "task": "P1 MCP CI flake Legacy SSE listen failed (HTTP 200)",
+      "status": "completed",
+      "timestamp": "2026-09-09T18:05:26.207624+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
+          "packages/server/src/mcp/mock-http-mcp-server.ts:168-189 non-legacy GET /mcp 404 + HEAD /mcp 200 + await Bun.sleep(10) before ready",
+          "packages/server/src/mcp/http-client.test.ts:1-80 startMock await Bun.sleep(50) + poll HEAD fallback GET 10x20ms"
+        ],
+        "verify": {
+          "isolated": "bun test packages/server/src/mcp/http-client.test.ts 11 pass 55.83s",
+          "under_load": "42 pass 1 skip with tools batch 53.79s, 197 pass gateway batch, 5 pass mcp manager/stdio",
+          "typecheck": "tsc --noEmit exit 0 (packages/server)",
+          "full_suite": "72 pass 1 fail (pre-existing OnlineLearner timeout) across learning/lsp/session"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_l45vab"
+      },
+      "outcome": "P1 fix complete: split conflated !res.ok||!res.body into separate checks (HTTP status + body text vs empty body), mock non-legacy GET now 404 with HEAD 200 and sleep(10) to avoid Bun serve race, startMock polls HEAD/GET 10x20ms after sleep(50); 11 tests pass isolated and under load, typecheck green, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_mxj27k",
+      "task": "P1 MCP CI flake Legacy SSE listen failed (HTTP 200)",
+      "status": "completed",
+      "timestamp": "2026-09-09T19:30:00.000000+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
+          "packages/server/src/mcp/mock-http-mcp-server.ts:168-189 non-legacy GET /mcp 404 + HEAD /mcp 200 + await Bun.sleep(10) before ready",
+          "packages/server/src/mcp/http-client.test.ts:1-80 startMock await Bun.sleep(50) + poll HEAD fallback GET 10x20ms"
+        ],
+        "verify": {
+          "isolated": "bun test ./packages/server/src/mcp/http-client.test.ts 11 pass 39.66s",
+          "typecheck": "turbo typecheck 6 successful, server tsc --noEmit pass",
+          "full_suite": "verified minimal diff preserved design, no web files touched"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_mxj27k"
+      },
+      "outcome": "P1 fix verified: split conflated !res.ok||!res.body into separate checks (HTTP status + body text vs empty body), mock non-legacy GET now 404 with HEAD 200 and sleep(10) to avoid Bun serve race, startMock polls HEAD/GET 10x20ms after sleep(50); 11 tests pass, typecheck green, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_alz3gg",
+      "task": "P1 workspace @ mentions \u2014 real workspace tree via GET /workspace/tree",
+      "status": "completed",
+      "timestamp": "2026-09-09T19:06:28.241103+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/routes/workspace.ts (new) \u2014 GET /workspace/tree via Bun.Glob('**/*') + isPathAllowed/sanitizePath, .gitignore + defaults (.git, node_modules, dist, .turbo, data, *.db, .mira, coverage), sorted 500",
+          "packages/server/src/index.ts \u2014 import mountWorkspaceRoutes + mountWorkspaceRoutes(app)",
+          "packages/web/src/api/client.ts \u2014 getWorkspaceTree: () => req<{files:string[]}>('/workspace/tree').then(r=>r.files)",
+          "packages/web/src/components/PromptInput.tsx \u2014 keep MOCK_FILES fallback, workspaceFiles signal + fetchWorkspaceFiles once via api.getWorkspaceTree, createEffect atVisible, onMount prefetch, onFocus, atFiltered uses workspaceFiles()"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (server+web) \u2014 tsc --noEmit pass",
+          "vite_build": "vite build 31 modules, 300.38kB (gzip 80.65kB), built 11.82s"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_alz3gg"
+      },
+      "outcome": "P1 fix complete: workspace tree now real via GET /workspace/tree (Bun.Glob + guardrails + .gitignore defaults, sorted 500), client getWorkspaceTree, PromptInput workspaceFiles signal with once-fetch (createEffect atVisible + onMount + onFocus) and fallback to MOCK_FILES; typecheck + vite build green, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_a9jvhr",
+      "task": "P1 CORS MIRA_ALLOW_LOCALHOST gate",
+      "status": "completed",
+      "timestamp": "2026-09-09T20:05:06.509550+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/middleware/index.ts:36-64 corsOrigin function with MIRA_ALLOW_LOCALHOST gate + normalizedAllowSet + header-smuggling protection",
+          ".env.example:28-35 CORS docs dev default (empty=allow localhost) vs prod (list set=deny localhost unless MIRA_ALLOW_LOCALHOST=1)"
+        ],
+        "verify": {
+          "typecheck": "bun run typecheck (server) tsc --noEmit exit 0",
+          "manual": "prod allowlist normalized, localhost gated behind MIRA_ALLOW_LOCALHOST==='1', dev default reflects localhost, header-smuggling via u.origin preserved"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_a9jvhr"
+      },
+      "outcome": "P1 fix complete: middleware corsOrigin now function when CORS_ORIGIN_LIST non-empty (normalized allowlist + MIRA_ALLOW_LOCALHOST==='1' gate for localhost, deny otherwise), dev default still reflects localhost via normalized origin, header-smuggling protection preserved; .env.example CORS docs updated; bun typecheck pass, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_hdh8ak",
+      "task": "P2 queue rail reorder/cancel \u2014 QueueRail polling + App.tsx placement + api/client verification",
+      "status": "completed",
+      "timestamp": "2026-09-09T20:58:58.684555+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/web/src/components/QueueRail.tsx:1-35 polling 3s visibility-aware onCleanup + \u2191\u2193 reorder and \u2715 cancel per-item (existing styling)",
+          "packages/web/src/App.tsx:895 QueueRail outside <Show when={store.state.cost}> verified (already outside, preserved)",
+          "packages/web/src/api/client.ts:967-976 reorderQueue/deleteQueueItem signatures verified vs session-extras.ts POST /session/:id/queue/reorder {texts} + DELETE /session/:id/queue/item {text}"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 5 cached + server tsc --noEmit pass, web tsc --noEmit pass (bunx tsc --noEmit exit 0 both)",
+          "vite_build": "vite build 31 modules 300.52kB gzip 80.71kB built 11.80s"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_hdh8ak"
+      },
+      "outcome": "P2 fix complete: QueueRail now polls GET /session/:id/queue every 3s (visibility-aware, onCleanup clear) + existing \u2191\u2193 reorder (api.reorderQueue) and \u2715 cancel (api.deleteQueueItem) per-item buttons preserved with existing styling; App.tsx QueueRail verified outside cost Show (visible regardless of cost); api/client signatures verified match server routes POST /session/:id/queue/reorder {texts} and DELETE /session/:id/queue/item {text}; typecheck + vite build green, minimal diff preserved design, no PromptInput/ChatView/mcp/workspace/middleware/cost UI touched"
+    }
+  ]
 }
