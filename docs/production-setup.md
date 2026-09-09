@@ -4,6 +4,7 @@
 
 **Environment file**
 Create `~/.mira/mira.env` with at least:
+
 ```
 MIRA_TOKEN=<32+ char random secret>
 MIRA_DB=/home/<user>/.mira/data/mira.db
@@ -15,11 +16,13 @@ MIRA_STRICT_AUTH=1
 ```
 
 Generate token:
+
 ```bash
 openssl rand -hex 32
 ```
 
 **Start server**
+
 ```bash
 scripts/serve-local.sh start
 # status
@@ -29,9 +32,11 @@ scripts/serve-local.sh status
 Auth is enforced in production: `/healthz` and `/metrics` are public, all other routes require `Authorization: Bearer <MIRA_TOKEN>` or API key.
 
 Optional multi-tenant:
+
 ```
 MIRA_API_KEYS=key1:alice,key2:bob
 ```
+
 Each key maps to an ownerID. Sessions are scoped to the owner.
 
 ### Issuing per-user API keys at runtime
@@ -63,17 +68,19 @@ survive reboots. Hand the `key` to the user — they paste it into the web UI
 
 **Where tokens live**
 
-| Layer | File / Store | Key | How it gets there |
-|-------|--------------|-----|-------------------|
-| Server | `~/.mira/mira.env` | `MIRA_TOKEN=…` (32+ hex, `openssl rand -hex 32`) or `MIRA_API_KEYS=key:owner,…` | `scripts/serve-local.sh:10` does `[ -f "$MIRA_ENV" ] && . "$MIRA_ENV"` then `export MIRA_TOKEN/MIRA_API_KEYS`; restart with `scripts/serve-local.sh start` |
-| Web (prod) | Browser `localStorage` | `mira_token` | User pastes token into the AuthGate card (or Settings) → `setToken()` writes `localStorage` + dispatches `mira:token-change`; survives reload; sent as `Authorization: Bearer` |
-| Web (dev fallback) | `packages/web/.env` | `VITE_MIRA_TOKEN=…` | Read by `getToken()` when `localStorage` is empty; Vite injects at build/dev time |
+| Layer              | File / Store                              | Key                                                    | How it gets there                                                                                                                                                                                                                                                                             |
+| ------------------ | ----------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Server             | `~/.mira/mira.env` (respects `$MIRA_DIR`) | `MIRA_TOKEN=…` (64-hex) or `MIRA_API_KEYS=key:owner,…` | First boot with no token anywhere auto-creates the file with a generated token (dev only; existing file adopted, never overwritten; opt out `MIRA_NO_AUTOPROVISION=1`); `scripts/serve-local.sh` sources it, then `export MIRA_TOKEN/MIRA_API_KEYS`; production without auth refuses to start |
+| Web (prod)         | Browser `localStorage`                    | `mira_token`                                           | User pastes `MIRA_TOKEN` into the AuthGate card (or Settings) → `setToken()` writes `localStorage` (that browser only) + dispatches `mira:token-change`; survives reload; sent as `Authorization: Bearer`                                                                                     |
+| Web (dev fallback) | `VITE_MIRA_TOKEN`                         | explicit value, else auto from `~/.mira/mira.env`      | Precedence: `localStorage mira_token` > `VITE_MIRA_TOKEN` (explicit or auto-injected from the server's `mira.env` by `vite dev`) > empty                                                                                                                                                      |
 
 **Build**
+
 ```bash
 cd packages/web
 npm run build
 ```
+
 Build output goes to `dist/`. `base` is set from `VITE_BASE`, default `/mira/`.
 
 For production, **do not** embed token in build. Users enter token in the AuthGate (first load) or Settings UI which stores it in `localStorage.mira_token`. The gate validates via `validateToken()` (`GET /health` / `GET /config`) before hiding; on 401 it shows “Invalid token” and stays visible.
@@ -84,11 +91,14 @@ Set `CORS_ORIGINS` to your production domain(s). Comma-separated.
 ## 3. Public access
 
 ### Option A: Cloudflare quick tunnel (no account, recommended)
+
 ```bash
 scripts/cloudflare-local.sh api start   # 4096
 scripts/cloudflare-local.sh web start   # 3000
 ```
+
 Or combined:
+
 ```bash
 scripts/dev-all.sh start
 # Or self-healing watchdog (auto-restarts server + tunnel, syncs VITE_API_URL to Pages):
@@ -104,20 +114,25 @@ scripts/tunnel-watchdog.sh start
 > (ULA `fd10::/8`).
 
 ### Option B: Named tunnel / reverse proxy
+
 Create a named tunnel and route via DNS (requires custom domain):
+
 ```bash
 cloudflared tunnel login
 cloudflared tunnel create mira
 cloudflared tunnel route dns mira mira.yourdomain.com
 ```
+
 Then point it to `http://127.0.0.1:4096` for API and `http://127.0.0.1:3000` for web.
 
 ### Option C: zrok reserved name
+
 ```bash
 zrok enable <account token>
 zrok create name <your-name> -n public
 zrok share public -n public:<your-name> http://127.0.0.1:4096 --headless
 ```
+
 Reserved URL: `https://<your-name>.shares.zrok.io`
 
 ## 4. Backups & maintenance

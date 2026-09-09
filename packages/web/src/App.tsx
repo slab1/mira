@@ -31,13 +31,16 @@ type ViewMode = 'chat' | 'split' | 'graph'
  *  clients. Show a credential card until a token is stored and the server
  *  accepts it. Dev servers without auth let any (even empty) token pass.
  *
- *  Token persistence:
- *  - Server: ~/.mira/mira.env  →  MIRA_TOKEN=... (32+ hex, `openssl rand -hex 32`)
- *    sourced + exported by scripts/serve-local.sh:10 (`[ -f "$MIRA_ENV" ] && . "$MIRA_ENV"` + `export MIRA_TOKEN`)
- *    then `scripts/serve-local.sh start` restarts the server.
- *  - Web: AuthGate input → localStorage `mira_token` (via setToken/getToken) → Authorization: Bearer
- *    survives reload; `mira:token-change` keeps tabs in sync.
- *  - Dev fallback: packages/web/.env  →  VITE_MIRA_TOKEN=... (read by getToken() when localStorage empty)
+ *  Token persistence (precedence: localStorage mira_token > VITE_MIRA_TOKEN > empty):
+ *  - Server: ~/.mira/mira.env (respects $MIRA_DIR)  →  MIRA_TOKEN=... (64-hex,
+ *    auto-created on first boot in dev; existing file adopted, never overwritten;
+ *    production without auth refuses to start; opt out MIRA_NO_AUTOPROVISION=1)
+ *    sourced + exported by scripts/serve-local.sh (`[ -f "$MIRA_ENV" ] && . "$MIRA_ENV"`)
+ *    then `scripts/serve-local.sh start` restarts the server. CLI/TUI: source the file.
+ *  - Web: AuthGate input → localStorage `mira_token` (via setToken/getToken, that browser
+ *    only) → Authorization: Bearer; survives reload; `mira:token-change` keeps tabs in sync.
+ *  - Dev fallback: VITE_MIRA_TOKEN=... explicit, else vite dev auto-injects MIRA_TOKEN
+ *    from ~/.mira/mira.env (read by getToken() when localStorage empty)
  */
 function AuthGate(props: { onReady: () => void }) {
   const [value, setValue] = createSignal(getToken())
@@ -144,8 +147,8 @@ function AuthGate(props: { onReady: () => void }) {
           <div
             style={{ 'font-size': 'var(--fs-sm)', color: 'var(--fg-muted)', 'line-height': '1.55' }}
           >
-            Paste the access token for your Mira server — ask your admin for a key. Open dev servers
-            let you connect without one.
+            Paste the MIRA_TOKEN from that server's ~/.mira/mira.env (auto-created on first boot)
+            for the Server URL below. Leave empty only if that server runs without auth.
           </div>
         </div>
 

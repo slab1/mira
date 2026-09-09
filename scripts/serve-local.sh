@@ -52,7 +52,7 @@ case "${1:-start}" in
         echo "[mira] ❌ MIRA_TOKEN/MIRA_API_KEYS required in production — refusing to start open server" >&2
         exit 1
       fi
-      echo "[mira] WARNING: no MIRA_TOKEN/MIRA_API_KEYS — server will be open. Set one in $MIRA_ENV"
+      echo "[mira] No MIRA_TOKEN/MIRA_API_KEYS — server auto-generates one into $MIRA_ENV on first boot"
     fi
     # setsid: own session — survives parent shell/process-group kills (tool runners, SSH drops)
     setsid nohup bun "$REPO_DIR/packages/server/src/index.ts" >>"$LOG_FILE" 2>&1 &

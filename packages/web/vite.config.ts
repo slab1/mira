@@ -1,10 +1,18 @@
 import { defineConfig } from 'vite'
 import solid from 'vite-plugin-solid'
 import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { homedir } from 'node:os'
+import { resolve, join } from 'node:path'
 
 function miraPortFallback(): string {
-  const cands = ['.mira/port', '../.mira/port', '../../.mira/port', resolve('.mira/port'), resolve('../.mira/port'), resolve('../../.mira/port')]
+  const cands = [
+    '.mira/port',
+    '../.mira/port',
+    '../../.mira/port',
+    resolve('.mira/port'),
+    resolve('../.mira/port'),
+    resolve('../../.mira/port'),
+  ]
   for (const p of cands) {
     try {
       if (existsSync(p)) {
@@ -17,6 +25,32 @@ function miraPortFallback(): string {
   return '4096'
 }
 
+// First-run token correspondence: the server auto-creates ~/.mira/mira.env
+// on first boot. Inject its MIRA_TOKEN as the web dev fallback so the
+// frontend authenticates without manual copy-paste. An explicit
+// VITE_MIRA_TOKEN and localStorage `mira_token` still take precedence
+// (see client getToken order).
+function miraEnvToken(): string {
+  const override = process.env.MIRA_DIR?.trim()
+  const cands = [
+    ...(override ? [join(override, 'mira.env')] : []),
+    join(homedir(), '.mira', 'mira.env'),
+  ]
+  for (const p of cands) {
+    try {
+      if (!existsSync(p)) continue
+      const m = readFileSync(p, 'utf-8').match(
+        /^\s*MIRA_TOKEN\s*=\s*(['"]?)([0-9a-fA-F]{32,})\1\s*$/m,
+      )
+      const tok = m?.[2]
+      if (tok) return tok
+    } catch {}
+  }
+  return ''
+}
+// Explicit env wins; otherwise adopt the server-provisioned token.
+const FIRST_RUN_TOKEN = process.env.VITE_MIRA_TOKEN?.trim() || miraEnvToken()
+
 // Dev-server API target: MIRA_DEV_API (full URL) or MIRA_DEV_PORT (port only).
 // vite.config runs in Node, so plain process.env is available.
 const API_TARGET =
@@ -24,6 +58,9 @@ const API_TARGET =
 
 export default defineConfig({
   plugins: [solid()],
+  ...(FIRST_RUN_TOKEN
+    ? { define: { 'import.meta.env.VITE_MIRA_TOKEN': JSON.stringify(FIRST_RUN_TOKEN) } }
+    : {}),
   // GitHub Pages serves project sites under /<repo>/ — assets must resolve there.
   // Env override keeps other hosts (tunnel, PaaS, same-origin) on "/".
   base: process.env.VITE_BASE ?? '/mira/',

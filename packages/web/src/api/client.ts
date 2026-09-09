@@ -361,9 +361,11 @@ function baseUrlCandidates(): string[] {
 // Token sources (in priority order):
 //  1. localStorage `mira_token` — written by AuthGate via setToken(), survives reload,
 //     dispatched as `mira:token-change` (same-tab) + `storage` event (cross-tab).
-//  2. Vite env `VITE_MIRA_TOKEN` — dev fallback from packages/web/.env (getToken() fallback).
-// Server side: ~/.mira/mira.env  →  MIRA_TOKEN=…  (sourced + exported by scripts/serve-local.sh:10)
-//  then `scripts/serve-local.sh start` restarts the server. req() clears on 401 via clearTokenOn401.
+//  2. Vite env `VITE_MIRA_TOKEN` — explicit override, else vite dev auto-injects
+//     MIRA_TOKEN from ~/.mira/mira.env (respects $MIRA_DIR; auto-created on first server boot).
+// Server side: ~/.mira/mira.env  →  MIRA_TOKEN=…  (auto-created 64-hex on first boot in dev;
+//  existing file adopted, never overwritten; production without auth refuses to start).
+//  Opt out: MIRA_NO_AUTOPROVISION=1. req() clears on 401 via clearTokenOn401.
 const TOKEN_KEY = 'mira_token'
 
 export class ApiError extends Error {

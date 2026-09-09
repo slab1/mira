@@ -20,7 +20,10 @@
  */
 
 import { Hono } from 'hono'
-import { timingSafeEqual } from 'node:crypto'
+import { timingSafeEqual, randomBytes } from 'node:crypto'
+import { homedir } from 'node:os'
+import { join, dirname } from 'node:path'
+import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync } from 'node:fs'
 import { Bus } from './bus/index.js'
 import { createDatabase, migrate } from './storage/db.js'
 import { SubgatewayRegistry } from './gateway/registry.js'
@@ -73,6 +76,60 @@ if (!GIT_SHA) {
   } catch {}
   if (!GIT_SHA) GIT_SHA = 'unknown'
 }
+
+// ── First-run: auto-provision ~/.mira/mira.env ──────────────────────
+// A first-time user has no token file and no env token. Create the file
+// with a generated secret so web/CLI/TUI auth works out of the box.
+// Production without auth still refuses below; this never overwrites an
+// existing file and never fails startup (opt out: MIRA_NO_AUTOPROVISION=1).
+function miraEnvFile(): string {
+  const dir = process.env.MIRA_DIR?.trim() || join(homedir(), '.mira')
+  return join(dir, 'mira.env')
+}
+function readMiraEnvFile(): Record<string, string> {
+  const out: Record<string, string> = {}
+  try {
+    for (const line of readFileSync(miraEnvFile(), 'utf-8').split('\n')) {
+      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/)
+      const k = m?.[1]
+      if (k) out[k] = (m?.[2] ?? '').replace(/^(['"])(.*)\1$/, '$2').trim()
+    }
+  } catch {}
+  return out
+}
+function provisionFirstRunToken(): void {
+  if (process.env.MIRA_NO_AUTOPROVISION === '1') return
+  if (process.env.NODE_ENV === 'production') return // fail-closed refusal below stays authoritative
+  try {
+    const file = miraEnvFile()
+    if (existsSync(file)) {
+      // Adopt existing file for direct runs (serve-local.sh sources it too).
+      const vars = readMiraEnvFile()
+      if (!process.env.MIRA_TOKEN && vars.MIRA_TOKEN) process.env.MIRA_TOKEN = vars.MIRA_TOKEN
+      if (!process.env.MIRA_API_KEYS && vars.MIRA_API_KEYS)
+        process.env.MIRA_API_KEYS = vars.MIRA_API_KEYS
+      return
+    }
+    if (process.env.MIRA_TOKEN || process.env.MIRA_API_KEYS) return
+    const token = randomBytes(32).toString('hex') // 64-hex, like scripts/gen-mira-token.sh
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(
+      file,
+      `# Mira env — auto-created on first run. Keep private.\nMIRA_TOKEN=${token}\n`,
+      { mode: 0o600 },
+    )
+    if (process.platform !== 'win32') {
+      try {
+        chmodSync(file, 0o600)
+      } catch {}
+    }
+    process.env.MIRA_TOKEN = token
+    log(`🔑 first run: generated MIRA_TOKEN in ${file}`)
+  } catch (e) {
+    warn('first-run token provisioning failed (continuing open):', String(e))
+  }
+}
+provisionFirstRunToken()
 
 // ── Security config ────────────────────────────────────────────────
 const REQUIRED_TOKEN = process.env.MIRA_TOKEN ?? ''
@@ -617,143 +674,165 @@ async function main() {
       server = Bun.serve<MiraWSData>({
         port: actualPort,
         hostname: HOST,
-    idleTimeout: 180,
-    fetch(req, srv) {
-      bunServer = srv
-      if (req.headers.get('upgrade')?.toLowerCase() === 'websocket') {
-        if (!isOriginAllowed(req.headers.get('origin'))) {
-          return new Response(JSON.stringify({ error: 'forbidden origin' }), {
-            status: 403,
-            headers: { 'content-type': 'application/json' },
-          })
-        }
-        const url = new URL(req.url)
-        const isTerminal = url.pathname === '/terminal'
-        if (isTerminal && !terminalEnabled()) {
-          return new Response(JSON.stringify({ error: 'terminal disabled' }), {
-            status: 403,
-            headers: { 'content-type': 'application/json' },
-          })
-        }
-        let authenticated = false
-        let owner: string | undefined
-        if (!REQUIRED_TOKEN && API_KEY_OWNERS.size === 0) {
-          authenticated = true
-        } else {
-          const auth = req.headers.get('authorization') ?? ''
-          owner = resolveOwner(bearerOf(auth))
-          authenticated = owner !== undefined
-        }
-        const upgraded = srv.upgrade(req, { data: { authenticated, owner, isTerminal } })
-        if (!upgraded) return new Response('WebSocket upgrade failed', { status: 500 })
-        return undefined
-      }
-      return app.fetch(req)
-    },
-    websocket: {
-      open(ws) {
-        const w = ws as object as MiraWS
-        w.__active = false
-        const isTerminal = (w.data as MiraWSData | undefined)?.isTerminal === true
-        const needsAuth = !!REQUIRED_TOKEN || API_KEY_OWNERS.size > 0
-        if (!needsAuth || w.data?.authenticated === true) {
-          if (isTerminal) activateTerminalSocket(w, w.data?.owner)
-          else activateSocket(w, w.data?.owner)
-        } else {
-          w.__authTimer = setTimeout(() => {
-            if (!w.__active) {
-              try {
-                w.close(1008, 'unauthorized: auth message not received within timeout')
-              } catch {}
+        idleTimeout: 180,
+        fetch(req, srv) {
+          bunServer = srv
+          if (req.headers.get('upgrade')?.toLowerCase() === 'websocket') {
+            if (!isOriginAllowed(req.headers.get('origin'))) {
+              return new Response(JSON.stringify({ error: 'forbidden origin' }), {
+                status: 403,
+                headers: { 'content-type': 'application/json' },
+              })
             }
-          }, WS_AUTH_TIMEOUT_MS)
-        }
-      },
-      message(ws, msg) {
-        const w = ws as object as MiraWS
-        const raw = String(msg)
-        if (raw.length > 1_000_000) {
-          try {
-            w.close(1009, 'message too large')
-          } catch {}
-          return
-        }
-        let event: {
-          type?: string
-          token?: string
-          sessionID?: string
-          data?: string
-          cols?: number
-          rows?: number
-        } | null = null
-        try {
-          event = JSON.parse(raw)
-        } catch {}
-        if (!w.__active) {
-          const owner =
-            event?.type === 'auth' && typeof event.token === 'string'
-              ? resolveOwner(event.token)
-              : undefined
-          if (owner !== undefined) {
-            const isTerminal = (w.data as MiraWSData | undefined)?.isTerminal === true
-            if (isTerminal) activateTerminalSocket(w, owner)
-            else activateSocket(w, owner)
+            const url = new URL(req.url)
+            const isTerminal = url.pathname === '/terminal'
+            if (isTerminal && !terminalEnabled()) {
+              return new Response(JSON.stringify({ error: 'terminal disabled' }), {
+                status: 403,
+                headers: { 'content-type': 'application/json' },
+              })
+            }
+            let authenticated = false
+            let owner: string | undefined
+            if (!REQUIRED_TOKEN && API_KEY_OWNERS.size === 0) {
+              authenticated = true
+            } else {
+              const auth = req.headers.get('authorization') ?? ''
+              owner = resolveOwner(bearerOf(auth))
+              authenticated = owner !== undefined
+            }
+            const upgraded = srv.upgrade(req, { data: { authenticated, owner, isTerminal } })
+            if (!upgraded) return new Response('WebSocket upgrade failed', { status: 500 })
+            return undefined
           }
-          return
-        }
-        if ((w.data as MiraWSData | undefined)?.isTerminal) {
-          if (event?.type === 'terminal.input' && typeof event.data === 'string') {
-            w.__armIdle?.()
-            if (terminalSandboxed()) {
-              const raw = event.data.trim()
-              if (raw && !raw.startsWith('#')) {
-                const first = raw.split(/[\s;|&]+/)[0] ?? ''
-                const base = first.split('/').pop() ?? first
-                let allowed: string[] = [
-                  'bash',
-                  'ls',
-                  'cat',
-                  'grep',
-                  'find',
-                  'git',
-                  'bun',
-                  'node',
-                  'tsc',
-                  'echo',
-                  'pwd',
-                  'head',
-                  'tail',
-                  'wc',
-                  'sort',
-                  'uniq',
-                  'date',
-                  'env',
-                  'which',
-                  'whoami',
-                  'printf',
-                  'sed',
-                  'awk',
-                ]
-                try {
-                  const cfg = getConfig() as MiraConfig
-                  const t = (cfg.tools as Record<string, JsonValue> | undefined)?.terminal as
-                    Record<string, JsonValue> | undefined
-                  const list = t?.allowedCommands as string[] | undefined
-                  if (Array.isArray(list)) allowed = list
-                } catch {}
-                if (base && !allowed.includes(base) && !allowed.includes(first)) {
+          return app.fetch(req)
+        },
+        websocket: {
+          open(ws) {
+            const w = ws as object as MiraWS
+            w.__active = false
+            const isTerminal = (w.data as MiraWSData | undefined)?.isTerminal === true
+            const needsAuth = !!REQUIRED_TOKEN || API_KEY_OWNERS.size > 0
+            if (!needsAuth || w.data?.authenticated === true) {
+              if (isTerminal) activateTerminalSocket(w, w.data?.owner)
+              else activateSocket(w, w.data?.owner)
+            } else {
+              w.__authTimer = setTimeout(() => {
+                if (!w.__active) {
                   try {
-                    w.send(
-                      JSON.stringify({
-                        type: 'terminal.output',
-                        payload: {
-                          stream: 'stderr',
-                          data: `sandbox: command "${base}" not in allowedCommands [${allowed.join(',')}] — blocked\n`,
-                        },
-                        timestamp: Date.now(),
-                      }),
-                    )
+                    w.close(1008, 'unauthorized: auth message not received within timeout')
                   } catch {}
+                }
+              }, WS_AUTH_TIMEOUT_MS)
+            }
+          },
+          message(ws, msg) {
+            const w = ws as object as MiraWS
+            const raw = String(msg)
+            if (raw.length > 1_000_000) {
+              try {
+                w.close(1009, 'message too large')
+              } catch {}
+              return
+            }
+            let event: {
+              type?: string
+              token?: string
+              sessionID?: string
+              data?: string
+              cols?: number
+              rows?: number
+            } | null = null
+            try {
+              event = JSON.parse(raw)
+            } catch {}
+            if (!w.__active) {
+              const owner =
+                event?.type === 'auth' && typeof event.token === 'string'
+                  ? resolveOwner(event.token)
+                  : undefined
+              if (owner !== undefined) {
+                const isTerminal = (w.data as MiraWSData | undefined)?.isTerminal === true
+                if (isTerminal) activateTerminalSocket(w, owner)
+                else activateSocket(w, owner)
+              }
+              return
+            }
+            if ((w.data as MiraWSData | undefined)?.isTerminal) {
+              if (event?.type === 'terminal.input' && typeof event.data === 'string') {
+                w.__armIdle?.()
+                if (terminalSandboxed()) {
+                  const raw = event.data.trim()
+                  if (raw && !raw.startsWith('#')) {
+                    const first = raw.split(/[\s;|&]+/)[0] ?? ''
+                    const base = first.split('/').pop() ?? first
+                    let allowed: string[] = [
+                      'bash',
+                      'ls',
+                      'cat',
+                      'grep',
+                      'find',
+                      'git',
+                      'bun',
+                      'node',
+                      'tsc',
+                      'echo',
+                      'pwd',
+                      'head',
+                      'tail',
+                      'wc',
+                      'sort',
+                      'uniq',
+                      'date',
+                      'env',
+                      'which',
+                      'whoami',
+                      'printf',
+                      'sed',
+                      'awk',
+                    ]
+                    try {
+                      const cfg = getConfig() as MiraConfig
+                      const t = (cfg.tools as Record<string, JsonValue> | undefined)?.terminal as
+                        Record<string, JsonValue> | undefined
+                      const list = t?.allowedCommands as string[] | undefined
+                      if (Array.isArray(list)) allowed = list
+                    } catch {}
+                    if (base && !allowed.includes(base) && !allowed.includes(first)) {
+                      try {
+                        w.send(
+                          JSON.stringify({
+                            type: 'terminal.output',
+                            payload: {
+                              stream: 'stderr',
+                              data: `sandbox: command "${base}" not in allowedCommands [${allowed.join(',')}] — blocked\n`,
+                            },
+                            timestamp: Date.now(),
+                          }),
+                        )
+                      } catch {}
+                    } else {
+                      try {
+                        const stdin = w.__proc?.stdin
+                        if (
+                          stdin &&
+                          typeof stdin !== 'number' &&
+                          typeof (stdin as Bun.FileSink).write === 'function'
+                        )
+                          (stdin as Bun.FileSink).write(event.data)
+                      } catch {}
+                    }
+                  } else {
+                    try {
+                      const stdin = w.__proc?.stdin
+                      if (
+                        stdin &&
+                        typeof stdin !== 'number' &&
+                        typeof (stdin as Bun.FileSink).write === 'function'
+                      )
+                        (stdin as Bun.FileSink).write(event.data)
+                    } catch {}
+                  }
                 } else {
                   try {
                     const stdin = w.__proc?.stdin
@@ -765,55 +844,37 @@ async function main() {
                       (stdin as Bun.FileSink).write(event.data)
                   } catch {}
                 }
-              } else {
-                try {
-                  const stdin = w.__proc?.stdin
-                  if (
-                    stdin &&
-                    typeof stdin !== 'number' &&
-                    typeof (stdin as Bun.FileSink).write === 'function'
-                  )
-                    (stdin as Bun.FileSink).write(event.data)
-                } catch {}
               }
-            } else {
-              try {
-                const stdin = w.__proc?.stdin
-                if (
-                  stdin &&
-                  typeof stdin !== 'number' &&
-                  typeof (stdin as Bun.FileSink).write === 'function'
-                )
-                  (stdin as Bun.FileSink).write(event.data)
-              } catch {}
+              if (event?.type === 'permission.reply' || event?.type === 'question.reply')
+                bus.publish(event as BusEvent)
+              return
             }
-          }
-          if (event?.type === 'permission.reply' || event?.type === 'question.reply')
+            if (event?.type !== 'permission.reply' && event?.type !== 'question.reply') return
             bus.publish(event as BusEvent)
-          return
-        }
-        if (event?.type !== 'permission.reply' && event?.type !== 'question.reply') return
-        bus.publish(event as BusEvent)
-      },
-      close(ws) {
-        const w = ws as object as MiraWS
-        clearTimeout(w.__authTimer)
-        try {
-          w.__unsub?.()
-        } catch {}
-        try {
-          w.__ac?.abort()
-        } catch {}
-        try {
-          w.__proc?.kill()
-        } catch {}
-      },
-    },
+          },
+          close(ws) {
+            const w = ws as object as MiraWS
+            clearTimeout(w.__authTimer)
+            try {
+              w.__unsub?.()
+            } catch {}
+            try {
+              w.__ac?.abort()
+            } catch {}
+            try {
+              w.__proc?.kill()
+            } catch {}
+          },
+        },
       })
       break
     } catch (e) {
       const msg = String((e as Error)?.message ?? e)
-      if (msg.includes('EADDRINUSE') || msg.includes('address already in use') || msg.includes('Failed to start server')) {
+      if (
+        msg.includes('EADDRINUSE') ||
+        msg.includes('address already in use') ||
+        msg.includes('Failed to start server')
+      ) {
         if (attempt < 9) {
           warn(`port ${actualPort} in use — trying ${actualPort + 1}`)
           actualPort++

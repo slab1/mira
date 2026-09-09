@@ -6,19 +6,19 @@ Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observab
 
 ## Why Mira?
 
-| Feature | Legacy | Claude Code | Cursor | Windsurf | Cline | **Mira** |
-|---------|----------|-------------|--------|----------|-------|------------|
-| Provider-agnostic | ✅ 25+ | ❌ Claude-only | ⚠️ Limited | ⚠️ Limited | ✅ BYO-key | ✅ **Gateway: OpenRouter + NVIDIA NIM** |
-| Real LSP servers | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ **JSON-RPC 3.17 (gopls today) + 9-layer edit fallback** |
-| Hierarchical Memory | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **Episodic/Semantic/Procedural, auto-injected per turn** |
-| Eval-first | ⚠️ | ⚠️ | ❌ | ❌ | ❌ | ✅ **3-tier eval gating CI** |
-| Tool-layer Guardrails | ❌ | ⚠️ | ❌ | ❌ | ❌ | ✅ **Enforced + audit log** |
-| File snapshots + undo | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ **Auto-snapshot before every mutation, rewind to any message** |
-| Message queue while streaming | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ **Durable (SQLite), chained-turn drain** |
-| Inspectable subagents | ❌ (ephemeral) | ❌ | ❌ | ❌ | ❌ | ✅ **Persistent child sessions with full transcripts** |
-| Self-improvement | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **Pain-point detection → verified patches → autopilot PRs** |
-| Cost Control | ✅ Free | $20-200 | $20-200 | $15-35 | Free | ✅ **Free + local, live spend display, prompt caching, cost-cap per-task/session** |
-| Kilo Parity (2026-08) | — | — | — | — | — | ✅ **Agents (code/ask/plan, per-agent LLM) · Memory Bank · Orchestrator DAG · MCP Marketplace · Inline Autocomplete · Browser · Sessions Sync · Slack (Socket Mode)** |
+| Feature                       | Legacy         | Claude Code    | Cursor     | Windsurf   | Cline      | **Mira**                                                                                                                                                              |
+| ----------------------------- | -------------- | -------------- | ---------- | ---------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Provider-agnostic             | ✅ 25+         | ❌ Claude-only | ⚠️ Limited | ⚠️ Limited | ✅ BYO-key | ✅ **Gateway: OpenRouter + NVIDIA NIM**                                                                                                                               |
+| Real LSP servers              | ✅             | ❌             | ❌         | ❌         | ❌         | ✅ **JSON-RPC 3.17 (gopls today) + 9-layer edit fallback**                                                                                                            |
+| Hierarchical Memory           | ❌             | ❌             | ❌         | ❌         | ❌         | ✅ **Episodic/Semantic/Procedural, auto-injected per turn**                                                                                                           |
+| Eval-first                    | ⚠️             | ⚠️             | ❌         | ❌         | ❌         | ✅ **3-tier eval gating CI**                                                                                                                                          |
+| Tool-layer Guardrails         | ❌             | ⚠️             | ❌         | ❌         | ❌         | ✅ **Enforced + audit log**                                                                                                                                           |
+| File snapshots + undo         | ✅             | ❌             | ❌         | ❌         | ❌         | ✅ **Auto-snapshot before every mutation, rewind to any message**                                                                                                     |
+| Message queue while streaming | ✅             | ❌             | ❌         | ❌         | ❌         | ✅ **Durable (SQLite), chained-turn drain**                                                                                                                           |
+| Inspectable subagents         | ❌ (ephemeral) | ❌             | ❌         | ❌         | ❌         | ✅ **Persistent child sessions with full transcripts**                                                                                                                |
+| Self-improvement              | ❌             | ❌             | ❌         | ❌         | ❌         | ✅ **Pain-point detection → verified patches → autopilot PRs**                                                                                                        |
+| Cost Control                  | ✅ Free        | $20-200        | $20-200    | $15-35     | Free       | ✅ **Free + local, live spend display, prompt caching, cost-cap per-task/session**                                                                                    |
+| Kilo Parity (2026-08)         | —              | —              | —          | —          | —          | ✅ **Agents (code/ask/plan, per-agent LLM) · Memory Bank · Orchestrator DAG · MCP Marketplace · Inline Autocomplete · Browser · Sessions Sync · Slack (Socket Mode)** |
 
 ## Architecture
 
@@ -58,7 +58,7 @@ Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observab
 ## Security Defaults
 
 - Server binds **127.0.0.1** — set `HOST=0.0.0.0` explicitly for remote access
-- Optional bearer auth: set `MIRA_TOKEN`; clients pass `Authorization: Bearer …` (query-param tokens are rejected)
+- Bearer auth via `MIRA_TOKEN`: first boot with no token anywhere auto-creates `~/.mira/mira.env` (respects `$MIRA_DIR`) with a generated 64-hex token; existing file is adopted, never overwritten. Production without auth refuses to start (`MIRA_NO_AUTOPROVISION=1` opts out). Clients pass `Authorization: Bearer …` (query-param tokens are rejected)
 - Rate limiting per real socket peer (Bun `requestIP`, unforgeable); proxy headers only honored under `MIRA_TRUST_PROXY=1`; per-route SSE bucket for streaming endpoints
 - Every mutating tool call is snapshotted; permission layer gates bash/edit/write/MCP
 
@@ -94,16 +94,16 @@ MIRA_API_URL=http://127.0.0.1:4096 MIRA_API_KEY=<key> SLACK_BOT_TOKEN=xoxb-... S
 
 ## Environment Reference
 
-| Variable | Purpose |
-|----------|---------|
-| `OPENROUTER_API_KEY` | Primary provider |
-| `NVIDIA_API_KEY` | NVIDIA NIM provider + enables vision model default |
-| `FIRECRAWL_API_KEY` / `TAVILY_API_KEY` | websearch quality tiers (DuckDuckGo fallback needs none) |
-| `MIRA_VISION_MODEL` | Vision model override (default `nvidia/meta/llama-3.2-90b-vision-instruct`) |
-| `MIRA_LSP_GO_CMD` | Custom Go LSP command (default `gopls`) |
-| `MIRA_AUTOPILOT=1` | Open PRs for verified self-patches |
-| `MIRA_TOKEN` | Require bearer auth |
-| `HOST` | Bind address (default `127.0.0.1`) |
+| Variable                               | Purpose                                                                                           |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `OPENROUTER_API_KEY`                   | Primary provider                                                                                  |
+| `NVIDIA_API_KEY`                       | NVIDIA NIM provider + enables vision model default                                                |
+| `FIRECRAWL_API_KEY` / `TAVILY_API_KEY` | websearch quality tiers (DuckDuckGo fallback needs none)                                          |
+| `MIRA_VISION_MODEL`                    | Vision model override (default `nvidia/meta/llama-3.2-90b-vision-instruct`)                       |
+| `MIRA_LSP_GO_CMD`                      | Custom Go LSP command (default `gopls`)                                                           |
+| `MIRA_AUTOPILOT=1`                     | Open PRs for verified self-patches                                                                |
+| `MIRA_TOKEN`                           | Bearer auth (auto-provisioned to `~/.mira/mira.env` on first boot; production refuses without it) |
+| `HOST`                                 | Bind address (default `127.0.0.1`)                                                                |
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) and [packages/server/README.md](./packages/server/README.md).
 
@@ -125,6 +125,7 @@ docker run -d \
 **Required env vars:** `HOST=0.0.0.0`, `MIRA_TOKEN`, `OPENROUTER_API_KEY` or `NVIDIA_API_KEY`. See `.env.example` for the full set (multi-tenant keys, CORS allowlist, loop limits, eval gate).
 
 Health checks:
+
 - `GET /healthz` — unauthenticated liveness (used by Docker/compose HEALTHCHECK; works under auth)
 - `GET /health` — detailed, behind the bearer gate
 
@@ -136,18 +137,18 @@ Single-token mode (`MIRA_TOKEN` only) maps everything to an implicit `"default"`
 
 ### API surface
 
-| Route | Auth | Description |
-|-------|------|-------------|
-| `GET /healthz` | none | liveness |
-| `GET /metrics` | see note | Prometheus scrape |
-| `GET/POST /session` | bearer | list (owner-scoped) / create |
-| `GET/DELETE /session/:id` | bearer | detail / delete (404 if foreign) |
-| `POST /session/:id/prompt` | bearer | SSE stream; body `{prompt, model?, maxSteps?}` |
-| `GET /session/:id/message` · `/todo` · `/export` | bearer | history, todos, transcript |
-| `GET/POST/DELETE /session/:id/queue` | bearer | message queue while streaming |
-| `GET /session/:id/snapshots` · `POST …/revert` | bearer | file undo/rewind |
-| `GET /session/:id/jobs` · `GET /job/:id` · `POST /job/:id/cancel` | bearer | background subagent job board |
-| `WS /` | bearer or first-message auth | live bus events, owner-scoped |
+| Route                                                             | Auth                         | Description                                    |
+| ----------------------------------------------------------------- | ---------------------------- | ---------------------------------------------- |
+| `GET /healthz`                                                    | none                         | liveness                                       |
+| `GET /metrics`                                                    | see note                     | Prometheus scrape                              |
+| `GET/POST /session`                                               | bearer                       | list (owner-scoped) / create                   |
+| `GET/DELETE /session/:id`                                         | bearer                       | detail / delete (404 if foreign)               |
+| `POST /session/:id/prompt`                                        | bearer                       | SSE stream; body `{prompt, model?, maxSteps?}` |
+| `GET /session/:id/message` · `/todo` · `/export`                  | bearer                       | history, todos, transcript                     |
+| `GET/POST/DELETE /session/:id/queue`                              | bearer                       | message queue while streaming                  |
+| `GET /session/:id/snapshots` · `POST …/revert`                    | bearer                       | file undo/rewind                               |
+| `GET /session/:id/jobs` · `GET /job/:id` · `POST /job/:id/cancel` | bearer                       | background subagent job board                  |
+| `WS /`                                                            | bearer or first-message auth | live bus events, owner-scoped                  |
 
 Agent tools include `finding_write` / `finding_list` / `finding_resolve` — structured cross-session team memory (open findings are auto-injected into every loop context).
 
