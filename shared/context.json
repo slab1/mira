@@ -51,7 +51,9 @@
     }
   ],
   "artifacts": {
-    "files_created": ["shared/simulation_sandbox.ts"],
+    "files_created": [
+      "shared/simulation_sandbox.ts"
+    ],
     "files_modified": [
       "packages/server/src/learning/ledger.ts",
       "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -65,7 +67,10 @@
       ".env.example:28-35 CORS docs dev default (empty=allow localhost) vs prod (list set=deny localhost unless MIRA_ALLOW_LOCALHOST=1)",
       "packages/web/src/components/QueueRail.tsx:1-35 polling 3s visibility-aware onCleanup + \u2191\u2193 reorder and \u2715 cancel per-item (existing styling)",
       "packages/web/src/App.tsx:895 QueueRail outside <Show when={store.state.cost}> verified (already outside, preserved)",
-      "packages/web/src/api/client.ts:967-976 reorderQueue/deleteQueueItem signatures verified vs session-extras.ts POST /session/:id/queue/reorder {texts} + DELETE /session/:id/queue/item {text}"
+      "packages/web/src/api/client.ts:967-976 reorderQueue/deleteQueueItem signatures verified vs session-extras.ts POST /session/:id/queue/reorder {texts} + DELETE /session/:id/queue/item {text}",
+      "packages/server/e2e/gaps.test.ts: beforeAll MIRA_TOKEN=test-gaps-token + AUTH headers + WS auth + 15s timeout",
+      "packages/server/e2e/queue.test.ts: MIRA_TOKEN=test-queue-token + AUTH + /healthz",
+      "packages/server/e2e/server.e2e.test.ts: MIRA_TOKEN=test-e2e-token + AUTH + /healthz"
     ]
   },
   "checkpoints": {
@@ -83,7 +88,7 @@
       "last_updated": "2026-09-08T09:04:07.720317+00:00"
     }
   },
-  "last_updated": "2026-09-09T20:58:58.684555+00:00",
+  "last_updated": "2026-09-09T22:30:00.000000+00:00",
   "workflow_trace": [
     {
       "agent": "fixer",
@@ -91,7 +96,11 @@
       "task": "P1 MCP CI flake Legacy SSE listen failed (HTTP 200)",
       "status": "completed",
       "timestamp": "2026-09-09T18:05:26.207624+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -114,7 +123,11 @@
       "task": "P1 MCP CI flake Legacy SSE listen failed (HTTP 200)",
       "status": "completed",
       "timestamp": "2026-09-09T19:30:00.000000+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -136,7 +149,11 @@
       "task": "P1 workspace @ mentions \u2014 real workspace tree via GET /workspace/tree",
       "status": "completed",
       "timestamp": "2026-09-09T19:06:28.241103+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/routes/workspace.ts (new) \u2014 GET /workspace/tree via Bun.Glob('**/*') + isPathAllowed/sanitizePath, .gitignore + defaults (.git, node_modules, dist, .turbo, data, *.db, .mira, coverage), sorted 500",
@@ -158,7 +175,11 @@
       "task": "P1 CORS MIRA_ALLOW_LOCALHOST gate",
       "status": "completed",
       "timestamp": "2026-09-09T20:05:06.509550+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/middleware/index.ts:36-64 corsOrigin function with MIRA_ALLOW_LOCALHOST gate + normalizedAllowSet + header-smuggling protection",
@@ -178,7 +199,11 @@
       "task": "P2 queue rail reorder/cancel \u2014 QueueRail polling + App.tsx placement + api/client verification",
       "status": "completed",
       "timestamp": "2026-09-09T20:58:58.684555+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/web/src/components/QueueRail.tsx:1-35 polling 3s visibility-aware onCleanup + \u2191\u2193 reorder and \u2715 cancel per-item (existing styling)",
@@ -192,6 +217,83 @@
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_hdh8ak"
       },
       "outcome": "P2 fix complete: QueueRail now polls GET /session/:id/queue every 3s (visibility-aware, onCleanup clear) + existing \u2191\u2193 reorder (api.reorderQueue) and \u2715 cancel (api.deleteQueueItem) per-item buttons preserved with existing styling; App.tsx QueueRail verified outside cost Show (visible regardless of cost); api/client signatures verified match server routes POST /session/:id/queue/reorder {texts} and DELETE /session/:id/queue/item {text}; typecheck + vite build green, minimal diff preserved design, no PromptInput/ChatView/mcp/workspace/middleware/cost UI touched"
+    },
+    {
+      "agent": "oracle",
+      "run_id": "run_20260909_3dc4b2",
+      "task": "TUI vs web parity crosscheck @80a6e743 (8 fixes)",
+      "status": "completed",
+      "timestamp": "2026-09-09T21:44:43Z",
+      "stages": [
+        "parse_context",
+        "examine_tui",
+        "examine_web",
+        "verify"
+      ],
+      "verdict": "REVISE",
+      "artifacts": {
+        "report": "/tmp/report_tui_crosscheck.md",
+        "parity": "3 missing (slash, workspace, cost), 3 partial (composer, queue, time-travel), 2 N/A (MCP, CORS)",
+        "typecheck": "tui tsc --noEmit EXIT 0, 0 TODOs, 0 tests",
+        "fix_list": "P0 slash preload (S), P1 workspace @ (M), P1 per-session cost (M), P1 queue polling+proxy (S), P2 history grouping+abort (S) \u2014 total ~8.5h"
+      },
+      "outcome": "REVISE \u2014 TUI not regressed but left behind on 3/8 fixes; 5 concrete fixes prioritized (P0 slash double-gate, P1 workspace @, P1 cost cap, P1 queue polling, P2 history grouping); shared rpc/client duplication is drift risk; vite proxy missing 11 routes"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_4416b3",
+      "task": "Fix CI gaps.test.ts auth 401 — GET /providers hasKey",
+      "status": "completed",
+      "timestamp": "2026-09-09T22:30:00.000000+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/e2e/gaps.test.ts: beforeAll MIRA_TOKEN=test-gaps-token deterministic + AUTH headers on GET /providers, POST /providers/:id/test, GET /terminal, GET /health, WS /terminal + WS vscode-webview (header + auth message fallback), WS timeout 15s",
+          "packages/server/e2e/queue.test.ts: MIRA_TOKEN=test-queue-token + AUTH on all /session, /queue, /prompt, /message + /healthz waitForHealth",
+          "packages/server/e2e/server.e2e.test.ts: MIRA_TOKEN=test-e2e-token + AUTH on all routes + /healthz waitForHealth"
+        ],
+        "verify": {
+          "gaps": "bun test packages/server/e2e/gaps.test.ts 7 pass 0 fail 20.20s (was 4 pass 3 fail ConnectionRefused)",
+          "queue": "bun test packages/server/e2e/queue.test.ts 1 pass 0 fail 23.23s",
+          "server_e2e": "bun test packages/server/e2e/server.e2e.test.ts 7 pass 1 fail (LIVE 401 from OpenRouter when key invalid, 7 non-live pass) 30.80s",
+          "typecheck": "turbo typecheck 6 successful, 6 total, 56.341s"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_4416b3"
+      },
+      "outcome": "Fix complete: gaps.test.ts beforeAll now sets deterministic MIRA_TOKEN and all fetches include Authorization Bearer header (providers, terminal, health, config fallback) + WS auth via header + auth message fallback with 15s timeout; queue.test.ts and server.e2e.test.ts similarly fixed to use deterministic tokens and /healthz for waitForHealth; 7/7 gaps pass, queue 1/1 pass, server.e2e 7/7 non-live pass, typecheck green, minimal diff preserved design"
     }
-  ]
+  ],
+  "findings": {
+    "oracle": [
+      {
+        "run_id": "run_20260909_3dc4b2",
+        "verdict": "REVISE",
+        "at": "2026-09-09T21:44:43Z",
+        "scope": "packages/tui vs packages/web @80a6e743",
+        "top_findings": [
+          "slash preload missing (P0)",
+          "workspace @ missing (P1)",
+          "per-session cost missing (P1)",
+          "queue no polling (P1)",
+          "history not grouped (P2)"
+        ]
+      }
+    ],
+    "fixer": [
+      {
+        "run_id": "run_20260909_4416b3",
+        "at": "2026-09-09T22:30:00.000000+00:00",
+        "task": "Fix CI gaps.test.ts auth 401",
+        "files_modified": [
+          "packages/server/e2e/gaps.test.ts",
+          "packages/server/e2e/queue.test.ts",
+          "packages/server/e2e/server.e2e.test.ts"
+        ],
+        "root_cause": "beforeAll cleaned MIRA_TOKEN but server auto-provisions random token via ~/.mira/mira.env, fetches without Authorization -> 401, list [] -> expect fail, then server killed -> ConnectionRefused for later tests",
+        "fix": "Set deterministic MIRA_TOKEN in spawn env (test-gaps-token, test-queue-token, test-e2e-token) and add Authorization Bearer header to all fetches requiring auth (/providers, /config, /terminal, /health, /session, etc.) + WS auth via header + auth message fallback, waitForHealth uses /healthz (public), WS timeout 15s",
+        "verify": "bun test gaps.test.ts 7 pass 0 fail 20.20s, queue.test.ts 1 pass, server.e2e.test.ts 7 pass (LIVE 401 expected), turbo typecheck 6 successful",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_4416b3"
+      }
+    ]
+  }
 }

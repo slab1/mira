@@ -6,6 +6,8 @@ import { describe, test, beforeAll, afterAll, expect } from "bun:test"
 
 const PORT = 4789
 const BASE = `http://localhost:${PORT}`
+const TOKEN = "test-gaps-token"
+const AUTH = { Authorization: `Bearer ${TOKEN}` }
 let proc: ReturnType<typeof Bun.spawn> | null = null
 
 async function waitForHealth(timeoutMs = 15_000) {
@@ -34,6 +36,7 @@ beforeAll(async () => {
       MIRA_TERMINAL_ENABLED: "1",
       MIRA_TERMINAL_SANDBOX: "0",
       OPENROUTER_API_KEY: "sk-test-gaps",
+      MIRA_TOKEN: TOKEN,
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -49,7 +52,7 @@ describe("gaps: providers expandEnv", () => {
     let lastData: unknown = null
     let list: Array<{ id: string; hasKey: boolean }> = []
     for (let i = 0; i < 5; i++) {
-      const res = await fetch(`${BASE}/providers`)
+      const res = await fetch(`${BASE}/providers`, { headers: AUTH })
       const data = await res.json() as unknown
       lastData = data
       list = Array.isArray(data) ? data as Array<{ id: string; hasKey: boolean }> : []
@@ -61,7 +64,7 @@ describe("gaps: providers expandEnv", () => {
       console.error("list:", JSON.stringify(list).slice(0, 2000))
       // Also try fetching /config to see what providers are configured
       try {
-        const cfgRes = await fetch(`${BASE}/config`)
+        const cfgRes = await fetch(`${BASE}/config`, { headers: AUTH })
         const cfg = await cfgRes.json() as any
         console.error("config provider keys:", Object.keys(cfg.provider ?? {}))
         console.error("config provider openrouter:", JSON.stringify(cfg.provider?.openrouter ?? null).slice(0, 500))
@@ -75,7 +78,7 @@ describe("gaps: providers expandEnv", () => {
   })
 
   test("POST /providers/:id/test expands and checks", async () => {
-    const r = await fetch(`${BASE}/providers/openrouter/test`, { method: "POST" })
+    const r = await fetch(`${BASE}/providers/openrouter/test`, { method: "POST", headers: AUTH })
     const j = await r.json()
     expect(j.ok).toBe(true)
     expect(j.expanded).toBe(true)
@@ -84,19 +87,24 @@ describe("gaps: providers expandEnv", () => {
 
 describe("gaps: terminal", () => {
   test("GET /terminal reports enabled", async () => {
-    const j = await (await fetch(`${BASE}/terminal`)).json()
+    const j = await (await fetch(`${BASE}/terminal`, { headers: AUTH })).json()
     expect(j.enabled).toBe(true)
     expect(j.ws).toContain("/terminal")
   })
 
   test("WS /terminal PTY echoes", async () => {
-    const ws = new WebSocket(`ws://localhost:${PORT}/terminal`)
+    // WS upgrade requires auth when MIRA_TOKEN is set — send via header if supported, plus auth message fallback
+    // @ts-expect-error — Bun WebSocket types lack `headers` option, but runtime supports it
+    const ws = new WebSocket(`ws://localhost:${PORT}/terminal`, { headers: AUTH })
     const out: string[] = []
     await new Promise<void>((resolve, reject) => {
       // Full-suite load (parallel server boots) makes the PTY echo roundtrip
       // blow past the old 5s bound (~3s in isolation, 5.2s under load).
       const t = setTimeout(() => reject(new Error("timeout")), 15_000)
-      ws.onopen = () => {}
+      ws.onopen = () => {
+        // Fallback auth via message for runtimes that ignore headers
+        try { ws.send(JSON.stringify({ type: "auth", token: TOKEN })) } catch {}
+      }
       ws.onmessage = (ev) => {
         try {
           const m = JSON.parse(String(ev.data))
@@ -112,7 +120,7 @@ describe("gaps: terminal", () => {
       ws.onerror = (e) => { clearTimeout(t); reject(e as Error) }
     })
     expect(out.join("")).toContain("gaps-ok")
-  })
+  }, 15_000)
 })
 
 describe("gaps: CORS for 3 clients", () => {
@@ -120,7 +128,7 @@ describe("gaps: CORS for 3 clients", () => {
     // Upgrade would be blocked by isOriginAllowed; we test via fetch with Origin header via WS upgrade simulation
     // For HTTP, CORS middleware allows, but we test WS origin check via manual fetch to upgrade endpoint (should not 403)
     // Instead, verify the server's CORS header allows localhost by checking that a normal request with Origin succeeds (not 403)
-    const res = await fetch(`${BASE}/health`, { headers: { Origin: "http://localhost:3001" } })
+    const res = await fetch(`${BASE}/health`, { headers: { Origin: "http://localhost:3001", ...AUTH } })
     expect(res.status).not.toBe(403)
   })
 
@@ -129,10 +137,13 @@ describe("gaps: CORS for 3 clients", () => {
     // We test by opening WS with Origin header (Bun WebSocket doesn't send Origin by default, but fetch upgrade check does)
     // Simulate by direct WS with headers (Node ws)
     // @ts-expect-error — Bun WebSocket types lack `headers` option, but runtime ws supports it for Origin simulation
-    const ws = new WebSocket(`ws://localhost:${PORT}/`, { headers: { Origin: "vscode-webview://123" } })
+    const ws = new WebSocket(`ws://localhost:${PORT}/`, { headers: { Origin: "vscode-webview://123", ...AUTH } })
     await new Promise<void>((resolve, reject) => {
       const t = setTimeout(() => reject(new Error("timeout")), 3000)
-      ws.onopen = () => { clearTimeout(t); ws.close(); resolve() }
+      ws.onopen = () => {
+        try { ws.send(JSON.stringify({ type: "auth", token: TOKEN })) } catch {}
+        clearTimeout(t); ws.close(); resolve()
+      }
       ws.onerror = () => { clearTimeout(t); resolve() } // if blocked, would be error, but we expect open
     })
     // If we reach here without 403, the origin was allowed (server would have returned 403 Response instead of upgrading, but ws onopen still fires only on 101)

@@ -9,13 +9,15 @@ import { describe, test, beforeAll, afterAll, expect } from 'bun:test'
 
 const PORT = 4788
 const BASE = `http://localhost:${PORT}`
+const TOKEN = "test-e2e-token"
+const AUTH = { Authorization: `Bearer ${TOKEN}` }
 let serverProc: ReturnType<typeof Bun.spawn> | null = null
 
 async function waitForHealth(timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${BASE}/health`)
+      const res = await fetch(`${BASE}/healthz`)
       if (res.ok) return await res.json()
     } catch {}
     await Bun.sleep(250)
@@ -26,9 +28,10 @@ async function waitForHealth(timeoutMs = 15_000) {
 beforeAll(async () => {
   const { resolveBunBinary, safeTempFile } = await import("../../shared/src/utils/paths.js")
   const BUN_BIN = resolveBunBinary()
+  const { MIRA_TOKEN: _mt, MIRA_API_KEYS: _mak, ...cleanEnv } = process.env as Record<string, string | undefined>
   serverProc = Bun.spawn([BUN_BIN, 'src/index.ts'], {
     cwd: import.meta.dir + '/..',
-    env: { ...process.env, PORT: String(PORT), MIRA_DB: safeTempFile('mira-e2e-test.db') },
+    env: { ...cleanEnv, PORT: String(PORT), MIRA_DB: safeTempFile('mira-e2e-test.db'), MIRA_TOKEN: TOKEN },
     stdout: 'pipe',
     stderr: 'pipe',
   })
@@ -43,22 +46,24 @@ describe('Mira server E2E', () => {
   test('health reports registered tools', async () => {
     const health = await waitForHealth()
     expect(health.ok).toBe(true)
-    expect(health.tools).toBeGreaterThan(10)
+    // /health requires auth when token set — fetch with auth for detail check
+    const detail = await (await fetch(`${BASE}/health`, { headers: AUTH })).json() as { tools: number }
+    expect(detail.tools).toBeGreaterThan(10)
   })
 
   test('skills + tools + mcp discovery endpoints', async () => {
-    const skills = await (await fetch(`${BASE}/skills`)).json()
+    const skills = await (await fetch(`${BASE}/skills`, { headers: AUTH })).json()
     expect(Array.isArray(skills)).toBe(true)
-    const toolList = await (await fetch(`${BASE}/tools`)).json()
+    const toolList = await (await fetch(`${BASE}/tools`, { headers: AUTH })).json()
     expect(toolList.length).toBeGreaterThan(10)
-    const mcp = await (await fetch(`${BASE}/mcp`)).json()
+    const mcp = await (await fetch(`${BASE}/mcp`, { headers: AUTH })).json()
     expect(Array.isArray(mcp)).toBe(true)
   })
 
   test('session lifecycle: create → prompt(SSE) → messages persisted', async () => {
     const created = await fetch(`${BASE}/session`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...AUTH },
       body: JSON.stringify({ title: 'e2e-test-session' }),
     })
     const session = await created.json()
@@ -68,7 +73,7 @@ describe('Mira server E2E', () => {
     // Drive the prompt loop over SSE (real gateway: may error if no API key, else streams)
     const res = await fetch(`${BASE}/session/${session.id}/prompt`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...AUTH },
       body: JSON.stringify({ prompt: 'hello mira' }),
     })
     expect(res.headers.get('Content-Type')).toContain('text/event-stream')
@@ -80,18 +85,18 @@ describe('Mira server E2E', () => {
     expect(body).toContain('event: step_start')
 
     // Messages were persisted (user at least)
-    const messages = await (await fetch(`${BASE}/session/${session.id}/message`)).json()
+    const messages = await (await fetch(`${BASE}/session/${session.id}/message`, { headers: AUTH })).json()
     expect(messages.length).toBeGreaterThanOrEqual(1) // user persisted even if gateway errored
 
     // Export as markdown contains the conversation
-    const md = await (await fetch(`${BASE}/session/${session.id}/export`)).text()
+    const md = await (await fetch(`${BASE}/session/${session.id}/export`, { headers: AUTH })).text()
     expect(md).toContain('# e2e-test-session')
   })
 
   test('agent personas: create session with researcher template', async () => {
     const res = await fetch(`${BASE}/session`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...AUTH },
       body: JSON.stringify({ agent: 'researcher' }),
     })
     const session = await res.json()
@@ -100,7 +105,7 @@ describe('Mira server E2E', () => {
   })
 
   test('dev/health exposes gateway cost stats', async () => {
-    const dev = await (await fetch(`${BASE}/dev/health`)).json()
+    const dev = await (await fetch(`${BASE}/dev/health`, { headers: AUTH })).json()
     expect(dev.gateway).toBeDefined()
     expect(typeof dev.gateway.requests).toBe('number')
     expect(typeof dev.gateway.costUSD).toBe('number')
@@ -114,7 +119,7 @@ describe('Mira server E2E', () => {
 
     const created = await fetch(`${BASE}/session`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...AUTH },
       body: JSON.stringify({ title: 'undo-test' }),
     })
     const session = await created.json()
@@ -122,13 +127,13 @@ describe('Mira server E2E', () => {
     // Mutate the file directly (simulating agent edit), then verify snapshot list is queryable
     await Bun.write(target, 'after-mira')
 
-    const snaps = await (await fetch(`${BASE}/session/${session.id}/snapshots`)).json()
+    const snaps = await (await fetch(`${BASE}/session/${session.id}/snapshots`, { headers: AUTH })).json()
     expect(Array.isArray(snaps)).toBe(true)
 
     // Revert with no mutations recorded → ok:true, reverted:0
     const res = await fetch(`${BASE}/session/${session.id}/revert`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...AUTH },
       body: JSON.stringify({}),
     })
     const out = await res.json()
@@ -139,14 +144,14 @@ describe('Mira server E2E', () => {
 
   test('config layered settings + PATCH persistence', async () => {
     // GET /config returns the flat merged config (apiKeys redacted); layers at /config/layers
-    const cfgRes = await fetch(`${BASE}/config`)
+    const cfgRes = await fetch(`${BASE}/config`, { headers: AUTH })
     expect(cfgRes.status).toBe(200)
     const cfg = (await cfgRes.json()) as {
       model: string
       provider: Record<string, { options: { apiKey: string } }>
     }
     expect(typeof cfg.model).toBe('string')
-    const layersRes = await fetch(`${BASE}/config/layers`)
+    const layersRes = await fetch(`${BASE}/config/layers`, { headers: AUTH })
     expect(layersRes.status).toBe(200)
     const layerInfo = (await layersRes.json()) as {
       merged: { model: string }
@@ -159,7 +164,7 @@ describe('Mira server E2E', () => {
     expect(rawKey === '' || rawKey === '***' || rawKey.startsWith('sk-***')).toBe(true)
 
     // GET /config/schema returns JSON Schema shape
-    const schema = (await (await fetch(`${BASE}/config/schema`)).json()) as {
+    const schema = (await (await fetch(`${BASE}/config/schema`, { headers: AUTH })).json()) as {
       properties?: Record<string, { type: string }>
     }
     expect(typeof schema.properties).toBe('object')
@@ -169,7 +174,7 @@ describe('Mira server E2E', () => {
     const testModel = 'openrouter/test-e2e-model'
     const patched = await fetch(`${BASE}/config`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...AUTH },
       body: JSON.stringify({ patch: { model: testModel }, layer: 'project' }),
     })
     expect(patched.status).toBe(200)
@@ -177,13 +182,13 @@ describe('Mira server E2E', () => {
     expect(afterPatch.model).toBe(testModel)
 
     // GET again confirms persistence
-    const cfg2 = (await (await fetch(`${BASE}/config`)).json()) as { model: string }
+    const cfg2 = (await (await fetch(`${BASE}/config`, { headers: AUTH })).json()) as { model: string }
     expect(cfg2.model).toBe(testModel)
 
     // Revert to default to not pollute later runs
     const revert = await fetch(`${BASE}/config`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...AUTH },
       body: JSON.stringify({
         patch: { model: 'openrouter/anthropic/claude-sonnet-4' },
         layer: 'project',
@@ -194,7 +199,7 @@ describe('Mira server E2E', () => {
     // Invalid patch → 400
     const bad = await fetch(`${BASE}/config`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...AUTH },
       body: JSON.stringify({ patch: null }),
     })
     expect(bad.status).toBe(400)
@@ -212,7 +217,7 @@ describe('Mira server E2E', () => {
     async () => {
       const created = await fetch(`${BASE}/session`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...AUTH },
         body: JSON.stringify({ title: 'live-llm-test', model: MIRA_E2E_MODEL }),
       })
       const session = await created.json()
@@ -226,7 +231,7 @@ describe('Mira server E2E', () => {
         try {
           const res = await fetch(`${BASE}/session/${session.id}/prompt`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...AUTH },
             body: JSON.stringify({ prompt: 'Reply with exactly the word: MIRA_E2E_OK' }),
           })
           body = await res.text()
@@ -261,7 +266,7 @@ describe('Mira server E2E', () => {
 
       // Gateway recorded real token usage
       await Bun.sleep(500)
-      const dev = await (await fetch(`${BASE}/dev/health`)).json()
+      const dev = await (await fetch(`${BASE}/dev/health`, { headers: AUTH })).json()
       expect(dev.gateway.requests).toBeGreaterThan(0)
       expect(dev.gateway.inputTokens).toBeGreaterThan(0)
       console.log('  [live] gateway stats:', JSON.stringify(dev.gateway.byModel))
