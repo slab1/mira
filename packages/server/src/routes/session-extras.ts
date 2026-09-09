@@ -384,7 +384,7 @@ export function mountSessionExtrasRoutes(
     if (!id || !snapshotId) return c.json({ error: 'not found' }, 404)
     if (!(await deps.authorizedSession(id, c))) return c.json({ error: 'not found' }, 404)
     const { getSnapshotContent } = await import('../storage/snapshots.js')
-    const snapshot = getSnapshotContent(db, snapshotId)
+    const snapshot = getSnapshotContent(db, snapshotId, id)
     if (!snapshot) return c.json({ error: 'snapshot not found' }, 404)
     let currentContent: string | null = null
     try {
@@ -407,9 +407,10 @@ export function mountSessionExtrasRoutes(
     if (!id) return c.json({ error: 'not found' }, 404)
     if (!(await deps.authorizedSession(id, c))) return c.json({ error: 'not found' }, 404)
     try {
-      const reverted = body.messageID
+      const outcome = body.messageID
         ? await revertToMessage(db, id, body.messageID)
-        : [await revertLast(db, id)].filter(Boolean)
+        : await revertLast(db, id)
+      const reverted = outcome.reverted.filter(Boolean)
       bus.publish({
         type: 'session.updated',
         sessionID: id,
@@ -419,7 +420,8 @@ export function mountSessionExtrasRoutes(
       return c.json({
         ok: true,
         reverted: reverted.length,
-        files: reverted.filter(Boolean).map((r) => (r as { path: string }).path),
+        files: reverted.map((r) => (r as { path: string }).path),
+        messagesDeleted: outcome.messagesDeleted,
       })
     } catch (e) {
       return c.json({ ok: false, error: String(e) }, 400)

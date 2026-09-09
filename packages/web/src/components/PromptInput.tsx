@@ -2,6 +2,7 @@ import { For, Show, createSignal, createEffect, createMemo, onCleanup } from 'so
 import type { SettingsStore } from '../stores/settings'
 import { filterCommands } from './CommandPalette'
 import type { CommandEntry } from '../api/client'
+import { providerModelId } from '../api/client'
 
 // ── File pill ────────────────────────────────────────────────────────
 
@@ -26,7 +27,9 @@ function FilePillChip(props: { pill: FilePill; onRemove: () => void }) {
         'max-width': '180px',
       }}
     >
-      <span style={{ overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>@{props.pill.path}</span>
+      <span style={{ overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>
+        @{props.pill.path}
+      </span>
       <button
         type="button"
         onClick={props.onRemove}
@@ -101,10 +104,28 @@ function AtMentionAutocomplete(props: {
           'flex-direction': 'column',
         }}
       >
-        <div style={{ padding: '6px 10px', 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'font-weight': '600', 'letter-spacing': '0.04em', 'text-transform': 'uppercase', 'border-bottom': '1px solid var(--border)' }}>
+        <div
+          style={{
+            padding: '6px 10px',
+            'font-size': 'var(--fs-2xs)',
+            color: 'var(--fg-faint)',
+            'font-weight': '600',
+            'letter-spacing': '0.04em',
+            'text-transform': 'uppercase',
+            'border-bottom': '1px solid var(--border)',
+          }}
+        >
           Files · @{props.query || '…'}
         </div>
-        <div style={{ overflow: 'auto', padding: '4px', display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
+        <div
+          style={{
+            overflow: 'auto',
+            padding: '4px',
+            display: 'flex',
+            'flex-direction': 'column',
+            gap: '2px',
+          }}
+        >
           <For each={filtered()}>
             {(file, i) => (
               <button
@@ -130,17 +151,40 @@ function AtMentionAutocomplete(props: {
                 }}
               >
                 <span style={{ 'font-size': '11px', color: 'var(--fg-faint)' }}>📄</span>
-                <span style={{ overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>{file}</span>
+                <span
+                  style={{
+                    overflow: 'hidden',
+                    'text-overflow': 'ellipsis',
+                    'white-space': 'nowrap',
+                  }}
+                >
+                  {file}
+                </span>
               </button>
             )}
           </For>
         </div>
-        <div style={{ padding: '6px 10px', 'border-top': '1px solid var(--border)', 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', display: 'flex', gap: '6px' }}>
-          <span><span class="kbd">↑↓</span> nav</span>
+        <div
+          style={{
+            padding: '6px 10px',
+            'border-top': '1px solid var(--border)',
+            'font-size': 'var(--fs-2xs)',
+            color: 'var(--fg-faint)',
+            display: 'flex',
+            gap: '6px',
+          }}
+        >
+          <span>
+            <span class="kbd">↑↓</span> nav
+          </span>
           <span>·</span>
-          <span><span class="kbd">Tab</span> select</span>
+          <span>
+            <span class="kbd">Tab</span> select
+          </span>
           <span>·</span>
-          <span><span class="kbd">Esc</span> close</span>
+          <span>
+            <span class="kbd">Esc</span> close
+          </span>
         </div>
       </div>
     </Show>
@@ -149,7 +193,11 @@ function AtMentionAutocomplete(props: {
 
 // ── Model selector ───────────────────────────────────────────────────
 
-function ModelSelector(props: { settings?: SettingsStore; value?: string; onSelect?: (model: string) => void }) {
+function ModelSelector(props: {
+  settings?: SettingsStore
+  value?: string
+  onSelect?: (model: string) => void
+}) {
   const [open, setOpen] = createSignal(false)
   const [search, setSearch] = createSignal('')
   let containerRef: HTMLDivElement | undefined
@@ -162,7 +210,9 @@ function ModelSelector(props: { settings?: SettingsStore; value?: string; onSele
     const q = search().toLowerCase().trim()
     const groups: Array<{ provider: string; models: string[] }> = []
     for (const p of providers()) {
-      const models = (p.models ?? []).filter((m) => !q || m.toLowerCase().includes(q))
+      const models = (p.models ?? [])
+        .map(providerModelId)
+        .filter((m) => !q || m.toLowerCase().includes(q))
       if (models.length > 0) groups.push({ provider: p.name || p.id, models })
     }
     // Also include config model if not in any provider
@@ -216,8 +266,19 @@ function ModelSelector(props: { settings?: SettingsStore; value?: string; onSele
         }}
       >
         <span style={{ 'font-size': '10px', color: 'var(--accent)' }}>◈</span>
-        <span style={{ overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>{currentLabel()}</span>
-        <span style={{ 'font-size': '9px', color: 'var(--fg-faint)', transform: open() ? 'rotate(180deg)' : 'none', transition: 'transform var(--dur-fast) var(--ease)' }}>▾</span>
+        <span style={{ overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>
+          {currentLabel()}
+        </span>
+        <span
+          style={{
+            'font-size': '9px',
+            color: 'var(--fg-faint)',
+            transform: open() ? 'rotate(180deg)' : 'none',
+            transition: 'transform var(--dur-fast) var(--ease)',
+          }}
+        >
+          ▾
+        </span>
       </button>
       <Show when={open()}>
         <div
@@ -260,15 +321,43 @@ function ModelSelector(props: { settings?: SettingsStore; value?: string; onSele
               }}
             />
           </div>
-          <div style={{ overflow: 'auto', padding: '4px', display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+          <div
+            style={{
+              overflow: 'auto',
+              padding: '4px',
+              display: 'flex',
+              'flex-direction': 'column',
+              gap: '4px',
+            }}
+          >
             <Show
               when={grouped().length > 0}
-              fallback={<div style={{ padding: '12px', 'text-align': 'center', 'font-size': 'var(--fs-sm)', color: 'var(--fg-faint)' }}>No models found</div>}
+              fallback={
+                <div
+                  style={{
+                    padding: '12px',
+                    'text-align': 'center',
+                    'font-size': 'var(--fs-sm)',
+                    color: 'var(--fg-faint)',
+                  }}
+                >
+                  No models found
+                </div>
+              }
             >
               <For each={grouped()}>
                 {(group) => (
                   <div>
-                    <div style={{ padding: '4px 8px', 'font-size': 'var(--fs-2xs)', 'font-weight': '700', color: 'var(--fg-faint)', 'letter-spacing': '0.04em', 'text-transform': 'uppercase' }}>
+                    <div
+                      style={{
+                        padding: '4px 8px',
+                        'font-size': 'var(--fs-2xs)',
+                        'font-weight': '700',
+                        color: 'var(--fg-faint)',
+                        'letter-spacing': '0.04em',
+                        'text-transform': 'uppercase',
+                      }}
+                    >
                       {group.provider}
                     </div>
                     <For each={group.models}>
@@ -289,8 +378,10 @@ function ModelSelector(props: { settings?: SettingsStore; value?: string; onSele
                             padding: '6px 8px',
                             'border-radius': 'var(--r-sm)',
                             border: '1px solid transparent',
-                            background: currentLabel() === model ? 'var(--accent-soft)' : 'transparent',
-                            'border-color': currentLabel() === model ? 'var(--accent-border)' : 'transparent',
+                            background:
+                              currentLabel() === model ? 'var(--accent-soft)' : 'transparent',
+                            'border-color':
+                              currentLabel() === model ? 'var(--accent-border)' : 'transparent',
                             color: currentLabel() === model ? 'var(--accent)' : 'var(--fg)',
                             'font-size': 'var(--fs-sm)',
                             'font-family': 'var(--font-mono)',
@@ -298,7 +389,16 @@ function ModelSelector(props: { settings?: SettingsStore; value?: string; onSele
                             'text-align': 'left',
                           }}
                         >
-                          <span style={{ flex: '1', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>{model}</span>
+                          <span
+                            style={{
+                              flex: '1',
+                              overflow: 'hidden',
+                              'text-overflow': 'ellipsis',
+                              'white-space': 'nowrap',
+                            }}
+                          >
+                            {model}
+                          </span>
                           <Show when={currentLabel() === model}>
                             <span style={{ 'font-size': '10px', color: 'var(--accent)' }}>✓</span>
                           </Show>
@@ -313,7 +413,11 @@ function ModelSelector(props: { settings?: SettingsStore; value?: string; onSele
                               flex: 'none',
                             }}
                           >
-                            {model.includes('sonnet') || model.includes('opus') ? 'reasoning' : model.includes('haiku') ? 'fast' : 'general'}
+                            {model.includes('sonnet') || model.includes('opus')
+                              ? 'reasoning'
+                              : model.includes('haiku')
+                                ? 'fast'
+                                : 'general'}
                           </span>
                         </button>
                       )}
@@ -459,10 +563,16 @@ export function PromptInput(props: {
   }
 
   return (
-    <div data-slot="prompt-input" style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', position: 'relative' }}>
+    <div
+      data-slot="prompt-input"
+      style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', position: 'relative' }}
+    >
       {/* File pills */}
       <Show when={(props.filePills ?? []).length > 0}>
-        <div data-slot="file-pills" style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap', 'align-items': 'center' }}>
+        <div
+          data-slot="file-pills"
+          style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap', 'align-items': 'center' }}
+        >
           <For each={props.filePills ?? []}>
             {(pill, i) => <FilePillChip pill={pill} onRemove={() => props.onRemovePill?.(i())} />}
           </For>
@@ -471,7 +581,16 @@ export function PromptInput(props: {
 
       {/* @ autocomplete */}
       <Show when={atVisible() && atFiltered().length > 0 && !atDismissed()}>
-        <AtMentionAutocomplete query={atQuery()} files={MOCK_FILES} selected={atIndex()} onSelect={handleAtSelect} onClose={() => { setAtVisible(false); setAtDismissed(true) }} />
+        <AtMentionAutocomplete
+          query={atQuery()}
+          files={MOCK_FILES}
+          selected={atIndex()}
+          onSelect={handleAtSelect}
+          onClose={() => {
+            setAtVisible(false)
+            setAtDismissed(true)
+          }}
+        />
       </Show>
 
       {/* Textarea */}
@@ -481,7 +600,10 @@ export function PromptInput(props: {
         value={props.value}
         onInput={handleInput}
         onKeyDown={handleKeyDown}
-        placeholder={props.placeholder ?? 'Message Mira…  ( / for commands · @ for files · ⌘K palette · ⌘↵ send )'}
+        placeholder={
+          props.placeholder ??
+          'Message Mira…  ( / for commands · @ for files · ⌘K palette · ⌘↵ send )'
+        }
         aria-label="Message Mira"
         aria-autocomplete="list"
         rows={1}
@@ -489,11 +611,33 @@ export function PromptInput(props: {
       />
 
       {/* Bottom bar: model selector + send */}
-      <div data-slot="prompt-actions" style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', gap: '10px' }}>
+      <div
+        data-slot="prompt-actions"
+        style={{
+          display: 'flex',
+          'align-items': 'center',
+          'justify-content': 'space-between',
+          gap: '10px',
+        }}
+      >
         <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
-          <ModelSelector settings={props.settings} value={props.selectedModel} onSelect={props.onModelSelect} />
-          <span aria-hidden="true" style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', display: 'flex', gap: '5px', 'align-items': 'center' }}>
-            <span class="kbd">↵</span> send <span style={{ opacity: '0.5' }}>·</span> <span class="kbd">⇧↵</span> newline
+          <ModelSelector
+            settings={props.settings}
+            value={props.selectedModel}
+            onSelect={props.onModelSelect}
+          />
+          <span
+            aria-hidden="true"
+            style={{
+              'font-size': 'var(--fs-2xs)',
+              color: 'var(--fg-faint)',
+              display: 'flex',
+              gap: '5px',
+              'align-items': 'center',
+            }}
+          >
+            <span class="kbd">↵</span> send <span style={{ opacity: '0.5' }}>·</span>{' '}
+            <span class="kbd">⇧↵</span> newline
           </span>
         </div>
         <Show
@@ -509,7 +653,12 @@ export function PromptInput(props: {
                   onClick={() => props.onQueue?.()}
                   title="Queue this message — it runs after the current turn"
                   aria-label="Queue message"
-                  style={{ padding: '7px 12px', 'font-size': 'var(--fs-sm)', 'border-radius': 'var(--r-md)', 'min-height': '36px' }}
+                  style={{
+                    padding: '7px 12px',
+                    'font-size': 'var(--fs-sm)',
+                    'border-radius': 'var(--r-md)',
+                    'min-height': '36px',
+                  }}
                 >
                   Queue ↵
                 </button>
@@ -521,7 +670,12 @@ export function PromptInput(props: {
                 onClick={() => props.onStop?.()}
                 title="Stop the current response"
                 aria-label="Stop response"
-                style={{ padding: '7px 12px', 'font-size': 'var(--fs-sm)', 'border-radius': 'var(--r-md)', 'min-height': '36px' }}
+                style={{
+                  padding: '7px 12px',
+                  'font-size': 'var(--fs-sm)',
+                  'border-radius': 'var(--r-md)',
+                  'min-height': '36px',
+                }}
               >
                 ■ Stop
               </button>
@@ -533,9 +687,17 @@ export function PromptInput(props: {
             data-slot="prompt-send"
             class="btn btn-solid"
             disabled={!props.value.trim() || props.disabled}
-            onClick={(e) => { e.preventDefault(); props.onSubmit() }}
+            onClick={(e) => {
+              e.preventDefault()
+              props.onSubmit()
+            }}
             aria-label="Send message"
-            style={{ padding: '7px 16px', 'font-size': 'var(--fs-sm)', flex: 'none', 'min-height': '36px' }}
+            style={{
+              padding: '7px 16px',
+              'font-size': 'var(--fs-sm)',
+              flex: 'none',
+              'min-height': '36px',
+            }}
           >
             Send ↵
           </button>

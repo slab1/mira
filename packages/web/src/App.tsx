@@ -238,7 +238,7 @@ export default function App() {
   const [moreOpen, setMoreOpen] = createSignal(false)
   const [budgetCapEnabled, setBudgetCapEnabled] = createSignal(false)
   const [budgetCapAmount, setBudgetCapAmount] = createSignal(100)
-  const [agents] = createResource(() => api.listAgents().catch(() => []))
+  const [agents] = createResource(authorized, () => api.listAgents().catch(() => []))
   const [selectedAgent, setSelectedAgent] = createSignal('')
   // /connect modal
   const [connectOpen, setConnectOpen] = createSignal(false)
@@ -299,6 +299,7 @@ export default function App() {
           return
         }
         await store.loadSessions()
+        void settings.loadAll()
         setAuthorized(true)
       } catch (e) {
         const err = e as Error
@@ -496,6 +497,7 @@ export default function App() {
           onReady={() => {
             setAuthorized(true)
             void store.loadSessions()
+            void settings.loadAll()
           }}
         />
       }
@@ -821,7 +823,9 @@ export default function App() {
               </button>
               <SkillSelector
                 onSelect={(skill) => {
-                  if (skill) void store.createSession(`${skill} session`).catch(() => {})
+                  // Insert /skill into the composer like commands do (same slash-insert
+                  // path as CommandPalette) — the skill runs when the message is sent.
+                  if (skill) handlePaletteInsert(`/${skill.replace(/^\//, '')} `)
                 }}
               />
               <span

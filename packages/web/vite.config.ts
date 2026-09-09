@@ -87,6 +87,7 @@ export default defineConfig({
       '/job': API_TARGET,
       '/guardrails': API_TARGET,
       '/config': API_TARGET,
+      '/provider': API_TARGET,
       '/providers': API_TARGET,
       '/commands': API_TARGET,
       '/agents': API_TARGET,

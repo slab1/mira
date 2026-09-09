@@ -135,20 +135,47 @@ export function mountConfigRoutes(
           const rawKey = (prov as { options?: { apiKey?: string } }).options?.apiKey ?? ''
           const apiKey = expandEnv(rawKey)
           const rawBase = (prov as { options?: { baseURL?: string } }).options?.baseURL ?? ''
+          const masked = apiKey ? maskApiKey(apiKey) : ''
+          const modelEntries = Object.entries(
+            ((prov as { models?: Record<string, JsonValue> }).models ?? {}) as Record<
+              string,
+              JsonValue
+            >,
+          ).map(([mid, m]) => ({
+            id: mid,
+            name:
+              (m as { name?: string } | null | undefined)?.name &&
+              typeof (m as { name?: string }).name === 'string'
+                ? (m as { name: string }).name
+                : mid,
+          }))
           return {
             id,
             name: (prov as { name?: string }).name ?? id,
             hasKey: !!apiKey,
-            masked: apiKey ? maskApiKey(apiKey) : '',
+            masked,
+            maskedKey: masked,
+            status: apiKey ? 'configured' : 'missing-key',
             baseURL: expandEnv(rawBase),
             rawBaseURL: rawBase,
-            modelCount: (prov as { models?: Record<string, JsonValue> }).models
-              ? Object.keys((prov as { models: Record<string, JsonValue> }).models).length
-              : 0,
+            modelCount: modelEntries.length,
+            models: modelEntries,
           }
         } catch (e) {
           console.error(`[providers] error for ${id}:`, e)
-          return { id, name: id, hasKey: false, masked: '', baseURL: '', rawBaseURL: '', modelCount: 0, error: String(e) }
+          return {
+            id,
+            name: id,
+            hasKey: false,
+            masked: '',
+            maskedKey: '',
+            status: 'error',
+            baseURL: '',
+            rawBaseURL: '',
+            modelCount: 0,
+            models: [],
+            error: String(e),
+          }
         }
       })
       return c.json(list)
@@ -157,15 +184,30 @@ export function mountConfigRoutes(
       return c.json({ error: String(e), stack: (e as Error).stack?.slice(0, 500) }, 500)
     }
   })
-  app.post('/providers/:id/test', async (c: Context) => {
-    const id = c.req.param('id')
-    if (!id) return c.json({ ok: false, error: 'provider not found' }, 404)
+  async function testProviderById(c: Context, id: string | undefined) {
+    const started = Date.now()
+    if (!id)
+      return c.json(
+        { ok: false, error: 'provider not found', latencyMs: Date.now() - started },
+        404,
+      )
     const cfg = getConfig() as MiraConfig
     const prov = cfg.provider[id] as ProviderConfig | undefined
-    if (!prov) return c.json({ ok: false, error: 'provider not found' }, 404)
+    if (!prov)
+      return c.json(
+        { ok: false, error: 'provider not found', latencyMs: Date.now() - started },
+        404,
+      )
     const apiKey = expandEnv((prov as { options?: { apiKey?: string } }).options?.apiKey ?? '')
     if (!apiKey)
-      return c.json({ ok: false, error: 'missing apiKey (check {env:VAR} + mira.env)' }, 400)
+      return c.json(
+        {
+          ok: false,
+          error: 'missing apiKey (check {env:VAR} + mira.env)',
+          latencyMs: Date.now() - started,
+        },
+        400,
+      )
     const baseURL = expandEnv((prov as { options?: { baseURL?: string } }).options?.baseURL ?? '')
     if (baseURL) {
       try {
@@ -175,27 +217,44 @@ export function mountConfigRoutes(
         clearTimeout(t)
       } catch {}
     }
-    return c.json({ ok: true, hasKey: !!apiKey, baseURL, expanded: true })
-  })
-  app.post('/provider/:id/test', async (c: Context) => {
+    return c.json({
+      ok: true,
+      hasKey: !!apiKey,
+      baseURL,
+      expanded: true,
+      latencyMs: Date.now() - started,
+    })
+  }
+  app.post('/providers/:id/test', async (c: Context) => testProviderById(c, c.req.param('id')))
+  app.post('/provider/:id/test', async (c: Context) => testProviderById(c, c.req.param('id')))
+  // Live model discovery — exposes gateway listModels() per provider (never leaks key material)
+  app.get('/providers/:id/models', async (c: Context) => {
     const id = c.req.param('id')
     if (!id) return c.json({ ok: false, error: 'provider not found' }, 404)
     const cfg = getConfig() as MiraConfig
     const prov = cfg.provider[id] as ProviderConfig | undefined
     if (!prov) return c.json({ ok: false, error: 'provider not found' }, 404)
-    const apiKey = expandEnv((prov as { options?: { apiKey?: string } }).options?.apiKey ?? '')
-    if (!apiKey)
-      return c.json({ ok: false, error: 'missing apiKey (check {env:VAR} + mira.env)' }, 400)
-    const baseURL = expandEnv((prov as { options?: { baseURL?: string } }).options?.baseURL ?? '')
-    if (baseURL) {
-      try {
-        const controller = new AbortController()
-        const t = setTimeout(() => controller.abort(), 3000)
-        await fetch(baseURL, { method: 'HEAD', signal: controller.signal }).catch(() => {})
-        clearTimeout(t)
-      } catch {}
+    try {
+      const apiKey = expandEnv((prov as { options?: { apiKey?: string } }).options?.apiKey ?? '')
+      if (!apiKey)
+        return c.json({ ok: false, error: 'missing apiKey (check {env:VAR} + mira.env)' }, 400)
+      const baseURL = expandEnv((prov as { options?: { baseURL?: string } }).options?.baseURL ?? '')
+      const headers = ((prov as { options?: { headers?: Record<string, string> } }).options
+        ?.headers ?? {}) as Record<string, string>
+      const { listModels } = await import('../gateway/models.js')
+      const upstream = await listModels({ baseURL, apiKey, headers, providerKey: id })
+      const models = (upstream as Array<string | { id?: string; name?: string }>)
+        .map((m) =>
+          typeof m === 'string'
+            ? { id: m, name: m }
+            : { id: m?.id ?? '', name: m?.name ?? m?.id ?? '' },
+        )
+        .filter((m) => m.id)
+      return c.json({ ok: true, models })
+    } catch (e) {
+      const message = e instanceof Error && e.message ? e.message : String(e)
+      return c.json({ ok: false, error: message }, 400)
     }
-    return c.json({ ok: true, hasKey: !!apiKey, baseURL, expanded: true })
   })
   app.delete('/providers/:id', async (c: Context) => {
     const id = c.req.param('id')

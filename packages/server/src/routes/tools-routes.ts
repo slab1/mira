@@ -32,11 +32,10 @@ export function mountToolsRoutes(
 ) {
   const { tools, permissions, guardrails, gateway } = deps
 
-  // Skills
+  // Skills — [{ name, description }] (web client also accepts legacy string[])
   app.get('/skills', async (c: Context) => {
-    const { loadSkills } = await import('../skills/loader.js')
-    const skills = await loadSkills()
-    return c.json(Object.keys(skills))
+    const { listSkillIndex } = await import('../skills/loader.js')
+    return c.json(await listSkillIndex())
   })
 
   app.get('/commands', async (c: Context) => {

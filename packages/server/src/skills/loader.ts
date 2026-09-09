@@ -111,9 +111,11 @@ function toPack(id: string, raw: string): SkillPack {
  * Skill sources scanned, in increasing precedence (later wins on name conflict):
  *   1. packaged:   packages/server/data/skills/   (shipped with mira)
  *   2. local:      .mira/skills/                 (project-local, where learning promotion writes)
+ *   3. parent fallbacks: ../.mira/skills, ../../.mira/skills (mirrors commands/loader
+ *      EXTRA_DIRS for when the server runs from packages/server in dev)
  */
-export function skillDirs(): string[] {
-  return [SKILLS_DIR, `${process.cwd()}/.mira/skills`]
+export function skillDirs(cwd = process.cwd()): string[] {
+  return [SKILLS_DIR, `${cwd}/.mira/skills`, `${cwd}/../.mira/skills`, `${cwd}/../../.mira/skills`]
 }
 
 /**

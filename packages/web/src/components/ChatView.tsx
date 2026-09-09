@@ -1,4 +1,13 @@
-import { For, Show, createSignal, createEffect, createMemo, onMount, onCleanup, createResource } from 'solid-js'
+import {
+  For,
+  Show,
+  createSignal,
+  createEffect,
+  createMemo,
+  onMount,
+  onCleanup,
+  createResource,
+} from 'solid-js'
 import type { AppStore } from '../stores/app'
 import type { SettingsStore } from '../stores/settings'
 import type { Message, Part, Job, JsonValue } from '../api/client'
@@ -171,7 +180,13 @@ function FencedContent(props: { text: string; isUser?: boolean; streaming?: bool
 
 function CitationChip(props: { label: string; source?: string; onClick?: () => void }) {
   return (
-    <button type="button" class="citation" onClick={props.onClick} title={props.source ?? props.label} aria-label={`Source: ${props.label}`}>
+    <button
+      type="button"
+      class="citation"
+      onClick={props.onClick}
+      title={props.source ?? props.label}
+      aria-label={`Source: ${props.label}`}
+    >
       ◈ {props.label}
     </button>
   )
@@ -182,8 +197,18 @@ function CitationChip(props: { label: string; source?: string; onClick?: () => v
 function ConfidenceIndicator(props: { value?: number }) {
   const v = () => props.value ?? 0.75
   const level = () => (v() >= 0.8 ? 'high' : v() >= 0.5 ? 'med' : 'low')
-  const color = () => (level() === 'high' ? 'var(--confidence-high)' : level() === 'med' ? 'var(--confidence-med)' : 'var(--confidence-low)')
-  const label = () => (level() === 'high' ? 'High confidence' : level() === 'med' ? 'Medium confidence' : 'Low confidence')
+  const color = () =>
+    level() === 'high'
+      ? 'var(--confidence-high)'
+      : level() === 'med'
+        ? 'var(--confidence-med)'
+        : 'var(--confidence-low)'
+  const label = () =>
+    level() === 'high'
+      ? 'High confidence'
+      : level() === 'med'
+        ? 'Medium confidence'
+        : 'Low confidence'
   return (
     <span class="confidence-bar" title={label()} aria-label={label()}>
       <span class="confidence-dot" style={{ background: color() }} />
@@ -276,15 +301,31 @@ function ErrorCard(props: { message: string; onRetry?: () => void; onDismiss: ()
         <strong>What happened:</strong> {props.message}
       </div>
       <div class="error-card-why">
-        <strong>Why:</strong> The request failed or the agent encountered an error. Check your connection and try again.
+        <strong>Why:</strong> The request failed or the agent encountered an error. Check your
+        connection and try again.
       </div>
       <div class="error-card-next">
         <Show when={props.onRetry}>
-          <button type="button" class="btn btn-solid" onClick={props.onRetry} style={{ padding: '6px 12px', 'font-size': 'var(--fs-xs)' }}>
+          <button
+            type="button"
+            class="btn btn-solid"
+            onClick={props.onRetry}
+            style={{ padding: '6px 12px', 'font-size': 'var(--fs-xs)' }}
+          >
             Retry
           </button>
         </Show>
-        <button type="button" class="btn btn-ghost" onClick={props.onDismiss} style={{ padding: '6px 12px', 'font-size': 'var(--fs-xs)', border: '1px solid var(--border)', 'border-radius': 'var(--r-md)' }}>
+        <button
+          type="button"
+          class="btn btn-ghost"
+          onClick={props.onDismiss}
+          style={{
+            padding: '6px 12px',
+            'font-size': 'var(--fs-xs)',
+            border: '1px solid var(--border)',
+            'border-radius': 'var(--r-md)',
+          }}
+        >
           Dismiss
         </button>
       </div>
@@ -335,7 +376,8 @@ export function ChatView(props: {
   const slashFiltered = () => filterCommands(slashQuery(), slashCommands())
   const [slashIndex, setSlashIndex] = createSignal(0)
   const [slashDismissed, setSlashDismissed] = createSignal(false)
-  const slashVisible = () => slashQuery().startsWith('/') && slashFiltered().length > 0 && !slashDismissed()
+  const slashVisible = () =>
+    slashQuery().startsWith('/') && slashFiltered().length > 0 && !slashDismissed()
   createEffect(() => {
     void slashQuery()
     setSlashIndex(0)
@@ -396,14 +438,15 @@ export function ChatView(props: {
   // Keyboard shortcuts
   const onGlobalKey = (e: KeyboardEvent) => {
     const tag = (e.target as HTMLElement)?.tagName?.toLowerCase()
-    const isInput = tag === 'input' || tag === 'textarea' || (e.target as HTMLElement)?.isContentEditable
+    const isInput =
+      tag === 'input' || tag === 'textarea' || (e.target as HTMLElement)?.isContentEditable
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault()
       props.onPaletteOpen?.()
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !isInput) {
       e.preventDefault()
-      props.store.sendPrompt()
+      props.store.sendPrompt(undefined, selectedModel() || undefined)
     }
     if (e.key === 'Escape' && s().streaming) {
       // Don't auto-stop; user must click Stop explicitly
@@ -426,7 +469,7 @@ export function ChatView(props: {
 
   const handleSubmit = (e: Event) => {
     e.preventDefault()
-    props.store.sendPrompt()
+    props.store.sendPrompt(undefined, selectedModel() || undefined)
     inputRef?.focus()
   }
 
@@ -445,7 +488,10 @@ export function ChatView(props: {
         setSlashIndex((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && q.trim().split(/\s/).length === 1)) {
+      if (
+        e.key === 'Tab' ||
+        (e.key === 'Enter' && !e.shiftKey && q.trim().split(/\s/).length === 1)
+      ) {
         const pick = filtered[slashIndex()]
         if (pick && q.trim() !== pick.name) {
           e.preventDefault()
@@ -466,12 +512,12 @@ export function ChatView(props: {
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault()
-      props.store.sendPrompt()
+      props.store.sendPrompt(undefined, selectedModel() || undefined)
       return
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      props.store.sendPrompt()
+      props.store.sendPrompt(undefined, selectedModel() || undefined)
     }
     if (e.key === '/' && !props.store.input()) {
       void props.settings?.loadAll()
@@ -515,7 +561,12 @@ export function ChatView(props: {
     >
       {/* messages */}
       <div style={{ flex: '1', position: 'relative', 'min-height': '0' }}>
-        <div class="scroll" ref={scrollRef} onScroll={onScroll} style={{ position: 'absolute', inset: '0' }}>
+        <div
+          class="scroll"
+          ref={scrollRef}
+          onScroll={onScroll}
+          style={{ position: 'absolute', inset: '0' }}
+        >
           <div
             style={{
               'max-width': 'calc(68ch + 48px)',
@@ -539,7 +590,14 @@ export function ChatView(props: {
                     padding: 'var(--sp-6)',
                   }}
                 >
-                  <div style={{ display: 'flex', 'flex-direction': 'column', 'align-items': 'center', gap: '12px' }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      'flex-direction': 'column',
+                      'align-items': 'center',
+                      gap: '12px',
+                    }}
+                  >
                     <div
                       style={{
                         width: '46px',
@@ -555,11 +613,36 @@ export function ChatView(props: {
                     >
                       ✦
                     </div>
-                    <div style={{ 'font-weight': '700', color: 'var(--fg)', 'font-size': 'var(--fs-lg)' }}>Welcome to Mira</div>
-                    <div style={{ 'font-size': 'var(--fs-sm)', color: 'var(--fg-subtle)', 'max-width': '44ch', 'line-height': '1.6' }}>
-                      A self-hosted coding agent with streaming answers, tool execution, and snapshot undo. Create a session to start.
+                    <div
+                      style={{
+                        'font-weight': '700',
+                        color: 'var(--fg)',
+                        'font-size': 'var(--fs-lg)',
+                      }}
+                    >
+                      Welcome to Mira
                     </div>
-                    <button type="button" class="btn btn-solid" onClick={() => void props.store.createSession().catch(() => {})} style={{ padding: '8px 14px', 'font-size': 'var(--fs-sm)', 'margin-top': '4px' }}>
+                    <div
+                      style={{
+                        'font-size': 'var(--fs-sm)',
+                        color: 'var(--fg-subtle)',
+                        'max-width': '44ch',
+                        'line-height': '1.6',
+                      }}
+                    >
+                      A self-hosted coding agent with streaming answers, tool execution, and
+                      snapshot undo. Create a session to start.
+                    </div>
+                    <button
+                      type="button"
+                      class="btn btn-solid"
+                      onClick={() => void props.store.createSession().catch(() => {})}
+                      style={{
+                        padding: '8px 14px',
+                        'font-size': 'var(--fs-sm)',
+                        'margin-top': '4px',
+                      }}
+                    >
                       ＋ New session
                     </button>
                   </div>
@@ -578,7 +661,14 @@ export function ChatView(props: {
                       padding: 'var(--sp-6)',
                     }}
                   >
-                    <div style={{ display: 'flex', 'flex-direction': 'column', 'align-items': 'center', gap: '10px' }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        'flex-direction': 'column',
+                        'align-items': 'center',
+                        gap: '10px',
+                      }}
+                    >
                       <div
                         aria-hidden="true"
                         style={{
@@ -595,12 +685,42 @@ export function ChatView(props: {
                       >
                         ✦
                       </div>
-                      <div style={{ 'font-weight': '600', color: 'var(--fg)', 'font-size': 'var(--fs-md)' }}>Start the conversation</div>
-                      <div style={{ 'font-size': 'var(--fs-sm)', color: 'var(--fg-subtle)', 'max-width': '42ch', 'line-height': '1.55' }}>
-                        Ask anything — Mira streams the answer, runs tools, and edits files with undo.
+                      <div
+                        style={{
+                          'font-weight': '600',
+                          color: 'var(--fg)',
+                          'font-size': 'var(--fs-md)',
+                        }}
+                      >
+                        Start the conversation
                       </div>
-                      <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '6px', 'justify-content': 'center', 'margin-top': '6px' }}>
-                        <For each={EXAMPLE_PROMPTS}>{(ex) => <button type="button" class="chip" onClick={() => useExample(ex)}>{ex}</button>}</For>
+                      <div
+                        style={{
+                          'font-size': 'var(--fs-sm)',
+                          color: 'var(--fg-subtle)',
+                          'max-width': '42ch',
+                          'line-height': '1.55',
+                        }}
+                      >
+                        Ask anything — Mira streams the answer, runs tools, and edits files with
+                        undo.
+                      </div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          'flex-wrap': 'wrap',
+                          gap: '6px',
+                          'justify-content': 'center',
+                          'margin-top': '6px',
+                        }}
+                      >
+                        <For each={EXAMPLE_PROMPTS}>
+                          {(ex) => (
+                            <button type="button" class="chip" onClick={() => useExample(ex)}>
+                              {ex}
+                            </button>
+                          )}
+                        </For>
                       </div>
                     </div>
                   </div>
@@ -608,13 +728,46 @@ export function ChatView(props: {
               >
                 {/* Pinned messages strip */}
                 <Show when={pinnedIds().size > 0}>
-                  <div data-slot="pinned-strip" style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap', 'align-items': 'center', padding: '6px 0', 'border-bottom': '1px solid var(--border)', 'margin-bottom': '4px' }}>
-                    <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'font-weight': '600', 'letter-spacing': '0.04em', 'text-transform': 'uppercase' }}>Pinned</span>
+                  <div
+                    data-slot="pinned-strip"
+                    style={{
+                      display: 'flex',
+                      gap: '6px',
+                      'flex-wrap': 'wrap',
+                      'align-items': 'center',
+                      padding: '6px 0',
+                      'border-bottom': '1px solid var(--border)',
+                      'margin-bottom': '4px',
+                    }}
+                  >
+                    <span
+                      style={{
+                        'font-size': 'var(--fs-2xs)',
+                        color: 'var(--fg-faint)',
+                        'font-weight': '600',
+                        'letter-spacing': '0.04em',
+                        'text-transform': 'uppercase',
+                      }}
+                    >
+                      Pinned
+                    </span>
                     <For each={s().messages.filter((m) => pinnedIds().has(m.id))}>
                       {(m) => (
                         <span class="msg-pinned-badge">
                           {m.role === 'user' ? 'You' : 'Mira'}: {contentOf(m).slice(0, 40)}…
-                          <button type="button" onClick={() => togglePin(m.id)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit', 'font-size': '10px', padding: '0 2px' }} aria-label="Unpin">
+                          <button
+                            type="button"
+                            onClick={() => togglePin(m.id)}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              cursor: 'pointer',
+                              color: 'inherit',
+                              'font-size': '10px',
+                              padding: '0 2px',
+                            }}
+                            aria-label="Unpin"
+                          >
                             ✕
                           </button>
                         </span>
@@ -674,12 +827,47 @@ export function ChatView(props: {
       <Show when={s().currentId}>
         <div style={{ padding: '0 var(--sp-4) var(--sp-3)' }}>
           <Show when={runningJobs().length > 0}>
-            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', 'margin-bottom': '8px' }}>
+            <div
+              style={{
+                display: 'flex',
+                'flex-direction': 'column',
+                gap: '6px',
+                'margin-bottom': '8px',
+              }}
+            >
               <For each={runningJobs()}>
                 {(job) => (
-                  <div class="card" style={{ display: 'flex', 'align-items': 'center', gap: '8px', padding: '8px 10px', background: 'var(--warn-soft)', border: '1px solid var(--warn-border)' }}>
-                    <span class="dot dot-pulse" style={{ background: 'var(--warn)', width: '8px', height: '8px', flex: 'none' }} />
-                    <span style={{ flex: '1', 'min-width': '0', 'font-size': 'var(--fs-xs)', color: 'var(--fg)', 'white-space': 'nowrap', overflow: 'hidden', 'text-overflow': 'ellipsis' }}>
+                  <div
+                    class="card"
+                    style={{
+                      display: 'flex',
+                      'align-items': 'center',
+                      gap: '8px',
+                      padding: '8px 10px',
+                      background: 'var(--warn-soft)',
+                      border: '1px solid var(--warn-border)',
+                    }}
+                  >
+                    <span
+                      class="dot dot-pulse"
+                      style={{
+                        background: 'var(--warn)',
+                        width: '8px',
+                        height: '8px',
+                        flex: 'none',
+                      }}
+                    />
+                    <span
+                      style={{
+                        flex: '1',
+                        'min-width': '0',
+                        'font-size': 'var(--fs-xs)',
+                        color: 'var(--fg)',
+                        'white-space': 'nowrap',
+                        overflow: 'hidden',
+                        'text-overflow': 'ellipsis',
+                      }}
+                    >
                       {job.agent ? `${job.agent}: ` : ''}
                       {job.prompt.slice(0, 100)}
                       {job.prompt.length > 100 ? '…' : ''}
@@ -698,7 +886,14 @@ export function ChatView(props: {
                       }
                       title="Cancel background job"
                       aria-label="Cancel background job"
-                      style={{ padding: '3px 8px', 'font-size': 'var(--fs-xs)', border: '1px solid var(--border)', 'border-radius': 'var(--r-full)', flex: 'none', 'min-height': '28px' }}
+                      style={{
+                        padding: '3px 8px',
+                        'font-size': 'var(--fs-xs)',
+                        border: '1px solid var(--border)',
+                        'border-radius': 'var(--r-full)',
+                        flex: 'none',
+                        'min-height': '28px',
+                      }}
                     >
                       ✕ cancel
                     </button>
@@ -711,12 +906,38 @@ export function ChatView(props: {
             {(dl) => {
               const d = dl()
               return (
-                <div role="alert" style={{ display: 'flex', 'align-items': 'center', gap: '8px', padding: '8px 10px', 'margin-bottom': '8px', background: 'var(--warn-soft)', border: '1px solid var(--warn-border)', 'border-radius': 'var(--r-md)', 'font-size': 'var(--fs-xs)', color: 'var(--fg)' }}>
+                <div
+                  role="alert"
+                  style={{
+                    display: 'flex',
+                    'align-items': 'center',
+                    gap: '8px',
+                    padding: '8px 10px',
+                    'margin-bottom': '8px',
+                    background: 'var(--warn-soft)',
+                    border: '1px solid var(--warn-border)',
+                    'border-radius': 'var(--r-md)',
+                    'font-size': 'var(--fs-xs)',
+                    color: 'var(--fg)',
+                  }}
+                >
                   <span style={{ flex: '1', 'min-width': '0' }}>
                     ⚠ Doom-loop detected: {d.reason} — tool "{d.tool}"
                     {d.pattern ? ` · ${d.pattern.slice(0, 3).join(' → ')}` : ''}
                   </span>
-                  <button type="button" class="btn btn-warn-ghost" onClick={() => void props.store.rewindDoomLoop()} aria-label="Rewind doom-loop" style={{ padding: '4px 10px', 'font-size': 'var(--fs-xs)', 'border-radius': 'var(--r-md)', flex: 'none', 'min-height': '28px' }}>
+                  <button
+                    type="button"
+                    class="btn btn-warn-ghost"
+                    onClick={() => void props.store.rewindDoomLoop()}
+                    aria-label="Rewind doom-loop"
+                    style={{
+                      padding: '4px 10px',
+                      'font-size': 'var(--fs-xs)',
+                      'border-radius': 'var(--r-md)',
+                      flex: 'none',
+                      'min-height': '28px',
+                    }}
+                  >
                     ↩ Rewind
                   </button>
                   <button
@@ -733,13 +954,30 @@ export function ChatView(props: {
                         toast.error(`Failed to add deny rule: ${(e as Error).message}`)
                       }
                     }}
-                    style={{ padding: '4px 10px', 'font-size': 'var(--fs-xs)', 'border-radius': 'var(--r-md)', flex: 'none', 'min-height': '28px' }}
+                    style={{
+                      padding: '4px 10px',
+                      'font-size': 'var(--fs-xs)',
+                      'border-radius': 'var(--r-md)',
+                      flex: 'none',
+                      'min-height': '28px',
+                    }}
                     title="Never repeat this pattern — add deny rule"
                     aria-label="Never repeat this tool"
                   >
                     ⛔ Never repeat
                   </button>
-                  <button type="button" class="btn btn-ghost" onClick={() => props.store.clearDoomLoop()} aria-label="Dismiss doom-loop warning" style={{ padding: '4px 8px', 'font-size': 'var(--fs-xs)', flex: 'none', 'min-height': '28px' }}>
+                  <button
+                    type="button"
+                    class="btn btn-ghost"
+                    onClick={() => props.store.clearDoomLoop()}
+                    aria-label="Dismiss doom-loop warning"
+                    style={{
+                      padding: '4px 8px',
+                      'font-size': 'var(--fs-xs)',
+                      flex: 'none',
+                      'min-height': '28px',
+                    }}
+                  >
                     ✕
                   </button>
                 </div>
@@ -748,32 +986,79 @@ export function ChatView(props: {
           </Show>
           <Show when={s().budgetWarning}>
             {(msg) => (
-              <div role="alert" style={{ display: 'flex', 'align-items': 'center', gap: '8px', padding: '8px 10px', 'margin-bottom': '8px', background: 'var(--warn-soft)', border: '1px solid var(--warn-border)', 'border-radius': 'var(--r-md)', 'font-size': 'var(--fs-xs)', color: 'var(--fg)' }}>
+              <div
+                role="alert"
+                style={{
+                  display: 'flex',
+                  'align-items': 'center',
+                  gap: '8px',
+                  padding: '8px 10px',
+                  'margin-bottom': '8px',
+                  background: 'var(--warn-soft)',
+                  border: '1px solid var(--warn-border)',
+                  'border-radius': 'var(--r-md)',
+                  'font-size': 'var(--fs-xs)',
+                  color: 'var(--fg)',
+                }}
+              >
                 <span style={{ flex: '1', 'min-width': '0' }}>⚠ {msg()}</span>
-                <button type="button" class="btn btn-ghost" onClick={() => props.store.clearBudgetWarning()} aria-label="Dismiss budget warning" style={{ padding: '4px 8px', 'font-size': 'var(--fs-xs)', flex: 'none', 'min-height': '28px' }}>
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  onClick={() => props.store.clearBudgetWarning()}
+                  aria-label="Dismiss budget warning"
+                  style={{
+                    padding: '4px 8px',
+                    'font-size': 'var(--fs-xs)',
+                    flex: 'none',
+                    'min-height': '28px',
+                  }}
+                >
                   ✕
                 </button>
               </div>
             )}
           </Show>
           <Show when={s().queued.length > 0}>
-            <div style={{ padding: '0 2px 6px', 'font-size': 'var(--fs-xs)', color: 'var(--warn)' }} role="status">
-              ⏳ {s().queued.length} message{s().queued.length === 1 ? '' : 's'} queued — will run after the current turn
+            <div
+              style={{ padding: '0 2px 6px', 'font-size': 'var(--fs-xs)', color: 'var(--warn)' }}
+              role="status"
+            >
+              ⏳ {s().queued.length} message{s().queued.length === 1 ? '' : 's'} queued — will run
+              after the current turn
             </div>
           </Show>
           <Show when={s().error}>
             <div style={{ 'margin-bottom': '8px' }}>
-              <ErrorCard message={s().error!} onDismiss={() => props.store.clearError()} onRetry={() => { props.store.clearError(); }} />
+              <ErrorCard
+                message={s().error!}
+                onDismiss={() => props.store.clearError()}
+                onRetry={() => {
+                  props.store.clearError()
+                }}
+              />
             </div>
           </Show>
           <form
             onSubmit={handleSubmit}
             class="composer"
             data-slot="composer"
-            style={{ display: 'flex', 'flex-direction': 'column', padding: '10px 12px 9px', gap: '8px', position: 'relative' }}
+            style={{
+              display: 'flex',
+              'flex-direction': 'column',
+              padding: '10px 12px 9px',
+              gap: '8px',
+              position: 'relative',
+            }}
           >
             <Show when={slashVisible()}>
-              <SlashAutocomplete query={slashQuery()} commands={slashCommands()} selected={slashIndex()} onSelect={handleSlashSelect} onClose={() => setSlashDismissed(true)} />
+              <SlashAutocomplete
+                query={slashQuery()}
+                commands={slashCommands()}
+                selected={slashIndex()}
+                onSelect={handleSlashSelect}
+                onClose={() => setSlashDismissed(true)}
+              />
             </Show>
             <PromptInput
               value={props.store.input()}
@@ -781,10 +1066,10 @@ export function ChatView(props: {
                 props.store.setInput(v)
                 if (v.startsWith('/')) void props.settings?.loadAll()
               }}
-              onSubmit={() => props.store.sendPrompt()}
+              onSubmit={() => props.store.sendPrompt(undefined, selectedModel() || undefined)}
               onQueue={() => {
                 const val = props.store.input().trim()
-                if (val) void props.store.sendPrompt(val)
+                if (val) void props.store.sendPrompt(val, selectedModel() || undefined)
               }}
               onStop={() => props.store.stopStream()}
               streaming={s().streaming}

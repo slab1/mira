@@ -30,7 +30,39 @@ export function mountMiddleware(
   const metrics = new MetricsCollector()
 
   // Security: CORS origin allowlist
-  app.use('*', cors(CORS_ORIGIN_LIST.length > 0 ? { origin: CORS_ORIGIN_LIST } : {}))
+  // When an explicit list is configured, honour it as-is.
+  // When the list is empty (dev/default), reflect any localhost/127.0.0.1 origin so
+  // a Vite dev server on a different port can reach the API directly.
+  const isLocalDevOrigin = (origin: string): boolean => {
+    try {
+      const u = new URL(origin)
+      const host = u.hostname
+      return (
+        (host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1') &&
+        (u.protocol === 'http:' || u.protocol === 'https:')
+      )
+    } catch {
+      return false
+    }
+  }
+  const corsOrigin =
+    CORS_ORIGIN_LIST.length > 0
+      ? { origin: CORS_ORIGIN_LIST }
+      : {
+          // Reflect the NORMALIZED origin (scheme://host:port) rather than the raw
+          // Origin header, so a crafted header can't smuggle extra bytes into the
+          // Access-Control-Allow-Origin response header.
+          origin: (origin: string | undefined) => {
+            if (!origin || !isLocalDevOrigin(origin)) return ''
+            try {
+              const u = new URL(origin)
+              return u.origin
+            } catch {
+              return ''
+            }
+          },
+        }
+  app.use('*', cors(corsOrigin))
 
   // Assign a stable request id once per request
   app.use('*', (c: Context, next: () => Promise<void>) => {

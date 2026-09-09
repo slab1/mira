@@ -1,7 +1,8 @@
 import { createSignal, createEffect, createMemo, For, Show, onCleanup } from 'solid-js'
 import type { SettingsStore } from '../stores/settings'
 import { api } from '../api/client'
-import type { MiraConfig, ThemeChoice, ProviderEntry } from '../api/client'
+import type { MiraConfig, ThemeChoice, ProviderEntry, ProviderConfig } from '../api/client'
+import { getApiUrl, providerModelId } from '../api/client'
 import { ConfirmDialog } from './ConfirmDialog'
 import { toast } from './Toast'
 import { useFocusTrap } from '../hooks/useFocusTrap'
@@ -18,30 +19,198 @@ type KnownModel = {
 }
 
 const KNOWN_MODELS: KnownModel[] = [
-  { id: 'openrouter/anthropic/claude-sonnet-4', provider: 'OpenRouter', label: 'Claude Sonnet 4', context: '200k', pricing: '$3/$15', capabilities: ['coding', 'reasoning', 'vision'] },
-  { id: 'openrouter/anthropic/claude-opus-4', provider: 'OpenRouter', label: 'Claude Opus 4', context: '200k', pricing: '$15/$75', capabilities: ['coding', 'reasoning', 'vision'] },
-  { id: 'openrouter/anthropic/claude-haiku-4', provider: 'OpenRouter', label: 'Claude Haiku 4', context: '200k', pricing: '$0.25/$1.25', capabilities: ['speed', 'vision'] },
-  { id: 'openrouter/deepseek/deepseek-v3.2-exp', provider: 'OpenRouter', label: 'DeepSeek V3.2 Exp', context: '128k', pricing: '$0.27/$1.10', capabilities: ['coding', 'reasoning'] },
-  { id: 'openrouter/deepseek/deepseek-chat', provider: 'OpenRouter', label: 'DeepSeek Chat', context: '128k', pricing: '$0.27/$1.10', capabilities: ['coding', 'reasoning'] },
-  { id: 'openrouter/deepseek/deepseek-reasoner', provider: 'OpenRouter', label: 'DeepSeek Reasoner', context: '128k', pricing: '$0.55/$2.19', capabilities: ['reasoning', 'coding'] },
-  { id: 'openrouter/openai/gpt-4o', provider: 'OpenRouter', label: 'GPT-4o', context: '128k', pricing: '$2.50/$10', capabilities: ['coding', 'vision', 'reasoning'] },
-  { id: 'openrouter/openai/gpt-4o-mini', provider: 'OpenRouter', label: 'GPT-4o Mini', context: '128k', pricing: '$0.15/$0.60', capabilities: ['speed', 'vision'] },
-  { id: 'openrouter/google/gemini-2.0-flash', provider: 'OpenRouter', label: 'Gemini 2.0 Flash', context: '1M', pricing: '$0.10/$0.40', capabilities: ['speed', 'vision'] },
-  { id: 'openrouter/google/gemini-2.0-pro', provider: 'OpenRouter', label: 'Gemini 2.0 Pro', context: '2M', pricing: '$1.25/$10', capabilities: ['reasoning', 'vision'] },
-  { id: 'openai/gpt-4o', provider: 'OpenAI', label: 'GPT-4o', context: '128k', pricing: '$2.50/$10', capabilities: ['coding', 'vision', 'reasoning'] },
-  { id: 'openai/gpt-4o-mini', provider: 'OpenAI', label: 'GPT-4o Mini', context: '128k', pricing: '$0.15/$0.60', capabilities: ['speed', 'vision'] },
-  { id: 'openai/gpt-4-turbo', provider: 'OpenAI', label: 'GPT-4 Turbo', context: '128k', pricing: '$10/$30', capabilities: ['coding', 'vision'] },
-  { id: 'openai/o1', provider: 'OpenAI', label: 'o1', context: '200k', pricing: '$15/$60', capabilities: ['reasoning', 'coding'] },
-  { id: 'openai/o1-mini', provider: 'OpenAI', label: 'o1 Mini', context: '128k', pricing: '$3/$12', capabilities: ['reasoning', 'speed'] },
-  { id: 'anthropic/claude-sonnet-4', provider: 'Anthropic', label: 'Claude Sonnet 4', context: '200k', pricing: '$3/$15', capabilities: ['coding', 'reasoning', 'vision'] },
-  { id: 'anthropic/claude-opus-4', provider: 'Anthropic', label: 'Claude Opus 4', context: '200k', pricing: '$15/$75', capabilities: ['coding', 'reasoning', 'vision'] },
-  { id: 'anthropic/claude-haiku-3.5', provider: 'Anthropic', label: 'Claude Haiku 3.5', context: '200k', pricing: '$0.80/$4', capabilities: ['speed', 'vision'] },
-  { id: 'google/gemini-2.0-flash', provider: 'Google', label: 'Gemini 2.0 Flash', context: '1M', pricing: '$0.10/$0.40', capabilities: ['speed', 'vision'] },
-  { id: 'google/gemini-2.0-pro', provider: 'Google', label: 'Gemini 2.0 Pro', context: '2M', pricing: '$1.25/$10', capabilities: ['reasoning', 'vision'] },
-  { id: 'google/gemini-1.5-pro', provider: 'Google', label: 'Gemini 1.5 Pro', context: '2M', pricing: '$1.25/$5', capabilities: ['reasoning', 'vision'] },
-  { id: 'deepseek/deepseek-chat', provider: 'DeepSeek', label: 'DeepSeek Chat', context: '128k', pricing: '$0.27/$1.10', capabilities: ['coding', 'reasoning'] },
-  { id: 'deepseek/deepseek-reasoner', provider: 'DeepSeek', label: 'DeepSeek Reasoner', context: '128k', pricing: '$0.55/$2.19', capabilities: ['reasoning', 'coding'] },
-  { id: 'deepseek/deepseek-coder', provider: 'DeepSeek', label: 'DeepSeek Coder', context: '128k', pricing: '$0.27/$1.10', capabilities: ['coding'] },
+  {
+    id: 'openrouter/anthropic/claude-sonnet-4',
+    provider: 'OpenRouter',
+    label: 'Claude Sonnet 4',
+    context: '200k',
+    pricing: '$3/$15',
+    capabilities: ['coding', 'reasoning', 'vision'],
+  },
+  {
+    id: 'openrouter/anthropic/claude-opus-4',
+    provider: 'OpenRouter',
+    label: 'Claude Opus 4',
+    context: '200k',
+    pricing: '$15/$75',
+    capabilities: ['coding', 'reasoning', 'vision'],
+  },
+  {
+    id: 'openrouter/anthropic/claude-haiku-4',
+    provider: 'OpenRouter',
+    label: 'Claude Haiku 4',
+    context: '200k',
+    pricing: '$0.25/$1.25',
+    capabilities: ['speed', 'vision'],
+  },
+  {
+    id: 'openrouter/deepseek/deepseek-v3.2-exp',
+    provider: 'OpenRouter',
+    label: 'DeepSeek V3.2 Exp',
+    context: '128k',
+    pricing: '$0.27/$1.10',
+    capabilities: ['coding', 'reasoning'],
+  },
+  {
+    id: 'openrouter/deepseek/deepseek-chat',
+    provider: 'OpenRouter',
+    label: 'DeepSeek Chat',
+    context: '128k',
+    pricing: '$0.27/$1.10',
+    capabilities: ['coding', 'reasoning'],
+  },
+  {
+    id: 'openrouter/deepseek/deepseek-reasoner',
+    provider: 'OpenRouter',
+    label: 'DeepSeek Reasoner',
+    context: '128k',
+    pricing: '$0.55/$2.19',
+    capabilities: ['reasoning', 'coding'],
+  },
+  {
+    id: 'openrouter/openai/gpt-4o',
+    provider: 'OpenRouter',
+    label: 'GPT-4o',
+    context: '128k',
+    pricing: '$2.50/$10',
+    capabilities: ['coding', 'vision', 'reasoning'],
+  },
+  {
+    id: 'openrouter/openai/gpt-4o-mini',
+    provider: 'OpenRouter',
+    label: 'GPT-4o Mini',
+    context: '128k',
+    pricing: '$0.15/$0.60',
+    capabilities: ['speed', 'vision'],
+  },
+  {
+    id: 'openrouter/google/gemini-2.0-flash',
+    provider: 'OpenRouter',
+    label: 'Gemini 2.0 Flash',
+    context: '1M',
+    pricing: '$0.10/$0.40',
+    capabilities: ['speed', 'vision'],
+  },
+  {
+    id: 'openrouter/google/gemini-2.0-pro',
+    provider: 'OpenRouter',
+    label: 'Gemini 2.0 Pro',
+    context: '2M',
+    pricing: '$1.25/$10',
+    capabilities: ['reasoning', 'vision'],
+  },
+  {
+    id: 'openai/gpt-4o',
+    provider: 'OpenAI',
+    label: 'GPT-4o',
+    context: '128k',
+    pricing: '$2.50/$10',
+    capabilities: ['coding', 'vision', 'reasoning'],
+  },
+  {
+    id: 'openai/gpt-4o-mini',
+    provider: 'OpenAI',
+    label: 'GPT-4o Mini',
+    context: '128k',
+    pricing: '$0.15/$0.60',
+    capabilities: ['speed', 'vision'],
+  },
+  {
+    id: 'openai/gpt-4-turbo',
+    provider: 'OpenAI',
+    label: 'GPT-4 Turbo',
+    context: '128k',
+    pricing: '$10/$30',
+    capabilities: ['coding', 'vision'],
+  },
+  {
+    id: 'openai/o1',
+    provider: 'OpenAI',
+    label: 'o1',
+    context: '200k',
+    pricing: '$15/$60',
+    capabilities: ['reasoning', 'coding'],
+  },
+  {
+    id: 'openai/o1-mini',
+    provider: 'OpenAI',
+    label: 'o1 Mini',
+    context: '128k',
+    pricing: '$3/$12',
+    capabilities: ['reasoning', 'speed'],
+  },
+  {
+    id: 'anthropic/claude-sonnet-4',
+    provider: 'Anthropic',
+    label: 'Claude Sonnet 4',
+    context: '200k',
+    pricing: '$3/$15',
+    capabilities: ['coding', 'reasoning', 'vision'],
+  },
+  {
+    id: 'anthropic/claude-opus-4',
+    provider: 'Anthropic',
+    label: 'Claude Opus 4',
+    context: '200k',
+    pricing: '$15/$75',
+    capabilities: ['coding', 'reasoning', 'vision'],
+  },
+  {
+    id: 'anthropic/claude-haiku-3.5',
+    provider: 'Anthropic',
+    label: 'Claude Haiku 3.5',
+    context: '200k',
+    pricing: '$0.80/$4',
+    capabilities: ['speed', 'vision'],
+  },
+  {
+    id: 'google/gemini-2.0-flash',
+    provider: 'Google',
+    label: 'Gemini 2.0 Flash',
+    context: '1M',
+    pricing: '$0.10/$0.40',
+    capabilities: ['speed', 'vision'],
+  },
+  {
+    id: 'google/gemini-2.0-pro',
+    provider: 'Google',
+    label: 'Gemini 2.0 Pro',
+    context: '2M',
+    pricing: '$1.25/$10',
+    capabilities: ['reasoning', 'vision'],
+  },
+  {
+    id: 'google/gemini-1.5-pro',
+    provider: 'Google',
+    label: 'Gemini 1.5 Pro',
+    context: '2M',
+    pricing: '$1.25/$5',
+    capabilities: ['reasoning', 'vision'],
+  },
+  {
+    id: 'deepseek/deepseek-chat',
+    provider: 'DeepSeek',
+    label: 'DeepSeek Chat',
+    context: '128k',
+    pricing: '$0.27/$1.10',
+    capabilities: ['coding', 'reasoning'],
+  },
+  {
+    id: 'deepseek/deepseek-reasoner',
+    provider: 'DeepSeek',
+    label: 'DeepSeek Reasoner',
+    context: '128k',
+    pricing: '$0.55/$2.19',
+    capabilities: ['reasoning', 'coding'],
+  },
+  {
+    id: 'deepseek/deepseek-coder',
+    provider: 'DeepSeek',
+    label: 'DeepSeek Coder',
+    context: '128k',
+    pricing: '$0.27/$1.10',
+    capabilities: ['coding'],
+  },
 ]
 
 function providerDisplayName(raw: string): string {
@@ -58,14 +227,39 @@ function providerDisplayName(raw: string): string {
 function inferCapabilities(id: string): string[] {
   const lower = id.toLowerCase()
   const caps: string[] = []
-  if (lower.includes('claude') || lower.includes('gpt-4o') || lower.includes('sonnet') || lower.includes('opus') || lower.includes('coder') || lower.includes('deepseek')) caps.push('coding')
-  if (lower.includes('reason') || lower.includes('o1') || lower.includes('opus') || lower.includes('deepseek')) {
+  if (
+    lower.includes('claude') ||
+    lower.includes('gpt-4o') ||
+    lower.includes('sonnet') ||
+    lower.includes('opus') ||
+    lower.includes('coder') ||
+    lower.includes('deepseek')
+  )
+    caps.push('coding')
+  if (
+    lower.includes('reason') ||
+    lower.includes('o1') ||
+    lower.includes('opus') ||
+    lower.includes('deepseek')
+  ) {
     if (!caps.includes('reasoning')) caps.push('reasoning')
   }
-  if (lower.includes('vision') || lower.includes('claude') || lower.includes('gpt-4o') || lower.includes('gemini') || lower.includes('vision')) {
+  if (
+    lower.includes('vision') ||
+    lower.includes('claude') ||
+    lower.includes('gpt-4o') ||
+    lower.includes('gemini') ||
+    lower.includes('vision')
+  ) {
     if (!caps.includes('vision')) caps.push('vision')
   }
-  if (lower.includes('mini') || lower.includes('haiku') || lower.includes('flash') || lower.includes('speed')) caps.push('speed')
+  if (
+    lower.includes('mini') ||
+    lower.includes('haiku') ||
+    lower.includes('flash') ||
+    lower.includes('speed')
+  )
+    caps.push('speed')
   // dedupe
   return [...new Set(caps)].slice(0, 3)
 }
@@ -118,7 +312,8 @@ function ModelSelector(props: {
     }
     for (const p of props.providers) {
       const models = p.models ?? []
-      for (const mid of models) {
+      for (const m of models) {
+        const mid = providerModelId(m)
         if (!mid || seen.has(mid)) continue
         seen.add(mid)
         const provider = providerDisplayName(mid.split('/')[0] ?? p.id)
@@ -154,7 +349,10 @@ function ModelSelector(props: {
     const q = query().trim().toLowerCase()
     if (!q) return allModels()
     return allModels().filter(
-      (m) => m.id.toLowerCase().includes(q) || m.provider.toLowerCase().includes(q) || m.label.toLowerCase().includes(q),
+      (m) =>
+        m.id.toLowerCase().includes(q) ||
+        m.provider.toLowerCase().includes(q) ||
+        m.label.toLowerCase().includes(q),
     )
   })
 
@@ -246,10 +444,7 @@ function ModelSelector(props: {
       <label for={props.id} class="settings-label">
         {props.label}
       </label>
-      <div
-        ref={(el) => (wrapperRef = el)}
-        style={{ position: 'relative' }}
-      >
+      <div ref={(el) => (wrapperRef = el)} style={{ position: 'relative' }}>
         <div style={{ position: 'relative', display: 'flex', 'align-items': 'center' }}>
           <input
             ref={(el) => (inputRef = el)}
@@ -391,7 +586,14 @@ function ModelSelector(props: {
             <Show
               when={filtered().length > 0}
               fallback={
-                <div style={{ padding: '12px', 'text-align': 'center', color: 'var(--fg-faint)', 'font-size': 'var(--fs-sm)' }}>
+                <div
+                  style={{
+                    padding: '12px',
+                    'text-align': 'center',
+                    color: 'var(--fg-faint)',
+                    'font-size': 'var(--fs-sm)',
+                  }}
+                >
                   No models match "{query()}"
                 </div>
               }
@@ -432,14 +634,27 @@ function ModelSelector(props: {
                                 gap: '3px',
                                 padding: '8px 10px',
                                 'border-radius': 'var(--r-sm)',
-                                border: isHighlighted() ? '1px solid var(--accent-border)' : '1px solid transparent',
-                                background: isHighlighted() ? 'var(--accent-soft)' : isSelected() ? 'var(--bg-surface)' : 'transparent',
+                                border: isHighlighted()
+                                  ? '1px solid var(--accent-border)'
+                                  : '1px solid transparent',
+                                background: isHighlighted()
+                                  ? 'var(--accent-soft)'
+                                  : isSelected()
+                                    ? 'var(--bg-surface)'
+                                    : 'transparent',
                                 cursor: 'pointer',
                                 'text-align': 'left',
                                 width: '100%',
                               }}
                             >
-                              <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'flex-wrap': 'wrap' }}>
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  'align-items': 'center',
+                                  gap: '6px',
+                                  'flex-wrap': 'wrap',
+                                }}
+                              >
                                 <span
                                   style={{
                                     'font-family': 'var(--font-mono)',
@@ -468,12 +683,35 @@ function ModelSelector(props: {
                                   {m.provider}
                                 </span>
                               </div>
-                              <div style={{ display: 'flex', gap: '6px', 'align-items': 'center', 'flex-wrap': 'wrap' }}>
-                                <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'font-family': 'var(--font-mono)' }}>
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  gap: '6px',
+                                  'align-items': 'center',
+                                  'flex-wrap': 'wrap',
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    'font-size': 'var(--fs-2xs)',
+                                    color: 'var(--fg-faint)',
+                                    'font-family': 'var(--font-mono)',
+                                  }}
+                                >
                                   {m.context} ctx
                                 </span>
-                                <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)' }}>·</span>
-                                <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'font-family': 'var(--font-mono)' }}>
+                                <span
+                                  style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)' }}
+                                >
+                                  ·
+                                </span>
+                                <span
+                                  style={{
+                                    'font-size': 'var(--fs-2xs)',
+                                    color: 'var(--fg-faint)',
+                                    'font-family': 'var(--font-mono)',
+                                  }}
+                                >
                                   {m.pricing} /1k
                                 </span>
                                 <For each={m.capabilities}>
@@ -521,7 +759,13 @@ function ModelSelector(props: {
             </Show>
 
             {/* Custom option */}
-            <div style={{ 'border-top': '1px solid var(--border)', 'margin-top': '4px', 'padding-top': '6px' }}>
+            <div
+              style={{
+                'border-top': '1px solid var(--border)',
+                'margin-top': '4px',
+                'padding-top': '6px',
+              }}
+            >
               <button
                 type="button"
                 role="option"
@@ -541,15 +785,25 @@ function ModelSelector(props: {
                   gap: '8px',
                   padding: '8px 10px',
                   'border-radius': 'var(--r-sm)',
-                  border: highlight() === flatList().length ? '1px solid var(--accent-border)' : '1px solid transparent',
-                  background: highlight() === flatList().length ? 'var(--accent-soft)' : 'transparent',
+                  border:
+                    highlight() === flatList().length
+                      ? '1px solid var(--accent-border)'
+                      : '1px solid transparent',
+                  background:
+                    highlight() === flatList().length ? 'var(--accent-soft)' : 'transparent',
                   cursor: 'pointer',
                   width: '100%',
                   'text-align': 'left',
                 }}
               >
-                <span style={{ 'font-size': 'var(--fs-sm)', 'font-weight': '600', color: 'var(--fg)' }}>✎ Custom</span>
-                <span style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-faint)' }}>— enter any model ID</span>
+                <span
+                  style={{ 'font-size': 'var(--fs-sm)', 'font-weight': '600', color: 'var(--fg)' }}
+                >
+                  ✎ Custom
+                </span>
+                <span style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-faint)' }}>
+                  — enter any model ID
+                </span>
               </button>
             </div>
           </div>
@@ -588,17 +842,32 @@ function ModelSelector(props: {
               aria-label={`${props.label} custom value`}
               style={{ flex: '1' }}
             />
-            <button type="button" class="btn btn-solid" onClick={handleCustomConfirm} style={{ padding: '7px 12px', 'font-size': 'var(--fs-sm)', 'min-height': '36px' }}>
+            <button
+              type="button"
+              class="btn btn-solid"
+              onClick={handleCustomConfirm}
+              style={{ padding: '7px 12px', 'font-size': 'var(--fs-sm)', 'min-height': '36px' }}
+            >
               Use
             </button>
-            <button type="button" class="btn btn-ghost" onClick={() => setCustomMode(false)} style={{ padding: '7px 10px', 'font-size': 'var(--fs-sm)' }}>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              onClick={() => setCustomMode(false)}
+              style={{ padding: '7px 10px', 'font-size': 'var(--fs-sm)' }}
+            >
               Cancel
             </button>
           </div>
         </Show>
 
-        <span class="settings-hint" style={{ display: 'block', 'margin-top': customMode() ? '6px' : '4px' }}>
-          {props.id === 'settings-model' ? 'Primary model for turns. Format: provider/model-id.' : 'Used for context compaction and summaries.'}
+        <span
+          class="settings-hint"
+          style={{ display: 'block', 'margin-top': customMode() ? '6px' : '4px' }}
+        >
+          {props.id === 'settings-model'
+            ? 'Primary model for turns. Format: provider/model-id.'
+            : 'Used for context compaction and summaries.'}
         </span>
       </div>
     </div>
@@ -940,6 +1209,50 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     }
   }
 
+  const [provRefreshing, setProvRefreshing] = createSignal<string | null>(null)
+
+  const handleRefreshModels = async (id: string) => {
+    if (provRefreshing()) return
+    setProvRefreshing(id)
+    try {
+      const r = await api.listProviderModels(id)
+      if (!r.ok || !r.models) {
+        toast.error(`Refresh failed for "${id}": ${r.error ?? 'unknown error'}`)
+        return
+      }
+      const providers = (s().config?.provider ?? {}) as Record<string, ProviderConfig>
+      const existing = providers[id] as
+        | { models?: Record<string, { name: string; limit: { context: number; output: number } }> }
+        | undefined
+      const merged: Record<string, { name: string; limit: { context: number; output: number } }> = {
+        ...(existing?.models ?? {}),
+      }
+      for (const m of r.models) {
+        const mid = m?.id
+        if (!mid) continue
+        merged[mid] = {
+          name: m.name || mid,
+          limit: merged[mid]?.limit ?? { context: 128000, output: 4096 },
+        }
+      }
+      const res = await props.store.saveConfig({
+        provider: { ...providers, [id]: { ...(existing ?? {}), models: merged } },
+      } as Partial<MiraConfig>)
+      if (res) {
+        void props.store.loadProviders()
+        toast.success(
+          `Refreshed ${r.models.length} model${r.models.length === 1 ? '' : 's'} for "${id}"`,
+        )
+      } else {
+        toast.error(props.store.state.error ?? `Failed to save models for "${id}"`)
+      }
+    } catch (e) {
+      toast.error(`Refresh failed for "${id}": ${(e as Error).message}`)
+    } finally {
+      setProvRefreshing(null)
+    }
+  }
+
   const [confirmRemoveProvider, setConfirmRemoveProvider] = createSignal<string | null>(null)
   const [confirmRemovePermission, setConfirmRemovePermission] = createSignal<{
     tool: string
@@ -1150,8 +1463,22 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     setTermTesting(true)
     setTermResult('')
     try {
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const ws = new WebSocket(`${proto}//${location.host}/terminal`)
+      // Derive the WS host from the same API base the client uses (direct-connect
+      // to a separate API port breaks if we always use location.host). Empty base
+      // means dev-proxy same-origin → fall back to location.host.
+      let wsUrl = ''
+      try {
+        const base = getApiUrl()
+        if (base) {
+          const u = new URL(base)
+          wsUrl = `${u.protocol === 'https:' ? 'wss:' : 'ws:'}//${u.host}/terminal`
+        }
+      } catch {}
+      if (!wsUrl) {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+        wsUrl = `${proto}//${location.host}/terminal`
+      }
+      const ws = new WebSocket(wsUrl)
       let done = false
       const t = setTimeout(() => {
         if (!done) {
@@ -2114,6 +2441,22 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                               }}
                             >
                               {provTesting() === p.id ? 'Testing…' : 'Test'}
+                            </button>
+                            <button
+                              type="button"
+                              class="btn btn-outline"
+                              disabled={provRefreshing() === p.id}
+                              aria-busy={provRefreshing() === p.id ? 'true' : 'false'}
+                              aria-label={`Refresh models for provider ${p.id}`}
+                              title={`Fetch live model list for ${p.id}`}
+                              onClick={() => void handleRefreshModels(p.id)}
+                              style={{
+                                padding: '5px 10px',
+                                'font-size': 'var(--fs-xs)',
+                                'min-height': '28px',
+                              }}
+                            >
+                              {provRefreshing() === p.id ? 'Refreshing…' : 'Refresh'}
                             </button>
                             <button
                               type="button"

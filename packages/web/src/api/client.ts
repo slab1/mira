@@ -193,13 +193,21 @@ export type ConfigSchema = {
   required?: string[]
 }
 
+/** A provider model — server sends {id,name} objects, older shapes may be plain ids. */
+export type ProviderModel = { id: string; name?: string }
+
 export type ProviderEntry = {
   id: string
   name: string
   maskedKey?: string
   baseURL?: string
   status?: 'ok' | 'error' | 'unknown'
-  models?: string[]
+  models?: Array<string | ProviderModel>
+}
+
+/** Extract the model id from either model shape (string id or {id,name} object). */
+export function providerModelId(m: string | ProviderModel): string {
+  return typeof m === 'string' ? m : (m?.id ?? '')
 }
 
 export type MCPServerEntry = {
@@ -224,7 +232,7 @@ export type CommandEntry = {
   name: string
   description: string
   content?: string
-  source: 'command' | 'skill'
+  source: 'command' | 'skill' | 'built-in'
 }
 
 export type SkillEntry = {
@@ -348,11 +356,21 @@ function baseUrlCandidates(): string[] {
   const b = baseUrl()
   if (!b) return [b]
   if (getRuntimeApiUrl() || getEnvBase()) return [b]
-  if (!b.includes('127.0.0.1:4096') && !b.includes('localhost:4096')) return [b]
+  // Sweep the local port-rotation range for any loopback base (base first,
+  // then 4096..4110 minus the base port). Non-loopback bases are returned as-is.
+  let u: URL
+  try {
+    u = new URL(b)
+  } catch {
+    return [b]
+  }
+  if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') return [b]
+  const basePort = Number(u.port)
   const cands = [b]
-  for (let p = 4097; p <= 4106; p++) {
-    const u = b.replace(':4096', `:${p}`)
-    if (!cands.includes(u)) cands.push(u)
+  for (let p = 4096; p <= 4110; p++) {
+    if (p === basePort) continue
+    const cand = `${u.protocol}//${u.hostname}:${p}`
+    if (!cands.includes(cand)) cands.push(cand)
   }
   return cands
 }
@@ -601,10 +619,13 @@ export const api = {
 
   /** File snapshot undo — revert last mutation or rewind to a message */
   revertSession: (id: string, messageID?: string) =>
-    req<{ ok: boolean; reverted: number; files: string[] }>(`/session/${id}/revert`, {
-      method: 'POST',
-      body: JSON.stringify(messageID ? { messageID } : {}),
-    }),
+    req<{ ok: boolean; reverted: number; files: string[]; messagesDeleted?: number }>(
+      `/session/${id}/revert`,
+      {
+        method: 'POST',
+        body: JSON.stringify(messageID ? { messageID } : {}),
+      },
+    ),
 
   listSnapshots: (id: string) => req<Snapshot[]>(`/session/${id}/snapshots`),
 
@@ -706,6 +727,10 @@ export const api = {
     req<{ ok: boolean; latencyMs?: number; error?: string }>(
       `/providers/${encodeURIComponent(id)}/test`,
       { method: 'POST' },
+    ),
+  listProviderModels: (id: string) =>
+    req<{ ok: boolean; models?: { id: string; name?: string }[]; error?: string }>(
+      `/providers/${encodeURIComponent(id)}/models`,
     ),
   removeProvider: (id: string) =>
     req<{ ok: boolean }>(`/providers/${encodeURIComponent(id)}`, { method: 'DELETE' }),

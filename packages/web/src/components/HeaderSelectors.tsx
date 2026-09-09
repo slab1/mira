@@ -1,6 +1,7 @@
 import { createSignal, createEffect, createMemo, For, Show, onCleanup } from 'solid-js'
 import type { SettingsStore } from '../stores/settings'
 import type { AgentEntry } from '../api/client'
+import { providerModelId } from '../api/client'
 import { toast } from './Toast'
 
 // ── Shared helpers ──────────────────────────────────────────────────
@@ -15,15 +16,78 @@ type KnownModel = {
 }
 
 const KNOWN_MODELS: KnownModel[] = [
-  { id: 'openrouter/anthropic/claude-sonnet-4', provider: 'OpenRouter', label: 'Claude Sonnet 4', context: '200k', pricing: '$3/$15', capabilities: ['coding', 'reasoning', 'vision'] },
-  { id: 'openrouter/anthropic/claude-opus-4', provider: 'OpenRouter', label: 'Claude Opus 4', context: '200k', pricing: '$15/$75', capabilities: ['coding', 'reasoning', 'vision'] },
-  { id: 'openrouter/deepseek/deepseek-chat', provider: 'OpenRouter', label: 'DeepSeek Chat', context: '128k', pricing: '$0.27/$1.10', capabilities: ['coding', 'reasoning'] },
-  { id: 'openrouter/openai/gpt-4o', provider: 'OpenRouter', label: 'GPT-4o', context: '128k', pricing: '$2.50/$10', capabilities: ['coding', 'vision'] },
-  { id: 'openai/gpt-4o', provider: 'OpenAI', label: 'GPT-4o', context: '128k', pricing: '$2.50/$10', capabilities: ['coding', 'vision', 'reasoning'] },
-  { id: 'openai/gpt-4o-mini', provider: 'OpenAI', label: 'GPT-4o Mini', context: '128k', pricing: '$0.15/$0.60', capabilities: ['speed', 'vision'] },
-  { id: 'anthropic/claude-sonnet-4', provider: 'Anthropic', label: 'Claude Sonnet 4', context: '200k', pricing: '$3/$15', capabilities: ['coding', 'reasoning', 'vision'] },
-  { id: 'google/gemini-2.0-flash', provider: 'Google', label: 'Gemini 2.0 Flash', context: '1M', pricing: '$0.10/$0.40', capabilities: ['speed', 'vision'] },
-  { id: 'deepseek/deepseek-chat', provider: 'DeepSeek', label: 'DeepSeek Chat', context: '128k', pricing: '$0.27/$1.10', capabilities: ['coding', 'reasoning'] },
+  {
+    id: 'openrouter/anthropic/claude-sonnet-4',
+    provider: 'OpenRouter',
+    label: 'Claude Sonnet 4',
+    context: '200k',
+    pricing: '$3/$15',
+    capabilities: ['coding', 'reasoning', 'vision'],
+  },
+  {
+    id: 'openrouter/anthropic/claude-opus-4',
+    provider: 'OpenRouter',
+    label: 'Claude Opus 4',
+    context: '200k',
+    pricing: '$15/$75',
+    capabilities: ['coding', 'reasoning', 'vision'],
+  },
+  {
+    id: 'openrouter/deepseek/deepseek-chat',
+    provider: 'OpenRouter',
+    label: 'DeepSeek Chat',
+    context: '128k',
+    pricing: '$0.27/$1.10',
+    capabilities: ['coding', 'reasoning'],
+  },
+  {
+    id: 'openrouter/openai/gpt-4o',
+    provider: 'OpenRouter',
+    label: 'GPT-4o',
+    context: '128k',
+    pricing: '$2.50/$10',
+    capabilities: ['coding', 'vision'],
+  },
+  {
+    id: 'openai/gpt-4o',
+    provider: 'OpenAI',
+    label: 'GPT-4o',
+    context: '128k',
+    pricing: '$2.50/$10',
+    capabilities: ['coding', 'vision', 'reasoning'],
+  },
+  {
+    id: 'openai/gpt-4o-mini',
+    provider: 'OpenAI',
+    label: 'GPT-4o Mini',
+    context: '128k',
+    pricing: '$0.15/$0.60',
+    capabilities: ['speed', 'vision'],
+  },
+  {
+    id: 'anthropic/claude-sonnet-4',
+    provider: 'Anthropic',
+    label: 'Claude Sonnet 4',
+    context: '200k',
+    pricing: '$3/$15',
+    capabilities: ['coding', 'reasoning', 'vision'],
+  },
+  {
+    id: 'google/gemini-2.0-flash',
+    provider: 'Google',
+    label: 'Gemini 2.0 Flash',
+    context: '1M',
+    pricing: '$0.10/$0.40',
+    capabilities: ['speed', 'vision'],
+  },
+  {
+    id: 'deepseek/deepseek-chat',
+    provider: 'DeepSeek',
+    label: 'DeepSeek Chat',
+    context: '128k',
+    pricing: '$0.27/$1.10',
+    capabilities: ['coding', 'reasoning'],
+  },
 ]
 
 function providerDisplayName(raw: string): string {
@@ -41,14 +105,33 @@ function providerDisplayName(raw: string): string {
 function inferCapabilities(id: string): string[] {
   const lower = id.toLowerCase()
   const caps: string[] = []
-  if (lower.includes('claude') || lower.includes('gpt-4o') || lower.includes('sonnet') || lower.includes('opus') || lower.includes('coder') || lower.includes('deepseek')) caps.push('coding')
-  if (lower.includes('reason') || lower.includes('o1') || lower.includes('opus') || lower.includes('deepseek')) {
+  if (
+    lower.includes('claude') ||
+    lower.includes('gpt-4o') ||
+    lower.includes('sonnet') ||
+    lower.includes('opus') ||
+    lower.includes('coder') ||
+    lower.includes('deepseek')
+  )
+    caps.push('coding')
+  if (
+    lower.includes('reason') ||
+    lower.includes('o1') ||
+    lower.includes('opus') ||
+    lower.includes('deepseek')
+  ) {
     if (!caps.includes('reasoning')) caps.push('reasoning')
   }
-  if (lower.includes('vision') || lower.includes('claude') || lower.includes('gpt-4o') || lower.includes('gemini')) {
+  if (
+    lower.includes('vision') ||
+    lower.includes('claude') ||
+    lower.includes('gpt-4o') ||
+    lower.includes('gemini')
+  ) {
     if (!caps.includes('vision')) caps.push('vision')
   }
-  if (lower.includes('mini') || lower.includes('haiku') || lower.includes('flash')) caps.push('speed')
+  if (lower.includes('mini') || lower.includes('haiku') || lower.includes('flash'))
+    caps.push('speed')
   return [...new Set(caps)].slice(0, 3)
 }
 
@@ -62,10 +145,7 @@ function inferContext(id: string): string {
 
 // ── Header Model Selector ───────────────────────────────────────────
 
-export function HeaderModelSelector(props: {
-  settings: SettingsStore
-  id?: string
-}) {
+export function HeaderModelSelector(props: { settings: SettingsStore; id?: string }) {
   const [open, setOpen] = createSignal(false)
   const [query, setQuery] = createSignal('')
   const [highlight, setHighlight] = createSignal(0)
@@ -88,7 +168,8 @@ export function HeaderModelSelector(props: {
     }
     for (const p of providers()) {
       const models = p.models ?? []
-      for (const mid of models) {
+      for (const m of models) {
+        const mid = providerModelId(m)
         if (!mid || seen.has(mid)) continue
         seen.add(mid)
         const provider = providerDisplayName(mid.split('/')[0] ?? p.id)
@@ -121,7 +202,10 @@ export function HeaderModelSelector(props: {
     const q = query().trim().toLowerCase()
     if (!q) return allModels()
     return allModels().filter(
-      (m) => m.id.toLowerCase().includes(q) || m.provider.toLowerCase().includes(q) || m.label.toLowerCase().includes(q),
+      (m) =>
+        m.id.toLowerCase().includes(q) ||
+        m.provider.toLowerCase().includes(q) ||
+        m.label.toLowerCase().includes(q),
     )
   })
 
@@ -202,7 +286,8 @@ export function HeaderModelSelector(props: {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'm') {
         const tag = (e.target as HTMLElement)?.tagName?.toLowerCase()
-        const isInput = tag === 'input' || tag === 'textarea' || (e.target as HTMLElement)?.isContentEditable
+        const isInput =
+          tag === 'input' || tag === 'textarea' || (e.target as HTMLElement)?.isContentEditable
         if (isInput) return
         e.preventDefault()
         if (open()) close()
@@ -266,8 +351,28 @@ export function HeaderModelSelector(props: {
         }}
       >
         <span style={{ 'font-size': '10px', color: 'var(--accent)', flex: 'none' }}>◈</span>
-        <span style={{ overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap', 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-xs)' }}>{displayLabel()}</span>
-        <span style={{ 'font-size': '9px', color: 'var(--fg-faint)', flex: 'none', transform: open() ? 'rotate(180deg)' : 'none', transition: 'transform var(--dur-fast) var(--ease)' }}>▾</span>
+        <span
+          style={{
+            overflow: 'hidden',
+            'text-overflow': 'ellipsis',
+            'white-space': 'nowrap',
+            'font-family': 'var(--font-mono)',
+            'font-size': 'var(--fs-xs)',
+          }}
+        >
+          {displayLabel()}
+        </span>
+        <span
+          style={{
+            'font-size': '9px',
+            color: 'var(--fg-faint)',
+            flex: 'none',
+            transform: open() ? 'rotate(180deg)' : 'none',
+            transition: 'transform var(--dur-fast) var(--ease)',
+          }}
+        >
+          ▾
+        </span>
       </button>
 
       <Show when={open()}>
@@ -295,7 +400,15 @@ export function HeaderModelSelector(props: {
             gap: '6px',
           }}
         >
-          <div style={{ position: 'sticky', top: '0', background: 'var(--bg-canvas)', 'z-index': '1', padding: '2px 0 6px' }}>
+          <div
+            style={{
+              position: 'sticky',
+              top: '0',
+              background: 'var(--bg-canvas)',
+              'z-index': '1',
+              padding: '2px 0 6px',
+            }}
+          >
             <input
               ref={(el) => (inputRef = el)}
               class="input"
@@ -303,7 +416,9 @@ export function HeaderModelSelector(props: {
               aria-expanded={open() ? 'true' : 'false'}
               aria-controls={listboxId()}
               aria-autocomplete="list"
-              aria-activedescendant={open() ? `${props.id ?? 'header-model'}-opt-${highlight()}` : undefined}
+              aria-activedescendant={
+                open() ? `${props.id ?? 'header-model'}-opt-${highlight()}` : undefined
+              }
               value={query()}
               onInput={(e) => {
                 setQuery(e.currentTarget.value)
@@ -340,7 +455,18 @@ export function HeaderModelSelector(props: {
 
           <Show
             when={filtered().length > 0}
-            fallback={<div style={{ padding: '12px', 'text-align': 'center', color: 'var(--fg-faint)', 'font-size': 'var(--fs-sm)' }}>No models match "{query()}"</div>}
+            fallback={
+              <div
+                style={{
+                  padding: '12px',
+                  'text-align': 'center',
+                  color: 'var(--fg-faint)',
+                  'font-size': 'var(--fs-sm)',
+                }}
+              >
+                No models match "{query()}"
+              </div>
+            }
           >
             <For each={grouped()}>
               {([provider, models]) => (
@@ -378,14 +504,27 @@ export function HeaderModelSelector(props: {
                               gap: '3px',
                               padding: '7px 10px',
                               'border-radius': 'var(--r-sm)',
-                              border: isHighlighted() ? '1px solid var(--accent-border)' : '1px solid transparent',
-                              background: isHighlighted() ? 'var(--accent-soft)' : isSelected() ? 'var(--bg-surface)' : 'transparent',
+                              border: isHighlighted()
+                                ? '1px solid var(--accent-border)'
+                                : '1px solid transparent',
+                              background: isHighlighted()
+                                ? 'var(--accent-soft)'
+                                : isSelected()
+                                  ? 'var(--bg-surface)'
+                                  : 'transparent',
                               cursor: 'pointer',
                               'text-align': 'left',
                               width: '100%',
                             }}
                           >
-                            <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'flex-wrap': 'wrap' }}>
+                            <div
+                              style={{
+                                display: 'flex',
+                                'align-items': 'center',
+                                gap: '6px',
+                                'flex-wrap': 'wrap',
+                              }}
+                            >
                               <span
                                 style={{
                                   'font-family': 'var(--font-mono)',
@@ -401,10 +540,37 @@ export function HeaderModelSelector(props: {
                                 <span style={{ color: 'var(--ok)', 'font-size': '11px' }}>✓</span>
                               </Show>
                             </div>
-                            <div style={{ display: 'flex', gap: '6px', 'align-items': 'center', 'flex-wrap': 'wrap' }}>
-                              <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'font-family': 'var(--font-mono)' }}>{m.context} ctx</span>
-                              <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)' }}>·</span>
-                              <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'font-family': 'var(--font-mono)' }}>{m.pricing} /1k</span>
+                            <div
+                              style={{
+                                display: 'flex',
+                                gap: '6px',
+                                'align-items': 'center',
+                                'flex-wrap': 'wrap',
+                              }}
+                            >
+                              <span
+                                style={{
+                                  'font-size': 'var(--fs-2xs)',
+                                  color: 'var(--fg-faint)',
+                                  'font-family': 'var(--font-mono)',
+                                }}
+                              >
+                                {m.context} ctx
+                              </span>
+                              <span
+                                style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)' }}
+                              >
+                                ·
+                              </span>
+                              <span
+                                style={{
+                                  'font-size': 'var(--fs-2xs)',
+                                  color: 'var(--fg-faint)',
+                                  'font-family': 'var(--font-mono)',
+                                }}
+                              >
+                                {m.pricing} /1k
+                              </span>
                               <For each={m.capabilities}>
                                 {(cap) => (
                                   <span
@@ -412,9 +578,23 @@ export function HeaderModelSelector(props: {
                                       'font-size': '9px',
                                       padding: '1px 5px',
                                       'border-radius': 'var(--r-full)',
-                                      background: cap === 'coding' ? 'var(--ok-soft)' : cap === 'reasoning' ? 'var(--accent-soft)' : cap === 'vision' ? 'var(--warn-soft)' : 'var(--bg-active)',
+                                      background:
+                                        cap === 'coding'
+                                          ? 'var(--ok-soft)'
+                                          : cap === 'reasoning'
+                                            ? 'var(--accent-soft)'
+                                            : cap === 'vision'
+                                              ? 'var(--warn-soft)'
+                                              : 'var(--bg-active)',
                                       border: `1px solid ${cap === 'coding' ? 'var(--ok-border)' : cap === 'reasoning' ? 'var(--accent-border)' : cap === 'vision' ? 'var(--warn-border)' : 'var(--border)'}`,
-                                      color: cap === 'coding' ? 'var(--ok)' : cap === 'reasoning' ? 'var(--accent)' : cap === 'vision' ? 'var(--warn)' : 'var(--fg-subtle)',
+                                      color:
+                                        cap === 'coding'
+                                          ? 'var(--ok)'
+                                          : cap === 'reasoning'
+                                            ? 'var(--accent)'
+                                            : cap === 'vision'
+                                              ? 'var(--warn)'
+                                              : 'var(--fg-subtle)',
                                       'font-weight': '600',
                                       'text-transform': 'uppercase',
                                       'letter-spacing': '0.04em',
@@ -532,7 +712,8 @@ export function HeaderAgentSelector(props: {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') {
         const tag = (e.target as HTMLElement)?.tagName?.toLowerCase()
-        const isInput = tag === 'input' || tag === 'textarea' || (e.target as HTMLElement)?.isContentEditable
+        const isInput =
+          tag === 'input' || tag === 'textarea' || (e.target as HTMLElement)?.isContentEditable
         if (isInput) return
         // Don't conflict with Memory Graph G toggle when not in input — only when Ctrl/Cmd held
         e.preventDefault()
@@ -562,7 +743,11 @@ export function HeaderAgentSelector(props: {
         aria-label="Agent lane"
         aria-expanded={open() ? 'true' : 'false'}
         aria-haspopup="listbox"
-        title={currentDesc() ? `${currentLabel()} — ${currentDesc()} (Ctrl+G)` : `${currentLabel()} (Ctrl+G) — Tab to cycle`}
+        title={
+          currentDesc()
+            ? `${currentLabel()} — ${currentDesc()} (Ctrl+G)`
+            : `${currentLabel()} (Ctrl+G) — Tab to cycle`
+        }
         onClick={() => {
           if (open()) close()
           else {
@@ -613,8 +798,26 @@ export function HeaderAgentSelector(props: {
         }}
       >
         <span style={{ 'font-size': '10px', flex: 'none' }}>🤖</span>
-        <span style={{ 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-xs)', 'text-transform': 'lowercase' }}>{currentLabel()}</span>
-        <span style={{ 'font-size': '9px', color: 'var(--fg-faint)', flex: 'none', transform: open() ? 'rotate(180deg)' : 'none', transition: 'transform var(--dur-fast) var(--ease)' }}>▾</span>
+        <span
+          style={{
+            'font-family': 'var(--font-mono)',
+            'font-size': 'var(--fs-xs)',
+            'text-transform': 'lowercase',
+          }}
+        >
+          {currentLabel()}
+        </span>
+        <span
+          style={{
+            'font-size': '9px',
+            color: 'var(--fg-faint)',
+            flex: 'none',
+            transform: open() ? 'rotate(180deg)' : 'none',
+            transition: 'transform var(--dur-fast) var(--ease)',
+          }}
+        >
+          ▾
+        </span>
       </button>
 
       <Show when={open()}>
@@ -660,15 +863,29 @@ export function HeaderAgentSelector(props: {
                     gap: '2px',
                     padding: '8px 10px',
                     'border-radius': 'var(--r-sm)',
-                    border: isHighlighted() ? '1px solid var(--accent-border)' : '1px solid transparent',
-                    background: isHighlighted() ? 'var(--accent-soft)' : isSelected() ? 'var(--bg-surface)' : 'transparent',
+                    border: isHighlighted()
+                      ? '1px solid var(--accent-border)'
+                      : '1px solid transparent',
+                    background: isHighlighted()
+                      ? 'var(--accent-soft)'
+                      : isSelected()
+                        ? 'var(--bg-surface)'
+                        : 'transparent',
                     cursor: 'pointer',
                     'text-align': 'left',
                     width: '100%',
                   }}
                 >
                   <span style={{ display: 'flex', 'align-items': 'center', gap: '6px' }}>
-                    <span style={{ 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-sm)', 'font-weight': '600', color: 'var(--fg)', 'text-transform': 'lowercase' }}>
+                    <span
+                      style={{
+                        'font-family': 'var(--font-mono)',
+                        'font-size': 'var(--fs-sm)',
+                        'font-weight': '600',
+                        color: 'var(--fg)',
+                        'text-transform': 'lowercase',
+                      }}
+                    >
                       {opt.name || 'general'}
                       {opt.custom ? ' *' : ''}
                     </span>
@@ -677,18 +894,44 @@ export function HeaderAgentSelector(props: {
                     </Show>
                   </span>
                   <Show when={opt.description}>
-                    <span style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)', 'line-height': '1.4' }}>{opt.description}</span>
+                    <span
+                      style={{
+                        'font-size': 'var(--fs-xs)',
+                        color: 'var(--fg-subtle)',
+                        'line-height': '1.4',
+                      }}
+                    >
+                      {opt.description}
+                    </span>
                   </Show>
                 </button>
               )
             }}
           </For>
-          <div style={{ 'border-top': '1px solid var(--border)', 'margin-top': '4px', 'padding-top': '6px', 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', display: 'flex', gap: '6px', 'align-items': 'center', 'justify-content': 'center' }}>
-            <span><span class="kbd">↑↓</span> nav</span>
+          <div
+            style={{
+              'border-top': '1px solid var(--border)',
+              'margin-top': '4px',
+              'padding-top': '6px',
+              'font-size': 'var(--fs-2xs)',
+              color: 'var(--fg-faint)',
+              display: 'flex',
+              gap: '6px',
+              'align-items': 'center',
+              'justify-content': 'center',
+            }}
+          >
+            <span>
+              <span class="kbd">↑↓</span> nav
+            </span>
             <span>·</span>
-            <span><span class="kbd">↵</span> select</span>
+            <span>
+              <span class="kbd">↵</span> select
+            </span>
             <span>·</span>
-            <span><span class="kbd">Tab</span> cycle</span>
+            <span>
+              <span class="kbd">Tab</span> cycle
+            </span>
           </div>
         </div>
       </Show>

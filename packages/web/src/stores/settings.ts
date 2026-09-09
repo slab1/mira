@@ -67,11 +67,68 @@ function maskKey(key: string): string {
   return key.slice(0, 3) + '••••' + key.slice(-4)
 }
 
+/** Raw server entry — every field optional so all-absent payloads can't crash us. */
+type RawProviderEntry = {
+  id?: unknown
+  name?: unknown
+  hasKey?: unknown
+  masked?: unknown
+  maskedKey?: unknown
+  status?: unknown
+  baseURL?: unknown
+  models?: Array<string | { id?: unknown; name?: unknown } | null | undefined> | null | undefined
+}
+
+function normalizeModel(
+  m: string | { id?: unknown; name?: unknown } | null | undefined,
+): { id: string; name: string } | null {
+  if (typeof m === 'string') {
+    const t = m.trim()
+    return t ? { id: t, name: t } : null
+  }
+  if (m && typeof m === 'object' && typeof m.id === 'string' && m.id) {
+    return { id: m.id, name: typeof m.name === 'string' && m.name ? m.name : m.id }
+  }
+  return null
+}
+
+function normalizeProviderEntry(p: RawProviderEntry | null | undefined): ProviderEntry {
+  const r = (p && typeof p === 'object' ? p : {}) as RawProviderEntry
+  const id = typeof r.id === 'string' ? r.id : ''
+  const hasKey = r.hasKey === true
+  const rawStatus = typeof r.status === 'string' ? r.status : ''
+  const status: ProviderEntry['status'] =
+    rawStatus === 'error'
+      ? 'error'
+      : rawStatus === 'ok' || rawStatus === 'configured' || hasKey
+        ? 'ok'
+        : 'unknown'
+  const maskedKey =
+    typeof r.maskedKey === 'string' && r.maskedKey
+      ? r.maskedKey
+      : typeof r.masked === 'string' && r.masked
+        ? r.masked
+        : undefined
+  const models = Array.isArray(r.models)
+    ? (r.models.map(normalizeModel).filter(Boolean) as Array<{ id: string; name: string }>)
+    : []
+  return {
+    id,
+    name: typeof r.name === 'string' && r.name ? r.name : id,
+    ...(maskedKey !== undefined ? { maskedKey } : {}),
+    ...(typeof r.baseURL === 'string' ? { baseURL: r.baseURL } : {}),
+    status,
+    models,
+  }
+}
+
 function normalizeProviders(
   raw: ProviderEntry[] | Record<string, ProviderConfig> | null,
 ): ProviderEntry[] {
   if (!raw) return []
-  if (Array.isArray(raw)) return raw
+  // Server array entries carry {id,name} model objects + hasKey/masked/status
+  // strings ('configured'/'missing-key') — map them onto the client shape.
+  if (Array.isArray(raw)) return raw.map((p) => normalizeProviderEntry(p as RawProviderEntry))
   // Record<string, ProviderConfig> → ProviderEntry[]
   return Object.entries(raw).map(([id, cfg]) => ({
     id,
@@ -182,7 +239,10 @@ export function createSettingsStore() {
       const msg = String((e as Error).message)
       if (e instanceof ApiError && e.status === 401) return
       if (msg.includes('401') || msg.includes('unauthorized')) return
-      if (!msg.includes('404')) setState('error', (e as Error).message)
+      if (!msg.includes('404')) {
+        console.warn('[mira] loadConfig failed:', msg)
+        setState('error', (e as Error).message)
+      }
     }
   }
 
@@ -190,8 +250,8 @@ export function createSettingsStore() {
     try {
       const s = await api.getConfigSchema()
       setState('schema', s)
-    } catch {
-      // optional
+    } catch (e) {
+      console.warn('[mira] loadSchema failed:', (e as Error).message)
     }
   }
 
@@ -205,6 +265,7 @@ export function createSettingsStore() {
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) return
       if (String((e as Error).message).includes('401')) return
+      console.warn('[mira] loadProviders failed:', (e as Error).message)
       // fallback: derive from config.provider if /providers missing
       if (state.config?.provider) {
         setState(
@@ -228,6 +289,7 @@ export function createSettingsStore() {
         setState('mcp', [])
         return
       }
+      console.warn('[mira] loadMcp failed:', (e as Error).message)
       if (!String((e as Error).message).includes('404')) setState('error', (e as Error).message)
       setState('mcp', [])
     }
@@ -242,6 +304,7 @@ export function createSettingsStore() {
         setState('agents', [])
         return
       }
+      console.warn('[mira] loadAgents failed:', (e as Error).message)
       setState('agents', [])
     }
   }
@@ -255,6 +318,7 @@ export function createSettingsStore() {
         setState('commands', [])
         return
       }
+      console.warn('[mira] loadCommands failed:', (e as Error).message)
       setState('commands', [])
     }
   }
@@ -268,6 +332,7 @@ export function createSettingsStore() {
         setState('skills', [])
         return
       }
+      console.warn('[mira] loadSkills failed:', (e as Error).message)
       setState('skills', [])
     }
   }
@@ -279,6 +344,7 @@ export function createSettingsStore() {
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) return
       if (String((e as Error).message).includes('401')) return
+      console.warn('[mira] loadPermission failed:', (e as Error).message)
       // fallback to config.permission if endpoint missing
       if (state.config?.permission)
         setState('permission', state.config.permission as PermissionMatrix)
@@ -445,7 +511,11 @@ export function createSettingsStore() {
     }))
     // Synthetic /connect command (always available, even if server doesn't list it)
     const synthetic: CommandEntry[] = [
-      { name: '/connect', description: 'Connect a provider — add API key (e.g. /connect openai)', source: 'command' as const },
+      {
+        name: '/connect',
+        description: 'Connect a provider — add API key (e.g. /connect openai)',
+        source: 'command' as const,
+      },
     ]
     // Deduplicate by name
     const seen = new Set<string>()

@@ -9,6 +9,7 @@ import { createSignal, createEffect, onCleanup } from 'solid-js'
 import { createStore } from 'solid-js/store'
 import {
   api,
+  ApiError,
   createSocket,
   type Session,
   type Message,
@@ -47,7 +48,13 @@ type AppState = {
     avgLatencyMs: number
   } | null
   /** doom-loop detection — set when server publishes server.error source doom-loop */
-  doomLoop: { tool: string; reason: string; pattern?: string[]; sessionID?: string } | null
+  doomLoop: {
+    tool: string
+    reason: string
+    pattern?: string[]
+    sessionID?: string
+    messageID?: string
+  } | null
   /** budget cap warning — set when spend exceeds configured cap */
   budgetWarning: string | null
 }
@@ -159,6 +166,7 @@ export function createAppStore() {
           tool?: string
           error?: string
           pattern?: string[]
+          messageID?: string
         } | null
         if (p?.source === 'doom-loop') {
           setState('doomLoop', {
@@ -166,17 +174,24 @@ export function createAppStore() {
             reason: p.error ?? 'repeating tool call',
             pattern: p.pattern,
             sessionID: e.sessionID,
+            messageID: typeof p.messageID === 'string' ? p.messageID : undefined,
           })
         }
         break
       }
       case 'doom_loop': {
-        const p = e.payload as { tool?: string; reason?: string; pattern?: string[] } | null
+        const p = e.payload as {
+          tool?: string
+          reason?: string
+          pattern?: string[]
+          messageID?: string
+        } | null
         setState('doomLoop', {
           tool: p?.tool ?? 'unknown',
           reason: p?.reason ?? 'repeating tool call',
           pattern: p?.pattern,
           sessionID: e.sessionID,
+          messageID: typeof p?.messageID === 'string' ? p.messageID : undefined,
         })
         break
       }
@@ -303,7 +318,8 @@ export function createAppStore() {
 
   let abort: AbortController | null = null
 
-  async function sendPrompt(text?: string) {
+  /** Send a prompt — `model` is a per-message override for this send only. */
+  async function sendPrompt(text?: string, model?: string) {
     const prompt = (text ?? input()).trim()
     if (!prompt || !state.currentId) return
     setInput('')
@@ -370,6 +386,7 @@ export function createAppStore() {
 
     try {
       await api.streamPrompt(state.currentId, prompt, {
+        model,
         signal: abort.signal,
         onChunk: (chunk) => {
           setState('streamText', (t) => t + chunk)
@@ -406,19 +423,34 @@ export function createAppStore() {
   }
 
   /** Undo the agent's most recent file mutation (snapshot restore) */
-  async function undoLastMutation() {
+  async function undoLastMutation(messageID?: string) {
     const id = state.currentId
     if (!id) return
     try {
-      const out = await api.revertSession(id)
+      // NOTE: req() throws ApiError on non-2xx, so a returned `!ok` is unreachable —
+      // server 400s (e.g. unknown messageID) surface via the catch branch below.
+      const out = await api.revertSession(id, messageID)
       if (out.ok && out.reverted > 0) {
         await loadMessages(id)
-        toast.success(`Reverted ${out.reverted} change${out.reverted === 1 ? '' : 's'}`)
-      } else if (!out.ok) {
-        toast.warn('Nothing to undo')
+        const extra =
+          typeof out.messagesDeleted === 'number' && out.messagesDeleted > 0
+            ? ` (${out.messagesDeleted} message${out.messagesDeleted === 1 ? '' : 's'} deleted)`
+            : ''
+        toast.success(`Reverted ${out.reverted} change${out.reverted === 1 ? '' : 's'}${extra}`)
+      } else if (out.ok) {
+        toast.info('Nothing to undo')
       }
       return out
     } catch (e) {
+      if (e instanceof ApiError && e.status === 400) {
+        let detail = e.message
+        try {
+          const j = JSON.parse(e.body) as { error?: string }
+          if (typeof j.error === 'string' && j.error) detail = j.error
+        } catch {}
+        toast.warn(detail)
+        return
+      }
       toast.error(`Undo failed: ${(e as Error).message}`)
     }
   }
@@ -428,7 +460,7 @@ export function createAppStore() {
   }
 
   async function rewindDoomLoop() {
-    await undoLastMutation()
+    await undoLastMutation(state.doomLoop?.messageID)
     clearDoomLoop()
   }
 
