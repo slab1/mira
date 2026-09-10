@@ -30,6 +30,8 @@ export type Session = {
   costUsd?: number | null
   tokensIn?: number | null
   tokensOut?: number | null
+  cwd?: string | null
+  projectId?: string | null
 }
 
 export type Message = {
@@ -723,10 +725,14 @@ export const api = {
     }>(`/agents/${encodeURIComponent(name)}/preview`),
 
   // ── Settings ─────────────────────────────────────────────────────
-  getConfig: () => req<MiraConfig>('/config'),
+  getConfig: (cwd?: string) =>
+    req<MiraConfig>(cwd ? `/config?cwd=${encodeURIComponent(cwd)}` : '/config'),
   getConfigSchema: () => req<ConfigSchema>('/config/schema'),
-  patchConfig: (patch: Partial<MiraConfig>) =>
-    req<MiraConfig>('/config', { method: 'PATCH', body: JSON.stringify(patch) }),
+  patchConfig: (patch: Partial<MiraConfig>, cwd?: string) =>
+    req<MiraConfig>(cwd ? `/config?cwd=${encodeURIComponent(cwd)}` : '/config', {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
 
   listProviders: () => req<ProviderEntry[] | Record<string, ProviderConfig>>('/providers'),
   testProvider: (id: string) =>
@@ -767,8 +773,16 @@ export const api = {
   listAgents: () => req<AgentEntry[]>('/agents'),
   listCommands: () => req<CommandEntry[] | string[]>('/commands'),
   listSkills: () => req<SkillEntry[] | string[]>('/skills'),
-  getWorkspaceTree: () => req<{ files: string[] }>('/workspace/tree').then((r) => r.files),
-  getPermission: () => req<PermissionMatrix>('/permission'),
+  getWorkspaceTree: (cwd?: string) =>
+    req<{ files: Array<{ path: string; isDir: boolean; size: number; mtime: number }> | string[] }>(
+      cwd ? `/workspace/tree?cwd=${encodeURIComponent(cwd)}` : '/workspace/tree',
+    ).then((r) => {
+      const files = (r as { files: unknown }).files as Array<string | { path: string }>
+      if (!Array.isArray(files)) return []
+      return files.map((f) => (typeof f === 'string' ? f : f.path))
+    }),
+  getPermission: (cwd?: string) =>
+    req<PermissionMatrix>(cwd ? `/permission?cwd=${encodeURIComponent(cwd)}` : '/permission'),
 
   // ── Knowledge Graph (H2-1 Memory v2 read + H3-E mutations) ────
   getKnowledgeGraph: (limit = 100) => req<KnowledgeGraph>(`/knowledge/graph?limit=${limit}`),

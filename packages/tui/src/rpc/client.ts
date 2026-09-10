@@ -683,9 +683,13 @@ export const rpc = {
     }),
   deleteKnowledge: (id: string) =>
     req<{ ok: boolean; id: string }>(`/knowledge/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  getConfig: () => req<MiraConfig>('/config'),
-  patchConfig: (patch: Partial<MiraConfig>) =>
-    req<MiraConfig>('/config', { method: 'PATCH', body: JSON.stringify({ patch }) }),
+  getConfig: (cwd?: string) =>
+    req<MiraConfig>(cwd ? `/config?cwd=${encodeURIComponent(cwd)}` : '/config'),
+  patchConfig: (patch: Partial<MiraConfig>, cwd?: string) =>
+    req<MiraConfig>(cwd ? `/config?cwd=${encodeURIComponent(cwd)}` : '/config', {
+      method: 'PATCH',
+      body: JSON.stringify({ patch }),
+    }),
   getConfigSchema: () => req<{ properties?: Record<string, { type: string }> }>('/config/schema'),
   listProviders: () => req<ProviderEntry[]>('/providers'),
   testProvider: (id: string) =>
@@ -720,8 +724,16 @@ export const rpc = {
   listAgents: () => req<AgentEntry[]>('/agents'),
   listSkills: () => req<string[] | Array<{ name: string; description: string }>>('/skills'),
   listCommands: () => req<string[] | Array<{ name: string; description: string }>>('/commands'),
-  getWorkspaceTree: () => req<{ files: string[] }>('/workspace/tree').then((r) => r.files),
-  getPermission: () => req<Record<string, JsonValue>>('/permission'),
+  getWorkspaceTree: (cwd?: string) =>
+    req<{ files: Array<{ path: string; isDir: boolean; size: number; mtime: number }> | string[] }>(
+      cwd ? `/workspace/tree?cwd=${encodeURIComponent(cwd)}` : '/workspace/tree',
+    ).then((r) => {
+      const files = (r as { files: unknown }).files as Array<string | { path: string }>
+      if (!Array.isArray(files)) return []
+      return files.map((f) => (typeof f === 'string' ? f : f.path))
+    }),
+  getPermission: (cwd?: string) =>
+    req<Record<string, JsonValue>>(cwd ? `/permission?cwd=${encodeURIComponent(cwd)}` : '/permission'),
   getTerminalStatus: () => req<{ enabled: boolean; sandbox: boolean; ws: string }>('/terminal'),
 
   // ── Mira Score GA (H2-2) — per-session score + trace (port from web/src/api/client.ts:736-818) ──

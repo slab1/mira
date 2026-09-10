@@ -5,6 +5,7 @@ import {
   saveConfig,
   removeProviderFromConfig,
 } from '../config/index.js'
+import { sanitizePath, isPathAllowed } from '../guardrails/index.js'
 import type { MiraConfig, JsonValue, ProviderConfig } from '../types/index.js'
 import type { Context } from 'hono'
 
@@ -39,17 +40,46 @@ function redactLayers(
   return layers.map((l) => ({ ...l, config: redactConfig(l.config as MiraConfig) }))
 }
 
+function resolveCwd(c: Context): { cwd?: string; error?: string; status?: number } {
+  const raw = c.req.query('cwd')
+  if (!raw) return {}
+  const sanitized = sanitizePath(raw)
+  if (!sanitized.ok) {
+    return { error: `invalid cwd: ${sanitized.reason}`, status: 400 }
+  }
+  const cwd = sanitized.sanitized ?? raw
+  // Validate against allowedRoots from per-project config
+  try {
+    const cfg = getConfig(cwd) as MiraConfig
+    const roots = (cfg.guardrails?.allowedRoots ?? []) as string[]
+    if (roots.length > 0 && !isPathAllowed(cwd, roots)) {
+      return { error: `cwd not allowed: ${cwd}`, status: 403 }
+    }
+  } catch {}
+  return { cwd }
+}
+
 export function mountConfigRoutes(
   app: Hono<{ Variables: { requestId: string } }>,
   opts?: { bus?: { publish: (e: any) => void } },
 ) {
   // Flat MiraConfig (redacted) — matches the web Settings store and TUI client contract
-  app.get('/config', (c: Context) => {
+  app.get('/config', async (c: Context) => {
+    const resolved = resolveCwd(c)
+    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status as 400 | 403) ?? 400)
+    const cwd = resolved.cwd
+    if (cwd) {
+      const { merged } = await getConfigLayers(cwd)
+      return c.json(redactConfig(merged as MiraConfig))
+    }
     return c.json(redactConfig(getConfig() as MiraConfig))
   })
   // Debug: full layer breakdown (moved off /config so clients get a plain MiraConfig)
   app.get('/config/layers', async (c: Context) => {
-    const { merged, layers } = await getConfigLayers()
+    const resolved = resolveCwd(c)
+    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status as 400 | 403) ?? 400)
+    const cwd = resolved.cwd
+    const { merged, layers } = await getConfigLayers(cwd ?? process.cwd())
     return c.json({
       merged: redactConfig(merged),
       layers: redactLayers(
@@ -58,6 +88,9 @@ export function mountConfigRoutes(
     })
   })
   app.patch('/config', async (c: Context) => {
+    const resolved = resolveCwd(c)
+    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status as 400 | 403) ?? 400)
+    const cwd = resolved.cwd ?? process.cwd()
     const body = (await c.req.json().catch(() => null)) as Record<string, JsonValue> | null
     if (!body) return c.json({ error: 'invalid JSON body' }, 400)
     // Accept both {patch, layer?} (TUI) and a flat Partial<MiraConfig> (web)
@@ -68,7 +101,7 @@ export function mountConfigRoutes(
       return c.json({ error: 'body must be a config patch (or { patch })' }, 400)
     }
     try {
-      const merged = await saveConfig(patch, layer)
+      const merged = await saveConfig(patch, layer, cwd)
       try {
         opts?.bus?.publish({
           type: 'config.updated',
@@ -83,7 +116,10 @@ export function mountConfigRoutes(
   })
   // Permission matrix — what the Settings Permissions tab reads (was missing; store fell back to config.permission)
   app.get('/permission', (c: Context) => {
-    const cfg = getConfig() as MiraConfig
+    const resolved = resolveCwd(c)
+    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status as 400 | 403) ?? 400)
+    const cwd = resolved.cwd
+    const cfg = getConfig(cwd) as MiraConfig
     return c.json(cfg.permission ?? {})
   })
   app.get('/config/schema', (c: Context) => {

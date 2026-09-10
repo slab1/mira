@@ -229,9 +229,9 @@ export function createSettingsStore() {
     applyTheme(choice)
   }
 
-  async function loadConfig(): Promise<void> {
+  async function loadConfig(cwd?: string): Promise<void> {
     try {
-      const cfg = await api.getConfig()
+      const cfg = await api.getConfig(cwd)
       setState('config', cfg)
     } catch (e) {
       // 404 = no config endpoint on older server — keep null, UI shows fallback
@@ -243,6 +243,15 @@ export function createSettingsStore() {
         console.warn('[mira] loadConfig failed:', msg)
         setState('error', (e as Error).message)
       }
+    }
+  }
+
+  async function loadWorkspaceTree(cwd?: string): Promise<string[]> {
+    try {
+      return await api.getWorkspaceTree(cwd)
+    } catch (e) {
+      console.warn('[mira] loadWorkspaceTree failed:', (e as Error).message)
+      return []
     }
   }
 
@@ -337,9 +346,9 @@ export function createSettingsStore() {
     }
   }
 
-  async function loadPermission(): Promise<void> {
+  async function loadPermission(cwd?: string): Promise<void> {
     try {
-      const perm = await api.getPermission()
+      const perm = await api.getPermission(cwd)
       setState('permission', perm)
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) return
@@ -352,10 +361,10 @@ export function createSettingsStore() {
     }
   }
 
-  async function loadAll(): Promise<void> {
+  async function loadAll(cwd?: string): Promise<void> {
     setState({ loading: true, error: null })
     await Promise.all([
-      loadConfig(),
+      loadConfig(cwd),
       loadSchema(),
       loadMcp(),
       loadAgents(),
@@ -363,15 +372,20 @@ export function createSettingsStore() {
       loadSkills(),
     ])
     // providers & permission may depend on config, load after
-    await Promise.all([loadProviders(), loadPermission()])
+    await Promise.all([loadProviders(), loadPermission(cwd)])
+    // also warm workspace tree for cwd if provided
+    if (cwd) await loadWorkspaceTree(cwd)
     setState('loading', false)
   }
 
-  async function saveConfig(patch: Partial<MiraConfig>): Promise<MiraConfig | null> {
+  async function saveConfig(
+    patch: Partial<MiraConfig>,
+    cwd?: string,
+  ): Promise<MiraConfig | null> {
     setSaving(true)
     setState('error', null)
     try {
-      const updated = await api.patchConfig(patch)
+      const updated = await api.patchConfig(patch, cwd)
       setState('config', updated)
       return updated
     } catch (e) {

@@ -62,11 +62,22 @@ function sessionStatus(session: { id: string }, store: AppStore): StatusInfo {
   }
 }
 
+function projectLabel(sess: { projectId?: string | null; cwd?: string | null }): string {
+  if (sess.projectId) return sess.projectId
+  if (sess.cwd) {
+    const parts = sess.cwd.replace(/\/$/, '').split('/')
+    return parts[parts.length - 1] || sess.cwd
+  }
+  return 'default'
+}
+
 export function SessionList(props: { store: AppStore; open?: boolean }) {
   const s = () => props.store.state
   const [confirmDelete, setConfirmDelete] = createSignal<{ id: string; title: string } | null>(null)
   const [search, setSearch] = createSignal('')
   const [statusFilter, setStatusFilter] = createSignal<'all' | 'active' | 'idle'>('all')
+  const [projectFilter, setProjectFilter] = createSignal<string>('all')
+  const [groupByProject, setGroupByProject] = createSignal(false)
   const [pinned, setPinned] = createSignal<Set<string>>(
     (() => {
       try {
@@ -90,9 +101,16 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
     })
   }
 
+  const availableProjects = createMemo(() => {
+    const set = new Set<string>()
+    for (const sess of s().sessions) set.add(projectLabel(sess as { projectId?: string | null; cwd?: string | null }))
+    return [...set].sort()
+  })
+
   const filtered = createMemo(() => {
     const q = search().toLowerCase().trim()
     const sf = statusFilter()
+    const pf = projectFilter()
     let list = s().sessions
     if (q) {
       list = list.filter(
@@ -111,6 +129,9 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
         return st.label === 'idle'
       })
     }
+    if (pf !== 'all') {
+      list = list.filter((sess) => projectLabel(sess as { projectId?: string | null; cwd?: string | null }) === pf)
+    }
     // Pinned first, then by updatedAt desc
     const pinSet = pinned()
     return [...list].sort((a, b) => {
@@ -123,6 +144,18 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
         new Date(a.updatedAt || a.createdAt).getTime()
       )
     })
+  })
+
+  const grouped = createMemo(() => {
+    if (!groupByProject()) return null
+    const map = new Map<string, typeof filtered extends () => infer T ? T extends Array<infer U> ? U[] : never : never>()
+    for (const sess of filtered()) {
+      const key = projectLabel(sess as { projectId?: string | null; cwd?: string | null })
+      const arr = map.get(key) ?? []
+      arr.push(sess as never)
+      map.set(key, arr)
+    }
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b))
   })
 
   const costLabel = (sess: {
@@ -266,6 +299,48 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
           </For>
         </div>
 
+        {/* Project filter */}
+        <Show when={availableProjects().length > 1}>
+          <div style={{ display: 'flex', gap: '4px', 'align-items': 'center' }}>
+            <select
+              value={projectFilter()}
+              onChange={(e) => setProjectFilter(e.currentTarget.value)}
+              aria-label="Filter by project"
+              style={{
+                flex: '1',
+                padding: '4px 8px',
+                'font-size': 'var(--fs-xs)',
+                border: '1px solid var(--border)',
+                'border-radius': 'var(--r-md)',
+                background: 'var(--bg-surface)',
+                color: 'var(--fg)',
+              }}
+            >
+              <option value="all">All projects</option>
+              <For each={availableProjects()}>{(p) => <option value={p}>{p}</option>}</For>
+            </select>
+          </div>
+        </Show>
+
+        {/* Group by project toggle */}
+        <label
+          style={{
+            display: 'flex',
+            'align-items': 'center',
+            gap: '6px',
+            'font-size': 'var(--fs-xs)',
+            color: 'var(--fg-subtle)',
+            cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={groupByProject()}
+            onChange={(e) => setGroupByProject(e.currentTarget.checked)}
+          />
+          Group by project
+        </label>
+
         <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
           <button
             type="button"
@@ -390,68 +465,86 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
               </Show>
             }
           >
-            <div role="list" style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
-              <For each={filtered()}>
-                {(sess) => {
-                  const active = () => s().currentId === sess.id
-                  const isPinned = () => pinned().has(sess.id)
-                  const st = () => sessionStatus(sess, props.store)
-                  const cost = () => costLabel(sess)
-                  return (
-                    <div class={`session-row ${active() ? 'active' : ''}`} role="listitem">
-                      <button
-                        type="button"
-                        class="session-main"
-                        aria-current={active() ? 'true' : undefined}
-                        onClick={() => props.store.selectSession(sess.id)}
-                      >
-                        {/* Status + pin row */}
-                        <div
-                          style={{
-                            display: 'flex',
-                            'align-items': 'center',
-                            gap: '6px',
-                            'margin-bottom': '4px',
-                          }}
-                        >
-                          <span
-                            class="pill"
-                            style={{
-                              'font-size': 'var(--fs-2xs)',
-                              padding: '1px 6px',
-                              background: st().bg,
-                              color: st().color,
-                              border: `1px solid ${st().border}`,
-                              gap: '4px',
-                            }}
+            <Show
+              when={grouped()}
+              fallback={
+                <div role="list" style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+                  <For each={filtered()}>
+                    {(sess) => {
+                      const active = () => s().currentId === sess.id
+                      const isPinned = () => pinned().has(sess.id)
+                      const st = () => sessionStatus(sess, props.store)
+                      const cost = () => costLabel(sess)
+                      const proj = () => projectLabel(sess as { projectId?: string | null; cwd?: string | null })
+                      return (
+                        <div class={`session-row ${active() ? 'active' : ''}`} role="listitem">
+                          <button
+                            type="button"
+                            class="session-main"
+                            aria-current={active() ? 'true' : undefined}
+                            onClick={() => props.store.selectSession(sess.id)}
                           >
-                            <span
-                              class={`dot ${st().label === 'streaming' ? 'dot-pulse' : ''}`}
-                              style={{ background: st().color, width: '6px', height: '6px' }}
-                            />
-                            {st().label}
-                          </span>
-                          <Show when={sess.agent}>
-                            <span
-                              class="pill"
+                            {/* Status + pin row */}
+                            <div
                               style={{
-                                'font-size': 'var(--fs-2xs)',
-                                padding: '1px 6px',
-                                'font-family': 'var(--font-mono)',
+                                display: 'flex',
+                                'align-items': 'center',
+                                gap: '6px',
+                                'margin-bottom': '4px',
+                                'flex-wrap': 'wrap',
                               }}
                             >
-                              {sess.agent}
-                            </span>
-                          </Show>
-                          <Show when={isPinned()}>
-                            <span
-                              style={{ 'font-size': '10px', color: 'var(--accent)' }}
-                              title="Pinned"
-                            >
-                              📌
-                            </span>
-                          </Show>
-                        </div>
+                              <span
+                                class="pill"
+                                style={{
+                                  'font-size': 'var(--fs-2xs)',
+                                  padding: '1px 6px',
+                                  background: st().bg,
+                                  color: st().color,
+                                  border: `1px solid ${st().border}`,
+                                  gap: '4px',
+                                }}
+                              >
+                                <span
+                                  class={`dot ${st().label === 'streaming' ? 'dot-pulse' : ''}`}
+                                  style={{ background: st().color, width: '6px', height: '6px' }}
+                                />
+                                {st().label}
+                              </span>
+                              <span
+                                class="pill"
+                                title={(sess as { cwd?: string | null }).cwd ?? proj()}
+                                style={{
+                                  'font-size': 'var(--fs-2xs)',
+                                  padding: '1px 6px',
+                                  'font-family': 'var(--font-mono)',
+                                  background: 'var(--bg-surface)',
+                                  border: '1px solid var(--border)',
+                                }}
+                              >
+                                {proj()}
+                              </span>
+                              <Show when={sess.agent}>
+                                <span
+                                  class="pill"
+                                  style={{
+                                    'font-size': 'var(--fs-2xs)',
+                                    padding: '1px 6px',
+                                    'font-family': 'var(--font-mono)',
+                                  }}
+                                >
+                                  {sess.agent}
+                                </span>
+                              </Show>
+                              <Show when={isPinned()}>
+                                <span
+                                  style={{ 'font-size': '10px', color: 'var(--accent)' }}
+                                  title="Pinned"
+                                >
+                                  📌
+                                </span>
+                              </Show>
+                            </div>
                         <span
                           style={{
                             display: 'block',
@@ -566,7 +659,220 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                   )
                 }}
               </For>
-            </div>
+                </div>
+              }
+            >
+              <div style={{ display: 'flex', 'flex-direction': 'column', gap: '12px' }}>
+                <For each={grouped()!}>
+                  {([project, sessions]) => (
+                    <div>
+                      <div
+                        style={{
+                          'font-size': 'var(--fs-2xs)',
+                          'font-weight': '700',
+                          color: 'var(--fg-subtle)',
+                          'text-transform': 'uppercase',
+                          'letter-spacing': '0.04em',
+                          padding: '4px 4px 6px',
+                          'border-bottom': '1px solid var(--border)',
+                          'margin-bottom': '6px',
+                        }}
+                      >
+                        {project} · {sessions.length}
+                      </div>
+                      <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+                        <For each={sessions}>
+                          {(sess) => {
+                            const active = () => s().currentId === sess.id
+                            const isPinned = () => pinned().has(sess.id)
+                            const st = () => sessionStatus(sess, props.store)
+                            const cost = () => costLabel(sess)
+                            const proj = () =>
+                              projectLabel(sess as { projectId?: string | null; cwd?: string | null })
+                            return (
+                              <div class={`session-row ${active() ? 'active' : ''}`} role="listitem">
+                                <button
+                                  type="button"
+                                  class="session-main"
+                                  aria-current={active() ? 'true' : undefined}
+                                  onClick={() => props.store.selectSession(sess.id)}
+                                >
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      'align-items': 'center',
+                                      gap: '6px',
+                                      'margin-bottom': '4px',
+                                      'flex-wrap': 'wrap',
+                                    }}
+                                  >
+                                    <span
+                                      class="pill"
+                                      style={{
+                                        'font-size': 'var(--fs-2xs)',
+                                        padding: '1px 6px',
+                                        background: st().bg,
+                                        color: st().color,
+                                        border: `1px solid ${st().border}`,
+                                        gap: '4px',
+                                      }}
+                                    >
+                                      <span
+                                        class={`dot ${st().label === 'streaming' ? 'dot-pulse' : ''}`}
+                                        style={{ background: st().color, width: '6px', height: '6px' }}
+                                      />
+                                      {st().label}
+                                    </span>
+                                    <span
+                                      class="pill"
+                                      title={(sess as { cwd?: string | null }).cwd ?? proj()}
+                                      style={{
+                                        'font-size': 'var(--fs-2xs)',
+                                        padding: '1px 6px',
+                                        'font-family': 'var(--font-mono)',
+                                        background: 'var(--bg-surface)',
+                                        border: '1px solid var(--border)',
+                                      }}
+                                    >
+                                      {proj()}
+                                    </span>
+                                    <Show when={sess.agent}>
+                                      <span
+                                        class="pill"
+                                        style={{
+                                          'font-size': 'var(--fs-2xs)',
+                                          padding: '1px 6px',
+                                          'font-family': 'var(--font-mono)',
+                                        }}
+                                      >
+                                        {sess.agent}
+                                      </span>
+                                    </Show>
+                                    <Show when={isPinned()}>
+                                      <span style={{ 'font-size': '10px', color: 'var(--accent)' }} title="Pinned">
+                                        📌
+                                      </span>
+                                    </Show>
+                                  </div>
+                                  <span
+                                    style={{
+                                      display: 'block',
+                                      'font-size': 'var(--fs-sm)',
+                                      'font-weight': active() ? '600' : '500',
+                                      color: active() ? 'var(--fg)' : 'var(--fg-muted)',
+                                      overflow: 'hidden',
+                                      'text-overflow': 'ellipsis',
+                                      'white-space': 'nowrap',
+                                    }}
+                                  >
+                                    {sess.title || `Session ${sess.id.slice(0, 6)}`}
+                                  </span>
+                                  <span
+                                    style={{
+                                      display: 'block',
+                                      'margin-top': '3px',
+                                      'font-size': 'var(--fs-2xs)',
+                                      color: 'var(--fg-subtle)',
+                                    }}
+                                  >
+                                    {sess.model || 'default'} ·{' '}
+                                    {new Date(sess.updatedAt || sess.createdAt).toLocaleString()}
+                                  </span>
+                                  <span
+                                    style={{
+                                      display: 'block',
+                                      'margin-top': '2px',
+                                      'font-family': 'var(--font-mono)',
+                                      'font-size': 'var(--fs-2xs)',
+                                      color: 'var(--fg-faint)',
+                                      overflow: 'hidden',
+                                      'text-overflow': 'ellipsis',
+                                      'white-space': 'nowrap',
+                                    }}
+                                  >
+                                    {sess.id}
+                                  </span>
+                                  <Show when={cost()}>
+                                    {(() => {
+                                      const cap = props.store.state.costCap?.perSession
+                                      const over = cap != null && (sess.costUsd ?? 0) >= cap
+                                      return (
+                                        <span
+                                          title={
+                                            over
+                                              ? `Budget cap $${cap} exceeded`
+                                              : cap
+                                                ? `Cap $${cap}`
+                                                : undefined
+                                          }
+                                          style={{
+                                            display: 'inline-flex',
+                                            'align-items': 'center',
+                                            gap: '4px',
+                                            'margin-top': '4px',
+                                            'font-family': 'var(--font-mono)',
+                                            'font-size': 'var(--fs-2xs)',
+                                            color: over ? 'var(--danger)' : 'var(--fg-subtle)',
+                                            background: over
+                                              ? 'color-mix(in srgb, var(--danger) 10%, var(--bg-surface))'
+                                              : 'var(--bg-surface)',
+                                            border: `1px solid ${over ? 'var(--danger-border)' : 'var(--border)'}`,
+                                            'border-radius': 'var(--r-full)',
+                                            padding: '1px 6px',
+                                          }}
+                                        >
+                                          {cost()}
+                                          {over ? ' ⚠' : ''}
+                                        </span>
+                                      )
+                                    })()}
+                                  </Show>
+                                </button>
+                                <button
+                                  type="button"
+                                  class={`session-pin-btn ${isPinned() ? 'pinned' : ''}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    togglePin(sess.id)
+                                  }}
+                                  title={isPinned() ? 'Unpin session' : 'Pin session'}
+                                  aria-label={isPinned() ? 'Unpin session' : 'Pin session'}
+                                  aria-pressed={isPinned() ? 'true' : 'false'}
+                                  style={{ position: 'absolute', top: '8px', right: '32px' }}
+                                >
+                                  📌
+                                </button>
+                                <button
+                                  type="button"
+                                  class="session-del btn btn-ghost"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setConfirmDelete({
+                                      id: sess.id,
+                                      title: sess.title || sess.id.slice(0, 6),
+                                    })
+                                  }}
+                                  title="Delete session"
+                                  aria-label={`Delete session ${sess.title || sess.id.slice(0, 6)}`}
+                                  style={{
+                                    width: '28px',
+                                    height: '28px',
+                                    'min-height': '28px',
+                                    'min-width': '28px',
+                                  }}
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            )
+                          }}
+                        </For>
+                      </div>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
           </Show>
         </Show>
       </div>

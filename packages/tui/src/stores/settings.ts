@@ -179,15 +179,23 @@ export function createSettingsStore() {
     applyTheme(choice)
   }
 
-  async function loadConfig(): Promise<void> {
+  async function loadConfig(cwd?: string): Promise<void> {
     try {
-      const cfg = await rpc.getConfig()
+      const cfg = await rpc.getConfig(cwd)
       setState('config', cfg)
     } catch (e) {
       const msg = String((e as Error).message)
       if (e instanceof ApiError && e.status === 401) return
       if (msg.includes('401') || msg.includes('unauthorized')) return
       if (!msg.includes('404')) setState('error', (e as Error).message)
+    }
+  }
+
+  async function loadWorkspaceTree(cwd?: string): Promise<string[]> {
+    try {
+      return await rpc.getWorkspaceTree(cwd)
+    } catch {
+      return []
     }
   }
 
@@ -276,9 +284,9 @@ export function createSettingsStore() {
     }
   }
 
-  async function loadPermission(): Promise<void> {
+  async function loadPermission(cwd?: string): Promise<void> {
     try {
-      const perm = await rpc.getPermission()
+      const perm = await rpc.getPermission(cwd)
       setState('permission', perm as PermissionMatrix)
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) return
@@ -289,25 +297,29 @@ export function createSettingsStore() {
     }
   }
 
-  async function loadAll(): Promise<void> {
+  async function loadAll(cwd?: string): Promise<void> {
     setState({ loading: true, error: null })
     await Promise.all([
-      loadConfig(),
+      loadConfig(cwd),
       loadSchema(),
       loadMcp(),
       loadAgents(),
       loadCommands(),
       loadSkills(),
     ])
-    await Promise.all([loadProviders(), loadPermission()])
+    await Promise.all([loadProviders(), loadPermission(cwd)])
+    if (cwd) await loadWorkspaceTree(cwd)
     setState('loading', false)
   }
 
-  async function saveConfig(patch: Partial<MiraConfig>): Promise<MiraConfig | null> {
+  async function saveConfig(
+    patch: Partial<MiraConfig>,
+    cwd?: string,
+  ): Promise<MiraConfig | null> {
     setSaving(true)
     setState('error', null)
     try {
-      const updated = await rpc.patchConfig(patch)
+      const updated = await rpc.patchConfig(patch, cwd)
       setState('config', updated)
       return updated
     } catch (e) {
