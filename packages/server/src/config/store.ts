@@ -2,11 +2,14 @@ import type { MiraConfig } from '../types/index.js'
 import type { PartialMiraConfig } from './types.js'
 import { DEFAULT_CONFIG } from './defaults.js'
 import { z } from 'zod'
+import { existsSync, readFileSync } from 'node:fs'
 
+const configCache = new Map<string, MiraConfig>()
 let cached: MiraConfig | null = null
 
 export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
-  if (cached) return cached
+  if (configCache.has(cwd)) return configCache.get(cwd)!
+  if (cached && cwd === process.cwd()) return cached
   // Try mira.json, mira.jsonc, .mira/config.json
   const candidates = ['mira.json', 'mira.jsonc', '.mira/config.json']
   for (const name of candidates) {
@@ -45,21 +48,72 @@ export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
           features: mergeSection(DEFAULT_CONFIG.features, raw.features),
           tools: mergeSection(DEFAULT_CONFIG.tools, raw.tools),
         } as MiraConfig
+        configCache.set(cwd, cached)
+        if (cwd === process.cwd()) cached = configCache.get(cwd)!
         return cached
       }
     } catch {}
   }
   cached = DEFAULT_CONFIG
+  configCache.set(cwd, cached)
+  if (cwd === process.cwd()) cached = configCache.get(cwd)!
   return cached
 }
 
-export function getConfig(): MiraConfig {
+export function getConfig(cwd?: string): MiraConfig {
+  if (cwd) {
+    if (configCache.has(cwd)) return configCache.get(cwd)!
+    // Sync fallback: try to load config for cwd synchronously (for workspace tree)
+    try {
+      const candidates = ['mira.json', 'mira.jsonc', '.mira/config.json']
+      for (const name of candidates) {
+        const p = `${cwd}/${name}`
+        if (existsSync(p)) {
+          const raw = JSON.parse(readFileSync(p, 'utf-8')) as Partial<MiraConfig>
+          function mergeSection<T>(base: T | undefined, override: T | undefined): T | undefined {
+            if (override === undefined) return base
+            if (base === undefined) return override
+            if (typeof override !== 'object' || override === null || Array.isArray(override))
+              return override
+            if (typeof base !== 'object' || base === null || Array.isArray(base)) return override
+            return { ...(base as object), ...(override as object) } as T
+          }
+          const merged = {
+            ...DEFAULT_CONFIG,
+            ...raw,
+            permission:
+              mergeSection(DEFAULT_CONFIG.permission, raw.permission) ?? DEFAULT_CONFIG.permission,
+            mcp: mergeSection(DEFAULT_CONFIG.mcp, raw.mcp) ?? DEFAULT_CONFIG.mcp,
+            provider:
+              mergeSection(DEFAULT_CONFIG.provider, raw.provider) ?? DEFAULT_CONFIG.provider,
+            routing: mergeSection(
+              DEFAULT_CONFIG.routing,
+              (raw as Record<string, unknown>).routing as typeof DEFAULT_CONFIG.routing,
+            ),
+            subgateways: mergeSection(
+              DEFAULT_CONFIG.subgateways,
+              (raw as Record<string, unknown>).subgateways as typeof DEFAULT_CONFIG.subgateways,
+            ),
+            loop: mergeSection(DEFAULT_CONFIG.loop, raw.loop),
+            agents: mergeSection(DEFAULT_CONFIG.agents, raw.agents),
+            guardrails: mergeSection(DEFAULT_CONFIG.guardrails, raw.guardrails),
+            features: mergeSection(DEFAULT_CONFIG.features, raw.features),
+            tools: mergeSection(DEFAULT_CONFIG.tools, raw.tools),
+          } as MiraConfig
+          configCache.set(cwd, merged)
+          return merged
+        }
+      }
+    } catch {}
+    return cached ?? DEFAULT_CONFIG
+  }
   return cached ?? DEFAULT_CONFIG
 }
 
 /** Reset the cached config (used by tests and hot-reload). */
 export function resetConfigCache(): void {
   cached = null
+  configCache.clear()
 }
 
 // ── Layer helpers ────────────────────────────────────────────────────
@@ -289,6 +343,7 @@ export async function saveConfig(
   const merged = mergePartialMiraConfig(existing, parsed)
   await Bun.write(targetPath, JSON.stringify(merged, null, 2) + '\n')
   cached = null
+  configCache.delete(cwd)
   return loadConfig(cwd)
 }
 
@@ -304,6 +359,7 @@ export async function removeMcpFromConfig(name: string, cwd = process.cwd()): Pr
     delete existing.mcp[name]
     await Bun.write(targetPath, JSON.stringify(existing, null, 2) + '\n')
     cached = null
+    configCache.delete(cwd)
     await loadConfig(cwd)
   }
 }
@@ -320,6 +376,7 @@ export async function removeProviderFromConfig(name: string, cwd = process.cwd()
     delete existing.provider[name]
     await Bun.write(targetPath, JSON.stringify(existing, null, 2) + '\n')
     cached = null
+    configCache.delete(cwd)
     await loadConfig(cwd)
   }
 }

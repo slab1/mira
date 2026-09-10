@@ -51,9 +51,7 @@
     }
   ],
   "artifacts": {
-    "files_created": [
-      "shared/simulation_sandbox.ts"
-    ],
+    "files_created": ["shared/simulation_sandbox.ts"],
     "files_modified": [
       "packages/server/src/learning/ledger.ts",
       "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -86,7 +84,10 @@
       "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
       "packages/tui/src/components/Inspector.tsx:70-89 grouped history same as HistoryView + toast + line counts, consistent",
       "packages/tui/src/stores/session.ts:586-589 stopStream now void rpc.abortPrompt(id).catch(()=>{}) + abort?.abort() + setState(streaming:false)",
-      "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))"
+      "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))",
+      "packages/server/src/routes/workspace.ts:63-82 project-aware with cwd/projectId/limit/cursor/includeDirs, sanitizePath+isPathAllowed with real allowedRoots, pagination, return {files:[{path,isDir,size,mtime}], truncated, cwd}",
+      "packages/server/src/guardrails/index.ts:105 isPathAllowed per-project roots fix normalize ./ prefix, enforce logic correct for prod vs dev",
+      "packages/server/src/config/store.ts:328 getConfig(cwd) per-project cache with sync fallback, getConfigLayers already supports 6 layers"
     ]
   },
   "checkpoints": {
@@ -104,7 +105,7 @@
       "last_updated": "2026-09-08T09:04:07.720317+00:00"
     }
   },
-  "last_updated": "2026-09-10T08:35:23.513735+00:00",
+  "last_updated": "2026-09-10T10:35:44.628821+00:00",
   "workflow_trace": [
     {
       "agent": "fixer",
@@ -112,11 +113,7 @@
       "task": "P1 MCP CI flake Legacy SSE listen failed (HTTP 200)",
       "status": "completed",
       "timestamp": "2026-09-09T18:05:26.207624+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -139,11 +136,7 @@
       "task": "P1 MCP CI flake Legacy SSE listen failed (HTTP 200)",
       "status": "completed",
       "timestamp": "2026-09-09T19:30:00.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -165,11 +158,7 @@
       "task": "P1 workspace @ mentions \u2014 real workspace tree via GET /workspace/tree",
       "status": "completed",
       "timestamp": "2026-09-09T19:06:28.241103+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/routes/workspace.ts (new) \u2014 GET /workspace/tree via Bun.Glob('**/*') + isPathAllowed/sanitizePath, .gitignore + defaults (.git, node_modules, dist, .turbo, data, *.db, .mira, coverage), sorted 500",
@@ -191,11 +180,7 @@
       "task": "P1 CORS MIRA_ALLOW_LOCALHOST gate",
       "status": "completed",
       "timestamp": "2026-09-09T20:05:06.509550+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/middleware/index.ts:36-64 corsOrigin function with MIRA_ALLOW_LOCALHOST gate + normalizedAllowSet + header-smuggling protection",
@@ -215,11 +200,7 @@
       "task": "P2 queue rail reorder/cancel \u2014 QueueRail polling + App.tsx placement + api/client verification",
       "status": "completed",
       "timestamp": "2026-09-09T20:58:58.684555+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/web/src/components/QueueRail.tsx:1-35 polling 3s visibility-aware onCleanup + \u2191\u2193 reorder and \u2715 cancel per-item (existing styling)",
@@ -240,12 +221,7 @@
       "task": "TUI vs web parity crosscheck @80a6e743 (8 fixes)",
       "status": "completed",
       "timestamp": "2026-09-09T21:44:43Z",
-      "stages": [
-        "parse_context",
-        "examine_tui",
-        "examine_web",
-        "verify"
-      ],
+      "stages": ["parse_context", "examine_tui", "examine_web", "verify"],
       "verdict": "REVISE",
       "artifacts": {
         "report": "/tmp/report_tui_crosscheck.md",
@@ -261,11 +237,7 @@
       "task": "Fix CI gaps.test.ts auth 401 \u2014 GET /providers hasKey",
       "status": "completed",
       "timestamp": "2026-09-09T22:30:00.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/e2e/gaps.test.ts: beforeAll MIRA_TOKEN=test-gaps-token deterministic + AUTH headers on GET /providers, POST /providers/:id/test, GET /terminal, GET /health, WS /terminal + WS vscode-webview (header + auth message fallback), WS timeout 15s",
@@ -288,11 +260,7 @@
       "task": "TUI P0 slash preload + skeleton + P1 workspace @",
       "status": "completed",
       "timestamp": "2026-09-10T06:00:24.509200+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/App.tsx:95-96 slashVisible fix + preload createEffect + workspace @ (MOCK_FILES, workspaceFiles, fetchWorkspaceFiles, atVisible/atFiltered, AtMentionAutocomplete, onInput/onFocus/onKeyDown)",
@@ -313,11 +281,7 @@
       "task": "TUI P1 cost + queue \u2014 per-session cost/cap bar + queue polling + proxy",
       "status": "completed",
       "timestamp": "2026-09-10T06:33:51.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/rpc/client.ts:13-23 Session costUsd/tokensIn/tokensOut",
@@ -341,11 +305,7 @@
       "task": "P1 auth gaps ora-3: CORS WS vs HTTP, api_keys schema, placeholder token",
       "status": "completed",
       "timestamp": "2026-09-10T07:25:25.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/storage/schema.ts: apiKeys table added (key TEXT PK, owner TEXT, created_at INTEGER, created_by TEXT DEFAULT default) + index api_keys_owner_idx, schema export includes apiKeys",
@@ -370,11 +330,7 @@
       "task": "TUI P2 history grouping + abortPrompt",
       "status": "completed",
       "timestamp": "2026-09-10T07:40:00.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
@@ -396,11 +352,7 @@
       "task": "TUI P2 history grouping + abortPrompt",
       "status": "completed",
       "timestamp": "2026-09-10T08:35:23.513735+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
@@ -415,6 +367,28 @@
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ed9ad5"
       },
       "outcome": "P2 fix complete: HistoryView + Inspector now grouped by messageID (__no_message__ sentinel) with per-group header (msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> revertSession + refetch + toast), per-file card (path+time+edit/new file+diff -> getSnapshot -> DiffViewer before/after + line-count delta); rpc abortPrompt added (POST /session/:id/abort catch 404), store stopStream now fire-and-forget abortPrompt + abort + streaming:false; typecheck + vite build green, minimal diff preserved design, no web/server/mcp/slash/workspace/cost/queue touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_ea1b0b",
+      "task": "P0-2 workspace tree project-aware + prod bug",
+      "status": "completed",
+      "timestamp": "2026-09-10T10:35:44.628986+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/routes/workspace.ts:63-82 project-aware with cwd/projectId/limit/cursor/includeDirs, sanitizePath+isPathAllowed with real allowedRoots, pagination, return {files:[{path,isDir,size,mtime}], truncated, cwd}",
+          "packages/server/src/guardrails/index.ts:105 isPathAllowed per-project roots fix normalize ./ prefix, enforce logic correct for prod vs dev",
+          "packages/server/src/config/store.ts:328 getConfig(cwd) per-project cache with sync fallback, getConfigLayers already supports 6 layers"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (server tsc --noEmit pass)",
+          "workspace": "GET /workspace/tree?cwd=/tmp/other_test returns 3 files with {path,isDir,size,mtime}, prod with CORS_ORIGINS returns 277 files (not 0), limit/cursor/includeDirs pagination works",
+          "config": "bun test packages/server/src/config/config.test.ts 18 pass"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ea1b0b"
+      },
+      "outcome": "P0-2 fix complete: workspace tree now project-aware (cwd/projectId query, per-project allowedRoots via getConfig(cwd), pagination limit/cursor/includeDirs, return {files:[{path,isDir,size,mtime}], truncated, cwd}), prod bug fixed (real allowedRoots not []), guardrails isPathAllowed fixed for ./ prefix, config store per-project cache; typecheck green, workspace verified, minimal diff preserved design"
     }
   ],
   "findings": {
@@ -522,6 +496,20 @@
         "fix": "HistoryView + Inspector grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header + rewind button (revertSession + refetch + toast), per-file card diff -> getSnapshot -> DiffViewer before/after + line-count delta; rpc abortPrompt POST /session/:id/abort catch 404; store stopStream void rpc.abortPrompt + abort + streaming:false",
         "verify": "bun run typecheck (tui) tsc --noEmit exit 0, vite build 39 modules 339.16kB gzip 85.83kB",
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ed9ad5"
+      },
+      {
+        "run_id": "run_20260909_ea1b0b",
+        "at": "2026-09-10T10:35:44.629020+00:00",
+        "task": "P0-2 workspace tree project-aware + prod bug",
+        "files_modified": [
+          "packages/server/src/routes/workspace.ts:63-82 project-aware with cwd/projectId/limit/cursor/includeDirs, sanitizePath+isPathAllowed with real allowedRoots, pagination, return {files:[{path,isDir,size,mtime}], truncated, cwd}",
+          "packages/server/src/guardrails/index.ts:105 isPathAllowed per-project roots fix normalize ./ prefix, enforce logic correct for prod vs dev",
+          "packages/server/src/config/store.ts:328 getConfig(cwd) per-project cache with sync fallback, getConfigLayers already supports 6 layers"
+        ],
+        "root_cause": "workspace.ts:63 no query, cwd=process.cwd(), isPathAllowed(file, []) with [] \u2192 prod returns 0 files (fail-closed bug, guardrails:106-109 if(roots.length===0 && prod) return false); store.ts:8 single cwd cache; guardrails isPathAllowed mishandled ./ prefix (./data vs /data)",
+        "fix": "workspace.ts:63-82 accept ?cwd=&projectId=&limit&cursor&includeDirs (validate via sanitizePath, default to process.cwd(), pass allowedRoots from getConfig(cwd), pagination, return {files:[{path,isDir,size,mtime}], truncated, cwd}); guardrails/index.ts:105 fix normalize ./ prefix and enforce logic; config/store.ts:328 per-project cache Map + getConfig(cwd) sync fallback, getConfigLayers already supports 6 layers",
+        "verify": "turbo typecheck 6 successful, GET /workspace/tree?cwd=/tmp/other_test returns 3 files, prod with CORS_ORIGINS returns 277 files (not 0), limit/cursor/includeDirs pagination works, bun test config 18 pass",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ea1b0b"
       }
     ]
   }
