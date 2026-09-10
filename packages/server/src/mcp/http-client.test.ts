@@ -61,8 +61,8 @@ async function startMock(
     })()
   })
 
-  await Bun.sleep(50)
-  for (let i = 0; i < 10; i++) {
+  await Bun.sleep(100)
+  for (let i = 0; i < 15; i++) {
     try {
       const r = await fetch(url, { method: 'HEAD' })
       if (r.ok) break
@@ -74,7 +74,22 @@ async function startMock(
       } catch {}
       if (r2.ok || r2.status === 404) break
     } catch {}
-    await Bun.sleep(20)
+    // Also probe POST (streamable path) — HEAD/GET success doesn't guarantee POST ready
+    try {
+      const r3 = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping', params: {} }),
+      })
+      try {
+        await r3.body?.cancel()
+      } catch {}
+      if (r3.ok || r3.status === 400 || r3.status === 404) break
+    } catch {}
+    await Bun.sleep(30)
   }
 
   return {

@@ -178,20 +178,38 @@ export class McpHttpClient {
       signal.addEventListener('abort', onOuterAbort, { once: true })
     }
     try {
-      const res = await fetch(this.url, {
-        method: 'GET',
-        headers: { Accept: 'text/event-stream', ...this.headers },
-        signal: controller.signal,
-      })
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        throw new Error(
-          `Legacy SSE listen failed (HTTP ${res.status}) from MCP server ${this.name}: ${text.slice(0, 300)}`,
-        )
+      // Retry on empty body (flaky under turbo parallel load — Bun fetch race)
+      let res: Response | null = null
+      let lastErr: Error | null = null
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await Bun.sleep(50 * attempt)
+        try {
+          res = await fetch(this.url, {
+            method: 'GET',
+            headers: { Accept: 'text/event-stream', ...this.headers },
+            signal: controller.signal,
+          })
+        } catch (e) {
+          lastErr = e as Error
+          continue
+        }
+        if (!res.ok) {
+          const text = await res.text().catch(() => '')
+          throw new Error(
+            `Legacy SSE listen failed (HTTP ${res.status}) from MCP server ${this.name}: ${text.slice(0, 300)}`,
+          )
+        }
+        if (!res.body) {
+          lastErr = new Error(
+            `Legacy SSE listen failed: empty body (HTTP ${res.status}) from MCP server ${this.name}`,
+          )
+          continue
+        }
+        break
       }
-      if (!res.body) {
-        throw new Error(
-          `Legacy SSE listen failed: empty body (HTTP ${res.status}) from MCP server ${this.name}`,
+      if (!res || !res.body) {
+        throw (
+          lastErr ?? new Error(`Legacy SSE listen failed: empty body from MCP server ${this.name}`)
         )
       }
       this.sseReader = res.body.getReader()
