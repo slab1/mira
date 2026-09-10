@@ -22,6 +22,8 @@ interface SessionRow {
   tokensIn: number | null
   tokensOut: number | null
   costUsd: number | null
+  cwd: string | null
+  projectId: string | null
 }
 
 /** Zod schema for POST /session body validation. */
@@ -29,6 +31,8 @@ const createSessionSchema = z.object({
   model: z.string().min(1).optional(),
   title: z.string().max(200).optional(),
   agent: z.string().min(1).max(100).optional(),
+  cwd: z.string().optional(),
+  projectId: z.string().optional(),
 })
 
 function requireId(c: Context): string | null {
@@ -74,6 +78,8 @@ export function mountSessionRoutes(app: Hono<{ Variables: { requestId: string } 
       tokensIn: (rawSession as Partial<SessionRow>).tokensIn ?? null,
       tokensOut: (rawSession as Partial<SessionRow>).tokensOut ?? null,
       costUsd: (rawSession as Partial<SessionRow>).costUsd ?? null,
+      cwd: (rawSession as Partial<SessionRow>).cwd ?? null,
+      projectId: (rawSession as Partial<SessionRow>).projectId ?? null,
     }
     deps.sessionOwnerCache.set(session.id, { owner: session.ownerID ?? null, ts: Date.now() })
     bus.publish({ type: "session.created", payload: JSON.parse(JSON.stringify(session)) as JsonValue, timestamp: Date.now() })

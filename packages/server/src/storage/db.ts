@@ -62,7 +62,9 @@ export async function migrate(db: MiraDB) {
       provider TEXT NOT NULL DEFAULT 'openrouter',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
-      parent_id TEXT
+      parent_id TEXT,
+      cwd TEXT,
+      project_id TEXT
     );
     CREATE INDEX IF NOT EXISTS sessions_updated_idx ON sessions(updated_at);
 
@@ -207,6 +209,9 @@ export async function migrate(db: MiraDB) {
   addColumn("sessions", "cost_usd", "REAL")
   addColumn("sessions", "owner_id", "TEXT")
   addColumn("sessions", "agent", "TEXT")
+  addColumn("sessions", "cwd", "TEXT")
+  addColumn("sessions", "project_id", "TEXT")
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS sessions_project_id_idx ON sessions(project_id);`) } catch {}
   // H2-1 Memory v2: temporal decay + entity graph columns
   addColumn("knowledge_entries", "tier", "TEXT")
   addColumn("knowledge_entries", "source", "TEXT")

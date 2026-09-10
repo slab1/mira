@@ -51,7 +51,9 @@
     }
   ],
   "artifacts": {
-    "files_created": ["shared/simulation_sandbox.ts"],
+    "files_created": [
+      "shared/simulation_sandbox.ts"
+    ],
     "files_modified": [
       "packages/server/src/learning/ledger.ts",
       "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -87,7 +89,15 @@
       "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))",
       "packages/server/src/routes/workspace.ts:63-82 project-aware with cwd/projectId/limit/cursor/includeDirs, sanitizePath+isPathAllowed with real allowedRoots, pagination, return {files:[{path,isDir,size,mtime}], truncated, cwd}",
       "packages/server/src/guardrails/index.ts:105 isPathAllowed per-project roots fix normalize ./ prefix, enforce logic correct for prod vs dev",
-      "packages/server/src/config/store.ts:328 getConfig(cwd) per-project cache with sync fallback, getConfigLayers already supports 6 layers"
+      "packages/server/src/config/store.ts:328 getConfig(cwd) per-project cache with sync fallback, getConfigLayers already supports 6 layers",
+      "packages/server/src/storage/schema.ts:11 cwd: text(\"cwd\"), projectId: text(\"project_id\") + index sessions_project_id_idx",
+      "packages/server/src/storage/db.ts:52-210 CREATE TABLE sessions cwd/project_id + addColumn cwd/project_id + index",
+      "packages/server/src/routes/session.ts:28 createSessionSchema cwd/projectId + SessionRow cwd/projectId",
+      "packages/server/src/session/prompt.ts:300 createSession cwd/projectId + fork/subagent inherit + streamResponse buildSystemPrompt cwd + loadContext/loadMemoryBank cwd + tools.execute cwd",
+      "packages/server/src/tools/registry.ts:200 execute cwd fallback ctx.cwd ?? process.cwd()",
+      "packages/server/src/tools/glob.ts:20 glob/grep use ctx.cwd",
+      "packages/server/src/tools/bash.ts:25 workdir fallback ctx.cwd",
+      "packages/server/src/config/prompt.ts:2 buildSystemPrompt(cwd) already exists, callers now pass session.cwd"
     ]
   },
   "checkpoints": {
@@ -105,7 +115,7 @@
       "last_updated": "2026-09-08T09:04:07.720317+00:00"
     }
   },
-  "last_updated": "2026-09-10T10:35:44.628821+00:00",
+  "last_updated": "2026-09-10T11:08:50.872685+00:00",
   "workflow_trace": [
     {
       "agent": "fixer",
@@ -113,7 +123,11 @@
       "task": "P1 MCP CI flake Legacy SSE listen failed (HTTP 200)",
       "status": "completed",
       "timestamp": "2026-09-09T18:05:26.207624+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -136,7 +150,11 @@
       "task": "P1 MCP CI flake Legacy SSE listen failed (HTTP 200)",
       "status": "completed",
       "timestamp": "2026-09-09T19:30:00.000000+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -158,7 +176,11 @@
       "task": "P1 workspace @ mentions \u2014 real workspace tree via GET /workspace/tree",
       "status": "completed",
       "timestamp": "2026-09-09T19:06:28.241103+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/routes/workspace.ts (new) \u2014 GET /workspace/tree via Bun.Glob('**/*') + isPathAllowed/sanitizePath, .gitignore + defaults (.git, node_modules, dist, .turbo, data, *.db, .mira, coverage), sorted 500",
@@ -180,7 +202,11 @@
       "task": "P1 CORS MIRA_ALLOW_LOCALHOST gate",
       "status": "completed",
       "timestamp": "2026-09-09T20:05:06.509550+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/middleware/index.ts:36-64 corsOrigin function with MIRA_ALLOW_LOCALHOST gate + normalizedAllowSet + header-smuggling protection",
@@ -200,7 +226,11 @@
       "task": "P2 queue rail reorder/cancel \u2014 QueueRail polling + App.tsx placement + api/client verification",
       "status": "completed",
       "timestamp": "2026-09-09T20:58:58.684555+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/web/src/components/QueueRail.tsx:1-35 polling 3s visibility-aware onCleanup + \u2191\u2193 reorder and \u2715 cancel per-item (existing styling)",
@@ -221,7 +251,12 @@
       "task": "TUI vs web parity crosscheck @80a6e743 (8 fixes)",
       "status": "completed",
       "timestamp": "2026-09-09T21:44:43Z",
-      "stages": ["parse_context", "examine_tui", "examine_web", "verify"],
+      "stages": [
+        "parse_context",
+        "examine_tui",
+        "examine_web",
+        "verify"
+      ],
       "verdict": "REVISE",
       "artifacts": {
         "report": "/tmp/report_tui_crosscheck.md",
@@ -237,7 +272,11 @@
       "task": "Fix CI gaps.test.ts auth 401 \u2014 GET /providers hasKey",
       "status": "completed",
       "timestamp": "2026-09-09T22:30:00.000000+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/e2e/gaps.test.ts: beforeAll MIRA_TOKEN=test-gaps-token deterministic + AUTH headers on GET /providers, POST /providers/:id/test, GET /terminal, GET /health, WS /terminal + WS vscode-webview (header + auth message fallback), WS timeout 15s",
@@ -260,7 +299,11 @@
       "task": "TUI P0 slash preload + skeleton + P1 workspace @",
       "status": "completed",
       "timestamp": "2026-09-10T06:00:24.509200+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/App.tsx:95-96 slashVisible fix + preload createEffect + workspace @ (MOCK_FILES, workspaceFiles, fetchWorkspaceFiles, atVisible/atFiltered, AtMentionAutocomplete, onInput/onFocus/onKeyDown)",
@@ -281,7 +324,11 @@
       "task": "TUI P1 cost + queue \u2014 per-session cost/cap bar + queue polling + proxy",
       "status": "completed",
       "timestamp": "2026-09-10T06:33:51.000000+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/rpc/client.ts:13-23 Session costUsd/tokensIn/tokensOut",
@@ -305,7 +352,11 @@
       "task": "P1 auth gaps ora-3: CORS WS vs HTTP, api_keys schema, placeholder token",
       "status": "completed",
       "timestamp": "2026-09-10T07:25:25.000000+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/storage/schema.ts: apiKeys table added (key TEXT PK, owner TEXT, created_at INTEGER, created_by TEXT DEFAULT default) + index api_keys_owner_idx, schema export includes apiKeys",
@@ -330,7 +381,11 @@
       "task": "TUI P2 history grouping + abortPrompt",
       "status": "completed",
       "timestamp": "2026-09-10T07:40:00.000000+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
@@ -352,7 +407,11 @@
       "task": "TUI P2 history grouping + abortPrompt",
       "status": "completed",
       "timestamp": "2026-09-10T08:35:23.513735+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
@@ -374,7 +433,11 @@
       "task": "P0-2 workspace tree project-aware + prod bug",
       "status": "completed",
       "timestamp": "2026-09-10T10:35:44.628986+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/routes/workspace.ts:63-82 project-aware with cwd/projectId/limit/cursor/includeDirs, sanitizePath+isPathAllowed with real allowedRoots, pagination, return {files:[{path,isDir,size,mtime}], truncated, cwd}",
@@ -389,6 +452,40 @@
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ea1b0b"
       },
       "outcome": "P0-2 fix complete: workspace tree now project-aware (cwd/projectId query, per-project allowedRoots via getConfig(cwd), pagination limit/cursor/includeDirs, return {files:[{path,isDir,size,mtime}], truncated, cwd}), prod bug fixed (real allowedRoots not []), guardrails isPathAllowed fixed for ./ prefix, config store per-project cache; typecheck green, workspace verified, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_iebhd3",
+      "task": "P0-1 Add projectId/cwd to sessions + thread through prompt/tools",
+      "status": "completed",
+      "timestamp": "2026-09-10T11:08:50.872685+00:00",
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/storage/schema.ts:11 cwd: text(\"cwd\"), projectId: text(\"project_id\") + index sessions_project_id_idx",
+          "packages/server/src/storage/db.ts:52-210 CREATE TABLE sessions cwd/project_id + addColumn cwd/project_id + index",
+          "packages/server/src/routes/session.ts:28 createSessionSchema cwd/projectId + SessionRow cwd/projectId",
+          "packages/server/src/session/prompt.ts:300 createSession cwd/projectId + fork/subagent inherit + streamResponse buildSystemPrompt cwd + loadContext/loadMemoryBank cwd + tools.execute cwd",
+          "packages/server/src/tools/registry.ts:200 execute cwd fallback ctx.cwd ?? process.cwd()",
+          "packages/server/src/tools/glob.ts:20 glob/grep use ctx.cwd",
+          "packages/server/src/tools/bash.ts:25 workdir fallback ctx.cwd",
+          "packages/server/src/config/prompt.ts:2 buildSystemPrompt(cwd) already exists, callers now pass session.cwd"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful, server tsc --noEmit exit 0",
+          "gaps": "bun test gaps.test.ts 7 pass 0 fail 17.69s",
+          "queue": "bun test queue.test.ts 1 pass 0 fail 14.68s",
+          "server_e2e": "7 pass 1 fail LIVE expected 20.44s",
+          "mcp_isolated": "11 pass 0 fail 56.82s",
+          "cwd_test": "ALL CHECKS PASSED: schema cwd/project_id + index, createSession persist, buildSystemPrompt cwd, loadMemoryBank cwd, tools cwd, session route cwd/projectId"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_iebhd3"
+      },
+      "outcome": "P0-1 fix complete: sessions table now has cwd/project_id with index, migrate idempotent (CREATE TABLE + addColumn + index), session route accepts cwd/projectId, prompt createSession persists and threads cwd through buildSystemPrompt/loadMemoryBank/tools.execute (fork/subagent inherit), registry ensures ctx.cwd fallback, glob/grep/bash use ctx.cwd; typecheck green, gaps/queue/server_e2e pass, cwd functional test ALL CHECKS PASSED, minimal diff preserved design, no workspace/guardrails/web/tui touched"
     }
   ],
   "findings": {
@@ -510,6 +607,25 @@
         "fix": "workspace.ts:63-82 accept ?cwd=&projectId=&limit&cursor&includeDirs (validate via sanitizePath, default to process.cwd(), pass allowedRoots from getConfig(cwd), pagination, return {files:[{path,isDir,size,mtime}], truncated, cwd}); guardrails/index.ts:105 fix normalize ./ prefix and enforce logic; config/store.ts:328 per-project cache Map + getConfig(cwd) sync fallback, getConfigLayers already supports 6 layers",
         "verify": "turbo typecheck 6 successful, GET /workspace/tree?cwd=/tmp/other_test returns 3 files, prod with CORS_ORIGINS returns 277 files (not 0), limit/cursor/includeDirs pagination works, bun test config 18 pass",
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ea1b0b"
+      },
+      {
+        "run_id": "run_20260909_iebhd3",
+        "at": "2026-09-10T11:08:50.872685+00:00",
+        "task": "P0-1 Add projectId/cwd to sessions + thread through prompt/tools",
+        "files_modified": [
+          "packages/server/src/storage/schema.ts:11 cwd: text(\"cwd\"), projectId: text(\"project_id\") + index sessions_project_id_idx",
+          "packages/server/src/storage/db.ts:52-210 CREATE TABLE sessions cwd/project_id + addColumn cwd/project_id + index",
+          "packages/server/src/routes/session.ts:28 createSessionSchema cwd/projectId + SessionRow cwd/projectId",
+          "packages/server/src/session/prompt.ts:300 createSession cwd/projectId + fork/subagent inherit + streamResponse buildSystemPrompt cwd + loadContext/loadMemoryBank cwd + tools.execute cwd",
+          "packages/server/src/tools/registry.ts:200 execute cwd fallback ctx.cwd ?? process.cwd()",
+          "packages/server/src/tools/glob.ts:20 glob/grep use ctx.cwd",
+          "packages/server/src/tools/bash.ts:25 workdir fallback ctx.cwd",
+          "packages/server/src/config/prompt.ts:2 buildSystemPrompt(cwd) already exists, callers now pass session.cwd"
+        ],
+        "root_cause": "sessions table lacked cwd/projectId, prompt/tools used process.cwd() globally, no per-session workspace isolation, buildSystemPrompt/loadMemoryBank/tools ignored session cwd",
+        "fix": "schema.ts add cwd/projectId + index, db.ts CREATE TABLE + addColumn + index idempotent (fixed initial CREATE INDEX failure on old DBs), session.ts SessionRow + Zod schema + route pass-through, prompt.ts createSession persist + fork/subagent inherit + streamResponse/buildSystemPrompt cwd + loadContext/loadMemoryBank cwd + tools.execute cwd, registry cwd fallback, glob/grep/bash use ctx.cwd, config/prompt already cwd-aware",
+        "verify": "turbo typecheck 6 successful, gaps 7 pass, queue 1 pass, server_e2e 7 pass LIVE fail expected, mcp isolated 11 pass, cwd functional test ALL CHECKS PASSED (schema, persist, buildSystemPrompt, loadMemoryBank, tools, route)",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_iebhd3"
       }
     ]
   }

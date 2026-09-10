@@ -203,6 +203,7 @@ export class ToolRegistry {
     const fullCtx: ToolContext = {
       ...this.defaultCtx,
       ...ctx,
+      cwd: ctx.cwd ?? this.defaultCtx.cwd ?? process.cwd(),
       subagentRunner: ctx.subagentRunner ?? this.subagentRunner,
     }
 

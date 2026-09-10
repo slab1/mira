@@ -19,10 +19,10 @@ export const bashTool = {
   category: "execution",
   needsPermission: true,
   schema: bashSchema,
-  async execute({ command, timeout = 30_000, workdir }, _ctx) {
+  async execute({ command, timeout = 30_000, workdir }, ctx) {
     // Security: block obviously dangerous patterns early (permission layer does deeper check)
     const proc = Bun.spawn(["bash", "-c", command], {
-      cwd: workdir,
+      cwd: workdir ?? ctx.cwd ?? process.cwd(),
       stdout: "pipe",
       stderr: "pipe",
       timeout,

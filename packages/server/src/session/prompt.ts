@@ -303,6 +303,8 @@ export class SessionPrompt {
     parentID?: string
     agent?: string
     ownerID?: string | null
+    cwd?: string
+    projectId?: string
   }) {
     const id = crypto.randomUUID()
     const now = Date.now()
@@ -333,8 +335,10 @@ export class SessionPrompt {
       tokensIn: null as number | null,
       tokensOut: null as number | null,
       costUsd: null as number | null,
+      cwd: input.cwd ?? null as string | null,
+      projectId: input.projectId ?? null as string | null,
     }
-    await this.deps.db.insert(this.deps.db.schema.sessions).values(session)
+    await this.deps.db.insert(this.deps.db.schema.sessions).values(session as never)
     return session
   }
 
@@ -430,6 +434,8 @@ export class SessionPrompt {
       model: source.model,
       parentID: source.id,
       agent: source.agent ?? undefined,
+      cwd: (source as unknown as { cwd?: string | null }).cwd ?? undefined,
+      projectId: (source as unknown as { projectId?: string | null }).projectId ?? undefined,
     })
 
     const now = Date.now()
@@ -482,11 +488,21 @@ export class SessionPrompt {
         agent: opts.agent ?? null,
         sessionModel: undefined,
       }) || undefined
+    // Inherit cwd/projectId from parent for workspace-aware subagents
+    let parentCwd: string | undefined
+    let parentProjectId: string | undefined
+    try {
+      const parent = await this.getSession(opts.parentID) as unknown as { cwd?: string | null; projectId?: string | null } | undefined
+      parentCwd = parent?.cwd ?? undefined
+      parentProjectId = parent?.projectId ?? undefined
+    } catch {}
     const s = await this.createSession({
       title: opts.title ?? `↳ ${opts.prompt.slice(0, 48)}`,
       parentID: opts.parentID,
       agent: opts.agent,
       model: effectiveModel,
+      cwd: parentCwd,
+      projectId: parentProjectId,
     })
     let text = ''
     // No-op sink: collect only the final text (no SSE transport needed)
@@ -507,7 +523,7 @@ export class SessionPrompt {
       const runModel = effectiveModel ?? s.model
       // Agent persona for subagent loop
       const persona = opts.agent ? getAgentTemplates()[opts.agent]?.system : undefined
-      const basePrompt = await buildSystemPrompt()
+      const basePrompt = await buildSystemPrompt((s as unknown as { cwd?: string | null }).cwd ?? parentCwd ?? process.cwd())
       const systemPrompt = persona ? `${persona}\n\n${basePrompt}` : basePrompt
       await this.runLoop({
         sessionID: s.id,
@@ -551,7 +567,7 @@ export class SessionPrompt {
       agent: effectiveAgent,
       sessionModel: session.model,
     })
-    const basePrompt = await buildSystemPrompt()
+    const basePrompt = await buildSystemPrompt((session as unknown as { cwd?: string | null }).cwd ?? process.cwd())
     // Agent persona (researcher/coder/reviewer) prepended when set on the session or per-turn
     const persona = effectiveAgent ? getAgentTemplates()[effectiveAgent]?.system : undefined
     const systemPrompt = persona ? `${persona}\n\n${basePrompt}` : basePrompt
@@ -693,6 +709,12 @@ export class SessionPrompt {
 
     // Load conversation history
     let messages = await this.loadContext(sessionID, systemPrompt)
+    // Resolve session cwd for tool execution (P0-1: thread cwd through prompt/tools)
+    let sessionCwd: string | undefined
+    try {
+      const s = await this.getSession(sessionID) as unknown as { cwd?: string | null } | undefined
+      sessionCwd = s?.cwd ?? undefined
+    } catch {}
 
     // Fetch session base cost for perSession cap (session tokens + current run)
     let sessionBaseCost = 0
@@ -992,6 +1014,7 @@ export class SessionPrompt {
             sessionID,
             messageID: assistantMessageID,
             signal: opts.signal,
+            cwd: sessionCwd ?? process.cwd(),
           })
           send('tool_result', { toolCallID: tc.id, name: tc.name, result })
         } catch (err) {
@@ -1123,12 +1146,14 @@ export class SessionPrompt {
 
   private async loadContext(sessionID: string, systemPrompt: string): Promise<LoopMessage[]> {
     const messages = await this.getMessages(sessionID)
+    const session = await this.getSession(sessionID) as unknown as { cwd?: string | null } | undefined
+    const sessionCwd = session?.cwd ?? process.cwd()
     // Hierarchical memory: systemPrompt already contains AGENTS.md via buildSystemPrompt (project instructions)
     // This method wires L1 working (messages) + L2 episodic (todos/findings) + L3 semantic (knowledge) + procedural (skills) + Memory Bank (Kilo K3)
     const context: LoopMessage[] = [{ role: 'system', content: systemPrompt }]
     // Memory Bank (Kilo K3 parity) — flat file notes that survive restarts, injected before other memory
     try {
-      const bank = await this.loadMemoryBank()
+      const bank = await this.loadMemoryBank(sessionCwd)
       if (bank) context.push({ role: 'system', content: bank })
     } catch {}
     // Skills injection (procedural memory)
@@ -1213,7 +1238,7 @@ export class SessionPrompt {
   }
 
   /** Memory Bank loader — reads data/memory_bank/*.md if present (Kilo parity, flat file notes). */
-  private async loadMemoryBank(): Promise<string | null> {
+  private async loadMemoryBank(cwd = process.cwd()): Promise<string | null> {
     // Resolve memory_bank sibling to the SQLite DB (MIRA_DB) or fallback to ./data/memory_bank
     const candidates: string[] = []
     const envDB = process.env.MIRA_DB
@@ -1221,6 +1246,8 @@ export class SessionPrompt {
       const slash = envDB.lastIndexOf('/')
       if (slash >= 0) candidates.push(`${envDB.slice(0, slash)}/memory_bank`)
     }
+    candidates.push(`${cwd}/data/memory_bank`)
+    candidates.push(`${cwd}/packages/server/data/memory_bank`)
     candidates.push(`${process.cwd()}/data/memory_bank`)
     candidates.push(`${process.cwd()}/packages/server/data/memory_bank`)
     // dedupe

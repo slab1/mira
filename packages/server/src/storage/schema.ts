@@ -24,8 +24,11 @@ export const sessions = sqliteTable("sessions", {
   tokensIn: integer("tokens_in"),
   tokensOut: integer("tokens_out"),
   costUsd: real("cost_usd"),
+  cwd: text("cwd"),
+  projectId: text("project_id"),
 }, (t) => [
   index("sessions_updated_idx").on(t.updatedAt),
+  index("sessions_project_id_idx").on(t.projectId),
 ])
 
 export const messages = sqliteTable("messages", {

@@ -16,8 +16,8 @@ export const globTool = {
   description: "Find files by glob pattern. Example: **/*.ts, src/**/*.tsx. Returns matching paths.",
   category: "file",
   schema: globSchema,
-  async execute({ pattern, cwd, limit = 100 }, _ctx) {
-    const base = cwd ?? process.cwd()
+  async execute({ pattern, cwd, limit = 100 }, ctx) {
+    const base = cwd ?? ctx.cwd ?? process.cwd()
     const glob = new Glob(pattern)
     const results: string[] = []
     for await (const file of glob.scan({ cwd: base, dot: false })) {
@@ -40,8 +40,8 @@ export const grepTool = {
   description: "Search file contents via regex. Returns file:line matches. Use glob first to narrow scope if needed.",
   category: "file",
   schema: grepSchema,
-  async execute({ pattern, include, path, limit = 50 }, _ctx) {
-    const cwd = path ?? process.cwd()
+  async execute({ pattern, include, path, limit = 50 }, ctx) {
+    const cwd = path ?? ctx.cwd ?? process.cwd()
     const args = ["-rn", "--color=never", pattern, cwd]
     if (include) args.splice(1, 0, `--include=${include}`)
     args.push("--max-count", String(limit))
