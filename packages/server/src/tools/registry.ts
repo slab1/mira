@@ -214,9 +214,12 @@ export class ToolRegistry {
     }
     const parsedArgs: Record<string, JsonValue> = parsed.data as Record<string, JsonValue>
 
-    // Guardrails pre-check
+    // Guardrails pre-check — per-project isolation: use session cwd's allowedRoots
     if (this.deps.guardrails) {
-      const check = await this.deps.guardrails.check(name, parsedArgs, { sessionID: ctx.sessionID })
+      const check = await this.deps.guardrails.check(name, parsedArgs, {
+        sessionID: ctx.sessionID,
+        cwd: fullCtx.cwd,
+      })
       if (check.decision === 'deny') {
         throw new Error(`Guardrail denied ${name}: ${check.reason ?? 'blocked'}`)
       }

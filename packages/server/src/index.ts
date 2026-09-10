@@ -136,14 +136,20 @@ provisionFirstRunToken()
 let REQUIRED_TOKEN = process.env.MIRA_TOKEN ?? ''
 if (REQUIRED_TOKEN === 'change-me-to-a-long-random-secret') {
   if (process.env.NODE_ENV === 'production') {
-    error('❌ MIRA_TOKEN is placeholder — refusing to start with guessable token (set a real secret via /root/.mira/mira.env or env)')
+    error(
+      '❌ MIRA_TOKEN is placeholder — refusing to start with guessable token (set a real secret via /root/.mira/mira.env or env)',
+    )
     process.exit(1)
   }
   // Non-prod: treat placeholder as empty (no auth) — log error if strict, warn otherwise
   if (process.env.MIRA_STRICT_AUTH !== '0') {
-    error('❌ MIRA_TOKEN is placeholder — treating as empty (no auth) — set a real secret via /root/.mira/mira.env or env')
+    error(
+      '❌ MIRA_TOKEN is placeholder — treating as empty (no auth) — set a real secret via /root/.mira/mira.env or env',
+    )
   } else {
-    warn('⚠️  MIRA_TOKEN is placeholder — treating as empty (no auth) — set a real secret via /root/.mira/mira.env or env')
+    warn(
+      '⚠️  MIRA_TOKEN is placeholder — treating as empty (no auth) — set a real secret via /root/.mira/mira.env or env',
+    )
   }
   REQUIRED_TOKEN = ''
 }
@@ -182,6 +188,14 @@ const HOST = process.env.HOST ?? '127.0.0.1'
 const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '0.0.0.0', '::1'])
 if (!ALLOWED_HOSTS.has(HOST)) {
   warn(`⚠️  HOST=${HOST} not in allowed list, defaulting to 127.0.0.1`)
+}
+// MIRA_WORKSPACE_ROOTS — comma-separated allowedRoots override (per-project isolation, env wins)
+const WORKSPACE_ROOTS = (process.env.MIRA_WORKSPACE_ROOTS ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+if (WORKSPACE_ROOTS.length) {
+  log(`workspace roots (MIRA_WORKSPACE_ROOTS): ${WORKSPACE_ROOTS.join(', ')}`)
 }
 const CORS_ORIGIN_LIST = (process.env.CORS_ORIGINS ?? '')
   .split(',')
@@ -358,8 +372,17 @@ async function main() {
   log(`permissions: ${Object.keys(config.permission).length} rules`)
 
   const guardrails = new GuardrailsManager(undefined, config, db)
+  const enforceEnabled =
+    config.guardrails?.enforce ??
+    (process.env.NODE_ENV === 'production' ||
+      process.env.HOST === '0.0.0.0' ||
+      process.env.MIRA_STRICT_AUTH === '1')
+  const rootsInfo = WORKSPACE_ROOTS.length
+    ? WORKSPACE_ROOTS.join(',')
+    : (config.guardrails?.allowedRoots?.join(',') ??
+      (enforceEnabled ? './data,./packages,./src' : '(per-project)'))
   log(
-    `guardrails: enforce=${(config.guardrails?.enforce ?? (process.env.NODE_ENV === 'production' || process.env.HOST === '0.0.0.0')) ? 'enabled' : 'disabled'} (DB mirror: audit_entries)`,
+    `guardrails: enforce=${enforceEnabled ? 'enabled' : 'disabled'} roots=${rootsInfo} (DB mirror: audit_entries)`,
   )
 
   const registry = new SubgatewayRegistry(config)

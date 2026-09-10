@@ -12,6 +12,7 @@
 
 import type { MiraConfig, JsonValue } from '../types/index.js'
 import type { Database } from 'bun:sqlite'
+import { getConfig } from '../config/store.js'
 
 /** Narrow untyped tool args to a string-keyed record (JsonValue-tolerant). */
 function argStr(args: JsonValue, key: string): string | undefined {
@@ -30,12 +31,55 @@ export interface GuardrailConfig {
   auditLogPath?: string // file path for audit log (defaults to ./data/audit.log)
 }
 
+/** Whether guardrails should enforce (fail-closed) — dynamic per call */
+export function isEnforceEnabled(): boolean {
+  return (
+    process.env.NODE_ENV === 'production' ||
+    process.env.HOST === '0.0.0.0' ||
+    process.env.MIRA_STRICT_AUTH === '1'
+  )
+}
+
+/** Parse MIRA_WORKSPACE_ROOTS env (comma-separated) into allowedRoots override */
+export function parseWorkspaceRoots(): string[] | null {
+  const raw = process.env.MIRA_WORKSPACE_ROOTS?.trim()
+  if (!raw) return null
+  const parts = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return parts.length ? parts : null
+}
+
+/** Resolve effective allowedRoots per-project: env override > per-project config > default */
+export function getEffectiveAllowedRoots(cwd?: string): string[] {
+  const envRoots = parseWorkspaceRoots()
+  if (envRoots) return envRoots
+  if (cwd) {
+    try {
+      const cfg = getConfig(cwd)
+      if (cfg.guardrails?.allowedRoots !== undefined) return cfg.guardrails.allowedRoots
+    } catch {}
+  }
+  return isEnforceEnabled() ? ['./data', './packages', './src'] : []
+}
+
+/** Resolve effective enforce per-project: env strict > config > default */
+export function getEffectiveEnforce(cwd?: string): boolean {
+  if (isEnforceEnabled()) return true
+  if (cwd) {
+    try {
+      const cfg = getConfig(cwd)
+      if (cfg.guardrails?.enforce !== undefined) return !!cfg.guardrails.enforce
+    } catch {}
+  }
+  return false
+}
+
 const DEFAULT_GUARDRAILS: Required<GuardrailConfig> = {
-  enforce: process.env.NODE_ENV === 'production' || process.env.HOST === '0.0.0.0',
+  enforce: isEnforceEnabled(),
   allowedRoots:
-    process.env.NODE_ENV === 'production' || process.env.HOST === '0.0.0.0'
-      ? ['./data', './packages', './src']
-      : [],
+    parseWorkspaceRoots() ?? (isEnforceEnabled() ? ['./data', './packages', './src'] : []),
   blockedPaths: [
     '/etc',
     '/root',
@@ -132,8 +176,8 @@ export function sanitizePath(path: string): { ok: boolean; reason?: string; sani
 /** Check if path is within any allowed root — resolved via realpath when possible */
 export function isPathAllowed(path: string, roots: string[]): boolean {
   if (roots.length === 0) {
-    // In production or when exposed on 0.0.0.0, require explicit roots — fail-closed (Risk 2)
-    if (process.env.NODE_ENV === 'production' || process.env.HOST === '0.0.0.0') return false
+    // In production or when exposed on 0.0.0.0 or strict auth, require explicit roots — fail-closed (Risk 2)
+    if (isEnforceEnabled()) return false
     return true
   }
   // Normalize both sides: handle ./ prefix, ensure leading /, collapse //, strip trailing /
@@ -253,9 +297,14 @@ export class GuardrailsManager {
     this.logger.attachDB(db)
   }
 
-  /** Main check — returns decision */
-  async check(tool: string, args: JsonValue, ctx: { sessionID: string }) {
+  /** Main check — returns decision (per-project: cwd drives allowedRoots/enforce) */
+  async check(tool: string, args: JsonValue, ctx: { sessionID: string; cwd?: string }) {
     const decision: AuditEntry = { sessionID: ctx.sessionID, tool, args, decision: 'allow' }
+    // Per-project isolation: derive effective roots/enforce from session cwd
+    const effectiveRoots = ctx.cwd ? getEffectiveAllowedRoots(ctx.cwd) : this.config.allowedRoots
+    const effectiveEnforce = ctx.cwd ? getEffectiveEnforce(ctx.cwd) : this.config.enforce
+    // Env override for enforce (MIRA_STRICT_AUTH/HOST) always wins
+    const enforce = isEnforceEnabled() || effectiveEnforce || this.config.enforce
 
     try {
       // File tools path checks — now includes patch
@@ -264,18 +313,17 @@ export class GuardrailsManager {
         if (typeof path === 'string') {
           const s = sanitizePath(path)
           if (!s.ok) {
-            decision.decision = this.config.enforce ? 'deny' : 'warn'
+            decision.decision = enforce ? 'deny' : 'warn'
             decision.reason = s.reason
             await this.logger.log(decision)
-            if (this.config.enforce) throw new Error(`Guardrail blocked ${tool}: ${s.reason}`)
+            if (enforce) throw new Error(`Guardrail blocked ${tool}: ${s.reason}`)
             return decision
           }
-          if (!isPathAllowed(path, this.config.allowedRoots)) {
-            decision.decision = this.config.enforce ? 'deny' : 'warn'
+          if (!isPathAllowed(path, effectiveRoots)) {
+            decision.decision = enforce ? 'deny' : 'warn'
             decision.reason = 'path outside allowed roots'
             await this.logger.log(decision)
-            if (this.config.enforce)
-              throw new Error(`Guardrail blocked ${tool}: path outside allowed roots`)
+            if (enforce) throw new Error(`Guardrail blocked ${tool}: path outside allowed roots`)
             return decision
           }
         }
@@ -287,40 +335,75 @@ export class GuardrailsManager {
         if (typeof cmd === 'string') {
           const s = sanitizeCommand(cmd)
           if (!s.ok) {
-            decision.decision = this.config.enforce ? 'deny' : 'warn'
+            decision.decision = enforce ? 'deny' : 'warn'
             decision.reason = s.reason
             await this.logger.log(decision)
-            if (this.config.enforce) throw new Error(`Guardrail blocked bash: ${s.reason}`)
+            if (enforce) throw new Error(`Guardrail blocked bash: ${s.reason}`)
             return decision
           }
           // Blocked commands list
           if (this.config.blockedCommands.some((p) => cmd.includes(p))) {
-            decision.decision = this.config.enforce ? 'deny' : 'warn'
+            decision.decision = enforce ? 'deny' : 'warn'
             decision.reason = 'command in blocked list'
             await this.logger.log(decision)
-            if (this.config.enforce) throw new Error(`Guardrail blocked bash command`)
+            if (enforce) throw new Error(`Guardrail blocked bash command`)
+          }
+          // Block sensitive path access via bash (e.g. cat /etc/passwd) when enforce
+          if (enforce) {
+            const lowerCmd = cmd.toLowerCase()
+            for (const blocked of this.config.blockedPaths) {
+              const b = blocked.toLowerCase()
+              // Check for absolute sensitive paths in command
+              if (b.startsWith('/') && lowerCmd.includes(b)) {
+                decision.decision = 'deny'
+                decision.reason = `bash command accesses blocked path ${blocked}`
+                await this.logger.log(decision)
+                throw new Error(`Guardrail blocked bash: accesses blocked path ${blocked}`)
+              }
+              // Check for sensitive filenames like .env, .pem, .key, mira.db
+              if (!b.startsWith('/') && lowerCmd.includes(b)) {
+                // Only block if it's a file access, not just substring in other words
+                if (
+                  lowerCmd.includes(`/${b}`) ||
+                  lowerCmd.includes(` ${b}`) ||
+                  lowerCmd.includes(`"${b}`) ||
+                  lowerCmd.includes(`'${b}`)
+                ) {
+                  decision.decision = 'deny'
+                  decision.reason = `bash command accesses blocked file ${blocked}`
+                  await this.logger.log(decision)
+                  throw new Error(`Guardrail blocked bash: accesses blocked file ${blocked}`)
+                }
+              }
+            }
+            // Explicit check for /etc/passwd and similar even if not in blockedPaths
+            if (lowerCmd.includes('/etc/passwd') || lowerCmd.includes('/etc/shadow')) {
+              decision.decision = 'deny'
+              decision.reason = 'bash command accesses /etc/passwd'
+              await this.logger.log(decision)
+              throw new Error(`Guardrail blocked bash: accesses /etc/passwd`)
+            }
           }
           // Allowed commands allowlist
           if (
             this.config.allowedCommands.length > 0 &&
             !this.config.allowedCommands.some((p) => cmd.startsWith(p))
           ) {
-            decision.decision = this.config.enforce ? 'deny' : 'warn'
+            decision.decision = enforce ? 'deny' : 'warn'
             decision.reason = 'command not in allowed list'
             await this.logger.log(decision)
-            if (this.config.enforce)
-              throw new Error(`Guardrail blocked bash: not in allowedCommands`)
+            if (enforce) throw new Error(`Guardrail blocked bash: not in allowedCommands`)
             return decision
           }
         }
-        // workdir sandbox
+        // workdir sandbox — per-project roots
         const workdir = argStr(args, 'workdir')
         if (typeof workdir === 'string') {
-          if (!isPathAllowed(workdir, this.config.allowedRoots)) {
-            decision.decision = this.config.enforce ? 'deny' : 'warn'
+          if (!isPathAllowed(workdir, effectiveRoots)) {
+            decision.decision = enforce ? 'deny' : 'warn'
             decision.reason = 'bash workdir outside allowed roots'
             await this.logger.log(decision)
-            if (this.config.enforce) throw new Error(`Guardrail blocked bash workdir`)
+            if (enforce) throw new Error(`Guardrail blocked bash workdir`)
             return decision
           }
         }
@@ -329,10 +412,10 @@ export class GuardrailsManager {
       if (tool === 'task' || tool === 'patch') {
         const payload = argStr(args, 'prompt') || argStr(args, 'patch') || ''
         if (payload && /rm\s+-rf\s+\/|:\(\)\{\s*:\|\:/i.test(payload)) {
-          decision.decision = this.config.enforce ? 'deny' : 'warn'
+          decision.decision = enforce ? 'deny' : 'warn'
           decision.reason = 'task/patch contains dangerous pattern'
           await this.logger.log(decision)
-          if (this.config.enforce) throw new Error(`Guardrail blocked ${tool}: dangerous pattern`)
+          if (enforce) throw new Error(`Guardrail blocked ${tool}: dangerous pattern`)
           return decision
         }
       }
@@ -343,10 +426,10 @@ export class GuardrailsManager {
         if (typeof url === 'string') {
           // basic scheme check
           if (!/^https?:\/\//.test(url) && tool === 'webfetch') {
-            decision.decision = this.config.enforce ? 'deny' : 'warn'
+            decision.decision = enforce ? 'deny' : 'warn'
             decision.reason = 'webfetch requires http(s) URL'
             await this.logger.log(decision)
-            if (this.config.enforce) throw new Error(`Guardrail blocked webfetch`)
+            if (enforce) throw new Error(`Guardrail blocked webfetch`)
           }
         }
       }
