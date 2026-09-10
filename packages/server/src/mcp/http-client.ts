@@ -91,16 +91,30 @@ export class McpHttpClient {
 
   static async connect(name: string, opts: McpHttpOptions): Promise<McpHttpClient> {
     // 1) Try the modern Streamable HTTP transport first (POST single endpoint).
-    const streamable = new McpHttpClient(name, opts, 'streamable')
+    // Retry on transient failures (Bun fetch race under parallel load)
+    let lastErr: unknown = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const streamable = new McpHttpClient(name, opts, 'streamable')
+      try {
+        await streamable.handshakeStreamable()
+        return streamable
+      } catch (e) {
+        lastErr = e
+        await streamable.shutdown()
+        if (attempt < 2) await Bun.sleep(150 * (attempt + 1))
+      }
+    }
+    // Streamable failed after retries — fall back to legacy (2024-11-05)
+    // If this is a non-legacy server, the legacy GET will 404 and we'll surface the original streamable error
     try {
-      await streamable.handshakeStreamable()
-      return streamable
-    } catch {
-      await streamable.shutdown()
-      // 2) Fall back to the legacy HTTP+SSE transport (2024-11-05).
       const legacy = new McpHttpClient(name, opts, 'legacy-sse')
       await legacy.handshakeLegacy(opts.signal)
       return legacy
+    } catch (legacyErr) {
+      // Prefer the original streamable error if legacy also fails (more informative for non-legacy servers)
+      const msg = String(legacyErr)
+      if (msg.includes('404') || msg.includes('Not Found')) throw lastErr as Error
+      throw legacyErr
     }
   }
 
@@ -181,8 +195,8 @@ export class McpHttpClient {
       // Retry on empty body (flaky under turbo parallel load — Bun fetch race)
       let res: Response | null = null
       let lastErr: Error | null = null
-      for (let attempt = 0; attempt < 3; attempt++) {
-        if (attempt > 0) await Bun.sleep(50 * attempt)
+      for (let attempt = 0; attempt < 8; attempt++) {
+        if (attempt > 0) await Bun.sleep(150 * attempt)
         try {
           res = await fetch(this.url, {
             method: 'GET',

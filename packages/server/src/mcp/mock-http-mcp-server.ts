@@ -229,6 +229,6 @@ const server = serve({
   },
 })
 
-await Bun.sleep(50)
+await Bun.sleep(100)
 // Signal readiness with the actual port
 console.log(JSON.stringify({ ready: true, port: server.port }))

@@ -61,8 +61,8 @@ async function startMock(
     })()
   })
 
-  await Bun.sleep(100)
-  for (let i = 0; i < 15; i++) {
+  await Bun.sleep(150)
+  for (let i = 0; i < 20; i++) {
     try {
       const r = await fetch(url, { method: 'HEAD' })
       if (r.ok) break
@@ -89,7 +89,7 @@ async function startMock(
       } catch {}
       if (r3.ok || r3.status === 400 || r3.status === 404) break
     } catch {}
-    await Bun.sleep(30)
+    await Bun.sleep(50)
   }
 
   return {
