@@ -70,7 +70,23 @@
       "packages/web/src/api/client.ts:967-976 reorderQueue/deleteQueueItem signatures verified vs session-extras.ts POST /session/:id/queue/reorder {texts} + DELETE /session/:id/queue/item {text}",
       "packages/server/e2e/gaps.test.ts: beforeAll MIRA_TOKEN=test-gaps-token + AUTH headers + WS auth + 15s timeout",
       "packages/server/e2e/queue.test.ts: MIRA_TOKEN=test-queue-token + AUTH + /healthz",
-      "packages/server/e2e/server.e2e.test.ts: MIRA_TOKEN=test-e2e-token + AUTH + /healthz"
+      "packages/server/e2e/server.e2e.test.ts: MIRA_TOKEN=test-e2e-token + AUTH + /healthz",
+      "packages/tui/src/App.tsx:95-96 slashVisible fix + preload createEffect + workspace @ (MOCK_FILES, workspaceFiles, fetchWorkspaceFiles, atVisible/atFiltered, AtMentionAutocomplete, onInput/onFocus/onKeyDown)",
+      "packages/tui/src/components/CommandPalette.tsx:321-381 palette double-gate Loading fallback + 418-505 SlashAutocomplete loading prop + fallback",
+      "packages/tui/src/rpc/client.ts:679 getWorkspaceTree: () => req<{files:string[]}>('/workspace/tree').then(r=>r.files)",
+      "packages/tui/src/rpc/client.ts:13-23 Session costUsd/tokensIn/tokensOut",
+      "packages/tui/src/stores/session.ts:405-427 loadCost costCap+session refresh 15s visibility-aware + costCap state",
+      "packages/tui/src/components/Layout.tsx:144-156 per-session $ pill cap bar sparkline \u26a0 costCap",
+      "packages/tui/src/App.tsx:368-379 budget per-session fallback + Header costCap/tokens",
+      "packages/tui/src/components/QueueRail.tsx:41-49 3s polling visibility guard onCleanup",
+      "packages/tui/vite.config.ts:43-48 13 proxies /workspace/tree /config /providers /commands /agents /skills /mcp /dev /learning /knowledge /finding /job /guardrails",
+      "packages/server/src/storage/schema.ts: apiKeys table added (key TEXT PK, owner TEXT, created_at INTEGER, created_by TEXT DEFAULT default) + index api_keys_owner_idx, schema export includes apiKeys",
+      "packages/server/src/index.ts:137-155 placeholder token strict handling (let REQUIRED_TOKEN, prod error+exit, non-prod error/warn+empty)",
+      "packages/server/src/index.ts:186-205 WS isOriginAllowed aligned to MIRA_ALLOW_LOCALHOST==='1' strict (https + ::1, prod gate, dev early return)",
+      "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
+      "packages/tui/src/components/Inspector.tsx:70-89 grouped history same as HistoryView + toast + line counts, consistent",
+      "packages/tui/src/stores/session.ts:586-589 stopStream now void rpc.abortPrompt(id).catch(()=>{}) + abort?.abort() + setState(streaming:false)",
+      "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))"
     ]
   },
   "checkpoints": {
@@ -88,7 +104,7 @@
       "last_updated": "2026-09-08T09:04:07.720317+00:00"
     }
   },
-  "last_updated": "2026-09-09T22:30:00.000000+00:00",
+  "last_updated": "2026-09-10T08:35:23.513735+00:00",
   "workflow_trace": [
     {
       "agent": "fixer",
@@ -242,10 +258,14 @@
     {
       "agent": "fixer",
       "run_id": "run_20260909_4416b3",
-      "task": "Fix CI gaps.test.ts auth 401 — GET /providers hasKey",
+      "task": "Fix CI gaps.test.ts auth 401 \u2014 GET /providers hasKey",
       "status": "completed",
       "timestamp": "2026-09-09T22:30:00.000000+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/e2e/gaps.test.ts: beforeAll MIRA_TOKEN=test-gaps-token deterministic + AUTH headers on GET /providers, POST /providers/:id/test, GET /terminal, GET /health, WS /terminal + WS vscode-webview (header + auth message fallback), WS timeout 15s",
@@ -261,6 +281,140 @@
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_4416b3"
       },
       "outcome": "Fix complete: gaps.test.ts beforeAll now sets deterministic MIRA_TOKEN and all fetches include Authorization Bearer header (providers, terminal, health, config fallback) + WS auth via header + auth message fallback with 15s timeout; queue.test.ts and server.e2e.test.ts similarly fixed to use deterministic tokens and /healthz for waitForHealth; 7/7 gaps pass, queue 1/1 pass, server.e2e 7/7 non-live pass, typecheck green, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_1ed11a",
+      "task": "TUI P0 slash preload + skeleton + P1 workspace @",
+      "status": "completed",
+      "timestamp": "2026-09-10T06:00:24.509200+00:00",
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
+      "artifacts": {
+        "files_modified": [
+          "packages/tui/src/App.tsx:95-96 slashVisible fix + preload createEffect + workspace @ (MOCK_FILES, workspaceFiles, fetchWorkspaceFiles, atVisible/atFiltered, AtMentionAutocomplete, onInput/onFocus/onKeyDown)",
+          "packages/tui/src/components/CommandPalette.tsx:321-381 palette double-gate Loading fallback + 418-505 SlashAutocomplete loading prop + fallback",
+          "packages/tui/src/rpc/client.ts:679 getWorkspaceTree: () => req<{files:string[]}>('/workspace/tree').then(r=>r.files)"
+        ],
+        "verify": {
+          "typecheck": "bun run typecheck (tui) tsc --noEmit exit 0",
+          "vite_build": "vite build 39 modules 333.24kB gzip 83.89kB built 11.46s"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_1ed11a"
+      },
+      "outcome": "P0 slash fix complete: preload createEffect on authorized() -> settingsStore.loadAll(), slashVisible now (filtered.length>0 || loading) && !dismissed with effect watching commands.length, SlashAutocomplete loading prop + fallback; P1 workspace @ complete: rpc.getWorkspaceTree, App workspaceFiles signal + once-fetch (onMount + createEffect atVisible + onFocus), atFiltered via workspaceFiles(), AtMentionAutocomplete with workspaceFiles(), @ detection + Tab/Enter/Esc nav; typecheck + vite build green, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_o8ybgp",
+      "task": "TUI P1 cost + queue \u2014 per-session cost/cap bar + queue polling + proxy",
+      "status": "completed",
+      "timestamp": "2026-09-10T06:33:51.000000+00:00",
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
+      "artifacts": {
+        "files_modified": [
+          "packages/tui/src/rpc/client.ts:13-23 Session costUsd/tokensIn/tokensOut",
+          "packages/tui/src/stores/session.ts:405-427 loadCost costCap+session refresh 15s visibility-aware + costCap state",
+          "packages/tui/src/components/Layout.tsx:144-156 per-session $ pill cap bar sparkline \u26a0 costCap",
+          "packages/tui/src/App.tsx:368-379 budget per-session fallback + Header costCap/tokens",
+          "packages/tui/src/components/QueueRail.tsx:41-49 3s polling visibility guard onCleanup",
+          "packages/tui/vite.config.ts:43-48 13 proxies /workspace/tree /config /providers /commands /agents /skills /mcp /dev /learning /knowledge /finding /job /guardrails"
+        ],
+        "verify": {
+          "typecheck": "bun run typecheck (tui) tsc --noEmit exit 0",
+          "vite_build": "vite build 39 modules 335.47kB gzip 84.64kB built 12.00s"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_o8ybgp"
+      },
+      "outcome": "P1 fix complete: Session type now costUsd/tokensIn/tokensOut, store loadCost fetches /config costCap + /session/:id per-session cost 15s visibility-aware, Layout Header per-session $ pill with cap bar/sparkline + \u26a0 when cost>=cap, App budget uses per-session fallback, QueueRail 3s polling with visibility+sessionId guard, vite 13 proxies added; typecheck + vite build green, minimal diff preserved design, no web/server/mcp/slash/workspace/history touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_ce5524",
+      "task": "P1 auth gaps ora-3: CORS WS vs HTTP, api_keys schema, placeholder token",
+      "status": "completed",
+      "timestamp": "2026-09-10T07:25:25.000000+00:00",
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/storage/schema.ts: apiKeys table added (key TEXT PK, owner TEXT, created_at INTEGER, created_by TEXT DEFAULT default) + index api_keys_owner_idx, schema export includes apiKeys",
+          "packages/server/src/index.ts:137-155 placeholder token strict handling (let REQUIRED_TOKEN, prod error+exit, non-prod error/warn+empty)",
+          "packages/server/src/index.ts:186-205 WS isOriginAllowed aligned to MIRA_ALLOW_LOCALHOST==='1' strict (https + ::1, prod gate, dev early return)"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (bunx tsc --noEmit exit 0, re-verified after re-apply)",
+          "gaps": "bun test packages/server/e2e/gaps.test.ts 7 pass 0 fail 20.34s (re-verified)",
+          "queue": "bun test packages/server/e2e/queue.test.ts 1 pass",
+          "server_e2e": "bun test packages/server/e2e/server.e2e.test.ts 8 pass 1 fail LIVE expected",
+          "manual": "api_keys table exists YES, schema has apiKeys true, WS CORS prod blocked/allowed PASS, placeholder prod exit PASS (re-verified)",
+          "migrate": "createDatabase + migrate creates api_keys, SELECT key,owner FROM api_keys succeeds 0 rows"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ce5524"
+      },
+      "outcome": "P1 auth gaps fixed: WS isOriginAllowed now strict MIRA_ALLOW_LOCALHOST==='1' (https + ::1, prod gate, dev early return true), apiKeys added to Drizzle schema (migrate already had it, now schema matches, admin ensureTable idempotent), placeholder token now let + prod error+exit, non-prod error/warn+empty (no guessable auth); typecheck green, gaps 7 pass, minimal diff preserved design, no web/tui slash/workspace/cost/queue/history touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_q7x9k2",
+      "task": "TUI P2 history grouping + abortPrompt",
+      "status": "completed",
+      "timestamp": "2026-09-10T07:40:00.000000+00:00",
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
+      "artifacts": {
+        "files_modified": [
+          "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
+          "packages/tui/src/components/Inspector.tsx:70-89 grouped history same as HistoryView + toast + line counts, consistent",
+          "packages/tui/src/stores/session.ts:586-589 stopStream now void rpc.abortPrompt(id).catch(()=>{}) + abort?.abort() + setState(streaming:false)",
+          "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))"
+        ],
+        "verify": {
+          "typecheck": "bun run typecheck (tui) tsc --noEmit exit 0",
+          "vite_build": "vite build 39 modules 339.16kB gzip 85.83kB built 19.30s"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_q7x9k2"
+      },
+      "outcome": "P2 fix complete: HistoryView + Inspector now grouped by messageID (__no_message__ sentinel) with per-group header (msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> revertSession + refetch + toast), per-file card (path+time+edit/new file+diff -> getSnapshot -> DiffViewer before/after + line-count delta); rpc abortPrompt added (POST /session/:id/abort catch 404), store stopStream now fire-and-forget abortPrompt + abort + streaming:false; typecheck + vite build green, minimal diff preserved design, no web/server/mcp/slash/workspace/cost/queue touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_ed9ad5",
+      "task": "TUI P2 history grouping + abortPrompt",
+      "status": "completed",
+      "timestamp": "2026-09-10T08:35:23.513735+00:00",
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
+      "artifacts": {
+        "files_modified": [
+          "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
+          "packages/tui/src/components/Inspector.tsx:70-89 grouped history same as HistoryView + toast + line counts, consistent",
+          "packages/tui/src/stores/session.ts:586-589 stopStream now void rpc.abortPrompt(id).catch(()=>{}) + abort?.abort() + setState(streaming:false)",
+          "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))"
+        ],
+        "verify": {
+          "typecheck": "bun run typecheck (tui) tsc --noEmit exit 0",
+          "vite_build": "vite build 39 modules 339.16kB gzip 85.83kB built 19.30s"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ed9ad5"
+      },
+      "outcome": "P2 fix complete: HistoryView + Inspector now grouped by messageID (__no_message__ sentinel) with per-group header (msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> revertSession + refetch + toast), per-file card (path+time+edit/new file+diff -> getSnapshot -> DiffViewer before/after + line-count delta); rpc abortPrompt added (POST /session/:id/abort catch 404), store stopStream now fire-and-forget abortPrompt + abort + streaming:false; typecheck + vite build green, minimal diff preserved design, no web/server/mcp/slash/workspace/cost/queue touched"
     }
   ],
   "findings": {
@@ -293,6 +447,81 @@
         "fix": "Set deterministic MIRA_TOKEN in spawn env (test-gaps-token, test-queue-token, test-e2e-token) and add Authorization Bearer header to all fetches requiring auth (/providers, /config, /terminal, /health, /session, etc.) + WS auth via header + auth message fallback, waitForHealth uses /healthz (public), WS timeout 15s",
         "verify": "bun test gaps.test.ts 7 pass 0 fail 20.20s, queue.test.ts 1 pass, server.e2e.test.ts 7 pass (LIVE 401 expected), turbo typecheck 6 successful",
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_4416b3"
+      },
+      {
+        "run_id": "run_20260909_1ed11a",
+        "at": "2026-09-10T06:00:24.509200+00:00",
+        "task": "TUI P0 slash preload + skeleton + P1 workspace @",
+        "files_modified": [
+          "packages/tui/src/App.tsx:95-96 slashVisible fix + preload createEffect + workspace @ (MOCK_FILES, workspaceFiles, fetchWorkspaceFiles, atVisible/atFiltered, AtMentionAutocomplete, onInput/onFocus/onKeyDown)",
+          "packages/tui/src/components/CommandPalette.tsx:321-381 palette double-gate Loading fallback + 418-505 SlashAutocomplete loading prop + fallback",
+          "packages/tui/src/rpc/client.ts:679 getWorkspaceTree: () => req<{files:string[]}>('/workspace/tree').then(r=>r.files)"
+        ],
+        "root_cause": "TUI slash double-gate hid palette when allCommands empty (no preload, only onInput/'/' key), no skeleton; workspace @ missing entirely (0 hits, no rpc method, plain textarea)",
+        "fix": "App preload effect + slashVisible loading gate + commands.length watch; CommandPalette double-gate Loading fallback + SlashAutocomplete loading prop; rpc getWorkspaceTree; App workspaceFiles once-fetch + atVisible effect + onMount + onFocus + atFiltered + AtMentionAutocomplete",
+        "verify": "bun run typecheck (tui) tsc --noEmit exit 0, vite build 39 modules 333.24kB gzip 83.89kB",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_1ed11a"
+      },
+      {
+        "run_id": "run_20260909_o8ybgp",
+        "at": "2026-09-10T06:33:51.000000+00:00",
+        "task": "TUI P1 cost + queue \u2014 per-session cost/cap bar + queue polling + proxy",
+        "files_modified": [
+          "packages/tui/src/rpc/client.ts:13-23 Session costUsd/tokensIn/tokensOut",
+          "packages/tui/src/stores/session.ts:405-427 loadCost costCap+session refresh 15s visibility-aware + costCap state",
+          "packages/tui/src/components/Layout.tsx:144-156 per-session $ pill cap bar sparkline \u26a0 costCap",
+          "packages/tui/src/App.tsx:368-379 budget per-session fallback + Header costCap/tokens",
+          "packages/tui/src/components/QueueRail.tsx:41-49 3s polling visibility guard onCleanup",
+          "packages/tui/vite.config.ts:43-48 13 proxies /workspace/tree /config /providers /commands /agents /skills /mcp /dev /learning /knowledge /finding /job /guardrails"
+        ],
+        "root_cause": "TUI Session missing costUsd/tokens, store loadCost only gateway no costCap/per-session, Layout global pill only, App budget global costUSD, QueueRail no polling, vite 4 proxies vs web 15+",
+        "fix": "rpc Session add costUsd/tokensIn/tokensOut; store loadCost GET /config costCap + GET /session/:id refresh 15s visibility-aware + costCap state; Layout per-session $ pill cap bar/sparkline \u26a0 when cost>=cap; App budget per-session fallback; QueueRail 3s polling visibility+sessionId guard onCleanup; vite 13 proxies added",
+        "verify": "bun run typecheck (tui) tsc --noEmit exit 0, vite build 39 modules 335.47kB gzip 84.64kB",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_o8ybgp"
+      },
+      {
+        "run_id": "run_20260909_ce5524",
+        "at": "2026-09-10T07:25:25.000000+00:00",
+        "task": "P1 auth gaps ora-3: CORS WS vs HTTP, api_keys schema, placeholder token",
+        "files_modified": [
+          "packages/server/src/storage/schema.ts: apiKeys table added",
+          "packages/server/src/index.ts:137-155 placeholder token strict handling",
+          "packages/server/src/index.ts:186-205 WS isOriginAllowed aligned to ===1"
+        ],
+        "root_cause": "WS isOriginAllowed used !=='0' (default allow) vs middleware ==='1' strict (403 vs 101 divergence); api_keys missing from Drizzle schema (migrate had it but schema export 9 tables, fresh DB without admin call has no table via Drizzle, SELECT warns); placeholder token only warn, dev ships guessable token with auth gate active",
+        "fix": "WS isOriginAllowed now ==='1' strict with https+::1, prod gate, dev early return; schema.ts add apiKeys sqliteTable + index + export; index.ts REQUIRED_TOKEN let + placeholder: prod error+exit, non-prod error/warn+empty (treat as no auth)",
+        "verify": "turbo typecheck 6 successful (re-verified), gaps 7 pass 20.34s (re-verified), queue 1 pass, manual api_keys exists YES + WS CORS PASS + placeholder PASS, migrate SELECT succeeds",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ce5524"
+      },
+      {
+        "run_id": "run_20260909_q7x9k2",
+        "at": "2026-09-10T07:40:00.000000+00:00",
+        "task": "TUI P2 history grouping + abortPrompt",
+        "files_modified": [
+          "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
+          "packages/tui/src/components/Inspector.tsx:70-89 grouped history same as HistoryView + toast + line counts, consistent",
+          "packages/tui/src/stores/session.ts:586-589 stopStream now void rpc.abortPrompt(id).catch(()=>{}) + abort?.abort() + setState(streaming:false)",
+          "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))"
+        ],
+        "root_cause": "HistoryView flat list (198-351) + Inspector flat (70-89) no grouping/toast/line counts; SessionView per-message rewind exists but history not grouped; stores/session stopStream only abort?.abort() no rpc.abortPrompt (0 hits), web has api/client:655 abortPrompt",
+        "fix": "HistoryView + Inspector grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header + rewind button (revertSession + refetch + toast), per-file card diff -> getSnapshot -> DiffViewer before/after + line-count delta; rpc abortPrompt POST /session/:id/abort catch 404; store stopStream void rpc.abortPrompt + abort + streaming:false",
+        "verify": "bun run typecheck (tui) tsc --noEmit exit 0, vite build 39 modules 339.16kB gzip 85.83kB",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_q7x9k2"
+      },
+      {
+        "run_id": "run_20260909_ed9ad5",
+        "at": "2026-09-10T08:35:23.513735+00:00",
+        "task": "TUI P2 history grouping + abortPrompt",
+        "files_modified": [
+          "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
+          "packages/tui/src/components/Inspector.tsx:70-89 grouped history same as HistoryView + toast + line counts, consistent",
+          "packages/tui/src/stores/session.ts:586-589 stopStream now void rpc.abortPrompt(id).catch(()=>{}) + abort?.abort() + setState(streaming:false)",
+          "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))"
+        ],
+        "root_cause": "HistoryView flat list (198-351) + Inspector flat (70-89) no grouping/toast/line counts; SessionView per-message rewind exists but history not grouped; stores/session stopStream only abort?.abort() no rpc.abortPrompt (0 hits), web has api/client:655 abortPrompt",
+        "fix": "HistoryView + Inspector grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header + rewind button (revertSession + refetch + toast), per-file card diff -> getSnapshot -> DiffViewer before/after + line-count delta; rpc abortPrompt POST /session/:id/abort catch 404; store stopStream void rpc.abortPrompt + abort + streaming:false",
+        "verify": "bun run typecheck (tui) tsc --noEmit exit 0, vite build 39 modules 339.16kB gzip 85.83kB",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ed9ad5"
       }
     ]
   }

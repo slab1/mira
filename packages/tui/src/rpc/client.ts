@@ -20,6 +20,9 @@ export type Session = {
   parentID?: string
   agent?: string
   ownerID?: string
+  costUsd?: number | null
+  tokensIn?: number | null
+  tokensOut?: number | null
 }
 
 export type ProvenanceNode = {
@@ -618,6 +621,10 @@ export const rpc = {
       method: 'POST',
       body: JSON.stringify(messageID ? { messageID } : {}),
     }),
+  abortPrompt: (id: string) =>
+    req<{ ok: boolean }>(`/session/${encodeURIComponent(id)}/abort`, { method: 'POST' }).catch(
+      () => ({ ok: false }) as { ok: boolean },
+    ),
   listSnapshots: (id: string) =>
     req<
       Array<{
@@ -713,6 +720,7 @@ export const rpc = {
   listAgents: () => req<AgentEntry[]>('/agents'),
   listSkills: () => req<string[] | Array<{ name: string; description: string }>>('/skills'),
   listCommands: () => req<string[] | Array<{ name: string; description: string }>>('/commands'),
+  getWorkspaceTree: () => req<{ files: string[] }>('/workspace/tree').then((r) => r.files),
   getPermission: () => req<Record<string, JsonValue>>('/permission'),
   getTerminalStatus: () => req<{ enabled: boolean; sandbox: boolean; ws: string }>('/terminal'),
 

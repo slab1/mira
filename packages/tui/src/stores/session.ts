@@ -69,6 +69,7 @@ type SessionState = {
     costUSD: number
     avgLatencyMs: number
   } | null
+  costCap: { perSession?: number; perTask?: number } | null
   budgetWarning: string | null
   doomLoop: { tool: string; reason: string; pattern?: string[]; sessionID?: string } | null
 }
@@ -94,6 +95,7 @@ export function createSessionStore() {
     pendingQuestion: null,
     queued: [],
     cost: null,
+    costCap: null,
     budgetWarning: null,
     doomLoop: null,
   })
@@ -407,6 +409,25 @@ export function createSessionStore() {
       const dev = await rpc.devHealth()
       if (dev.gateway) setState('cost', dev.gateway)
     } catch {}
+    try {
+      const cfg = await rpc.getConfig()
+      const cap = (cfg as unknown as { costCap?: { perSession?: number; perTask?: number } }).costCap
+      if (cap) setState('costCap', cap)
+    } catch {}
+    if (state.currentId) {
+      try {
+        const sess = await rpc.getSession(state.currentId)
+        if (sess) {
+          setState('sessions', (prev) =>
+            prev.map((s) =>
+              s.id === sess.id
+                ? { ...s, costUsd: sess.costUsd, tokensIn: sess.tokensIn, tokensOut: sess.tokensOut }
+                : s,
+            ),
+          )
+        }
+      } catch {}
+    }
   }
   loadCost()
   if (typeof window !== 'undefined') {
@@ -584,6 +605,8 @@ export function createSessionStore() {
   }
 
   function stopStream() {
+    const id = state.currentId
+    if (id) void rpc.abortPrompt(id).catch(() => {})
     abort?.abort()
     setState({ streaming: false, streamStartAt: null })
   }

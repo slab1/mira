@@ -324,60 +324,73 @@ export default function CommandPalette(props: Props) {
             aria-label="Commands"
             style={{ 'max-height': '320px', overflow: 'auto', padding: '6px' }}
           >
-            <For each={filtered()}>
-              {(cmd, i) => {
-                const active = () => index() === i()
-                return (
-                  <div
-                    role="option"
-                    aria-selected={active() ? 'true' : 'false'}
-                    tabindex={active() ? 0 : -1}
-                    onMouseEnter={() => setIndex(i())}
-                    onClick={() => execute(cmd.name)}
-                    onFocus={() => setIndex(i())}
-                    style={{
-                      display: 'flex',
-                      'align-items': 'center',
-                      gap: '10px',
-                      padding: '10px 12px',
-                      'border-radius': '8px',
-                      cursor: 'pointer',
-                      background: active() ? 'rgba(99,102,241,0.18)' : 'transparent',
-                      border: active() ? '1px solid rgba(99,102,241,0.35)' : '1px solid transparent',
-                      outline: 'none',
-                    }}
-                  >
-                    <span style={{ display: 'flex', 'flex-direction': 'column', gap: '2px', flex: '1', 'min-width': '0' }}>
-                      <span style={{ 'font-family': 'ui-monospace, monospace', 'font-weight': '700', color: '#a5b4fc' }}>
-                        {cmd.name}
-                      </span>
-                      <Show when={cmd.description}>
-                        <span style={{ 'font-size': '12px', opacity: '0.7' }}>{cmd.description}</span>
-                      </Show>
-                    </span>
-                    <span
+            <Show
+              when={filtered().length > 0}
+              fallback={
+                <Show
+                  when={props.settings?.state.loading}
+                  fallback={
+                    <div style={{ padding: '20px', 'text-align': 'center', opacity: '0.5', 'font-size': '13px' }}>
+                      No commands match “{query()}” — try <code style={{ 'font-family': 'ui-monospace' }}>/</code> to see all.
+                    </div>
+                  }
+                >
+                  <div style={{ padding: '20px', 'text-align': 'center', opacity: '0.5', 'font-size': '13px' }}>
+                    Loading commands…
+                  </div>
+                </Show>
+              }
+            >
+              <For each={filtered()}>
+                {(cmd, i) => {
+                  const active = () => index() === i()
+                  return (
+                    <div
+                      role="option"
+                      aria-selected={active() ? 'true' : 'false'}
+                      tabindex={active() ? 0 : -1}
+                      onMouseEnter={() => setIndex(i())}
+                      onClick={() => execute(cmd.name)}
+                      onFocus={() => setIndex(i())}
                       style={{
-                        'font-size': '10px',
-                        padding: '2px 6px',
-                        'border-radius': '999px',
-                        background: 'rgba(255,255,255,0.08)',
-                        border: '1px solid rgba(255,255,255,0.12)',
-                        opacity: '0.7',
+                        display: 'flex',
+                        'align-items': 'center',
+                        gap: '10px',
+                        padding: '10px 12px',
+                        'border-radius': '8px',
+                        cursor: 'pointer',
+                        background: active() ? 'rgba(99,102,241,0.18)' : 'transparent',
+                        border: active() ? '1px solid rgba(99,102,241,0.35)' : '1px solid transparent',
+                        outline: 'none',
                       }}
                     >
-                      {cmd.source}
-                    </span>
-                    <span style={{ 'font-size': '11px', opacity: '0.45', 'font-family': 'ui-monospace' }}>
-                      {i() + 1}
-                    </span>
-                  </div>
-                )
-              }}
-            </For>
-            <Show when={filtered().length === 0}>
-              <div style={{ padding: '20px', 'text-align': 'center', opacity: '0.5', 'font-size': '13px' }}>
-                No commands match “{query()}” — try <code style={{ 'font-family': 'ui-monospace' }}>/</code> to see all.
-              </div>
+                      <span style={{ display: 'flex', 'flex-direction': 'column', gap: '2px', flex: '1', 'min-width': '0' }}>
+                        <span style={{ 'font-family': 'ui-monospace, monospace', 'font-weight': '700', color: '#a5b4fc' }}>
+                          {cmd.name}
+                        </span>
+                        <Show when={cmd.description}>
+                          <span style={{ 'font-size': '12px', opacity: '0.7' }}>{cmd.description}</span>
+                        </Show>
+                      </span>
+                      <span
+                        style={{
+                          'font-size': '10px',
+                          padding: '2px 6px',
+                          'border-radius': '999px',
+                          background: 'rgba(255,255,255,0.08)',
+                          border: '1px solid rgba(255,255,255,0.12)',
+                          opacity: '0.7',
+                        }}
+                      >
+                        {cmd.source}
+                      </span>
+                      <span style={{ 'font-size': '11px', opacity: '0.45', 'font-family': 'ui-monospace' }}>
+                        {i() + 1}
+                      </span>
+                    </div>
+                  )
+                }}
+              </For>
             </Show>
           </div>
 
@@ -408,12 +421,13 @@ export function SlashAutocomplete(props: {
   selected?: number
   onSelect: (name: string) => void
   onClose: () => void
+  loading?: boolean
 }) {
   const filtered = () => filterCommands(props.query, props.commands).slice(0, 8)
   const selected = () => props.selected ?? 0
 
   return (
-    <Show when={props.query.startsWith('/') && filtered().length > 0}>
+    <Show when={props.query.startsWith('/') && (filtered().length > 0 || Boolean(props.loading))}>
       <div
         role="listbox"
         aria-label="Slash commands"
@@ -432,52 +446,61 @@ export function SlashAutocomplete(props: {
         }}
       >
         <div style={{ display: 'flex', 'flex-direction': 'column', padding: '6px', gap: '2px', 'max-height': '280px', overflow: 'auto' }}>
-          <For each={filtered()}>
-            {(cmd, i) => (
-              <button
-                type="button"
-                role="option"
-                aria-selected={selected() === i() ? 'true' : 'false'}
-                onClick={() => props.onSelect(cmd.name)}
-                style={{
-                  display: 'flex',
-                  'align-items': 'center',
-                  gap: '10px',
-                  padding: '8px 10px',
-                  'border-radius': '8px',
-                  border: selected() === i() ? '1px solid rgba(99,102,241,0.35)' : '1px solid transparent',
-                  background: selected() === i() ? 'rgba(99,102,241,0.18)' : 'transparent',
-                  cursor: 'pointer',
-                  'text-align': 'left',
-                  width: '100%',
-                }}
-              >
-                <span style={{ display: 'flex', 'flex-direction': 'column', gap: '1px', 'min-width': '0', flex: '1', 'text-align': 'left' }}>
-                  <span style={{ 'font-family': 'ui-monospace, monospace', 'font-size': '13px', 'font-weight': '600', color: '#a5b4fc' }}>
-                    {cmd.name}
-                  </span>
-                  <Show when={cmd.description}>
-                    <span style={{ 'font-size': '11px', color: 'rgba(229,231,235,0.6)', 'white-space': 'nowrap', overflow: 'hidden', 'text-overflow': 'ellipsis', 'max-width': '36ch' }}>
-                      {cmd.description}
-                    </span>
-                  </Show>
-                </span>
-                <span
+          <Show
+            when={filtered().length > 0}
+            fallback={
+              <div style={{ padding: '12px', 'text-align': 'center', opacity: '0.5', 'font-size': '12px' }}>
+                Loading commands…
+              </div>
+            }
+          >
+            <For each={filtered()}>
+              {(cmd, i) => (
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={selected() === i() ? 'true' : 'false'}
+                  onClick={() => props.onSelect(cmd.name)}
                   style={{
-                    'font-size': '10px',
-                    padding: '2px 6px',
-                    'border-radius': '999px',
-                    background: 'rgba(255,255,255,0.08)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    color: 'rgba(229,231,235,0.7)',
-                    'flex-shrink': '0',
+                    display: 'flex',
+                    'align-items': 'center',
+                    gap: '10px',
+                    padding: '8px 10px',
+                    'border-radius': '8px',
+                    border: selected() === i() ? '1px solid rgba(99,102,241,0.35)' : '1px solid transparent',
+                    background: selected() === i() ? 'rgba(99,102,241,0.18)' : 'transparent',
+                    cursor: 'pointer',
+                    'text-align': 'left',
+                    width: '100%',
                   }}
                 >
-                  {cmd.source}
-                </span>
-              </button>
-            )}
-          </For>
+                  <span style={{ display: 'flex', 'flex-direction': 'column', gap: '1px', 'min-width': '0', flex: '1', 'text-align': 'left' }}>
+                    <span style={{ 'font-family': 'ui-monospace, monospace', 'font-size': '13px', 'font-weight': '600', color: '#a5b4fc' }}>
+                      {cmd.name}
+                    </span>
+                    <Show when={cmd.description}>
+                      <span style={{ 'font-size': '11px', color: 'rgba(229,231,235,0.6)', 'white-space': 'nowrap', overflow: 'hidden', 'text-overflow': 'ellipsis', 'max-width': '36ch' }}>
+                        {cmd.description}
+                      </span>
+                    </Show>
+                  </span>
+                  <span
+                    style={{
+                      'font-size': '10px',
+                      padding: '2px 6px',
+                      'border-radius': '999px',
+                      background: 'rgba(255,255,255,0.08)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      color: 'rgba(229,231,235,0.7)',
+                      'flex-shrink': '0',
+                    }}
+                  >
+                    {cmd.source}
+                  </span>
+                </button>
+              )}
+            </For>
+          </Show>
         </div>
         <div style={{ padding: '6px 10px', 'border-top': '1px solid rgba(255,255,255,0.06)', 'font-size': '10px', color: 'rgba(229,231,235,0.45)', display: 'flex', gap: '6px' }}>
           <span>↑↓ nav</span>

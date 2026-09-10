@@ -24,7 +24,7 @@
  *   Esc              cancel / close modal / stop streaming
  */
 
-import { Show, createEffect, createSignal, onMount, onCleanup } from 'solid-js'
+import { Show, For, createEffect, createSignal, createMemo, onMount, onCleanup } from 'solid-js'
 import { createSessionStore } from './stores/session'
 import { createSettingsStore } from './stores/settings'
 import SessionView from './components/SessionView'
@@ -93,11 +93,18 @@ export default function App() {
   const [slashIndex, setSlashIndex] = createSignal(0)
   const [slashDismissed, setSlashDismissed] = createSignal(false)
   const slashVisible = () =>
-    slashQuery().startsWith('/') && slashFiltered().length > 0 && !slashDismissed()
+    slashQuery().startsWith('/') &&
+    !slashDismissed() &&
+    (slashFiltered().length > 0 || settingsStore.state.loading)
   createEffect(() => {
     void slashQuery()
+    void slashCommands().length
     setSlashIndex(0)
     setSlashDismissed(false)
+  })
+  // Preload slash commands/skills as soon as we're authorized — ensures first "/" shows palette
+  createEffect(() => {
+    if (authorized()) void settingsStore.loadAll()
   })
   const handleSlashSelect = (name: string) => {
     store.setInput(name + ' ')
@@ -106,6 +113,175 @@ export default function App() {
       inputRef.style.height = 'auto'
       inputRef.style.height = Math.min(inputRef.scrollHeight, 160) + 'px'
     }
+  }
+
+  // ── Workspace @ mention ───────────────────────────────────────
+  const MOCK_FILES = [
+    'src/App.tsx',
+    'src/components/ChatView.tsx',
+    'src/components/SessionList.tsx',
+    'src/components/ActivityPanel.tsx',
+    'src/components/ToolView.tsx',
+    'src/stores/app.ts',
+    'src/stores/settings.ts',
+    'src/api/client.ts',
+    'src/index.css',
+    'package.json',
+    'README.md',
+    'vite.config.ts',
+    'tsconfig.json',
+  ]
+  function filterFiles(query: string, files: string[]): string[] {
+    const q = query.toLowerCase().trim()
+    if (!q) return files.slice(0, 8)
+    return files.filter((f) => f.toLowerCase().includes(q)).slice(0, 8)
+  }
+  const [workspaceFiles, setWorkspaceFiles] = createSignal<string[]>(MOCK_FILES)
+  const [atQuery, setAtQuery] = createSignal('')
+  const [atIndex, setAtIndex] = createSignal(0)
+  const [atVisible, setAtVisible] = createSignal(false)
+  const [atDismissed, setAtDismissed] = createSignal(false)
+  let workspaceFetched = false
+  let workspaceFetching: Promise<void> | null = null
+  const fetchWorkspaceFiles = () => {
+    if (workspaceFetched || workspaceFetching) return workspaceFetching ?? Promise.resolve()
+    workspaceFetching = import('./rpc/client')
+      .then(({ rpc }) => rpc.getWorkspaceTree())
+      .then((files) => {
+        if (files.length > 0) setWorkspaceFiles(files)
+        workspaceFetched = true
+      })
+      .catch(() => {
+        workspaceFetched = true
+      })
+      .finally(() => {
+        workspaceFetching = null
+      })
+    return workspaceFetching
+  }
+  onMount(() => {
+    void fetchWorkspaceFiles()
+  })
+  createEffect(() => {
+    if (atVisible()) void fetchWorkspaceFiles()
+  })
+  createEffect(() => {
+    const v = store.input()
+    if (!v.includes('@')) setAtDismissed(false)
+  })
+  const atFiltered = createMemo(() => filterFiles(atQuery(), workspaceFiles()))
+  const detectAtMention = (text: string, cursorPos: number): string | null => {
+    const before = text.slice(0, cursorPos)
+    const atIdx = before.lastIndexOf('@')
+    if (atIdx === -1) return null
+    if (atIdx > 0 && !/\s/.test(before[atIdx - 1])) return null
+    const after = before.slice(atIdx + 1)
+    if (after.includes(' ') || after.includes('\n')) return null
+    return after
+  }
+  const handleAtSelect = (path: string) => {
+    const val = store.input()
+    const cursor = inputRef?.selectionStart ?? val.length
+    const before = val.slice(0, cursor)
+    const atIdx = before.lastIndexOf('@')
+    if (atIdx !== -1) {
+      const after = val.slice(cursor)
+      const next = before.slice(0, atIdx) + `@${path} ` + after
+      store.setInput(next)
+    }
+    setAtVisible(false)
+    setAtDismissed(false)
+    inputRef?.focus()
+    queueMicrotask(() => {
+      if (inputRef) {
+        inputRef.style.height = 'auto'
+        inputRef.style.height = Math.min(inputRef.scrollHeight, 160) + 'px'
+      }
+    })
+  }
+  function AtMentionAutocomplete(props: {
+    query: string
+    files: string[]
+    selected: number
+    onSelect: (path: string) => void
+    onClose: () => void
+  }) {
+    const filtered = createMemo(() => filterFiles(props.query, props.files))
+    return (
+      <Show when={filtered().length > 0}>
+        <div
+          role="listbox"
+          aria-label="File suggestions"
+          style={{
+            position: 'absolute',
+            bottom: '100%',
+            left: '0',
+            right: '0',
+            'margin-bottom': '8px',
+            background: '#0f1117',
+            border: '1px solid rgba(255,255,255,0.12)',
+            'border-radius': '10px',
+            'box-shadow': '0 12px 32px rgba(0,0,0,0.45)',
+            overflow: 'hidden',
+            'z-index': '20',
+            'max-height': '200px',
+            display: 'flex',
+            'flex-direction': 'column',
+          }}
+        >
+          <div
+            style={{
+              padding: '6px 10px',
+              'font-size': '10px',
+              color: 'rgba(229,231,235,0.5)',
+              'font-weight': '600',
+              'letter-spacing': '0.04em',
+              'text-transform': 'uppercase',
+              'border-bottom': '1px solid rgba(255,255,255,0.06)',
+            }}
+          >
+            Files · @{props.query || '…'}
+          </div>
+          <div style={{ overflow: 'auto', padding: '4px', display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
+            <For each={filtered()}>
+              {(file, i) => (
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={props.selected === i() ? 'true' : 'false'}
+                  onClick={() => props.onSelect(file)}
+                  style={{
+                    display: 'flex',
+                    'align-items': 'center',
+                    gap: '8px',
+                    padding: '6px 9px',
+                    'border-radius': '8px',
+                    border: props.selected === i() ? '1px solid rgba(99,102,241,0.35)' : '1px solid transparent',
+                    background: props.selected === i() ? 'rgba(99,102,241,0.18)' : 'transparent',
+                    color: '#e5e7eb',
+                    'font-size': '12px',
+                    'font-family': 'ui-monospace, monospace',
+                    cursor: 'pointer',
+                    width: '100%',
+                    'text-align': 'left',
+                  }}
+                >
+                  <span style={{ 'font-size': '11px', opacity: '0.5' }}>📄</span>
+                  <span style={{ overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>{file}</span>
+                </button>
+              )}
+            </For>
+          </div>
+          <div style={{ padding: '6px 10px', 'border-top': '1px solid rgba(255,255,255,0.06)', 'font-size': '10px', color: 'rgba(229,231,235,0.45)', display: 'flex', gap: '6px' }}>
+            <span>↑↓ nav</span>
+            <span>·</span>
+            <span>Tab select</span>
+            <span>·</span>
+            <span>Esc close</span>
+          </div>
+        </div>
+      </Show>
+    )
   }
 
   // ── Mount: auth probe + health + palette listener ─────────────
@@ -190,15 +366,17 @@ export default function App() {
     setSelectedAgent(sess?.agent ?? '')
   })
   createEffect(() => {
-    const c = store.state.cost
-    if (!c || !budgetCapEnabled() || !store.state.currentId) return
-    if (c.costUSD >= budgetCapAmount()) {
+    const sess = store.state.sessions.find((s) => s.id === store.state.currentId)
+    const cap = store.state.costCap?.perSession ?? (budgetCapEnabled() ? budgetCapAmount() : undefined)
+    const cost = sess?.costUsd ?? store.state.cost?.costUSD
+    if (cost == null || cap == null || !store.state.currentId) return
+    if (cost >= cap) {
       const key = `mira.budgetCap.warned.${store.state.currentId}`
       try {
         if (localStorage.getItem(key)) return
         localStorage.setItem(key, '1')
       } catch {}
-      store.setBudgetWarning(`Budget cap reached: $${c.costUSD.toFixed(4)} ≥ $${budgetCapAmount()}`)
+      store.setBudgetWarning(`Budget cap reached: $${cost.toFixed(4)} ≥ $${cap} (per-session)`)
     }
   })
 
@@ -446,6 +624,32 @@ export default function App() {
   }
 
   const handleInputKeyDown = (e: KeyboardEvent) => {
+    if (atVisible() && atFiltered().length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setAtIndex((i) => Math.min(i + 1, atFiltered().length - 1))
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setAtIndex((i) => Math.max(i - 1, 0))
+        return
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        const pick = atFiltered()[atIndex()]
+        if (pick) {
+          e.preventDefault()
+          handleAtSelect(pick)
+          return
+        }
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setAtVisible(false)
+        setAtDismissed(true)
+        return
+      }
+    }
     const q = slashQuery()
     const filtered = slashFiltered()
     const hasSlash = slashVisible()
@@ -562,7 +766,10 @@ export default function App() {
           model={currentModel()}
           version={health()?.version}
           tools={health()?.tools}
-          costUSD={cost()?.costUSD}
+          costUSD={store.state.sessions.find((s) => s.id === store.state.currentId)?.costUsd ?? cost()?.costUSD}
+          costCap={store.state.costCap?.perSession ?? (budgetCapEnabled() ? budgetCapAmount() : undefined)}
+          tokensIn={store.state.sessions.find((s) => s.id === store.state.currentId)?.tokensIn}
+          tokensOut={store.state.sessions.find((s) => s.id === store.state.currentId)?.tokensOut}
           score={miraScore()?.score ?? null}
           queued={store.state.queued.length}
           hasSession={Boolean(store.state.currentId)}
@@ -816,19 +1023,45 @@ export default function App() {
               selected={slashIndex()}
               onSelect={handleSlashSelect}
               onClose={() => setSlashDismissed(true)}
+              loading={settingsStore.state.loading}
+            />
+          </Show>
+          <Show when={atVisible() && atFiltered().length > 0 && !atDismissed()}>
+            <AtMentionAutocomplete
+              query={atQuery()}
+              files={workspaceFiles()}
+              selected={atIndex()}
+              onSelect={handleAtSelect}
+              onClose={() => {
+                setAtVisible(false)
+                setAtDismissed(true)
+              }}
             />
           </Show>
           <textarea
             ref={inputRef}
             value={store.input()}
             onInput={(e) => {
-              store.setInput(e.currentTarget.value)
-              if (e.currentTarget.value.startsWith('/')) void settingsStore.loadAll()
+              const val = e.currentTarget.value
+              store.setInput(val)
+              if (val.startsWith('/')) void settingsStore.loadAll()
+              const cursor = e.currentTarget.selectionStart ?? val.length
+              const at = detectAtMention(val, cursor)
+              if (at !== null && !atDismissed()) {
+                setAtQuery(at)
+                setAtVisible(true)
+                setAtIndex(0)
+              } else {
+                setAtVisible(false)
+              }
               e.currentTarget.style.height = 'auto'
               e.currentTarget.style.height = Math.min(e.currentTarget.scrollHeight, 160) + 'px'
             }}
             onKeyDown={handleInputKeyDown}
-            onFocus={() => focusMgr.setActive('input')}
+            onFocus={() => {
+              focusMgr.setActive('input')
+              void fetchWorkspaceFiles()
+            }}
             placeholder={
               !store.state.currentId
                 ? 'Create or select a session to start…'

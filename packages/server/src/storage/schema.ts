@@ -187,4 +187,14 @@ export const auditEntries = sqliteTable("audit_entries", {
   index("audit_entries_created_idx").on(t.createdAt),
 ])
 
-export const schema = { sessions, messages, parts, todos, fileSnapshots, jobs, findings, knowledgeEntries, auditEntries, sessionsRelations, messagesRelations, partsRelations, todosRelations, jobsRelations, findingsRelations }
+// Runtime-issued API keys — persisted via admin routes, loaded on startup
+export const apiKeys = sqliteTable("api_keys", {
+  key: text("key").primaryKey(),
+  owner: text("owner").notNull(),
+  createdAt: integer("created_at").notNull(),
+  createdBy: text("created_by").notNull().default("default"),
+}, (t) => [
+  index("api_keys_owner_idx").on(t.owner),
+])
+
+export const schema = { sessions, messages, parts, todos, fileSnapshots, jobs, findings, knowledgeEntries, auditEntries, apiKeys, sessionsRelations, messagesRelations, partsRelations, todosRelations, jobsRelations, findingsRelations }

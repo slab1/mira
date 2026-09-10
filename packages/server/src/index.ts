@@ -133,9 +133,19 @@ function provisionFirstRunToken(): void {
 provisionFirstRunToken()
 
 // ── Security config ────────────────────────────────────────────────
-const REQUIRED_TOKEN = process.env.MIRA_TOKEN ?? ''
+let REQUIRED_TOKEN = process.env.MIRA_TOKEN ?? ''
 if (REQUIRED_TOKEN === 'change-me-to-a-long-random-secret') {
-  warn('⚠️  MIRA_TOKEN is placeholder — set a real secret via /root/.mira/mira.env or env')
+  if (process.env.NODE_ENV === 'production') {
+    error('❌ MIRA_TOKEN is placeholder — refusing to start with guessable token (set a real secret via /root/.mira/mira.env or env)')
+    process.exit(1)
+  }
+  // Non-prod: treat placeholder as empty (no auth) — log error if strict, warn otherwise
+  if (process.env.MIRA_STRICT_AUTH !== '0') {
+    error('❌ MIRA_TOKEN is placeholder — treating as empty (no auth) — set a real secret via /root/.mira/mira.env or env')
+  } else {
+    warn('⚠️  MIRA_TOKEN is placeholder — treating as empty (no auth) — set a real secret via /root/.mira/mira.env or env')
+  }
+  REQUIRED_TOKEN = ''
 }
 const API_KEY_OWNERS = new Map<string, string>()
 for (const pair of (process.env.MIRA_API_KEYS ?? '')
@@ -193,12 +203,17 @@ function isOriginAllowed(origin: string | null | undefined): boolean {
     return true
   if (CORS_ORIGIN_LIST.length === 0) return true
   if (CORS_ORIGIN_LIST.includes(origin)) return true
-  const allowLocal =
-    process.env.MIRA_ALLOW_LOCALHOST !== '0' &&
-    (process.env.NODE_ENV !== 'production' || CORS_ORIGIN_LIST.length === 0)
+  // Align with middleware/index.ts:73 — strict MIRA_ALLOW_LOCALHOST === '1' gate.
+  // Prod with CORS_ORIGINS set: localhost only allowed when gate is '1'.
+  // Dev default (empty list) already returned true above, so localhost allowed without gate.
   if (
-    allowLocal &&
-    (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:'))
+    process.env.MIRA_ALLOW_LOCALHOST === '1' &&
+    (origin.startsWith('http://localhost:') ||
+      origin.startsWith('https://localhost:') ||
+      origin.startsWith('http://127.0.0.1:') ||
+      origin.startsWith('https://127.0.0.1:') ||
+      origin.startsWith('http://[::1]:') ||
+      origin.startsWith('https://[::1]:'))
   )
     return true
   return false

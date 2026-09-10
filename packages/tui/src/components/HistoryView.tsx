@@ -3,10 +3,12 @@
  *
  * Lists file snapshots for a session, previews diff via getSnapshot, and reverts via revertSession.
  * Used standalone or inside Inspector's History tab.
+ * Grouped by messageID (__no_message__ sentinel) — port of web ToolView.tsx:580-610.
  */
 
-import { For, Show, createSignal, createEffect } from 'solid-js'
+import { For, Show, createSignal, createEffect, createMemo } from 'solid-js'
 import { rpc } from '../rpc/client'
+import { toast } from './Toast'
 
 type Snapshot = {
   id: string
@@ -27,6 +29,93 @@ type SnapshotDetail = {
 type Props = {
   sessionId: string | null
   onReverted?: () => void
+}
+
+function DiffViewer(props: { path: string; before: string | null; after: string | null }) {
+  const snapLines = () => (props.before ?? '').split('\n').length
+  const currLines = () => (props.after ?? '').split('\n').length
+  const added = () => Math.max(0, currLines() - snapLines())
+  const removed = () => Math.max(0, snapLines() - currLines())
+  return (
+    <div
+      data-slot="snapshot-diff"
+      style={{
+        display: 'flex',
+        'flex-direction': 'column',
+        gap: '8px',
+        width: '100%',
+        'margin-top': '6px',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          gap: '6px',
+          'align-items': 'center',
+          'font-size': '10px',
+          color: '#6b7280',
+          'font-family': 'ui-monospace, monospace',
+        }}
+      >
+        <span style={{ 'font-weight': '600', color: '#e5e7eb' }}>{props.path}</span>
+        <span style={{ 'margin-left': 'auto', display: 'inline-flex', gap: '6px' }}>
+          <Show when={added() > 0}>
+            <span style={{ color: '#34d399', 'font-weight': '600' }}>+{added()} lines</span>
+          </Show>
+          <Show when={removed() > 0}>
+            <span style={{ color: '#f87171', 'font-weight': '600' }}>-{removed()} lines</span>
+          </Show>
+          <span>
+            {snapLines()} → {currLines()} lines
+          </span>
+        </span>
+      </div>
+      <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
+        <div>
+          <div style={{ color: '#9ca3af', 'font-size': '10px', 'margin-bottom': '4px' }}>
+            Before (snapshot):
+          </div>
+          <pre
+            style={{
+              margin: '0',
+              padding: '8px',
+              background: 'rgba(0,0,0,0.30)',
+              'border-radius': '6px',
+              border: '1px solid rgba(255,255,255,0.06)',
+              color: '#d1d5db',
+              'white-space': 'pre-wrap',
+              'max-height': '200px',
+              overflow: 'auto',
+              'font-family': 'ui-monospace, monospace',
+              'font-size': '11px',
+            }}
+          >
+            {props.before ?? '(empty)'}
+          </pre>
+        </div>
+        <div>
+          <div style={{ color: '#9ca3af', 'font-size': '10px', 'margin-bottom': '4px' }}>After (current):</div>
+          <pre
+            style={{
+              margin: '0',
+              padding: '8px',
+              background: 'rgba(0,0,0,0.30)',
+              'border-radius': '6px',
+              border: '1px solid rgba(255,255,255,0.06)',
+              color: '#d1d5db',
+              'white-space': 'pre-wrap',
+              'max-height': '200px',
+              overflow: 'auto',
+              'font-family': 'ui-monospace, monospace',
+              'font-size': '11px',
+            }}
+          >
+            {props.after ?? '(file missing)'}
+          </pre>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export default function HistoryView(props: Props) {
@@ -73,6 +162,7 @@ export default function HistoryView(props: Props) {
       setDetailSnapId(snap.id)
     } catch (e) {
       setError((e as Error).message ?? String(e))
+      toast.error(`Snapshot detail failed: ${(e as Error).message}`)
     } finally {
       setLoadingDetail(null)
     }
@@ -83,21 +173,45 @@ export default function HistoryView(props: Props) {
     setDetailSnapId(null)
   }
 
-  const doRevert = async (snap: Snapshot) => {
+  const doRevertGroup = async (messageID: string | null, count: number) => {
     const id = props.sessionId
     if (!id) return
-    setReverting(snap.id)
+    const key = messageID ?? '__no_message__'
+    setReverting(key)
     setError(null)
     try {
-      await rpc.revertSession(id, snap.messageID ?? undefined)
+      await rpc.revertSession(id, messageID ?? undefined)
       await loadSnapshots()
       props.onReverted?.()
+      toast.success(
+        messageID ? `Rewound to ${messageID.slice(0, 8)} — ${count} file(s) restored` : `Reverted last mutation`,
+      )
     } catch (e) {
-      setError((e as Error).message ?? String(e))
+      const msg = (e as Error).message ?? String(e)
+      setError(msg)
+      toast.error(`Rewind failed: ${msg}`)
     } finally {
       setReverting(null)
     }
   }
+
+  const grouped = createMemo(() => {
+    const snaps = snapshots()
+    const map = new Map<string, Snapshot[]>()
+    const order: string[] = []
+    for (const sn of snaps) {
+      const key = sn.messageID ?? '__no_message__'
+      if (!map.has(key)) {
+        map.set(key, [])
+        order.push(key)
+      }
+      map.get(key)!.push(sn)
+    }
+    return order.map((k) => ({
+      messageID: k === '__no_message__' ? null : k,
+      snaps: map.get(k)!,
+    }))
+  })
 
   return (
     <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
@@ -195,157 +309,155 @@ export default function HistoryView(props: Props) {
                 </div>
               }
             >
-              <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
-                <For each={snapshots()}>
-                  {(snap) => (
+              <div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
+                <For each={grouped()}>
+                  {(group) => (
                     <div
+                      data-slot="snapshot-group"
                       style={{
-                        padding: '9px 11px',
-                        'border-radius': '8px',
-                        background: 'rgba(255,255,255,0.03)',
-                        border: '1px solid rgba(255,255,255,0.08)',
+                        padding: '8px',
                         display: 'flex',
                         'flex-direction': 'column',
                         gap: '6px',
+                        background: 'rgba(255,255,255,0.02)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        'border-radius': '8px',
                       }}
                     >
-                      <div style={{ display: 'flex', gap: '9px', 'align-items': 'center' }}>
-                        <div style={{ flex: '1', 'min-width': '0' }}>
-                          <div
-                            style={{
-                              'font-size': '12px',
-                              'font-weight': '600',
-                              color: '#e5e7eb',
-                              'font-family': 'ui-monospace, monospace',
-                              'white-space': 'nowrap',
-                              overflow: 'hidden',
-                              'text-overflow': 'ellipsis',
-                            }}
-                            title={snap.path}
-                          >
-                            {snap.path}
-                          </div>
-                          <div
-                            style={{
-                              'font-size': '10px',
-                              color: '#6b7280',
-                              'margin-top': '2px',
-                              'font-family': 'ui-monospace, monospace',
-                            }}
-                          >
-                            {new Date(snap.createdAt).toLocaleTimeString()} ·{' '}
-                            {snap.existedBefore ? 'edit' : 'new file'}
-                            {snap.messageID ? ` · ${snap.messageID.slice(0, 8)}` : ''}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => void openDiff(snap)}
-                          title="Preview diff"
+                      <div
+                        style={{
+                          display: 'flex',
+                          'align-items': 'center',
+                          gap: '8px',
+                          'flex-wrap': 'wrap',
+                        }}
+                      >
+                        <span
                           style={{
-                            padding: '4px 8px',
-                            'font-size': '11px',
-                            border: '1px solid rgba(255,255,255,0.12)',
-                            'border-radius': '999px',
-                            background: 'rgba(255,255,255,0.06)',
+                            'font-size': '10px',
+                            'font-weight': '700',
                             color: '#9ca3af',
-                            cursor: 'pointer',
-                            flex: 'none',
+                            'font-family': 'ui-monospace, monospace',
+                            'letter-spacing': '0.04em',
+                            'text-transform': 'uppercase',
                           }}
                         >
-                          {loadingDetail() === snap.id ? '…' : 'diff'}
-                        </button>
+                          {group.messageID ? `msg ${group.messageID.slice(0, 8)}` : 'no message'}
+                        </span>
+                        <span
+                          style={{
+                            'font-size': '10px',
+                            color: '#6b7280',
+                            'font-family': 'ui-monospace, monospace',
+                          }}
+                        >
+                          {new Date(Math.min(...group.snaps.map((s) => s.createdAt))).toLocaleTimeString()} ·{' '}
+                          {group.snaps.length} file{group.snaps.length === 1 ? '' : 's'}
+                        </span>
                         <button
                           type="button"
-                          disabled={reverting() === snap.id}
-                          onClick={() => void doRevert(snap)}
+                          disabled={reverting() === (group.messageID ?? '__no_message__')}
+                          onClick={() => void doRevertGroup(group.messageID, group.snaps.length)}
                           title={
-                            snap.messageID
-                              ? `Rewind to message ${snap.messageID.slice(0, 8)} (reverts this + later)`
+                            group.messageID
+                              ? `↩ rewind to here — reverts this message and all later ones`
+                              : 'Undo last mutation'
+                          }
+                          aria-label={
+                            group.messageID
+                              ? `Rewind to message ${group.messageID.slice(0, 8)}`
                               : 'Undo last mutation'
                           }
                           style={{
-                            padding: '4px 8px',
+                            padding: '4px 10px',
                             'font-size': '11px',
                             border: '1px solid rgba(255,255,255,0.12)',
                             'border-radius': '999px',
-                            background: 'rgba(255,255,255,0.06)',
-                            color: '#e5e7eb',
-                            cursor: reverting() === snap.id ? 'not-allowed' : 'pointer',
+                            'margin-left': 'auto',
                             flex: 'none',
-                            opacity: reverting() === snap.id ? '0.5' : '1',
+                            background: group.messageID ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.06)',
+                            color: group.messageID ? '#a5b4fc' : '#e5e7eb',
+                            'border-color': group.messageID ? 'rgba(99,102,241,0.35)' : 'rgba(255,255,255,0.12)',
+                            'font-weight': '600',
+                            cursor: reverting() === (group.messageID ?? '__no_message__') ? 'not-allowed' : 'pointer',
+                            opacity: reverting() === (group.messageID ?? '__no_message__') ? '0.5' : '1',
                           }}
                         >
-                          {reverting() === snap.id ? '…' : '↩ revert'}
+                          {reverting() === (group.messageID ?? '__no_message__') ? '…' : '↩ rewind to here'}
                         </button>
                       </div>
-                      {/* Inline diff preview when this snapshot is selected */}
-                      <Show when={detailSnapId() === snap.id && detail()}>
-                        {(d) => (
+                      <For each={group.snaps}>
+                        {(snap) => (
                           <div
+                            data-slot="snapshot-card"
                             style={{
-                              'margin-top': '4px',
-                              'font-family': 'ui-monospace, monospace',
-                              'font-size': '10px',
-                              'white-space': 'pre-wrap',
-                              background: 'rgba(0,0,0,0.25)',
-                              padding: '8px',
-                              'border-radius': '6px',
-                              border: '1px solid rgba(255,255,255,0.06)',
+                              padding: '9px 11px',
+                              'border-radius': '8px',
+                              background: 'rgba(255,255,255,0.03)',
+                              border: '1px solid rgba(255,255,255,0.08)',
+                              display: 'flex',
+                              'flex-direction': 'column',
+                              gap: '6px',
                             }}
                           >
-                            <div
-                              style={{
-                                display: 'flex',
-                                'justify-content': 'space-between',
-                                'align-items': 'center',
-                                'margin-bottom': '4px',
-                              }}
-                            >
-                              <span style={{ 'font-weight': '600', color: '#e5e7eb' }}>
-                                Diff preview for {d().path}
-                              </span>
+                            <div style={{ display: 'flex', gap: '9px', 'align-items': 'center' }}>
+                              <div style={{ flex: '1', 'min-width': '0' }}>
+                                <div
+                                  style={{
+                                    'font-size': '12px',
+                                    'font-weight': '600',
+                                    color: '#e5e7eb',
+                                    'font-family': 'ui-monospace, monospace',
+                                    'white-space': 'nowrap',
+                                    overflow: 'hidden',
+                                    'text-overflow': 'ellipsis',
+                                  }}
+                                  title={snap.path}
+                                >
+                                  {snap.path}
+                                </div>
+                                <div
+                                  style={{
+                                    'font-size': '10px',
+                                    color: '#6b7280',
+                                    'margin-top': '2px',
+                                    'font-family': 'ui-monospace, monospace',
+                                  }}
+                                >
+                                  {new Date(snap.createdAt).toLocaleTimeString()} ·{' '}
+                                  {snap.existedBefore ? 'edit' : 'new file'}
+                                </div>
+                              </div>
                               <button
                                 type="button"
-                                onClick={closeDiff}
+                                onClick={() => void openDiff(snap)}
+                                title="Preview diff"
                                 style={{
-                                  padding: '2px 6px',
-                                  'font-size': '10px',
+                                  padding: '4px 8px',
+                                  'font-size': '11px',
                                   border: '1px solid rgba(255,255,255,0.12)',
                                   'border-radius': '999px',
-                                  background: 'transparent',
+                                  background: 'rgba(255,255,255,0.06)',
                                   color: '#9ca3af',
                                   cursor: 'pointer',
+                                  flex: 'none',
                                 }}
                               >
-                                ✕ close
+                                {loadingDetail() === snap.id ? '…' : 'diff'}
                               </button>
                             </div>
-                            <div style={{ color: '#9ca3af' }}>
-                              Snapshot ({d().existedBefore ? 'edit' : 'new file'}):
-                            </div>
-                            <pre
-                              style={{
-                                margin: '4px 0',
-                                'white-space': 'pre-wrap',
-                                color: '#d1d5db',
-                              }}
-                            >
-                              {d().snapshotContent ?? '(empty)'}
-                            </pre>
-                            <div style={{ color: '#9ca3af' }}>Current:</div>
-                            <pre
-                              style={{
-                                margin: '4px 0',
-                                'white-space': 'pre-wrap',
-                                color: '#d1d5db',
-                              }}
-                            >
-                              {d().currentContent ?? '(file missing)'}
-                            </pre>
+                            <Show when={detailSnapId() === snap.id && detail()}>
+                              {(d) => (
+                                <DiffViewer
+                                  path={d().path}
+                                  before={d().snapshotContent}
+                                  after={d().currentContent}
+                                />
+                              )}
+                            </Show>
                           </div>
                         )}
-                      </Show>
+                      </For>
                     </div>
                   )}
                 </For>
@@ -415,57 +527,9 @@ export default function HistoryView(props: Props) {
                 ✕ Close
               </button>
             </div>
-            <div
-              style={{
-                'font-family': 'ui-monospace, monospace',
-                'font-size': '11px',
-                'white-space': 'pre-wrap',
-                display: 'flex',
-                'flex-direction': 'column',
-                gap: '8px',
-              }}
-            >
-              <div>
-                <div style={{ color: '#9ca3af', 'font-size': '10px', 'margin-bottom': '4px' }}>
-                  Snapshot ({detail()?.existedBefore ? 'edit' : 'new file'}):
-                </div>
-                <pre
-                  style={{
-                    margin: '0',
-                    padding: '8px',
-                    background: 'rgba(0,0,0,0.30)',
-                    'border-radius': '6px',
-                    border: '1px solid rgba(255,255,255,0.06)',
-                    color: '#d1d5db',
-                    'white-space': 'pre-wrap',
-                    'max-height': '260px',
-                    overflow: 'auto',
-                  }}
-                >
-                  {detail()?.snapshotContent ?? '(empty)'}
-                </pre>
-              </div>
-              <div>
-                <div style={{ color: '#9ca3af', 'font-size': '10px', 'margin-bottom': '4px' }}>
-                  Current:
-                </div>
-                <pre
-                  style={{
-                    margin: '0',
-                    padding: '8px',
-                    background: 'rgba(0,0,0,0.30)',
-                    'border-radius': '6px',
-                    border: '1px solid rgba(255,255,255,0.06)',
-                    color: '#d1d5db',
-                    'white-space': 'pre-wrap',
-                    'max-height': '260px',
-                    overflow: 'auto',
-                  }}
-                >
-                  {detail()?.currentContent ?? '(file missing)'}
-                </pre>
-              </div>
-            </div>
+            <Show when={detail()}>
+              {(d) => <DiffViewer path={d().path} before={d().snapshotContent} after={d().currentContent} />}
+            </Show>
           </div>
         </div>
       </Show>

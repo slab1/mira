@@ -23,6 +23,9 @@ export function Header(props: {
   version?: string
   tools?: number
   costUSD?: number
+  costCap?: number
+  tokensIn?: number | null
+  tokensOut?: number | null
   score?: number | null
   queued?: number
   onUndo?: () => void
@@ -142,19 +145,51 @@ export function Header(props: {
           </span>
         </Show>
         <Show when={props.costUSD !== undefined}>
-          <span
-            style={{
-              padding: '3px 8px',
-              'border-radius': '999px',
-              background: 'rgba(59,130,246,0.15)',
-              border: '1px solid rgba(59,130,246,0.25)',
-              color: '#93c5fd',
-              'font-family': font.mono,
-              'font-weight': '600',
-            }}
-          >
-            <Text>${(props.costUSD ?? 0).toFixed(4)}</Text>
-          </span>
+          {(() => {
+            const cost = props.costUSD ?? 0
+            const cap = props.costCap
+            const over = cap != null && cost >= cap
+            const pct = cap ? Math.min(100, (cost / cap) * 100) : 0
+            const sparkW = 24
+            const sparkH = 8
+            const points = cap
+              ? [0, cost * 0.3, cost * 0.6, cost].map(
+                  (v, i) => `${(i * sparkW) / 3},${sparkH - (v / cap) * sparkH}`,
+                )
+              : []
+            return (
+              <span
+                title={`${cap ? `cap $${cap} (${pct.toFixed(0)}%)` : ''}${props.tokensIn != null ? ` · ${props.tokensIn} in / ${props.tokensOut ?? 0} out` : ''}${over ? ' · ⚠ Budget cap exceeded' : ''}`}
+                style={{
+                  padding: cap != null ? '3px 6px 3px 8px' : '3px 8px',
+                  'border-radius': '999px',
+                  background: over ? 'rgba(239,68,68,0.15)' : 'rgba(59,130,246,0.15)',
+                  border: over ? '1px solid rgba(239,68,68,0.35)' : '1px solid rgba(59,130,246,0.25)',
+                  color: over ? '#fca5a5' : '#93c5fd',
+                  'font-family': font.mono,
+                  'font-weight': '600',
+                  display: 'inline-flex',
+                  'align-items': 'center',
+                  gap: '6px',
+                }}
+              >
+                <Text>${cost.toFixed(4)}{over ? ' ⚠' : ''}</Text>
+                <Show when={cap != null}>
+                  <span style={{ display: 'inline-flex', 'align-items': 'center', gap: '4px', 'font-size': '10px', opacity: '0.9' }}>
+                    <span style={{ width: '32px', height: '4px', background: 'rgba(255,255,255,0.15)', 'border-radius': '2px', overflow: 'hidden', display: 'inline-block' }}>
+                      <span style={{ display: 'block', height: '100%', width: `${pct}%`, background: over ? '#f87171' : pct > 80 ? '#fbbf24' : '#60a5fa', 'border-radius': '2px' }} />
+                    </span>
+                    <Show when={points.length}>
+                      <svg width={sparkW} height={sparkH} viewBox={`0 0 ${sparkW} ${sparkH}`} style={{ display: 'block' }} aria-hidden="true">
+                        <polyline fill="none" stroke={over ? '#f87171' : '#60a5fa'} stroke-width="1.2" points={points.join(' ')} />
+                      </svg>
+                    </Show>
+                    <Text>{over ? '⚠' : `${pct.toFixed(0)}%`}</Text>
+                  </span>
+                </Show>
+              </span>
+            )
+          })()}
         </Show>
         <Show when={props.version}>
           <span style={{ opacity: '0.7' }}>

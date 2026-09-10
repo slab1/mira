@@ -6,7 +6,7 @@
  * Also used as inline rail when needed.
  */
 
-import { createSignal, createEffect, onCleanup, For, Show } from 'solid-js'
+import { createSignal, createEffect, onCleanup, onMount, For, Show } from 'solid-js'
 import { rpc } from '../rpc/client'
 
 type Props = {
@@ -46,6 +46,15 @@ export default function QueueRail(props: Props) {
   createEffect(() => {
     const sid = props.sessionId
     if (props.open && sid) void load()
+  })
+
+  onMount(() => {
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+      if (!props.sessionId) return
+      void load()
+    }, 3000)
+    onCleanup(() => clearInterval(timer))
   })
 
   const move = async (idx: number, dir: number) => {
