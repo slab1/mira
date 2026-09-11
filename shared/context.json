@@ -97,7 +97,13 @@
       "packages/server/src/tools/registry.ts:200 execute cwd fallback ctx.cwd ?? process.cwd()",
       "packages/server/src/tools/glob.ts:20 glob/grep use ctx.cwd",
       "packages/server/src/tools/bash.ts:25 workdir fallback ctx.cwd",
-      "packages/server/src/config/prompt.ts:2 buildSystemPrompt(cwd) already exists, callers now pass session.cwd"
+      "packages/server/src/config/prompt.ts:2 buildSystemPrompt(cwd) already exists, callers now pass session.cwd",
+      "packages/cli/src/cli.ts:68-95 readMiraEnvFile() (MIRA_DIR, XDG_CONFIG_HOME/mira/mira.env, ~/.mira/mira.env) + token() now process.env.MIRA_TOKEN ?? readMiraEnvFile() ?? \"\"",
+      "packages/web/vite.config.ts:52-63 FIRST_RUN_TOKEN gated by NODE_ENV !== 'production' + define gated by NODE_ENV !== 'production' && FIRST_RUN_TOKEN (DEV ONLY)",
+      "packages/web/src/api/client.ts:409-414 getToken() VITE_MIRA_TOKEN fallback marked // DEV ONLY (vite dev injects, never in prod bundle)",
+      "packages/web/.env removed (was baking VITE_MIRA_TOKEN=01df... into prod dist)",
+      "packages/web/src/api/client.ts:440-449 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)",
+      "packages/tui/src/rpc/client.ts:498-506 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)"
     ]
   },
   "checkpoints": {
@@ -118,7 +124,7 @@
       "last_updated": "2026-09-08T09:04:07.720317+00:00"
     }
   },
-  "last_updated": "2026-09-10T11:08:50.872685+00:00",
+  "last_updated": "2026-09-11T08:16:50.719522+00:00",
   "workflow_trace": [
     {
       "agent": "fixer",
@@ -546,6 +552,61 @@
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_7cf010"
       },
       "outcome": "P2-2 complete: workspace lifecycle (create/switch/templates/recent) via ~/.mira/workspaces.json + MIRA_WORKSPACE_ROOTS, CLI workspace/project commands with offline fallback, web switcher dropdown with cwd for new sessions, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_ecb0ef",
+      "task": "P2-3 CLI env-only + P3-3 VITE_MIRA_TOKEN prod bake",
+      "status": "completed",
+      "timestamp": "2026-09-11T06:54:36.238176+00:00",
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
+      "artifacts": {
+        "files_modified": [
+          "packages/cli/src/cli.ts:68-95 readMiraEnvFile() (MIRA_DIR, XDG_CONFIG_HOME/mira/mira.env, ~/.mira/mira.env) + token() now process.env.MIRA_TOKEN ?? readMiraEnvFile() ?? \"\"",
+          "packages/web/vite.config.ts:52-63 FIRST_RUN_TOKEN gated by NODE_ENV !== 'production' + define gated by NODE_ENV !== 'production' && FIRST_RUN_TOKEN (DEV ONLY)",
+          "packages/web/src/api/client.ts:409-414 getToken() VITE_MIRA_TOKEN fallback marked // DEV ONLY (vite dev injects, never in prod bundle)",
+          "packages/web/.env removed (was baking VITE_MIRA_TOKEN=01df... into prod dist)"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (server+web+tui+shared+slack+cli) \u2014 tsc --noEmit pass",
+          "cli": "MIRA_DIR=/tmp/test-mira-dir token fallback PASS, XDG_CONFIG_HOME fallback PASS, env precedence PASS, mira session list without source now works via file read",
+          "vite_prod": "NODE_ENV=production vite build 31 modules 309.14kB \u2014 dist/assets/*.js no VITE_MIRA_TOKEN value (bl without token, Hn() returns \"\"), prod clean",
+          "vite_dev": "dev still injects via mira.env when NODE_ENV != production",
+          "server_tests": "bun test packages/server 250+ pass 1 fail LIVE expected (pre-existing), gaps 7 pass, queue 1 pass"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ecb0ef"
+      },
+      "outcome": "P2-3+P3-3 complete: CLI now reads ~/.mira/mira.env (MIRA_DIR > XDG_CONFIG_HOME/mira/mira.env > ~/.mira/mira.env) via readMiraEnvFile() (15 LOC, copy index.ts:91-101 logic) and token() falls back to file when env not set \u2014 mira session list without source now works; vite.config FIRST_RUN_TOKEN and define now gated by NODE_ENV !== 'production' (DEV ONLY) \u2014 prod build no longer bakes token (verified dist clean, .env removed), client getToken marked DEV ONLY; typecheck green, minimal diff preserved design, no validateToken/api_keys/admin/tokenEquals/isPublicUiPath/?api= touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_ad3821",
+      "task": "P2-2 validateToken double 401 \u2014 single gated endpoint",
+      "status": "completed",
+      "timestamp": "2026-09-11T08:16:50.719522+00:00",
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
+      "artifacts": {
+        "files_modified": [
+          "packages/web/src/api/client.ts:440-449 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)",
+          "packages/tui/src/rpc/client.ts:498-506 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)"
+        ],
+        "verify": {
+          "typecheck": "web tsc --noEmit exit 0, tui tsc --noEmit exit 0, server tsc --noEmit exit 0",
+          "gaps": "bun test packages/server/e2e/gaps.test.ts 7 pass 0 fail 21.17s",
+          "validateToken": "web validateToken single /config PASS, tui validateToken single /config PASS, AuthGate Invalid token error PASS (single 401, saves 1 RTT)",
+          "manual": "grep validateToken shows 0 /health refs, 1 /config ref, no double logic"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ad3821"
+      },
+      "outcome": "P2-2 fix complete: web/api/client.ts:440 and tui/rpc/client.ts:498 now single GET /config (gated, requires auth) instead of /health then /config double 401 \u2014 saves 1 RTT on invalid token, AuthGate shows Invalid token after single 401; typecheck green (web+tui+server), gaps 7 pass, minimal diff preserved design, no cli/vite/api_keys/admin/tokenEquals/isPublicUiPath/?api= touched"
     }
   ],
   "findings": {
@@ -686,6 +747,34 @@
         "fix": "schema.ts add cwd/projectId + index, db.ts CREATE TABLE + addColumn + index idempotent (fixed initial CREATE INDEX failure on old DBs), session.ts SessionRow + Zod schema + route pass-through, prompt.ts createSession persist + fork/subagent inherit + streamResponse/buildSystemPrompt cwd + loadContext/loadMemoryBank cwd + tools.execute cwd, registry cwd fallback, glob/grep/bash use ctx.cwd, config/prompt already cwd-aware",
         "verify": "turbo typecheck 6 successful, gaps 7 pass, queue 1 pass, server_e2e 7 pass LIVE fail expected, mcp isolated 11 pass, cwd functional test ALL CHECKS PASSED (schema, persist, buildSystemPrompt, loadMemoryBank, tools, route)",
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_iebhd3"
+      },
+      {
+        "run_id": "run_20260909_ecb0ef",
+        "at": "2026-09-11T06:54:36.238176+00:00",
+        "task": "P2-3 CLI env-only + P3-3 VITE_MIRA_TOKEN prod bake",
+        "files_modified": [
+          "packages/cli/src/cli.ts:68-95 readMiraEnvFile() (MIRA_DIR, XDG_CONFIG_HOME/mira/mira.env, ~/.mira/mira.env) + token() now process.env.MIRA_TOKEN ?? readMiraEnvFile() ?? \"\"",
+          "packages/web/vite.config.ts:52-63 FIRST_RUN_TOKEN gated by NODE_ENV !== 'production' + define gated by NODE_ENV !== 'production' && FIRST_RUN_TOKEN (DEV ONLY)",
+          "packages/web/src/api/client.ts:409-414 getToken() VITE_MIRA_TOKEN fallback marked // DEV ONLY (vite dev injects, never in prod bundle)",
+          "packages/web/.env removed (was baking VITE_MIRA_TOKEN=01df... into prod dist)"
+        ],
+        "root_cause": "CLI token() only env (no file read) vs server/vite read mira.env; vite define baked token into prod dist via FIRST_RUN_TOKEN without NODE_ENV gate + .env file",
+        "fix": "CLI add readMiraEnvFile() with MIRA_DIR/XDG_CONFIG_HOME/homedir fallback and token() env ?? file; vite gate FIRST_RUN_TOKEN and define by NODE_ENV !== 'production' + DEV ONLY comment in client; remove .env",
+        "verify": "typecheck 6/6, CLI fallback PASS, vite prod clean (no token), server tests pass",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ecb0ef"
+      },
+      {
+        "run_id": "run_20260909_ad3821",
+        "at": "2026-09-11T08:16:50.719522+00:00",
+        "task": "P2-2 validateToken double 401 \u2014 single gated endpoint",
+        "files_modified": [
+          "packages/web/src/api/client.ts:440-449 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)",
+          "packages/tui/src/rpc/client.ts:498-506 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)"
+        ],
+        "root_cause": "validateToken tried GET /health (public when no auth, gated when auth) then GET /config on non-401 \u2014 invalid token triggered 2\u00d7401 before AuthGate showed error, wasting 1 RTT",
+        "fix": "Changed web/api/client.ts:440 and tui/rpc/client.ts:498 to single GET /config (gated, requires auth) \u2014 single 401, AuthGate shows Invalid token immediately, saves 1 RTT, minimal diff preserved design",
+        "verify": "web tsc --noEmit exit 0, tui tsc --noEmit exit 0, gaps 7 pass, manual grep 0 /health 1 /config PASS, AuthGate Invalid token PASS",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ad3821"
       }
     ]
   }

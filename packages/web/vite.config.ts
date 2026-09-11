@@ -49,7 +49,11 @@ function miraEnvToken(): string {
   return ''
 }
 // Explicit env wins; otherwise adopt the server-provisioned token.
-const FIRST_RUN_TOKEN = process.env.VITE_MIRA_TOKEN?.trim() || miraEnvToken()
+// DEV ONLY — never bake token into prod bundle (NODE_ENV=production skips file read + define).
+const FIRST_RUN_TOKEN =
+  process.env.NODE_ENV !== 'production'
+    ? process.env.VITE_MIRA_TOKEN?.trim() || miraEnvToken()
+    : ''
 
 // Dev-server API target: MIRA_DEV_API (full URL) or MIRA_DEV_PORT (port only).
 // vite.config runs in Node, so plain process.env is available.
@@ -58,7 +62,7 @@ const API_TARGET =
 
 export default defineConfig({
   plugins: [solid()],
-  ...(FIRST_RUN_TOKEN
+  ...(process.env.NODE_ENV !== 'production' && FIRST_RUN_TOKEN
     ? { define: { 'import.meta.env.VITE_MIRA_TOKEN': JSON.stringify(FIRST_RUN_TOKEN) } }
     : {}),
   // GitHub Pages serves project sites under /<repo>/ — assets must resolve there.

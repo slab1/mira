@@ -65,8 +65,36 @@ function apiUrl(): string {
   if (port) return `http://127.0.0.1:${port}`
   return DEFAULT_API.replace(/\/$/, "")
 }
+function readMiraEnvFile(): string | undefined {
+  try {
+    const { readFileSync, existsSync } = require("node:fs") as typeof import("node:fs")
+    const { homedir } = require("node:os") as typeof import("node:os")
+    const { join } = require("node:path") as typeof import("node:path")
+    const cands = [
+      process.env.MIRA_DIR?.trim() ? join(process.env.MIRA_DIR.trim(), "mira.env") : null,
+      process.env.XDG_CONFIG_HOME?.trim()
+        ? join(process.env.XDG_CONFIG_HOME.trim(), "mira", "mira.env")
+        : null,
+      join(homedir(), ".mira", "mira.env"),
+    ].filter(Boolean) as string[]
+    for (const p of cands) {
+      try {
+        if (!existsSync(p)) continue
+        for (const line of readFileSync(p, "utf-8").split("\n")) {
+          const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/)
+          const k = m?.[1]
+          if (k === "MIRA_TOKEN") {
+            const v = (m?.[2] ?? "").replace(/^(['"])(.*)\1$/, "$2").trim()
+            if (v) return v
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+  return undefined
+}
 function token(): string {
-  return process.env.MIRA_TOKEN ?? ""
+  return process.env.MIRA_TOKEN ?? readMiraEnvFile() ?? ""
 }
 function authHeaders(): Record<string, string> {
   const t = token()

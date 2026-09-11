@@ -410,7 +410,7 @@ export function getToken(): string {
   try {
     const stored = localStorage.getItem(TOKEN_KEY)
     if (stored) return stored
-    // dev fallback from Vite env
+    // DEV ONLY — VITE_MIRA_TOKEN is injected by vite.config.ts in dev only (never in prod bundle)
     return (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
   } catch {
     return ''
@@ -439,21 +439,11 @@ export function clearTokenOn401(): void {
 
 export async function validateToken(): Promise<boolean> {
   try {
-    await req<{ ok: boolean }>('/health')
+    await req<MiraConfig>('/config')
     return true
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) return false
-    // /health may be open on dev servers while /config is gated — try /config
-    // before concluding the token is invalid.
-    try {
-      await req<MiraConfig>('/config')
-      return true
-    } catch {
-      // Network or other error (not 401) — the server is unreachable, so the
-      // token cannot be validated. Return false so AuthGate surfaces instead of
-      // letting the app load and fail on every subsequent API call.
-      return false
-    }
+    return false
   }
 }
 

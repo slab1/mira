@@ -497,16 +497,11 @@ export function clearTokenOn401(): void {
 
 export async function validateToken(): Promise<boolean> {
   try {
-    await req<{ ok: boolean }>('/health')
+    await req<MiraConfig>('/config')
     return true
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) return false
-    try {
-      await req<{ ok: boolean }>('/config')
-      return true
-    } catch {
-      return false
-    }
+    return false
   }
 }
 
