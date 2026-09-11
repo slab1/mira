@@ -191,8 +191,11 @@ export const auditEntries = sqliteTable("audit_entries", {
 ])
 
 // Runtime-issued API keys — persisted via admin routes, loaded on startup
+// P3-1: key_hash + key_prefix for DB-dump protection (keep key for backward compat)
 export const apiKeys = sqliteTable("api_keys", {
   key: text("key").primaryKey(),
+  keyHash: text("key_hash"),
+  keyPrefix: text("key_prefix"),
   owner: text("owner").notNull(),
   createdAt: integer("created_at").notNull(),
   createdBy: text("created_by").notNull().default("default"),

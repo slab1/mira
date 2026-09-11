@@ -20,7 +20,7 @@
  */
 
 import { Hono } from 'hono'
-import { timingSafeEqual, randomBytes } from 'node:crypto'
+import { timingSafeEqual, randomBytes, createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync } from 'node:fs'
@@ -181,9 +181,10 @@ function bearerOf(authHeader: string | undefined): string {
   return authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : ''
 }
 function tokenEquals(a: string, b: string): boolean {
-  const ab = Buffer.from(a)
-  const bb = Buffer.from(b)
-  return ab.length === bb.length && timingSafeEqual(ab, bb)
+  // Hash then compare — always 32 bytes, no length leak via timing (P3-4)
+  const ha = createHash('sha256').update(a).digest()
+  const hb = createHash('sha256').update(b).digest()
+  return timingSafeEqual(ha, hb)
 }
 const HOST = process.env.HOST ?? '127.0.0.1'
 const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '0.0.0.0', '::1'])

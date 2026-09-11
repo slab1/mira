@@ -103,7 +103,13 @@
       "packages/web/src/api/client.ts:409-414 getToken() VITE_MIRA_TOKEN fallback marked // DEV ONLY (vite dev injects, never in prod bundle)",
       "packages/web/.env removed (was baking VITE_MIRA_TOKEN=01df... into prod dist)",
       "packages/web/src/api/client.ts:440-449 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)",
-      "packages/tui/src/rpc/client.ts:498-506 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)"
+      "packages/tui/src/rpc/client.ts:498-506 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)",
+      "packages/server/src/index.ts: tokenEquals hash-then-compare (createHash sha256 32B constant time, P3-4)",
+      "packages/server/src/storage/schema.ts: apiKeys key_hash/key_prefix columns (P3-1)",
+      "packages/server/src/storage/db.ts: CREATE TABLE api_keys key_hash/key_prefix + addColumn idempotent (P3-1)",
+      "packages/server/src/routes/admin.ts: isAdmin loopback gate (HOST check + warn, P3-2) + ensureTable key_hash/prefix + mint stores sha256+prefix (P3-1)",
+      "packages/server/src/middleware/index.ts: isPublicUiPath normalize via URL + traversal block + normalizedPath in auth gate (P3-5)",
+      "packages/web/src/api/client.ts: getRuntimeApiUrl ?api= validate localhost/https only (P3-6)"
     ]
   },
   "checkpoints": {
@@ -124,7 +130,7 @@
       "last_updated": "2026-09-08T09:04:07.720317+00:00"
     }
   },
-  "last_updated": "2026-09-11T08:16:50.719522+00:00",
+  "last_updated": "2026-09-11T10:11:59.270194+00:00",
   "workflow_trace": [
     {
       "agent": "fixer",
@@ -607,6 +613,38 @@
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ad3821"
       },
       "outcome": "P2-2 fix complete: web/api/client.ts:440 and tui/rpc/client.ts:498 now single GET /config (gated, requires auth) instead of /health then /config double 401 \u2014 saves 1 RTT on invalid token, AuthGate shows Invalid token after single 401; typecheck green (web+tui+server), gaps 7 pass, minimal diff preserved design, no cli/vite/api_keys/admin/tokenEquals/isPublicUiPath/?api= touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_38b045",
+      "task": "P3 auth gaps \u2014 api_keys hash, admin loopback gate, tokenEquals hash, isPublicUiPath normalize, ?api= validate",
+      "status": "completed",
+      "timestamp": "2026-09-11T10:11:59.270194+00:00",
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/index.ts: tokenEquals hash-then-compare (createHash sha256 32B constant time, P3-4)",
+          "packages/server/src/storage/schema.ts: apiKeys key_hash/key_prefix columns (P3-1)",
+          "packages/server/src/storage/db.ts: CREATE TABLE api_keys key_hash/key_prefix + addColumn idempotent (P3-1)",
+          "packages/server/src/routes/admin.ts: isAdmin loopback gate (HOST check + warn, P3-2) + ensureTable key_hash/prefix + mint stores sha256+prefix (P3-1)",
+          "packages/server/src/middleware/index.ts: isPublicUiPath normalize via URL + traversal block + normalizedPath in auth gate (P3-5)",
+          "packages/web/src/api/client.ts: getRuntimeApiUrl ?api= validate localhost/https only (P3-6)"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (server tsc --noEmit exit 0, web tsc --noEmit exit 0)",
+          "gaps": "bun test packages/server/e2e/gaps.test.ts 7 pass 0 fail 22.05s",
+          "traversal": "GET /assets/../session 401 PASS (was 200 bypass), /assets/app.js public, /session 401 without auth",
+          "admin": "GET /admin/api-keys 401 without auth, 200 with auth, mint stores key_hash 64 hex + key_prefix 12 chars PASS",
+          "tokenEquals": "hash-then-compare 32B constant time, no length leak PASS",
+          "api_validate": "?api= https/localhost allowed, http evil/file rejected PASS"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_38b045"
+      },
+      "outcome": "P3 fix complete: tokenEquals now hash-then-compare (sha256 32B constant time, no length leak), api_keys now stores key_hash (sha256 hex) + key_prefix (12 chars) with migrate idempotent and backward compat (raw key kept), admin isAdmin now gated to loopback when no REQUIRED_TOKEN (HOST check + warn, 401 on non-loopback), isPublicUiPath now normalizes via URL and blocks .. traversal (GET /assets/../session 401), ?api= now validates localhost/https only; typecheck green, gaps 7 pass, minimal diff preserved design, no validateToken/cli/vite touched"
     }
   ],
   "findings": {
@@ -775,6 +813,23 @@
         "fix": "Changed web/api/client.ts:440 and tui/rpc/client.ts:498 to single GET /config (gated, requires auth) \u2014 single 401, AuthGate shows Invalid token immediately, saves 1 RTT, minimal diff preserved design",
         "verify": "web tsc --noEmit exit 0, tui tsc --noEmit exit 0, gaps 7 pass, manual grep 0 /health 1 /config PASS, AuthGate Invalid token PASS",
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ad3821"
+      },
+      {
+        "run_id": "run_20260909_38b045",
+        "at": "2026-09-11T10:11:59.270194+00:00",
+        "task": "P3 auth gaps \u2014 api_keys hash, admin loopback gate, tokenEquals hash, isPublicUiPath normalize, ?api= validate",
+        "files_modified": [
+          "packages/server/src/index.ts: tokenEquals hash-then-compare (createHash sha256 32B constant time, P3-4)",
+          "packages/server/src/storage/schema.ts: apiKeys key_hash/key_prefix columns (P3-1)",
+          "packages/server/src/storage/db.ts: CREATE TABLE api_keys key_hash/key_prefix + addColumn idempotent (P3-1)",
+          "packages/server/src/routes/admin.ts: isAdmin loopback gate (HOST check + warn, P3-2) + ensureTable key_hash/prefix + mint stores sha256+prefix (P3-1)",
+          "packages/server/src/middleware/index.ts: isPublicUiPath normalize via URL + traversal block + normalizedPath in auth gate (P3-5)",
+          "packages/web/src/api/client.ts: getRuntimeApiUrl ?api= validate localhost/https only (P3-6)"
+        ],
+        "root_cause": "P3-1 api_keys stored raw 96-hex (DB dump leaks bearer), P3-2 isAdmin returned true when !REQUIRED_TOKEN (any local process could POST /admin/api-keys), P3-4 tokenEquals short-circuited on length (timing leak 64 vs 96), P3-5 isPublicUiPath p.startsWith('/assets/') bypass via /assets/../session (fragile, Hono does not normalize), P3-6 ?api= URL param could leak token if ever used for token (pattern invites ?token=)",
+        "fix": "P3-4: tokenEquals now createHash('sha256').update(a).digest() 32B + timingSafeEqual (no length leak); P3-1: schema add key_hash/key_prefix, db migrate CREATE TABLE + addColumn, admin ensureTable + mint stores sha256 hex + prefix 12, keep key for compat; P3-2: isAdmin now checks HOST loopback (127.0.0.1/localhost/::1) when !REQUIRED_TOKEN && API_KEY_OWNERS empty, 401 on non-loopback, warn once; P3-5: isPublicUiPath normalizes via new URL('http://x'+p).pathname + decode + .. block, auth gate uses new URL(c.req.url).pathname; P3-6: getRuntimeApiUrl validates ?api= via new URL hostname localhost/127.0.0.1/::1 or https: only, rejects http evil/file",
+        "verify": "turbo typecheck 6 successful, gaps 7 pass 22.05s, traversal GET /assets/../session 401 PASS, admin 401/200 + hash store PASS, tokenEquals constant time PASS, ?api= validate PASS, minimal diff preserved design",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_38b045"
       }
     ]
   }

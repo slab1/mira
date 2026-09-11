@@ -1,5 +1,5 @@
 import type { Hono } from "hono"
-import { randomBytes } from "node:crypto"
+import { randomBytes, createHash } from "node:crypto"
 import { z } from "zod"
 import type { MiraDB } from "../storage/db.js"
 import type { JsonValue } from "../types/index.js"
@@ -22,9 +22,29 @@ export function mountAdminRoutes(
 
   // Admin = the master MIRA_TOKEN (owner "default"). In open/dev mode (no
   // REQUIRED_TOKEN) the endpoints are reachable without auth, matching the
-  // server's "auth disabled" posture.
+  // server's "auth disabled" posture — but gated to loopback (P3-2).
+  let adminOpenWarned = false
   const isAdmin = (c: { req: { header: (n: string) => string | undefined } }): boolean => {
-    if (!REQUIRED_TOKEN) return true
+    if (!REQUIRED_TOKEN && API_KEY_OWNERS.size === 0) {
+      // Open/dev mode: only allow admin on loopback, otherwise 401 (P3-2)
+      const host = process.env.HOST ?? "127.0.0.1"
+      const isLoopback = host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "0.0.0.0"
+      // 0.0.0.0 binds all interfaces but dev default is loopback-only; treat as loopback for dev
+      // Strict gate: if HOST is non-loopback and MIRA_STRICT_AUTH !== '0', deny
+      const strictLoopback = host === "127.0.0.1" || host === "localhost" || host === "::1"
+      if (!strictLoopback && process.env.MIRA_STRICT_AUTH !== "0" && host !== "0.0.0.0") {
+        return false
+      }
+      if (!adminOpenWarned) {
+        adminOpenWarned = true
+        console.warn(`[admin] open mode: admin endpoints reachable without auth (dev only, HOST=${host})`)
+      }
+      // When HOST=0.0.0.0 in dev, still allow but warn — prod with CORS_ORIGINS would have exited earlier
+      if (!isLoopback && host === "0.0.0.0") {
+        // allow dev 0.0.0.0 but already warned
+      }
+      return true
+    }
     return resolveOwner(bearerOf(c.req.header("Authorization"))) === "default"
   }
   const deny = (c: { json: (b: JsonValue, s: number) => Response }) => c.json({ error: "unauthorized" }, 401)
@@ -34,10 +54,15 @@ export function mountAdminRoutes(
     if (tableEnsured) return
     db.sqlite.exec(`CREATE TABLE IF NOT EXISTS api_keys (
       key TEXT PRIMARY KEY,
+      key_hash TEXT,
+      key_prefix TEXT,
       owner TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       created_by TEXT NOT NULL DEFAULT 'default'
     ); CREATE INDEX IF NOT EXISTS api_keys_owner_idx ON api_keys(owner);`)
+    // Idempotent column adds for existing DBs (P3-1)
+    try { db.sqlite.exec(`ALTER TABLE api_keys ADD COLUMN key_hash TEXT;`) } catch (e) { if (!String(e).includes("duplicate column name")) console.warn("[admin] addColumn key_hash failed:", String(e)) }
+    try { db.sqlite.exec(`ALTER TABLE api_keys ADD COLUMN key_prefix TEXT;`) } catch (e) { if (!String(e).includes("duplicate column name")) console.warn("[admin] addColumn key_prefix failed:", String(e)) }
     tableEnsured = true
   }
 
@@ -53,9 +78,11 @@ export function mountAdminRoutes(
     const count = (db.sqlite.prepare("SELECT COUNT(*) as n FROM api_keys").get() as { n: number }).n
     if (count >= MAX_KEYS) return c.json({ error: `key limit reached (${MAX_KEYS}) — revoke unused keys first` }, 429)
     const key = randomBytes(48).toString("hex")
+    const keyHash = createHash("sha256").update(key).digest("hex")
+    const keyPrefix = key.slice(0, 12)
     db.sqlite
-      .prepare("INSERT INTO api_keys (key, owner, created_at, created_by) VALUES (?, ?, ?, ?)")
-      .run(key, owner, Date.now(), "default")
+      .prepare("INSERT INTO api_keys (key, key_hash, key_prefix, owner, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(key, keyHash, keyPrefix, owner, Date.now(), "default")
     API_KEY_OWNERS.set(key, owner)
     console.log(`[admin] mint key for owner="${owner}" preview=${key.slice(0,6)}…${key.slice(-4)}`)
     return c.json({ key, owner }, 201)

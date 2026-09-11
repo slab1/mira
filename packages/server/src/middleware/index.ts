@@ -135,15 +135,34 @@ export function mountMiddleware(
 
   // Security: optional bearer-token gate
   const PUBLIC_PATHS = new Set(['/healthz', '/metrics'])
-  const isPublicUiPath = (p: string) =>
-    p === '/' ||
-    p.startsWith('/assets/') ||
-    p === '/favicon.ico' ||
-    p === '/robots.txt' ||
-    p === '/vite.svg'
+  const isPublicUiPath = (p: string) => {
+    // Normalize traversal: /assets/../session -> /session (not public) (P3-5)
+    let normalized = p
+    try {
+      normalized = new URL(`http://x${p}`).pathname
+    } catch {}
+    // Decode and re-normalize to catch encoded traversal
+    try {
+      const decoded = decodeURIComponent(normalized)
+      if (decoded !== normalized) normalized = new URL(`http://x${decoded}`).pathname
+    } catch {}
+    if (normalized.includes("..")) return false
+    return (
+      normalized === "/" ||
+      normalized.startsWith("/assets/") ||
+      normalized === "/favicon.ico" ||
+      normalized === "/robots.txt" ||
+      normalized === "/vite.svg"
+    )
+  }
   if (REQUIRED_TOKEN || API_KEY_OWNERS.size > 0) {
     app.use('*', async (c: Context, next: () => Promise<void>) => {
-      if (PUBLIC_PATHS.has(c.req.path) || isPublicUiPath(c.req.path)) return await next()
+      // Normalize pathname via URL to prevent /assets/../session bypass (P3-5)
+      let normalizedPath = c.req.path
+      try {
+        normalizedPath = new URL(c.req.url).pathname
+      } catch {}
+      if (PUBLIC_PATHS.has(normalizedPath) || isPublicUiPath(normalizedPath)) return await next()
       if (!resolveOwner(bearerOf(c.req.header('Authorization'))))
         return c.json({ error: 'unauthorized' }, 401)
       await next()

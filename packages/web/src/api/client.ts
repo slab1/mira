@@ -296,10 +296,30 @@ function getRuntimeApiUrl(): string {
     // 1. Explicit user override (survives rebuilds, fixes ephemeral trycloudflare URL without redeploy)
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem(API_URL_KEY) : null
     if (stored && stored.trim()) return stored.trim().replace(/\/$/, '')
-    // 2. URL query param ?api=https://... (shareable link)
+    // 2. URL query param ?api=https://... (shareable link) — validated (P3-6: only localhost or https)
     if (typeof window !== 'undefined') {
       const q = new URLSearchParams(window.location.search).get('api')
-      if (q && q.trim()) return q.trim().replace(/\/$/, '')
+      if (q && q.trim()) {
+        const trimmed = q.trim().replace(/\/$/, '')
+        // Validate ?api= is only for URL, not token — only localhost or https allowed
+        try {
+          const u = new URL(trimmed)
+          const isLocalhost = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1'
+          const isHttps = u.protocol === 'https:'
+          if (isLocalhost || isHttps) return trimmed
+          if (!runtimeApiUrlWarned) {
+            runtimeApiUrlWarned = true
+            console.warn('[mira] ?api= rejected: only localhost or https allowed', trimmed)
+          }
+        } catch {
+          // Allow https:// prefix even if URL parse fails (edge), otherwise reject
+          if (trimmed.startsWith('https://')) return trimmed
+          if (!runtimeApiUrlWarned) {
+            runtimeApiUrlWarned = true
+            console.warn('[mira] ?api= rejected: invalid URL', trimmed)
+          }
+        }
+      }
       // 3. Window-injected (for runtime-config.json or watchdog)
       const w = window as { __MIRA_API_URL?: string }
       if (w.__MIRA_API_URL && w.__MIRA_API_URL.trim())

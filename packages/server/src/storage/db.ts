@@ -175,6 +175,8 @@ export async function migrate(db: MiraDB) {
 
     CREATE TABLE IF NOT EXISTS api_keys (
       key TEXT PRIMARY KEY,
+      key_hash TEXT,
+      key_prefix TEXT,
       owner TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       created_by TEXT NOT NULL DEFAULT 'default'
@@ -212,6 +214,9 @@ export async function migrate(db: MiraDB) {
   addColumn("sessions", "cwd", "TEXT")
   addColumn("sessions", "project_id", "TEXT")
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS sessions_project_id_idx ON sessions(project_id);`) } catch {}
+  // P3-1: api_keys hash/prefix for DB-dump protection
+  addColumn("api_keys", "key_hash", "TEXT")
+  addColumn("api_keys", "key_prefix", "TEXT")
   // H2-1 Memory v2: temporal decay + entity graph columns
   addColumn("knowledge_entries", "tier", "TEXT")
   addColumn("knowledge_entries", "source", "TEXT")
