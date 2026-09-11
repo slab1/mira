@@ -82,19 +82,25 @@ export class LSPClient {
     })
     const client = new LSPClient(name, proc)
 
+    const rootUri = `file://${rootPath.replace(/\/$/, '')}`
     const result = await client.request(
       'initialize',
       {
         processId: process.pid,
-        rootUri: `file://${rootPath.replace(/\/$/, '')}`,
+        rootUri,
+        rootPath,
+        workspaceFolders: [{ uri: rootUri, name: rootPath.split('/').pop() ?? 'workspace' }],
         capabilities: {
           textDocument: {
             publishDiagnostics: { relatedInformation: false },
           },
           workspace: {
             symbol: { dynamicRegistration: false },
+            workspaceFolders: true,
+            configuration: true,
           },
         },
+        initializationOptions: { root: rootPath },
       },
       20_000,
     )
@@ -385,9 +391,13 @@ export async function clientForFile(
   const spec = scf(filePath)
   if (!spec) return null
 
-  const existing = clients.get(spec.lang)
+  const key = `${spec.lang}:${rootPath}`
+  const existing = clients.get(key) ?? clients.get(spec.lang)
   if (existing?.alive) return existing
-  if (existing && !existing.alive) clients.delete(spec.lang)
+  if (existing && !existing.alive) {
+    clients.delete(key)
+    clients.delete(spec.lang)
+  }
 
   // Only spawn when binary actually exists — avoids noisy failures
   try {
@@ -399,7 +409,8 @@ export async function clientForFile(
 
   try {
     const client = await LSPClient.spawn(spec.cmd, spec.cmd.slice(1), rootPath, spec.name)
-    clients.set(spec.lang, client)
+    clients.set(key, client)
+    if (!clients.has(spec.lang)) clients.set(spec.lang, client)
     return client
   } catch {
     return null

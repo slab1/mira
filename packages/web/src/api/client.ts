@@ -242,6 +242,13 @@ export type SkillEntry = {
   description: string
 }
 
+export type WorkspaceEntry = {
+  id: string
+  path: string
+  name: string
+  addedAt: number
+}
+
 export type PermissionMatrix = Record<string, string | Record<string, string>>
 
 export type GraphNode = {
@@ -769,6 +776,20 @@ export const api = {
     ),
   removeMcp: (name: string) =>
     req<{ ok: boolean }>(`/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+
+  // ── Workspaces (P2-2 project lifecycle) ──────────────────────────
+  listWorkspaces: () =>
+    req<{ workspaces: WorkspaceEntry[] }>('/workspaces').then((r) => r.workspaces),
+  addWorkspace: (path: string) =>
+    req<{ workspace: WorkspaceEntry; workspaces: WorkspaceEntry[] }>('/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
+  removeWorkspace: (id: string) =>
+    req<{ ok: boolean; removed: WorkspaceEntry; workspaces: WorkspaceEntry[] }>(
+      `/workspaces/${encodeURIComponent(id)}`,
+      { method: 'DELETE' },
+    ),
 
   listAgents: () => req<AgentEntry[]>('/agents'),
   listCommands: () => req<CommandEntry[] | string[]>('/commands'),

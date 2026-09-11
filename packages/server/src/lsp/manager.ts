@@ -90,16 +90,23 @@ export async function clientForFile(
 
   if (isCircuitOpen(spec.lang)) return null
 
-  const existing = clients.get(spec.lang)
+  // Workspace-aware: key includes rootPath so different sessions don't share wrong root
+  const key = `${spec.lang}:${rootPath}`
+  const existing = clients.get(key) ?? clients.get(spec.lang)
   if (existing?.alive) return existing
-  if (existing && !existing.alive) clients.delete(spec.lang)
+  if (existing && !existing.alive) {
+    clients.delete(key)
+    clients.delete(spec.lang)
+  }
 
   // Only spawn when binary actually exists — avoids noisy failures
   if (!binaryExists(spec.cmd[0])) return null
 
   try {
     const client = await LSPClient.spawn(spec.cmd, spec.cmd.slice(1), rootPath, spec.name)
-    clients.set(spec.lang, client)
+    clients.set(key, client)
+    // Also keep legacy key for backward compat
+    if (!clients.has(spec.lang)) clients.set(spec.lang, client)
     recordSuccess(spec.lang)
     return client
   } catch (e) {

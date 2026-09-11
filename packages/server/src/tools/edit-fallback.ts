@@ -18,7 +18,7 @@
  */
 
 import { createHash } from 'crypto'
-import { symbolIndex } from '../symbols/index.js'
+import { symbolIndex, getSymbolIndex } from '../symbols/index.js'
 import { guardEdit } from '../symbols/semantic.js'
 import { LSPError } from '../lsp/transport.js'
 
@@ -206,6 +206,7 @@ export async function applyEditWithFallback(
   oldString: string,
   newString: string,
   replaceAll = false,
+  cwd?: string,
 ): Promise<EditResult> {
   const file = Bun.file(absPath)
   if (!(await file.exists())) {
@@ -399,12 +400,13 @@ export async function applyEditWithFallback(
     const newName = newIdMatch?.[1]
 
     if (isRename && oldName && newName) {
+      const cwdForLsp = cwd ?? process.cwd()
       // ── 8a: Real LSP via manager.withClient (with timeout, circuit-breaker, LSPError handling) ──
       try {
         const { withClient } = await import('../lsp/manager.js')
         const lspResult = await withClient(
           absPath,
-          process.cwd(),
+          cwdForLsp,
           async (client) => {
             // Find symbol position in file
             const pos = findSymbolPosition(original, oldName)
@@ -436,8 +438,8 @@ export async function applyEditWithFallback(
               throw new LSPError(`LSP rename returned no edits for ${oldName}→${newName}`)
             }
 
-            // Apply WorkspaceEdit
-            const applied = await applyWorkspaceEdit(edit, process.cwd())
+            // Apply WorkspaceEdit — workspace-aware (P2-1: use session cwd)
+            const applied = await applyWorkspaceEdit(edit, cwdForLsp)
             return applied
           },
           timeoutMs,
@@ -477,12 +479,12 @@ export async function applyEditWithFallback(
         // Never throw — fall through to heuristic
       }
 
-      // ── 8b: Heuristic fallback (symbolIndex.renameSymbol) ──
+      // ── 8b: Heuristic fallback (symbolIndex.renameSymbol) — workspace-aware (P2-1) ──
       try {
-        const relPath = absPath.replace(process.cwd() + '/', '')
-        const guard = await guardEdit(relPath, oldString, newString)
+        const relPath = absPath.startsWith(cwdForLsp + '/') ? absPath.slice(cwdForLsp.length + 1) : absPath.replace(process.cwd() + '/', '')
+        const guard = await guardEdit(relPath, oldString, newString, cwdForLsp)
         if (guard.allowed) {
-          const renamed = await symbolIndex.renameSymbol(oldName, newName)
+          const renamed = await getSymbolIndex(cwdForLsp).renameSymbol(oldName, newName, cwdForLsp)
           if (renamed.count > 0) {
             return {
               ok: true,

@@ -104,7 +104,10 @@
     "enabled": true,
     "dir": "shared/checkpoints",
     "retentionHours": 168,
-    "keep": 5
+    "keep": 5,
+    "helper": "~/.config/opencode/scripts/oc-checkpoint.sh",
+    "directory_expanded": "/root/.config/opencode/shared/checkpoints/",
+    "directory": "shared/checkpoints"
   },
   "strategy_effectiveness": {
     "critic": {
@@ -486,6 +489,63 @@
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_iebhd3"
       },
       "outcome": "P0-1 fix complete: sessions table now has cwd/project_id with index, migrate idempotent (CREATE TABLE + addColumn + index), session route accepts cwd/projectId, prompt createSession persists and threads cwd through buildSystemPrompt/loadMemoryBank/tools.execute (fork/subagent inherit), registry ensures ctx.cwd fallback, glob/grep/bash use ctx.cwd; typecheck green, gaps/queue/server_e2e pass, cwd functional test ALL CHECKS PASSED, minimal diff preserved design, no workspace/guardrails/web/tui touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_96b605",
+      "task": "P2-1 Workspace-aware symbols/LSP/memory",
+      "status": "completed",
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
+      "timestamp": "2026-09-10T20:45:00.000000+00:00",
+      "artifacts": {
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_96b605",
+        "files_modified": [
+          "packages/server/src/symbols/index.ts:261 walk fix baseRoot param for workspace-aware relative paths",
+          "packages/server/src/tools/edit-fallback.ts:21 import getSymbolIndex, 442 applyWorkspaceEdit cwdForLsp, 484-487 heuristic rename workspace-aware",
+          "packages/server/src/tools/edit.ts:24 pass cwd to applyEditWithFallback, 55 patch tool ctx.cwd fallback",
+          "packages/server/src/tools/other.ts:204 diagnose tool ctx.cwd fallback"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful, server tsc --noEmit pass",
+          "lsp": "8 pass 1 skip (lsp/client.test.ts)",
+          "tools": "31 pass 1 skip (tools/*)",
+          "workspace": "manual test: getSymbolIndex per-cwd isolates symbols, glob/read respect session.cwd, GET /workspace/symbol?cwd returns correct"
+        }
+      },
+      "outcome": "P2-1 fix complete: walk now respects session.cwd via baseRoot param, edit-fallback LSP/heuristic renames use session cwd via getSymbolIndex(cwdForLsp), edit patch/diagnose tools respect ctx.cwd, workspace-aware symbols/LSP/memory verified"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_7cf010",
+      "task": "P2-2 project lifecycle \u2014 create/switch/templates/recent",
+      "status": "completed",
+      "timestamp": "2026-09-11T00:29:53.681711+00:00",
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/routes/workspace.ts (already had GET/POST/DELETE /workspaces with sanitizePath+isPathAllowed+getConfig guardrails, ~/.mira/workspaces.json + MIRA_WORKSPACE_ROOTS)",
+          "packages/cli/src/cli.ts: workspace add/list/remove/switch + project init --template ts (mira.json creation, offline fallback to ~/.mira/workspaces.json)",
+          "packages/web/src/api/client.ts: WorkspaceEntry + listWorkspaces/addWorkspace/removeWorkspace",
+          "packages/web/src/components/SessionList.tsx: workspace switcher dropdown (GET /workspaces, cwd for new sessions, add workspace inline)",
+          "packages/web/src/stores/app.ts: createSession now accepts cwd/projectId"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (server+web+tui+shared+slack+cli)",
+          "cli": "mira workspace add/list/switch + project init --template ts verified offline",
+          "web": "workspace switcher renders, cwd passed to createSession",
+          "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_7cf010"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_7cf010"
+      },
+      "outcome": "P2-2 complete: workspace lifecycle (create/switch/templates/recent) via ~/.mira/workspaces.json + MIRA_WORKSPACE_ROOTS, CLI workspace/project commands with offline fallback, web switcher dropdown with cwd for new sessions, minimal diff preserved design"
     }
   ],
   "findings": {

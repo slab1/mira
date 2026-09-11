@@ -6,7 +6,7 @@
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 import type { JsonValue } from "../types/index.js"
-import { symbolIndex } from "../symbols/index.js"
+import { symbolIndex, getSymbolIndex } from "../symbols/index.js"
 import { guardEdit } from "../symbols/semantic.js"
 import { resolve } from "node:path"
 import { readFileSync } from "node:fs"
@@ -86,35 +86,36 @@ export const lspTool = {
 
     if (real !== null && real !== undefined && !("error" in real)) return real
 
-    // ── Heuristic fallback (symbolIndex) — original implementation ──
+    // ── Heuristic fallback (symbolIndex) — workspace-aware via session.cwd ──
+    const idx = getSymbolIndex(root)
     try {
       switch (operation) {
         case "hover": {
           if (line == null || character == null) throw new Error("line and character required for hover");
-          const contents = await symbolIndex.hover(file, line, character);
+          const contents = await idx.hover(file, line, character, root);
           return { operation, file, line, character, hover: contents };
         }
         case "definition": {
           if (line == null || character == null) throw new Error("line and character required for definition");
-          const def = await symbolIndex.findDefinition(file, line, character);
+          const def = await idx.findDefinition(file, line, character, root);
           return { operation, file, line, character, definition: asJson(def) };
         }
         case "references": {
-          const name = symbol ?? (line != null && character != null ? (await symbolIndex.findSymbolAt(file, line, character))?.name : undefined);
+          const name = symbol ?? (line != null && character != null ? (await idx.findSymbolAt(file, line, character, root))?.name : undefined);
           if (!name) throw new Error("symbol name required for references");
-          const occurrences = await symbolIndex.findReferences(name);
+          const occurrences = await idx.findReferences(name, root);
           return { operation, symbol: name, references: occurrences };
         }
         case "diagnostics": {
-          const issues = await symbolIndex.diagnostics(file);
+          const issues = await idx.diagnostics(file, root);
           return { operation, file, diagnostics: issues };
         }
         case "rename": {
           if (!symbol && (!line || !character)) throw new Error("symbol name or location required for rename");
-          const targetName = symbol ?? (await symbolIndex.findSymbolAt(file, line!, character!))?.name;
+          const targetName = symbol ?? (await idx.findSymbolAt(file, line!, character!, root))?.name;
           if (!targetName) throw new Error("symbol not found");
           if (!newName) throw new Error("newName required for rename");
-          const result = await symbolIndex.renameSymbol(targetName, newName);
+          const result = await idx.renameSymbol(targetName, newName, root);
           return { operation, oldName: targetName, newName, renamedFiles: result.files, occurrences: result.count };
         }
       }

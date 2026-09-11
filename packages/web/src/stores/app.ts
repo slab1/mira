@@ -225,7 +225,7 @@ export function createAppStore() {
     }
   }
 
-  async function createSession(title?: string, opts: { agent?: string } = {}) {
+  async function createSession(title?: string, opts: { agent?: string; cwd?: string; projectId?: string } = {}) {
     if (creating) return null
     creating = true
     setState('error', null)
@@ -233,6 +233,8 @@ export function createAppStore() {
       const body: Record<string, string> = {}
       if (title) body.title = title
       if (opts.agent) body.agent = opts.agent
+      if (opts.cwd) body.cwd = opts.cwd
+      if (opts.projectId) body.projectId = opts.projectId
       const s = await api.createSession(body)
       setState('sessions', (prev) => [s, ...prev.filter((x) => x.id !== s.id)])
       await selectSession(s.id)

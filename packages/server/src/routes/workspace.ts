@@ -57,7 +57,178 @@ function isIgnored(file: string, patterns: string[]): boolean {
   return false
 }
 
+// ── Workspaces helpers ───────────────────────────────────────────────
+export type WorkspaceEntry = {
+  id: string
+  path: string
+  name: string
+  addedAt: number
+}
+
+function workspacesFilePath(): string {
+  const home = process.env.HOME ?? ''
+  if (home) return `${home}/.mira/workspaces.json`
+  return `${process.cwd()}/.mira/workspaces.json`
+}
+
+function workspaceIdForPath(p: string): string {
+  // deterministic id: base64url of path
+  try {
+    return Buffer.from(p).toString('base64url')
+  } catch {
+    return p.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-')
+  }
+}
+
+function loadWorkspacesFromFile(): WorkspaceEntry[] {
+  const fp = workspacesFilePath()
+  try {
+    if (!existsSync(fp)) return []
+    const raw = readFileSync(fp, 'utf-8')
+    const parsed = JSON.parse(raw) as { workspaces?: WorkspaceEntry[] } | WorkspaceEntry[]
+    if (Array.isArray(parsed)) return parsed
+    if (parsed && Array.isArray((parsed as { workspaces?: WorkspaceEntry[] }).workspaces)) {
+      return (parsed as { workspaces: WorkspaceEntry[] }).workspaces
+    }
+    return []
+  } catch {
+    return []
+  }
+}
+
+async function saveWorkspacesToFile(entries: WorkspaceEntry[]): Promise<void> {
+  const fp = workspacesFilePath()
+  const dir = fp.slice(0, fp.lastIndexOf('/'))
+  try {
+    const { mkdir } = await import('node:fs/promises')
+    if (dir) await mkdir(dir, { recursive: true })
+  } catch {}
+  const payload = { workspaces: entries }
+  await Bun.write(fp, JSON.stringify(payload, null, 2) + '\n')
+}
+
+function envWorkspaces(): WorkspaceEntry[] {
+  const out: WorkspaceEntry[] = []
+  const single = process.env.MIRA_WORKSPACE?.trim()
+  if (single) {
+    const p = single.replace(/\/$/, '') || '/'
+    out.push({ id: workspaceIdForPath(p), path: p, name: p.split('/').pop() || p, addedAt: Date.now() })
+  }
+  const roots = (process.env.MIRA_WORKSPACE_ROOTS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  for (const r of roots) {
+    const p = r.replace(/\/$/, '') || '/'
+    if (out.some((w) => w.path === p)) continue
+    out.push({ id: workspaceIdForPath(p), path: p, name: p.split('/').pop() || p, addedAt: Date.now() })
+  }
+  return out
+}
+
+function allWorkspaces(): WorkspaceEntry[] {
+  const file = loadWorkspacesFromFile()
+  const env = envWorkspaces()
+  const map = new Map<string, WorkspaceEntry>()
+  for (const w of file) map.set(w.path, w)
+  for (const w of env) {
+    if (!map.has(w.path)) map.set(w.path, w)
+  }
+  return [...map.values()].sort((a, b) => b.addedAt - a.addedAt)
+}
+
 export function mountWorkspaceRoutes(app: Hono<{ Variables: { requestId: string } }>) {
+  // ── Workspaces CRUD ──────────────────────────────────────────────
+  app.get('/workspaces', async (c) => {
+    const workspaces = allWorkspaces()
+    return c.json({ workspaces })
+  })
+
+  app.post('/workspaces', async (c) => {
+    let body: { path?: string } = {}
+    try {
+      body = (await c.req.json()) as { path?: string }
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400)
+    }
+    const rawPath = body.path?.trim()
+    if (!rawPath) return c.json({ error: 'path required' }, 400)
+
+    // Validate sanitizePath
+    const sanitized = sanitizePath(rawPath)
+    if (!sanitized.ok) {
+      return c.json({ error: `invalid path: ${sanitized.reason}` }, 400)
+    }
+    let absPath = sanitized.sanitized ?? rawPath
+    if (!absPath.startsWith('/')) absPath = `${process.cwd()}/${absPath}`
+    absPath = absPath.replace(/\/+/g, '/').replace(/\/$/, '') || '/'
+
+    // Validate exists and is directory
+    try {
+      if (!existsSync(absPath)) return c.json({ error: `path not found: ${absPath}` }, 404)
+      const st = statSync(absPath)
+      if (!st.isDirectory()) return c.json({ error: `not a directory: ${absPath}` }, 400)
+    } catch (e) {
+      return c.json({ error: `invalid path: ${String(e)}` }, 400)
+    }
+
+    // Validate isPathAllowed with per-project allowedRoots
+    try {
+      const cfg = getConfig(absPath)
+      const allowedRoots = cfg.guardrails?.allowedRoots
+      if (allowedRoots !== undefined) {
+        // Use isPathAllowed to check if path itself is allowed
+        // For workspace add, we check if the path is within allowedRoots or if allowedRoots is empty (allow all)
+        if (allowedRoots.length > 0 && !isPathAllowed(absPath, allowedRoots)) {
+          return c.json({ error: `path not allowed by guardrails: ${absPath}` }, 403)
+        }
+      }
+    } catch {
+      // ignore config load errors
+    }
+
+    const existing = loadWorkspacesFromFile()
+    if (existing.some((w) => w.path === absPath)) {
+      const found = existing.find((w) => w.path === absPath)!
+      return c.json({ workspace: found, workspaces: allWorkspaces() }, 200)
+    }
+    const entry: WorkspaceEntry = {
+      id: workspaceIdForPath(absPath),
+      path: absPath,
+      name: absPath.split('/').pop() || absPath,
+      addedAt: Date.now(),
+    }
+    const next = [...existing, entry]
+    await saveWorkspacesToFile(next)
+    return c.json({ workspace: entry, workspaces: allWorkspaces() }, 201)
+  })
+
+  app.delete('/workspaces/:id', async (c) => {
+    const id = c.req.param('id')
+    if (!id) return c.json({ error: 'id required' }, 400)
+    const decoded = (() => {
+      try {
+        return Buffer.from(id, 'base64url').toString('utf-8')
+      } catch {
+        return null
+      }
+    })()
+    const existing = loadWorkspacesFromFile()
+    const idx = existing.findIndex((w) => w.id === id || w.path === id || (decoded && w.path === decoded))
+    if (idx === -1) {
+      // Also check env workspaces — cannot delete env ones
+      const env = envWorkspaces()
+      if (env.some((w) => w.id === id || w.path === id || (decoded && w.path === decoded))) {
+        return c.json({ error: 'cannot delete env workspace (MIRA_WORKSPACE/MIRA_WORKSPACE_ROOTS)' }, 403)
+      }
+      return c.json({ error: 'workspace not found' }, 404)
+    }
+    const removed = existing[idx]
+    const next = existing.filter((_, i) => i !== idx)
+    await saveWorkspacesToFile(next)
+    return c.json({ ok: true, removed, workspaces: allWorkspaces() })
+  })
+
   app.get('/workspace/tree', async (c) => {
     const cwdQuery = c.req.query('cwd')
     const projectId = c.req.query('projectId')

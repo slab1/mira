@@ -1,6 +1,6 @@
-import { For, Show, createSignal, createMemo } from 'solid-js'
+import { For, Show, createSignal, createMemo, onMount } from 'solid-js'
 import type { AppStore } from '../stores/app'
-import { getApiUrl } from '../api/client'
+import { api, getApiUrl, type WorkspaceEntry } from '../api/client'
 import { ConfirmDialog } from './ConfirmDialog'
 import { toast } from './Toast'
 
@@ -99,6 +99,66 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
       } catch {}
       return next
     })
+  }
+
+  // ── Workspace switcher (P2-2) ──────────────────────────────────
+  const [workspaces, setWorkspaces] = createSignal<WorkspaceEntry[]>([])
+  const [selectedWorkspace, setSelectedWorkspace] = createSignal<string>(
+    (() => {
+      try {
+        return localStorage.getItem('mira.selectedWorkspace') ?? ''
+      } catch {
+        return ''
+      }
+    })(),
+  )
+  const [workspaceLoading, setWorkspaceLoading] = createSignal(false)
+  const [showAddWorkspace, setShowAddWorkspace] = createSignal(false)
+  const [newWorkspacePath, setNewWorkspacePath] = createSignal('')
+
+  const loadWorkspaces = async () => {
+    setWorkspaceLoading(true)
+    try {
+      const list = await api.listWorkspaces()
+      setWorkspaces(list)
+      // Auto-select first if none selected and list non-empty
+      if (!selectedWorkspace() && list.length > 0) {
+        // keep empty = default, don't auto-select
+      }
+    } catch {
+      // ignore — workspaces optional
+    } finally {
+      setWorkspaceLoading(false)
+    }
+  }
+  onMount(() => void loadWorkspaces())
+
+  const handleWorkspaceChange = (path: string) => {
+    setSelectedWorkspace(path)
+    try {
+      if (path) localStorage.setItem('mira.selectedWorkspace', path)
+      else localStorage.removeItem('mira.selectedWorkspace')
+    } catch {}
+  }
+
+  const handleAddWorkspace = async () => {
+    const p = newWorkspacePath().trim()
+    if (!p) return
+    try {
+      const res = await api.addWorkspace(p)
+      setWorkspaces(res.workspaces)
+      handleWorkspaceChange(res.workspace.path)
+      setNewWorkspacePath('')
+      setShowAddWorkspace(false)
+      toast.success(`Workspace added: ${res.workspace.path}`)
+    } catch (e) {
+      toast.error(`Add workspace failed: ${(e as Error).message}`)
+    }
+  }
+
+  const handleCreateSession = () => {
+    const cwd = selectedWorkspace() || undefined
+    void props.store.createSession(undefined, cwd ? { cwd } : {}).catch(() => {})
   }
 
   const availableProjects = createMemo(() => {
@@ -234,10 +294,127 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
           gap: '8px',
         }}
       >
+        {/* Workspace switcher (P2-2) */}
+        <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
+          <label
+            style={{
+              'font-size': 'var(--fs-2xs)',
+              'font-weight': '600',
+              color: 'var(--fg-subtle)',
+              'text-transform': 'uppercase',
+              'letter-spacing': '0.04em',
+            }}
+          >
+            Workspace
+          </label>
+          <div style={{ display: 'flex', gap: '4px', 'align-items': 'center' }}>
+            <select
+              value={selectedWorkspace()}
+              onChange={(e) => handleWorkspaceChange(e.currentTarget.value)}
+              aria-label="Select workspace"
+              style={{
+                flex: '1',
+                padding: '6px 8px',
+                'font-size': 'var(--fs-xs)',
+                border: '1px solid var(--border)',
+                'border-radius': 'var(--r-md)',
+                background: 'var(--bg-surface)',
+                color: 'var(--fg)',
+                'min-width': '0',
+              }}
+            >
+              <option value="">Default (cwd)</option>
+              <For each={workspaces()}>{(w) => <option value={w.path}>{w.name} — {w.path}</option>}</For>
+            </select>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              onClick={() => void loadWorkspaces()}
+              disabled={workspaceLoading()}
+              title="Refresh workspaces"
+              aria-label="Refresh workspaces"
+              style={{ padding: '4px 6px', 'font-size': 'var(--fs-xs)', 'min-height': '28px' }}
+            >
+              ↻
+            </button>
+          </div>
+          <Show when={showAddWorkspace()}>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <input
+                type="text"
+                placeholder="/path/to/repo"
+                value={newWorkspacePath()}
+                onInput={(e) => setNewWorkspacePath(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleAddWorkspace()
+                  if (e.key === 'Escape') setShowAddWorkspace(false)
+                }}
+                aria-label="New workspace path"
+                style={{
+                  flex: '1',
+                  padding: '4px 8px',
+                  'font-size': 'var(--fs-xs)',
+                  border: '1px solid var(--border)',
+                  'border-radius': 'var(--r-md)',
+                  background: 'var(--bg-surface)',
+                  color: 'var(--fg)',
+                }}
+              />
+              <button
+                type="button"
+                class="btn btn-solid"
+                onClick={() => void handleAddWorkspace()}
+                style={{ padding: '4px 8px', 'font-size': 'var(--fs-xs)' }}
+              >
+                Add
+              </button>
+              <button
+                type="button"
+                class="btn btn-ghost"
+                onClick={() => setShowAddWorkspace(false)}
+                style={{ padding: '4px 6px', 'font-size': 'var(--fs-xs)' }}
+              >
+                ✕
+              </button>
+            </div>
+          </Show>
+          <Show when={!showAddWorkspace()}>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              onClick={() => setShowAddWorkspace(true)}
+              style={{
+                padding: '4px 8px',
+                'font-size': 'var(--fs-2xs)',
+                border: '1px dashed var(--border)',
+                'border-radius': 'var(--r-md)',
+                color: 'var(--fg-subtle)',
+              }}
+            >
+              ＋ Add workspace
+            </button>
+          </Show>
+          <Show when={selectedWorkspace()}>
+            <span
+              style={{
+                'font-size': 'var(--fs-2xs)',
+                color: 'var(--fg-faint)',
+                'font-family': 'var(--font-mono)',
+                overflow: 'hidden',
+                'text-overflow': 'ellipsis',
+                'white-space': 'nowrap',
+              }}
+              title={selectedWorkspace()}
+            >
+              cwd: {selectedWorkspace()}
+            </span>
+          </Show>
+        </div>
+
         <button
           type="button"
           class="btn btn-solid"
-          onClick={() => void props.store.createSession().catch(() => {})}
+          onClick={handleCreateSession}
           disabled={s().loading}
           aria-busy={s().loading ? 'true' : 'false'}
           style={{ width: '100%', padding: '8px 12px', 'font-size': 'var(--fs-sm)' }}
@@ -440,7 +617,7 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                     <button
                       type="button"
                       class="btn btn-outline"
-                      onClick={() => void props.store.createSession().catch(() => {})}
+                      onClick={handleCreateSession}
                       disabled={s().loading}
                       aria-busy={s().loading ? 'true' : 'false'}
                       style={{ padding: '6px 12px', 'font-size': 'var(--fs-sm)' }}

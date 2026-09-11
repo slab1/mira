@@ -23,9 +23,9 @@ export const editTool = {
   async execute({ path, oldString, newString, replaceAll }, ctx) {
     const cwd = ctx.cwd ?? process.cwd()
     const abs = path.startsWith("/") ? path : `${cwd}/${path}`
-    
-    // Use 9-layer fallback engine with verification
-    const result = await applyEditWithFallback(abs, oldString, newString, replaceAll ?? false)
+
+    // Use 9-layer fallback engine with verification — workspace-aware (P2-1)
+    const result = await applyEditWithFallback(abs, oldString, newString, replaceAll ?? false, cwd)
     
     // Backward compatible return shape
     return {
@@ -52,12 +52,12 @@ export const patchTool = {
   category: "file",
   needsPermission: true,
   schema: patchSchema,
-  async execute({ patch, cwd }, _ctx) {
+  async execute({ patch, cwd }, ctx) {
     const { safeTempFile } = await import("../../../shared/src/utils/paths.js")
     const tmp = safeTempFile(`mira-patch-${Date.now()}.diff`)
     await Bun.write(tmp, patch)
     const proc = Bun.spawn(["patch", "-p1", "--forward"], {
-      cwd: cwd ?? process.cwd(),
+      cwd: cwd ?? ctx.cwd ?? process.cwd(),
       stdin: Bun.file(tmp),
       stdout: "pipe",
       stderr: "pipe",

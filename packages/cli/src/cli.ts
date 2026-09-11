@@ -4,7 +4,7 @@ declare const Bun: {
   spawn(args: string[], opts: { cwd?: string; env?: Record<string, string | undefined>; stdout?: string; stderr?: string; stdin?: string }): { exited: Promise<number> }
   file(path: string): { text(): Promise<string> }
 }
-declare const process: { env: Record<string, string | undefined>; argv: string[]; exit(code: number): never; stdout: { write(s: string): void } }
+declare const process: { env: Record<string, string | undefined>; argv: string[]; exit(code: number): never; stdout: { write(s: string): void }; cwd(): string }
 declare const require: (m: string) => unknown
 
 /**
@@ -125,6 +125,11 @@ Usage:
   mira config get [key]                                   Get config (or filtered by key)
   mira config set <key> <value>                            Set config (dot notation, JSON value)
   mira finding list [--status open] [--limit 20]          List findings
+  mira workspace list                                     List workspaces (recent)
+  mira workspace add <path>                               Add workspace (validates path)
+  mira workspace remove <id|path>                         Remove workspace
+  mira workspace switch <id|path>                         Switch workspace (sets cwd for new sessions)
+  mira project init [--template ts] [--path <dir>]        Init mira.json in project
   mira manager                                            Active jobs + recent sessions
   mira health                                             Liveness (/healthz)
   mira complete --prefix "..." [--suffix "..."] [--file path]  Ghost-text completion
@@ -134,11 +139,15 @@ Usage:
 Env:
   MIRA_API_URL  server URL (default http://127.0.0.1:4096)
   MIRA_TOKEN    bearer token
+  MIRA_WORKSPACE  single workspace path (env)
+  MIRA_WORKSPACE_ROOTS  comma-separated workspace roots (env)
 
 Examples:
   mira serve
   mira session create --agent ask --title "Q&A"
   mira session prompt --id abc --prompt "explain ./src/index.ts"
+  mira workspace add /path/to/repo
+  mira project init --template ts
   mira skill list
   mira command list
   mira tool list
@@ -492,6 +501,280 @@ async function cmdHealth(): Promise<void> {
   console.log(JSON.stringify(await res.json(), null, 2))
 }
 
+async function cmdWorkspaceList(): Promise<void> {
+  try {
+    const res = await apiFetch("/workspaces")
+    if (!res.ok) {
+      console.error(`workspace list failed: ${res.status} ${await res.text()}`)
+      process.exit(1)
+    }
+    const data = (await res.json()) as { workspaces: Array<{ id: string; path: string; name: string; addedAt: number }> }
+    const list = data.workspaces ?? []
+    if (list.length === 0) {
+      console.log("No workspaces — add one with: mira workspace add /path/to/repo")
+      return
+    }
+    for (const w of list) {
+      console.log(`${w.id.slice(0, 8)}  ${w.path}  (${w.name})`)
+    }
+  } catch (e) {
+    // Fallback: read ~/.mira/workspaces.json directly if server not running
+    try {
+      const { readFileSync, existsSync } = require("node:fs") as typeof import("node:fs")
+      const home = process.env.HOME ?? ""
+      const fp = home ? `${home}/.mira/workspaces.json` : `${process.cwd()}/.mira/workspaces.json`
+      if (existsSync(fp)) {
+        const raw = readFileSync(fp, "utf-8")
+        const parsed = JSON.parse(raw) as { workspaces?: Array<{ id: string; path: string; name: string }> } | Array<{ id: string; path: string; name: string }>
+        const list = Array.isArray(parsed) ? parsed : (parsed.workspaces ?? [])
+        if (list.length === 0) console.log("No workspaces")
+        else for (const w of list) console.log(`${(w.id ?? "").slice(0, 8)}  ${w.path}  (${w.name ?? w.path.split("/").pop()})`)
+        return
+      }
+    } catch {}
+    console.error(`workspace list failed: ${String((e as Error).message ?? e)}`)
+    process.exit(1)
+  }
+}
+
+async function cmdWorkspaceAdd(opts: Record<string, string | boolean>): Promise<void> {
+  const positional = Bun.argv.slice(3).filter(a => !a.startsWith("-"))
+  // positional[0] is sub ("add"), positional[1] is path; also check opts["1"] from main's positional mapping
+  let rawPath = String(opts.path ?? opts.p ?? opts["1"] ?? positional[1] ?? "").trim()
+  if (!rawPath || rawPath === "add") rawPath = String(positional[1] ?? opts["1"] ?? "").trim()
+  if (!rawPath) rawPath = String(positional[0] ?? "").trim()
+  if (!rawPath || rawPath === "add") {
+    console.error("workspace add requires <path> — e.g. mira workspace add /path/to/repo")
+    process.exit(1)
+  }
+  try {
+    const res = await apiFetch("/workspaces", { method: "POST", body: JSON.stringify({ path: rawPath }) })
+    if (!res.ok) {
+      console.error(`workspace add failed: ${res.status} ${await res.text()}`)
+      process.exit(1)
+    }
+    const data = (await res.json()) as { workspace: { id: string; path: string; name: string } }
+    console.log(`Added workspace: ${data.workspace.path} (${data.workspace.id.slice(0, 8)})`)
+    console.log(JSON.stringify(data.workspace, null, 2))
+  } catch (e) {
+    // Fallback: write directly to ~/.mira/workspaces.json if server not reachable
+    const msg = String((e as Error).message ?? e)
+    const isConn = msg.includes("ECONNREFUSED") || msg.includes("fetch failed") || msg.includes("Connection refused") || msg.includes("Unable to connect") || msg.includes("ECONNRESET")
+    if (!isConn) {
+      console.error(`workspace add failed: ${msg}`)
+      process.exit(1)
+    }
+    try {
+      const { readFileSync, existsSync, mkdirSync, writeFileSync } = require("node:fs") as typeof import("node:fs")
+      const { resolve } = require("node:path") as typeof import("node:path")
+      const absPath = rawPath.startsWith("/") ? rawPath : resolve(process.cwd(), rawPath)
+      if (!existsSync(absPath)) {
+        console.error(`path not found: ${absPath}`)
+        process.exit(1)
+      }
+      const home = process.env.HOME ?? ""
+      const fp = home ? `${home}/.mira/workspaces.json` : `${process.cwd()}/.mira/workspaces.json`
+      const dir = fp.slice(0, fp.lastIndexOf("/"))
+      if (dir) mkdirSync(dir, { recursive: true })
+      let existing: Array<{ id: string; path: string; name: string; addedAt: number }> = []
+      if (existsSync(fp)) {
+        try {
+          const raw = readFileSync(fp, "utf-8")
+          const parsed = JSON.parse(raw) as { workspaces?: typeof existing } | typeof existing
+          existing = Array.isArray(parsed) ? parsed : (parsed.workspaces ?? [])
+        } catch {}
+      }
+      if (existing.some(w => w.path === absPath)) {
+        console.log(`Workspace already exists: ${absPath}`)
+        return
+      }
+      const id = Buffer.from(absPath).toString("base64url")
+      const entry = { id, path: absPath, name: absPath.split("/").pop() || absPath, addedAt: Date.now() }
+      existing.push(entry)
+      writeFileSync(fp, JSON.stringify({ workspaces: existing }, null, 2) + "\n")
+      console.log(`Added workspace (offline): ${absPath} (${id.slice(0, 8)})`)
+    } catch (err) {
+      console.error(`workspace add failed: ${String((err as Error).message ?? err)}`)
+      process.exit(1)
+    }
+  }
+}
+
+async function cmdWorkspaceRemove(opts: Record<string, string | boolean>): Promise<void> {
+  const positional = Bun.argv.slice(3).filter(a => !a.startsWith("-"))
+  let id = String(opts.id ?? opts["1"] ?? positional[1] ?? "").trim()
+  if (!id || id === "remove" || id === "rm" || id === "delete") id = String(positional[1] ?? opts["1"] ?? "").trim()
+  if (!id) id = String(positional[0] ?? "").trim()
+  if (!id || ["remove", "rm", "delete"].includes(id)) {
+    console.error("workspace remove requires <id|path> — e.g. mira workspace remove <id>")
+    process.exit(1)
+  }
+  try {
+    const res = await apiFetch(`/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
+    if (!res.ok) {
+      console.error(`workspace remove failed: ${res.status} ${await res.text()}`)
+      process.exit(1)
+    }
+    console.log(JSON.stringify(await res.json(), null, 2))
+    return
+  } catch (e) {
+    const msg = String((e as Error).message ?? e)
+    const isConn = msg.includes("ECONNREFUSED") || msg.includes("fetch failed") || msg.includes("Connection refused") || msg.includes("Unable to connect") || msg.includes("ECONNRESET")
+    if (!isConn) {
+      console.error(`workspace remove failed: ${msg}`)
+      process.exit(1)
+    }
+    // Offline fallback: edit ~/.mira/workspaces.json directly
+    try {
+      const { readFileSync, existsSync, writeFileSync } = require("node:fs") as typeof import("node:fs")
+      const home = process.env.HOME ?? ""
+      const fp = home ? `${home}/.mira/workspaces.json` : `${process.cwd()}/.mira/workspaces.json`
+      if (!existsSync(fp)) {
+        console.error(`workspace not found: ${id}`)
+        process.exit(1)
+      }
+      const raw = readFileSync(fp, "utf-8")
+      const parsed = JSON.parse(raw) as { workspaces?: Array<{ id: string; path: string; name: string; addedAt: number }> } | Array<{ id: string; path: string; name: string; addedAt: number }>
+      const list = Array.isArray(parsed) ? parsed : (parsed.workspaces ?? [])
+      const idx = list.findIndex(w => w.id === id || w.path === id || w.id.startsWith(id) || w.path.endsWith(id))
+      if (idx === -1) {
+        console.error(`workspace not found: ${id}`)
+        process.exit(1)
+      }
+      const removed = list[idx]
+      const next = list.filter((_, i) => i !== idx)
+      writeFileSync(fp, JSON.stringify({ workspaces: next }, null, 2) + "\n")
+      console.log(`Removed workspace (offline): ${removed.path}`)
+      console.log(JSON.stringify({ ok: true, removed }, null, 2))
+    } catch (err) {
+      console.error(`workspace remove failed: ${String((err as Error).message ?? err)}`)
+      process.exit(1)
+    }
+  }
+}
+
+async function cmdWorkspaceSwitch(opts: Record<string, string | boolean>): Promise<void> {
+  const positional = Bun.argv.slice(3).filter(a => !a.startsWith("-"))
+  let target = String(opts.path ?? opts["1"] ?? positional[1] ?? "").trim()
+  if (!target || target === "switch") target = String(positional[1] ?? opts["1"] ?? "").trim()
+  if (!target) target = String(positional[0] ?? "").trim()
+  // Try to resolve via server workspaces list
+  try {
+    const res = await apiFetch("/workspaces")
+    if (res.ok) {
+      const data = (await res.json()) as { workspaces: Array<{ id: string; path: string; name: string }> }
+      const found = data.workspaces.find(w => w.id === target || w.path === target || w.id.startsWith(target) || w.path.endsWith(target))
+      if (found) {
+        console.log(`Switched to workspace: ${found.path} (${found.name})`)
+        console.log(`Set MIRA_WORKSPACE=${found.path} for new sessions (export MIRA_WORKSPACE="${found.path}")`)
+        return
+      }
+      console.error(`workspace not found: ${target}`)
+      process.exit(1)
+    }
+  } catch {}
+  // Fallback: check local file
+  try {
+    const { readFileSync, existsSync } = require("node:fs") as typeof import("node:fs")
+    const home = process.env.HOME ?? ""
+    const fp = home ? `${home}/.mira/workspaces.json` : `${process.cwd()}/.mira/workspaces.json`
+    if (existsSync(fp)) {
+      const raw = readFileSync(fp, "utf-8")
+      const parsed = JSON.parse(raw) as { workspaces?: Array<{ id: string; path: string; name: string }> } | Array<{ id: string; path: string; name: string }>
+      const list = Array.isArray(parsed) ? parsed : (parsed.workspaces ?? [])
+      const found = list.find(w => w.id === target || w.path === target || w.id.startsWith(target))
+      if (found) {
+        console.log(`Switched to workspace: ${found.path} (${found.name ?? found.path.split("/").pop()})`)
+        console.log(`Set MIRA_WORKSPACE=${found.path} for new sessions (export MIRA_WORKSPACE="${found.path}")`)
+        return
+      }
+    }
+  } catch {}
+  console.error(`workspace not found: ${target}`)
+  process.exit(1)
+}
+
+async function cmdProjectInit(opts: Record<string, string | boolean>): Promise<void> {
+  const template = String(opts.template ?? opts.t ?? "default").trim() || "default"
+  const targetPath = String(opts.path ?? opts.p ?? positionalPath() ?? process.cwd()).trim() || process.cwd()
+  function positionalPath(): string | undefined {
+    const positional = Bun.argv.slice(3).filter(a => !a.startsWith("-"))
+    // project init may have --template ts, so positional after that is path
+    // If template is ts, positional[0] might be path if not starting with -
+    const tIdx = Bun.argv.indexOf("--template")
+    const tIdx2 = Bun.argv.indexOf("-t")
+    let afterTemplate = -1
+    if (tIdx !== -1) afterTemplate = tIdx + 2
+    else if (tIdx2 !== -1) afterTemplate = tIdx2 + 2
+    if (afterTemplate !== -1 && Bun.argv[afterTemplate] && !Bun.argv[afterTemplate].startsWith("-")) return Bun.argv[afterTemplate]
+    // otherwise first positional that is not template value
+    if (template !== "default" && positional.length > 0) {
+      // if positional[0] is template value, skip it
+      if (positional[0] === template) return positional[1]
+    }
+    return positional[0]
+  }
+  const { existsSync, mkdirSync, writeFileSync, readFileSync } = require("node:fs") as typeof import("node:fs")
+  const { resolve } = require("node:path") as typeof import("node:path")
+  const absPath = targetPath.startsWith("/") ? targetPath : resolve(process.cwd(), targetPath)
+  try {
+    mkdirSync(absPath, { recursive: true })
+  } catch {}
+  const miraJsonPath = `${absPath}/mira.json`
+  if (existsSync(miraJsonPath)) {
+    console.error(`mira.json already exists at ${miraJsonPath} — refusing to overwrite`)
+    process.exit(1)
+  }
+  let config: Record<string, unknown>
+  if (template === "ts" || template === "typescript") {
+    config = {
+      model: "openrouter/anthropic/claude-sonnet-4",
+      permission: { bash: "ask", read: "allow", write: "ask", edit: "ask" },
+      guardrails: { allowedRoots: ["."], enforce: false },
+      mcp: {},
+      provider: {},
+      agents: {},
+    }
+  } else {
+    config = {
+      model: "openrouter/anthropic/claude-sonnet-4",
+      permission: {},
+      mcp: {},
+      provider: {},
+    }
+  }
+  writeFileSync(miraJsonPath, JSON.stringify(config, null, 2) + "\n")
+  console.log(`Created ${miraJsonPath} (template: ${template})`)
+  // Also ensure workspace is registered
+  try {
+    const res = await apiFetch("/workspaces", { method: "POST", body: JSON.stringify({ path: absPath }) })
+    if (res.ok) {
+      const data = (await res.json()) as { workspace: { path: string } }
+      console.log(`Registered workspace: ${data.workspace.path}`)
+    }
+  } catch {}
+  // Also write to local workspaces.json as fallback
+  try {
+    const home = process.env.HOME ?? ""
+    const fp = home ? `${home}/.mira/workspaces.json` : `${process.cwd()}/.mira/workspaces.json`
+    const dir = fp.slice(0, fp.lastIndexOf("/"))
+    if (dir) mkdirSync(dir, { recursive: true })
+    let existing: Array<{ id: string; path: string; name: string; addedAt: number }> = []
+    if (existsSync(fp)) {
+      try {
+        const raw = readFileSync(fp, "utf-8")
+        const parsed = JSON.parse(raw) as { workspaces?: typeof existing } | typeof existing
+        existing = Array.isArray(parsed) ? parsed : (parsed.workspaces ?? [])
+      } catch {}
+    }
+    if (!existing.some(w => w.path === absPath)) {
+      const id = Buffer.from(absPath).toString("base64url")
+      existing.push({ id, path: absPath, name: absPath.split("/").pop() || absPath, addedAt: Date.now() })
+      writeFileSync(fp, JSON.stringify({ workspaces: existing }, null, 2) + "\n")
+    }
+  } catch {}
+}
+
 async function main(): Promise<void> {
   const rawCmd = Bun.argv[2] ?? "help"
   // handle direct slash alias: mira /new etc. or mira help
@@ -589,6 +872,31 @@ async function main(): Promise<void> {
       if (sub === "list" || sub === null) await cmdFindingList(opts)
       else {
         console.error(`unknown finding subcommand: ${sub}`)
+        process.exit(1)
+      }
+      return
+    case "workspace":
+    case "workspaces":
+      if (sub === "list" || sub === null) await cmdWorkspaceList()
+      else if (sub === "add") await cmdWorkspaceAdd(opts)
+      else if (sub === "remove" || sub === "rm" || sub === "delete") await cmdWorkspaceRemove(opts)
+      else if (sub === "switch") await cmdWorkspaceSwitch(opts)
+      else {
+        // allow `mira workspace /path/to/repo` as add shorthand
+        if (sub && !["list", "add", "remove", "rm", "delete", "switch"].includes(sub)) {
+          opts["path"] = sub
+          await cmdWorkspaceAdd(opts)
+          return
+        }
+        console.error(`unknown workspace subcommand: ${sub ?? ""} — try: list, add, remove, switch`)
+        process.exit(1)
+      }
+      return
+    case "project":
+    case "projects":
+      if (sub === "init" || sub === null) await cmdProjectInit(opts)
+      else {
+        console.error(`unknown project subcommand: ${sub ?? ""} — try: init`)
         process.exit(1)
       }
       return

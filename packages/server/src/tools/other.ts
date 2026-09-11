@@ -201,8 +201,8 @@ export const diagnoseTool = {
   description: 'Run diagnostics: typecheck, test, build. Aggregates real errors for fix loops.',
   category: 'other',
   schema: diagnoseSchema,
-  async execute({ checks = ['typecheck'], cwd }, _ctx) {
-    const workdir = cwd ?? process.cwd()
+  async execute({ checks = ['typecheck'], cwd }, ctx) {
+    const workdir = cwd ?? ctx.cwd ?? process.cwd()
     const bunBin = resolveBunBinary()
     const bunxBin = process.platform === 'win32' ? bunBin.replace(/bun\.exe$/i, 'bunx.exe').replace(/bun$/i, 'bunx.exe') : bunBin.replace(/bun$/i, 'bunx')
     const commands: Record<string, string[]> = {

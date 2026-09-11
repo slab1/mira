@@ -175,3 +175,19 @@ export class SymbolWatcher {
 }
 
 export const symbolWatcher = new SymbolWatcher()
+
+// Per-session factory — workspace-aware (P2-1)
+const watcherCache = new Map<string, SymbolWatcher>()
+export function getSymbolWatcher(cwd?: string): SymbolWatcher {
+  const root = resolve(cwd ?? process.cwd())
+  let w = watcherCache.get(root)
+  if (!w) {
+    w = new SymbolWatcher(root)
+    watcherCache.set(root, w)
+  }
+  return w
+}
+export function clearWatcherCache(): void {
+  for (const w of watcherCache.values()) w.close()
+  watcherCache.clear()
+}

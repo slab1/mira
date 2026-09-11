@@ -10,8 +10,20 @@ export class SymbolIndex {
     this.root = root
   }
 
-  private async readFile(path: string): Promise<string> {
-    const abs = path.startsWith('/') ? path : `${this.root}/${path}`
+  /** Update root for workspace-aware per-session use */
+  setRoot(root: string): void {
+    this.root = root
+  }
+  getRoot(): string {
+    return this.root
+  }
+  private resolveRoot(cwd?: string): string {
+    return cwd ?? this.root
+  }
+
+  private async readFile(path: string, cwd?: string): Promise<string> {
+    const root = this.resolveRoot(cwd)
+    const abs = path.startsWith('/') ? path : `${root}/${path}`
     const file = Bun.file(abs)
     if (!(await file.exists())) return ''
     return await file.text()
@@ -81,8 +93,8 @@ export class SymbolIndex {
     return symbols
   }
 
-  async ensureIndexed(file: string): Promise<SymbolInfo[]> {
-    const content = await this.readFile(file)
+  async ensureIndexed(file: string, cwd?: string): Promise<SymbolInfo[]> {
+    const content = await this.readFile(file, cwd)
     // Try LRU cache with contentHash invalidation first
     const cached = this.lruCache.get(file, content)
     if (cached) {
@@ -114,9 +126,9 @@ export class SymbolIndex {
     this.lruCache.invalidate(file)
   }
 
-  async findSymbolAt(file: string, line: number, character: number): Promise<SymbolInfo | null> {
-    const symbols = await this.ensureIndexed(file)
-    const content = await this.readFile(file)
+  async findSymbolAt(file: string, line: number, character: number, cwd?: string): Promise<SymbolInfo | null> {
+    const symbols = await this.ensureIndexed(file, cwd)
+    const content = await this.readFile(file, cwd)
     const lines = content.split('\n')
     const targetLine = lines[line - 1] ?? ''
     // Extract word at character
@@ -132,24 +144,24 @@ export class SymbolIndex {
     return sym ?? null
   }
 
-  async findDefinition(file: string, line: number, character: number): Promise<SymbolInfo | null> {
-    const sym = await this.findSymbolAt(file, line, character)
+  async findDefinition(file: string, line: number, character: number, cwd?: string): Promise<SymbolInfo | null> {
+    const sym = await this.findSymbolAt(file, line, character, cwd)
     if (!sym) return null
     // For simplicity, try to find exact symbol definition in same file first
-    const symbols = await this.ensureIndexed(file)
+    const symbols = await this.ensureIndexed(file, cwd)
     const def = symbols.find((s) => s.name === sym.name)
     if (def) return def
     // Fallback: search workspace for exported symbol
-    const candidates = await this.findSymbolInWorkspace(sym.name)
+    const candidates = await this.findSymbolInWorkspace(sym.name, cwd)
     return candidates[0] ?? null
   }
 
-  async findSymbolInWorkspace(name: string): Promise<SymbolInfo[]> {
-    // Simple glob search in packages/**/*.ts
+  async findSymbolInWorkspace(name: string, cwd?: string): Promise<SymbolInfo[]> {
+    const root = this.resolveRoot(cwd)
     const results: SymbolInfo[] = []
-    const files = await this.glob('packages/**/*.ts')
+    const files = await this.glob('**/*.{ts,tsx,js,jsx}', root)
     for (const f of files) {
-      const symbols = await this.ensureIndexed(f)
+      const symbols = await this.ensureIndexed(f, root)
       const match = symbols.find((s) => s.name === name && s.export)
       if (match) results.push(match)
     }
@@ -158,13 +170,15 @@ export class SymbolIndex {
 
   async findReferences(
     name: string,
+    cwd?: string,
   ): Promise<Array<{ file: string; line: number; character: number }>> {
+    const root = this.resolveRoot(cwd)
     const occurrences: Array<{ file: string; line: number; character: number }> = []
-    const files = await this.glob('packages/**/*.ts')
+    const files = await this.glob('**/*.{ts,tsx,js,jsx}', root)
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const regex = new RegExp(`\\b${escaped}\\b`, 'g')
     for (const f of files) {
-      const content = await this.readFile(f)
+      const content = await this.readFile(f, root)
       const lines = content.split('\n')
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i]
@@ -180,8 +194,10 @@ export class SymbolIndex {
   async renameSymbol(
     oldName: string,
     newName: string,
+    cwd?: string,
   ): Promise<{ files: string[]; count: number }> {
-    const occurrences = await this.findReferences(oldName)
+    const root = this.resolveRoot(cwd)
+    const occurrences = await this.findReferences(oldName, root)
     // Group by file to batch writes — one read + one write per file
     const byFile = new Map<string, typeof occurrences>()
     for (const occ of occurrences) {
@@ -192,8 +208,8 @@ export class SymbolIndex {
     const filesSet = new Set<string>()
     let count = 0
     for (const [file, occs] of byFile) {
-      const abs = file.startsWith('/') ? file : `${this.root}/${file}`
-      let content = await this.readFile(file)
+      const abs = file.startsWith('/') ? file : `${root}/${file}`
+      let content = await this.readFile(file, root)
       let lines = content.split('\n')
       // Sort descending by line+char so replacements don't shift earlier offsets on same line
       occs.sort((a, b) => b.line - a.line || b.character - a.character)
@@ -219,39 +235,56 @@ export class SymbolIndex {
     return { files: [...filesSet], count }
   }
 
-  private async glob(pattern: string): Promise<string[]> {
-    // Very naive implementation for packages/**/*.ts
+  private async glob(pattern: string, cwd?: string): Promise<string[]> {
+    const base = this.resolveRoot(cwd)
+    // Use Bun.Glob for workspace-aware scanning (respects cwd)
+    try {
+      const { Glob } = await import('bun')
+      const glob = new Glob(pattern)
+      const results: string[] = []
+      for await (const file of glob.scan({ cwd: base, dot: false, onlyFiles: true })) {
+        // Filter to source files only
+        if (file.endsWith('.ts') || file.endsWith('.tsx') || file.endsWith('.js') || file.endsWith('.jsx')) {
+          results.push(file)
+        } else if (!pattern.includes('.')) {
+          results.push(file)
+        }
+      }
+      if (results.length) return results
+    } catch {}
+    // Fallback to walk
     const results: string[] = []
-    const base = this.root
     await this.walk(base, pattern, results)
     return results
   }
 
-  private async walk(dir: string, pattern: string, results: string[]) {
+  private async walk(dir: string, pattern: string, results: string[], baseRoot?: string) {
+    const base = baseRoot ?? dir
     try {
       const { readdirSync } = await import('node:fs')
       const entries = readdirSync(dir)
       for (const entry of entries) {
         const full = `${dir}/${entry}`
         if (entry === '.' || entry === '..') continue
+        // Skip ignored dirs
+        if (entry === 'node_modules' || entry === '.git' || entry === 'dist' || entry === '.turbo' || entry === '.mira' || entry === 'coverage') continue
         const stat = await Bun.file(full)
           .stat()
           .catch(() => null)
         if (!stat) continue
         if (stat.isDirectory()) {
-          await this.walk(full, pattern, results)
-        } else if (full.endsWith('.ts') || full.endsWith('.tsx')) {
-          // crude filter
-          if (pattern.includes('packages')) {
-            results.push(full.replace(this.root + '/', ''))
-          }
+          await this.walk(full, pattern, results, base)
+        } else if (full.endsWith('.ts') || full.endsWith('.tsx') || full.endsWith('.js') || full.endsWith('.jsx')) {
+          // Respect session.cwd: return relative path to base (workspace root)
+          const rel = full.startsWith(base + '/') ? full.slice(base.length + 1) : full
+          results.push(rel)
         }
       }
     } catch {}
   }
 
-  async hover(file: string, line: number, character: number): Promise<string> {
-    const sym = await this.findSymbolAt(file, line, character)
+  async hover(file: string, line: number, character: number, cwd?: string): Promise<string> {
+    const sym = await this.findSymbolAt(file, line, character, cwd)
     if (!sym) return 'No symbol at position'
     const parts = [
       `Symbol: ${sym.name}`,
@@ -263,8 +296,8 @@ export class SymbolIndex {
     return parts.join('\n')
   }
 
-  async diagnostics(file: string): Promise<string[]> {
-    const content = await this.readFile(file)
+  async diagnostics(file: string, cwd?: string): Promise<string[]> {
+    const content = await this.readFile(file, cwd)
     const issues: string[] = []
     if (!content) return issues
     const lines = content.split('\n')
@@ -278,3 +311,18 @@ export class SymbolIndex {
 }
 
 export const symbolIndex = new SymbolIndex()
+
+// Per-session factory — workspace-aware (P2-1)
+const indexCache = new Map<string, SymbolIndex>()
+export function getSymbolIndex(cwd?: string): SymbolIndex {
+  const root = cwd ?? process.cwd()
+  let idx = indexCache.get(root)
+  if (!idx) {
+    idx = new SymbolIndex(root)
+    indexCache.set(root, idx)
+  }
+  return idx
+}
+export function clearSymbolIndexCache(): void {
+  indexCache.clear()
+}
