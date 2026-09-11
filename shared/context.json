@@ -109,7 +109,10 @@
       "packages/server/src/storage/db.ts: CREATE TABLE api_keys key_hash/key_prefix + addColumn idempotent (P3-1)",
       "packages/server/src/routes/admin.ts: isAdmin loopback gate (HOST check + warn, P3-2) + ensureTable key_hash/prefix + mint stores sha256+prefix (P3-1)",
       "packages/server/src/middleware/index.ts: isPublicUiPath normalize via URL + traversal block + normalizedPath in auth gate (P3-5)",
-      "packages/web/src/api/client.ts: getRuntimeApiUrl ?api= validate localhost/https only (P3-6)"
+      "packages/web/src/api/client.ts: getRuntimeApiUrl ?api= validate localhost/https only (P3-6)",
+      "packages/web/vite.config.ts:79-99 add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + keep WS catch-all last",
+      "packages/tui/vite.config.ts:43-48 replace /workspace/tree with /workspace + add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + add WS catch-all '/' ws:true last",
+      "packages/server/src/routes/static.ts:10-20 API_ROUTE_PREFIXES add /workspaces /workspace"
     ]
   },
   "checkpoints": {
@@ -130,7 +133,7 @@
       "last_updated": "2026-09-08T09:04:07.720317+00:00"
     }
   },
-  "last_updated": "2026-09-11T10:11:59.270194+00:00",
+  "last_updated": "2026-09-11T15:33:35.462703+00:00",
   "workflow_trace": [
     {
       "agent": "fixer",
@@ -645,6 +648,34 @@
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_38b045"
       },
       "outcome": "P3 fix complete: tokenEquals now hash-then-compare (sha256 32B constant time, no length leak), api_keys now stores key_hash (sha256 hex) + key_prefix (12 chars) with migrate idempotent and backward compat (raw key kept), admin isAdmin now gated to loopback when no REQUIRED_TOKEN (HOST check + warn, 401 on non-loopback), isPublicUiPath now normalizes via URL and blocks .. traversal (GET /assets/../session 401), ?api= now validates localhost/https only; typecheck green, gaps 7 pass, minimal diff preserved design, no validateToken/cli/vite touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_52a377",
+      "task": "F1 Sync Vite proxies to server route table",
+      "status": "completed",
+      "timestamp": "2026-09-11T15:33:35.462703+00:00",
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
+      "artifacts": {
+        "files_modified": [
+          "packages/web/vite.config.ts:79-99 add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + keep WS catch-all last",
+          "packages/tui/vite.config.ts:43-48 replace /workspace/tree with /workspace + add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + add WS catch-all '/' ws:true last",
+          "packages/server/src/routes/static.ts:10-20 API_ROUTE_PREFIXES add /workspaces /workspace"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (web tsc --noEmit pass, tui tsc --noEmit pass, server tsc --noEmit pass)",
+          "vite_build_web": "vite build 31 modules 309.42kB gzip 82.80kB built 12.21s",
+          "vite_build_tui": "vite build 39 modules 339.46kB gzip 85.91kB built 13.40s",
+          "proxy_direct": "GET /admin/api-keys 200, GET /workspace/symbol?cwd=/tmp 200, GET /metrics 200, GET /workspaces 200, GET /workspace/tree 200, GET /terminal 200 via direct server (vite proxy forwards to same)",
+          "vite_proxy_config": "web 7 proxies + WS catch-all verified, tui 7 proxies + WS catch-all verified, static API_ROUTE_PREFIXES includes all"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_52a377"
+      },
+      "outcome": "F1 fix complete: web vite.config now proxies 22 routes (15+7) with WS catch-all last, tui vite.config now proxies 20 routes (13+7) with WS catch-all last (replaced /workspace/tree with /workspace to cover /workspace/tree + /workspace/symbol), static API_ROUTE_PREFIXES now includes /workspaces + /workspace (32 prefixes total); typecheck + vite build green, direct server routes 200, vite proxy config verified, minimal diff preserved design, no turbo.json/slack/bot.ts/server/index.ts WS touched"
     }
   ],
   "findings": {
@@ -830,6 +861,20 @@
         "fix": "P3-4: tokenEquals now createHash('sha256').update(a).digest() 32B + timingSafeEqual (no length leak); P3-1: schema add key_hash/key_prefix, db migrate CREATE TABLE + addColumn, admin ensureTable + mint stores sha256 hex + prefix 12, keep key for compat; P3-2: isAdmin now checks HOST loopback (127.0.0.1/localhost/::1) when !REQUIRED_TOKEN && API_KEY_OWNERS empty, 401 on non-loopback, warn once; P3-5: isPublicUiPath normalizes via new URL('http://x'+p).pathname + decode + .. block, auth gate uses new URL(c.req.url).pathname; P3-6: getRuntimeApiUrl validates ?api= via new URL hostname localhost/127.0.0.1/::1 or https: only, rejects http evil/file",
         "verify": "turbo typecheck 6 successful, gaps 7 pass 22.05s, traversal GET /assets/../session 401 PASS, admin 401/200 + hash store PASS, tokenEquals constant time PASS, ?api= validate PASS, minimal diff preserved design",
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_38b045"
+      },
+      {
+        "run_id": "run_20260909_52a377",
+        "at": "2026-09-11T15:33:35.462703+00:00",
+        "task": "F1 Sync Vite proxies to server route table",
+        "files_modified": [
+          "packages/web/vite.config.ts:79-99 add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + keep WS catch-all last",
+          "packages/tui/vite.config.ts:43-48 replace /workspace/tree with /workspace + add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + add WS catch-all '/' ws:true last",
+          "packages/server/src/routes/static.ts:10-20 API_ROUTE_PREFIXES add /workspaces /workspace"
+        ],
+        "root_cause": "web vite.config proxies 15 routes but missing /admin, /workspaces, /workspace, /complete, /autocomplete, /terminal, /metrics; tui vite.config same gaps + missing /workspace/symbol, /admin, /complete, /autocomplete, /terminal and no WS catch-all; static API_ROUTE_PREFIXES missing /workspaces, /workspace",
+        "fix": "web: add 7 proxies before WS catch-all; tui: replace /workspace/tree with /workspace + add 7 proxies + WS catch-all last; static: add /workspaces + /workspace to API_ROUTE_PREFIXES",
+        "verify": "turbo typecheck 6 successful, vite build web 31 modules 309.42kB, tui 39 modules 339.46kB, direct server GET /admin/api-keys 200, GET /workspace/symbol 200, GET /metrics 200, vite proxy config verified",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_52a377"
       }
     ]
   }

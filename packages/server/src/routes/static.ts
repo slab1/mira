@@ -27,6 +27,8 @@ const API_ROUTE_PREFIXES = [
   '/manager',
   '/complete',
   '/autocomplete',
+  '/workspaces',
+  '/workspace',
 ]
 
 function isApiRoute(path: string): boolean {

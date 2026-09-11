@@ -46,7 +46,6 @@ export default defineConfig({
       '/tools': API_TARGET,
       '/permission': API_TARGET,
       '/health': API_TARGET,
-      '/workspace/tree': API_TARGET,
       '/config': API_TARGET,
       '/providers': API_TARGET,
       '/commands': API_TARGET,
@@ -59,6 +58,15 @@ export default defineConfig({
       '/finding': API_TARGET,
       '/job': API_TARGET,
       '/guardrails': API_TARGET,
+      '/admin': API_TARGET,
+      '/workspaces': API_TARGET,
+      '/workspace': API_TARGET,
+      '/complete': API_TARGET,
+      '/autocomplete': API_TARGET,
+      '/terminal': API_TARGET,
+      '/metrics': API_TARGET,
+      // WebSocket (GlobalBus + terminal) — catch-all must be last
+      '/': { target: API_TARGET, ws: true },
     },
   },
   build: {

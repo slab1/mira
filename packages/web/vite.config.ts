@@ -95,6 +95,13 @@ export default defineConfig({
       '/providers': API_TARGET,
       '/commands': API_TARGET,
       '/agents': API_TARGET,
+      '/admin': API_TARGET,
+      '/workspaces': API_TARGET,
+      '/workspace': API_TARGET,
+      '/complete': API_TARGET,
+      '/autocomplete': API_TARGET,
+      '/terminal': API_TARGET,
+      '/metrics': API_TARGET,
       // WebSocket (GlobalBus) — catch-all must be last
       '/': { target: API_TARGET, ws: true },
     },
