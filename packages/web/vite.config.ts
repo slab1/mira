@@ -72,7 +72,7 @@ export default defineConfig({
     port: Number(process.env.MIRA_WEB_PORT ?? 3000),
     host: true,
     strictPort: true,
-    hmr: { host: process.env.MIRA_HMR_HOST ?? 'localhost' },
+    hmr: { host: process.env.MIRA_HMR_HOST ?? 'localhost', port: 24678 },
     cors: true,
     // Allow Cloudflare tunnel hosts — Vite ServerOptions allows boolean true (Vite 6+)
     allowedHosts: true,
@@ -102,8 +102,18 @@ export default defineConfig({
       '/autocomplete': API_TARGET,
       '/terminal': API_TARGET,
       '/metrics': API_TARGET,
-      // WebSocket (GlobalBus) — catch-all must be last
-      '/': { target: API_TARGET, ws: true },
+      // WebSocket (GlobalBus) — catch-all must be last; HMR WS isolated on 24678 so it never hits this proxy
+      '/': {
+        target: API_TARGET,
+        ws: true,
+        configure: (proxy) => {
+          // Gracefully ignore writeAfterFIN during bun --watch restart (HMR reconnect)
+          proxy.on('error', (err: Error & { code?: string }) => {
+            const msg = String(err?.message ?? err)
+            if (msg.includes('writeAfterFIN') || (err as { code?: string })?.code === 'ECONNRESET') return
+          })
+        },
+      },
     },
   },
   build: {

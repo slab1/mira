@@ -744,8 +744,21 @@ async function main() {
               owner = resolveOwner(bearerOf(auth))
               authenticated = owner !== undefined
             }
-            const upgraded = srv.upgrade(req, { data: { authenticated, owner, isTerminal } })
-            if (!upgraded) return new Response('WebSocket upgrade failed', { status: 500 })
+            let upgraded = false
+            try {
+              upgraded = srv.upgrade(req, { data: { authenticated, owner, isTerminal } })
+            } catch (e) {
+              const msg = String((e as Error)?.message ?? e)
+              if (msg.includes('writeAfterFIN') || msg.includes('FIN')) {
+                // HMR reconnect during bun --watch restart — socket already closed, ignore gracefully
+                return undefined
+              }
+              throw e
+            }
+            if (!upgraded) {
+              // During bun --watch restart HMR may race; don't log writeAfterFIN as error
+              return new Response('WebSocket upgrade failed', { status: 500 })
+            }
             return undefined
           }
           return app.fetch(req)
