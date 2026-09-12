@@ -115,7 +115,10 @@
       "packages/server/src/routes/static.ts:10-20 API_ROUTE_PREFIXES add /workspaces /workspace",
       "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
       "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials \u2014 skipping\"; exit 0; fi; bun --watch src/bot.ts",
-      "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
+      "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1",
+      "packages/server/src/middleware/index.ts:32-101 isLocalDevOrigin now ws/wss + isVscodeOrigin + corsOrigin vscode allowlist both branches",
+      "packages/server/src/index.ts:212-250 isOriginAllowed now mirrors corsOrigin (empty list \u2192 only isLocalDevOrigin, prod allowlist normalized + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes)",
+      "packages/server/src/middleware/cors.test.ts (new) \u2014 5 tests parity: empty list only localhost, prod allowlist + gate, vscode always, isLocalDevOrigin ws/wss, parity true iff cors non-empty"
     ]
   },
   "checkpoints": {
@@ -136,7 +139,7 @@
       "last_updated": "2026-09-08T09:04:07.720317+00:00"
     }
   },
-  "last_updated": "2026-09-12T01:35:47.379827+00:00",
+  "last_updated": "2026-09-12T04:26:16.116109+00:00",
   "workflow_trace": [
     {
       "agent": "fixer",
@@ -735,6 +738,35 @@
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_cf1c5c"
       },
       "outcome": "F2 fix complete: slack#dev now opt-in \u2014 root dev filters out @mira/slack (dev:all keeps it), slack package dev guards missing creds via shell + .env check, bot.ts exits 0 in dev (not park) with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still fails fast; turbo dev with 4 tasks runs cleanly without slack, turbo dev --filter=@mira/slack still works, SIGINT fast, typecheck green, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_650858",
+      "task": "F5 Align WS isOriginAllowed with HTTP CORS",
+      "status": "completed",
+      "timestamp": "2026-09-12T04:26:16.115820+00:00",
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/middleware/index.ts:32-101 isLocalDevOrigin now ws/wss + isVscodeOrigin + corsOrigin vscode allowlist both branches",
+          "packages/server/src/index.ts:212-250 isOriginAllowed now mirrors corsOrigin (empty list \u2192 only isLocalDevOrigin, prod allowlist normalized + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes)",
+          "packages/server/src/middleware/cors.test.ts (new) \u2014 5 tests parity: empty list only localhost, prod allowlist + gate, vscode always, isLocalDevOrigin ws/wss, parity true iff cors non-empty"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (server tsc --noEmit pass)",
+          "cors_parity": "bun test packages/server/src/middleware/cors.test.ts 5 pass 69 expect",
+          "gaps": "bun test packages/server/e2e/gaps.test.ts 7 pass 0 fail",
+          "http_dev": "GET /health Origin http://localhost:3000 200 with CORS http://localhost:3000, Origin https://evil.com 200 without CORS (blocked), Origin vscode-webview://123 200 with CORS vscode-webview://123",
+          "http_prod": "GET /health Origin https://evil.com 200 without CORS (blocked), Origin https://slab1.github.io 200 with CORS, Origin http://localhost:3000 without gate blocked (no CORS)",
+          "ws": "WS isOriginAllowed vscode-webview:// true, http://localhost:3000 true in dev and prod with MIRA_ALLOW_LOCALHOST=1, https://evil.com false; WS upgrade evil.com 403, vscode 500 not 403, dev localhost 500 not 403, prod localhost no gate 403"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_650858"
+      },
+      "outcome": "F5 fix complete: isOriginAllowed now mirrors corsOrigin (empty list \u2192 only isLocalDevOrigin not any origin, prod allowlist normalized + MIRA_ALLOW_LOCALHOST=1 gate, vscode-webview:// always allowed, isLocalDevOrigin now http/https/ws/wss for localhost/127.0.0.1/[::1]); middleware corsOrigin updated with isVscodeOrigin + ws/wss; parity test 5 pass, typecheck green, HTTP dev localhost 200 with CORS, evil blocked, prod evil blocked, WS vscode true, localhost true in dev/gate, evil false, minimal diff preserved design, no web/vite.config.ts, tui/vite.config.ts, server/routes/static.ts, turbo.json, slack/bot.ts, server/index.ts WS writeAfterFIN, web/vite.config.ts VITE_MIRA_TOKEN touched"
     }
   ],
   "findings": {
@@ -962,6 +994,20 @@
         "fix": "Option A+B: root package.json dev now --filter=!@mira/slack (dev:all keeps slack), slack package dev adds shell guard with .env check, bot.ts now exits 0 in dev (NODE_ENV!=production) with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still exits 1",
         "verify": "turbo typecheck 6 successful, turbo dev --filter=!@mira/slack 6 packages without slack, --filter=@mira/slack slack only, bot exits 0/1/park verified, SIGINT fast (4 tasks)",
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_cf1c5c"
+      },
+      {
+        "run_id": "run_20260909_650858",
+        "at": "2026-09-12T04:26:16.115820+00:00",
+        "task": "F5 Align WS isOriginAllowed with HTTP CORS",
+        "files_modified": [
+          "packages/server/src/middleware/index.ts:32-101 isLocalDevOrigin now ws/wss + isVscodeOrigin + corsOrigin vscode allowlist both branches",
+          "packages/server/src/index.ts:212-250 isOriginAllowed now mirrors corsOrigin (empty list \u2192 only isLocalDevOrigin, prod allowlist normalized + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes)",
+          "packages/server/src/middleware/cors.test.ts (new) \u2014 5 tests parity: empty list only localhost, prod allowlist + gate, vscode always, isLocalDevOrigin ws/wss, parity true iff cors non-empty"
+        ],
+        "root_cause": "WS isOriginAllowed empty list returned true for any origin (no localhost check) vs HTTP corsOrigin empty list only isLocalDevOrigin; WS used string prefix checks not normalized, missed ws/wss schemes, no vscode allowlist in HTTP; prod localhost gate inconsistent",
+        "fix": "middleware isLocalDevOrigin now http/https/ws/wss + isVscodeOrigin helper, corsOrigin both branches handle vscode (return origin directly, not URL.origin null) and ws/wss; index.ts isOriginAllowed now mirrors corsOrigin: empty list \u2192 only isLocalDevOrigin, prod normalizedAllowSet + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes; added cors.test.ts 5 tests parity",
+        "verify": "turbo typecheck 6 successful, bun test cors.test.ts 5 pass 69 expect, gaps 7 pass, HTTP dev localhost 200 with CORS, evil blocked, prod evil blocked, WS vscode true, localhost true dev/gate, evil false",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_650858"
       }
     ]
   }

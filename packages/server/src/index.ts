@@ -209,29 +209,50 @@ if (process.env.NODE_ENV === 'production' && HOST === '0.0.0.0' && CORS_ORIGIN_L
   )
   if (process.env.MIRA_STRICT_CORS !== '0') process.exit(1)
 }
+const isVscodeOrigin = (origin: string): boolean =>
+  origin.startsWith('vscode-webview://') ||
+  origin.startsWith('vscode-file://') ||
+  origin.startsWith('vscode:')
+function isLocalDevOrigin(origin: string): boolean {
+  try {
+    const u = new URL(origin)
+    const host = u.hostname
+    return (
+      (host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1') &&
+      (u.protocol === 'http:' ||
+        u.protocol === 'https:' ||
+        u.protocol === 'ws:' ||
+        u.protocol === 'wss:')
+    )
+  } catch {
+    return false
+  }
+}
+const normalizedAllowSet = new Set(
+  CORS_ORIGIN_LIST.map((o) => {
+    try {
+      return new URL(o).origin
+    } catch {
+      return o
+    }
+  }),
+)
 function isOriginAllowed(origin: string | null | undefined): boolean {
   if (!origin) return true
-  if (
-    origin.startsWith('vscode-webview://') ||
-    origin.startsWith('vscode-file://') ||
-    origin.startsWith('vscode:')
-  )
-    return true
-  if (CORS_ORIGIN_LIST.length === 0) return true
-  if (CORS_ORIGIN_LIST.includes(origin)) return true
-  // Align with middleware/index.ts:73 — strict MIRA_ALLOW_LOCALHOST === '1' gate.
-  // Prod with CORS_ORIGINS set: localhost only allowed when gate is '1'.
-  // Dev default (empty list) already returned true above, so localhost allowed without gate.
-  if (
-    process.env.MIRA_ALLOW_LOCALHOST === '1' &&
-    (origin.startsWith('http://localhost:') ||
-      origin.startsWith('https://localhost:') ||
-      origin.startsWith('http://127.0.0.1:') ||
-      origin.startsWith('https://127.0.0.1:') ||
-      origin.startsWith('http://[::1]:') ||
-      origin.startsWith('https://[::1]:'))
-  )
-    return true
+  if (isVscodeOrigin(origin)) return true
+  if (CORS_ORIGIN_LIST.length === 0) {
+    // Dev default (empty list): only localhost + vscode (not any origin)
+    return isLocalDevOrigin(origin)
+  }
+  // Prod: allow only allowlisted (normalized) or localhost when gated
+  try {
+    const normalized = new URL(origin).origin
+    if (normalizedAllowSet.has(normalized)) return true
+  } catch {
+    if (CORS_ORIGIN_LIST.includes(origin)) return true
+    return false
+  }
+  if (process.env.MIRA_ALLOW_LOCALHOST === '1' && isLocalDevOrigin(origin)) return true
   return false
 }
 

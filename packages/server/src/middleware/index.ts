@@ -34,13 +34,20 @@ export function mountMiddleware(
   // a Vite dev server on a different port can reach the API directly.
   // When an explicit list is configured (prod), only origins in the list are
   // allowed; localhost is denied unless MIRA_ALLOW_LOCALHOST=1.
+  const isVscodeOrigin = (origin: string): boolean =>
+    origin.startsWith('vscode-webview://') ||
+    origin.startsWith('vscode-file://') ||
+    origin.startsWith('vscode:')
   const isLocalDevOrigin = (origin: string): boolean => {
     try {
       const u = new URL(origin)
       const host = u.hostname
       return (
         (host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1') &&
-        (u.protocol === 'http:' || u.protocol === 'https:')
+        (u.protocol === 'http:' ||
+          u.protocol === 'https:' ||
+          u.protocol === 'ws:' ||
+          u.protocol === 'wss:')
       )
     } catch {
       return false
@@ -60,9 +67,10 @@ export function mountMiddleware(
       ? {
           // Prod: allow only origins in CORS_ORIGIN_LIST (normalized) or
           // localhost when explicitly gated by MIRA_ALLOW_LOCALHOST=1.
-          // Return normalized origin to prevent header-smuggling.
+          // vscode-webview:// always allowed. Return normalized origin to prevent header-smuggling.
           origin: (origin: string | undefined) => {
             if (!origin) return ''
+            if (isVscodeOrigin(origin)) return origin
             let normalized: string
             try {
               normalized = new URL(origin).origin
@@ -76,10 +84,12 @@ export function mountMiddleware(
           },
         }
       : {
-          // Dev default (empty list): reflect localhost via normalized origin.
+          // Dev default (empty list): reflect localhost + vscode via normalized origin.
           // Preserve header-smuggling protection by returning u.origin.
           origin: (origin: string | undefined) => {
-            if (!origin || !isLocalDevOrigin(origin)) return ''
+            if (!origin) return ''
+            if (isVscodeOrigin(origin)) return origin
+            if (!isLocalDevOrigin(origin)) return ''
             try {
               const u = new URL(origin)
               return u.origin
