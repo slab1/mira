@@ -7,7 +7,8 @@
   ],
   "scripts": {
     "prepare": "husky",
-    "dev": "turbo dev --continue",
+    "dev": "turbo dev --continue --filter=!@mira/slack",
+    "dev:all": "turbo dev --continue",
     "build": "turbo build",
     "test": "turbo test",
     "typecheck": "turbo typecheck",

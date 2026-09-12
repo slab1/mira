@@ -112,7 +112,10 @@
       "packages/web/src/api/client.ts: getRuntimeApiUrl ?api= validate localhost/https only (P3-6)",
       "packages/web/vite.config.ts:79-99 add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + keep WS catch-all last",
       "packages/tui/vite.config.ts:43-48 replace /workspace/tree with /workspace + add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + add WS catch-all '/' ws:true last",
-      "packages/server/src/routes/static.ts:10-20 API_ROUTE_PREFIXES add /workspaces /workspace"
+      "packages/server/src/routes/static.ts:10-20 API_ROUTE_PREFIXES add /workspaces /workspace",
+      "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
+      "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials \u2014 skipping\"; exit 0; fi; bun --watch src/bot.ts",
+      "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
     ]
   },
   "checkpoints": {
@@ -133,7 +136,7 @@
       "last_updated": "2026-09-08T09:04:07.720317+00:00"
     }
   },
-  "last_updated": "2026-09-11T15:33:35.462703+00:00",
+  "last_updated": "2026-09-12T01:35:47.379827+00:00",
   "workflow_trace": [
     {
       "agent": "fixer",
@@ -676,6 +679,62 @@
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_52a377"
       },
       "outcome": "F1 fix complete: web vite.config now proxies 22 routes (15+7) with WS catch-all last, tui vite.config now proxies 20 routes (13+7) with WS catch-all last (replaced /workspace/tree with /workspace to cover /workspace/tree + /workspace/symbol), static API_ROUTE_PREFIXES now includes /workspaces + /workspace (32 prefixes total); typecheck + vite build green, direct server routes 200, vite proxy config verified, minimal diff preserved design, no turbo.json/slack/bot.ts/server/index.ts WS touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_98abc0",
+      "task": "F2 Make slack#dev opt-in, not persistent",
+      "status": "completed",
+      "timestamp": "2026-09-11T20:15:00.000000+00:00",
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
+      "artifacts": {
+        "files_modified": [
+          "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
+          "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials \u2014 skipping\"; exit 0; fi; bun --watch src/bot.ts",
+          "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (server tsc --noEmit pass, slack tsc --noEmit pass)",
+          "turbo_dev_filter": "turbo dev --filter=!@mira/slack --dry shows 6 packages without slack, turbo dev --filter=@mira/slack --dry shows slack only, turbo dev --dry shows 7 packages with slack",
+          "slack_bot": "SLACK_BOT_TOKEN=\"\" bun src/bot.ts exits 0 with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', MIRA_SLACK_STRICT=1 exits 1, NODE_ENV=production parks (timeout 124), with creds via .env runs",
+          "slack_dev_guard": "if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then skip else run \u2014 handles .env creds",
+          "sigint": "turbo dev --filter=!@mira/slack runs 4 tasks (server, web, tui, cli) without slack, SIGINT draining fast (4 tasks shutting down, no 25m50s park)"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_98abc0"
+      },
+      "outcome": "F2 fix complete: slack#dev now opt-in \u2014 root dev filters out @mira/slack (dev:all keeps it), slack package dev guards missing creds via shell + .env check, bot.ts exits 0 in dev (not park) with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still fails fast; turbo dev with 4 tasks runs cleanly without slack, turbo dev --filter=@mira/slack still works, SIGINT fast, typecheck green, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_cf1c5c",
+      "task": "F2 Make slack#dev opt-in, not persistent",
+      "status": "completed",
+      "timestamp": "2026-09-12T01:35:47.379650+00:00",
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
+      "artifacts": {
+        "files_modified": [
+          "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
+          "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials \u2014 skipping\"; exit 0; fi; bun --watch src/bot.ts",
+          "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (server tsc --noEmit pass, slack tsc --noEmit pass)",
+          "turbo_dev_filter": "turbo dev --filter=!@mira/slack --dry shows 6 packages without slack, turbo dev --filter=@mira/slack --dry shows slack only, turbo dev --dry shows 7 packages with slack",
+          "slack_bot": "SLACK_BOT_TOKEN=\"\" bun src/bot.ts exits 0 with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', MIRA_SLACK_STRICT=1 exits 1, NODE_ENV=production parks (timeout 124), with creds via .env runs",
+          "slack_dev_guard": "if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then skip else run \u2014 handles .env creds",
+          "sigint": "turbo dev --filter=!@mira/slack runs 4 tasks (server, web, tui, cli) without slack, SIGINT draining fast (4 tasks shutting down, no 25m50s park)"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_cf1c5c"
+      },
+      "outcome": "F2 fix complete: slack#dev now opt-in \u2014 root dev filters out @mira/slack (dev:all keeps it), slack package dev guards missing creds via shell + .env check, bot.ts exits 0 in dev (not park) with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still fails fast; turbo dev with 4 tasks runs cleanly without slack, turbo dev --filter=@mira/slack still works, SIGINT fast, typecheck green, minimal diff preserved design"
     }
   ],
   "findings": {
@@ -875,6 +934,34 @@
         "fix": "web: add 7 proxies before WS catch-all; tui: replace /workspace/tree with /workspace + add 7 proxies + WS catch-all last; static: add /workspaces + /workspace to API_ROUTE_PREFIXES",
         "verify": "turbo typecheck 6 successful, vite build web 31 modules 309.42kB, tui 39 modules 339.46kB, direct server GET /admin/api-keys 200, GET /workspace/symbol 200, GET /metrics 200, vite proxy config verified",
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_52a377"
+      },
+      {
+        "run_id": "run_20260909_98abc0",
+        "at": "2026-09-11T20:15:00.000000+00:00",
+        "task": "F2 Make slack#dev opt-in, not persistent",
+        "files_modified": [
+          "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
+          "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials \u2014 skipping\"; exit 0; fi; bun --watch src/bot.ts",
+          "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
+        ],
+        "root_cause": "slack/bot.ts:60-80 isMissingCreds() parked event loop forever via setInterval when creds missing and MIRA_SLACK_STRICT!=1, holding turbo dev (5 tasks persistent --continue) until SIGINT draining 25m50s; turbo dev ran all 5 packages in parallel with no filter",
+        "fix": "Option A+B: root package.json dev now --filter=!@mira/slack (dev:all keeps slack), slack package dev adds shell guard with .env check, bot.ts now exits 0 in dev (NODE_ENV!=production) with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still exits 1",
+        "verify": "turbo typecheck 6 successful, turbo dev --filter=!@mira/slack 6 packages without slack, --filter=@mira/slack slack only, bot exits 0/1/park verified, SIGINT fast (4 tasks)",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_98abc0"
+      },
+      {
+        "run_id": "run_20260909_cf1c5c",
+        "at": "2026-09-12T01:35:47.379791+00:00",
+        "task": "F2 Make slack#dev opt-in, not persistent",
+        "files_modified": [
+          "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
+          "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials \u2014 skipping\"; exit 0; fi; bun --watch src/bot.ts",
+          "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
+        ],
+        "root_cause": "slack/bot.ts:60-80 isMissingCreds() parked event loop forever via setInterval when creds missing and MIRA_SLACK_STRICT!=1, holding turbo dev (5 tasks persistent --continue) until SIGINT draining 25m50s; turbo dev ran all 5 packages in parallel with no filter",
+        "fix": "Option A+B: root package.json dev now --filter=!@mira/slack (dev:all keeps slack), slack package dev adds shell guard with .env check, bot.ts now exits 0 in dev (NODE_ENV!=production) with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still exits 1",
+        "verify": "turbo typecheck 6 successful, turbo dev --filter=!@mira/slack 6 packages without slack, --filter=@mira/slack slack only, bot exits 0/1/park verified, SIGINT fast (4 tasks)",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_cf1c5c"
       }
     ]
   }

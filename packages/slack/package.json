@@ -4,7 +4,7 @@
   "description": "Mira Slack bot — Socket Mode bridge to Mira HTTP API (thin client, no server changes)",
   "type": "module",
   "scripts": {
-    "dev": "bun --watch src/bot.ts",
+    "dev": "if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials — skipping (set SLACK_BOT_TOKEN to enable)\"; exit 0; fi; bun --watch src/bot.ts",
     "build": "tsc --noEmit && bun build src/bot.ts --outdir dist --target bun",
     "typecheck": "tsc --noEmit",
     "test": "bun test",

@@ -80,14 +80,18 @@ async function start() {
     if (process.env.MIRA_SLACK_STRICT === "1") {
       process.exit(1)
     }
-    // Idle (don't exit): a missing Slack key shouldn't take down `turbo dev`.
-    // Set MIRA_SLACK_STRICT=1 to fail fast (CI/prod validation).
-    console.warn("[mira-slack] No Slack credentials — bot idle. API stays up; set creds to enable Slack turns.")
-    // Park the event loop (a bare never-promise alone lets the runtime exit).
-    await new Promise(() => {
-      setInterval(() => {}, 60_000)
-    })
-    return
+    // In production, park (don't exit) so the bot stays idle but doesn't crash the process.
+    // In dev, exit cleanly so `turbo dev` isn't held forever — slack is opt-in via `turbo dev --filter=slack` or `dev:all`.
+    // Set MIRA_SLACK_STRICT=1 to fail fast in CI.
+    if (process.env.NODE_ENV === "production") {
+      console.warn("[mira-slack] No Slack credentials — bot idle. API stays up; set creds to enable Slack turns.")
+      await new Promise(() => {
+        setInterval(() => {}, 60_000)
+      })
+      return
+    }
+    console.log("[mira-slack] No Slack credentials — bot idle (set SLACK_BOT_TOKEN to enable)")
+    process.exit(0)
   }
 
   const healthy = await checkHealth(MIRA_API_URL)
