@@ -451,6 +451,7 @@ export function PromptInput(props: {
   filePills?: FilePill[]
   onRemovePill?: (index: number) => void
   onAddPill?: (path: string) => void
+  cwd?: string | null
 }) {
   let textareaRef: HTMLTextAreaElement | undefined
   const [atQuery, setAtQuery] = createSignal('')
@@ -458,18 +459,28 @@ export function PromptInput(props: {
   const [atVisible, setAtVisible] = createSignal(false)
   const [atDismissed, setAtDismissed] = createSignal(false)
   const [workspaceFiles, setWorkspaceFiles] = createSignal<string[]>(MOCK_FILES)
-  let workspaceFetched = false
+  let workspaceFetchedForCwd: string | null = null
   let workspaceFetching: Promise<void> | null = null
-  const fetchWorkspaceFiles = () => {
-    if (workspaceFetched || workspaceFetching) return workspaceFetching ?? Promise.resolve()
+  const resolveCwd = () => {
+    if (props.cwd) return props.cwd
+    try {
+      const v = localStorage.getItem('mira.selectedWorkspace')
+      if (v) return v
+    } catch {}
+    return undefined
+  }
+  const fetchWorkspaceFiles = (forceCwd?: string | null) => {
+    const cwd = forceCwd !== undefined ? forceCwd ?? undefined : resolveCwd()
+    const cacheKey = cwd ?? '__default__'
+    if (workspaceFetchedForCwd === cacheKey || workspaceFetching) return workspaceFetching ?? Promise.resolve()
     workspaceFetching = api
-      .getWorkspaceTree()
+      .getWorkspaceTree(cwd)
       .then((files) => {
         if (files.length > 0) setWorkspaceFiles(files)
-        workspaceFetched = true
+        workspaceFetchedForCwd = cacheKey
       })
       .catch(() => {
-        workspaceFetched = true
+        workspaceFetchedForCwd = cacheKey
       })
       .finally(() => {
         workspaceFetching = null
@@ -477,10 +488,17 @@ export function PromptInput(props: {
     return workspaceFetching
   }
   onMount(() => {
-    fetchWorkspaceFiles()
+    void fetchWorkspaceFiles()
   })
   createEffect(() => {
-    if (atVisible()) fetchWorkspaceFiles()
+    if (atVisible()) void fetchWorkspaceFiles()
+  })
+  createEffect(() => {
+    const cwd = props.cwd ?? null
+    if (cwd !== workspaceFetchedForCwd && workspaceFetchedForCwd !== null) {
+      workspaceFetchedForCwd = null
+      void fetchWorkspaceFiles(cwd)
+    }
   })
 
   // Detect @ mention in progress

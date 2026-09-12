@@ -141,18 +141,24 @@ export default function App() {
   const [atIndex, setAtIndex] = createSignal(0)
   const [atVisible, setAtVisible] = createSignal(false)
   const [atDismissed, setAtDismissed] = createSignal(false)
-  let workspaceFetched = false
+  let workspaceFetchedForCwd: string | null = null
   let workspaceFetching: Promise<void> | null = null
-  const fetchWorkspaceFiles = () => {
-    if (workspaceFetched || workspaceFetching) return workspaceFetching ?? Promise.resolve()
+  const currentCwd = () => {
+    const sess = store.state.sessions.find((s) => s.id === store.state.currentId) as { cwd?: string | null } | undefined
+    return sess?.cwd ?? null
+  }
+  const fetchWorkspaceFiles = (forceCwd?: string | null) => {
+    const cwd = forceCwd !== undefined ? forceCwd : currentCwd()
+    const cacheKey = cwd ?? '__default__'
+    if (workspaceFetchedForCwd === cacheKey || workspaceFetching) return workspaceFetching ?? Promise.resolve()
     workspaceFetching = import('./rpc/client')
-      .then(({ rpc }) => rpc.getWorkspaceTree())
+      .then(({ rpc }) => rpc.getWorkspaceTree(cwd ?? undefined))
       .then((files) => {
         if (files.length > 0) setWorkspaceFiles(files)
-        workspaceFetched = true
+        workspaceFetchedForCwd = cacheKey
       })
       .catch(() => {
-        workspaceFetched = true
+        workspaceFetchedForCwd = cacheKey
       })
       .finally(() => {
         workspaceFetching = null
@@ -164,6 +170,15 @@ export default function App() {
   })
   createEffect(() => {
     if (atVisible()) void fetchWorkspaceFiles()
+  })
+  // Refetch when current session cwd changes (project-aware @ mention)
+  createEffect(() => {
+    const cwd = currentCwd()
+    // Reset cache when cwd changes so next @ shows correct project files
+    if (cwd !== workspaceFetchedForCwd && workspaceFetchedForCwd !== null) {
+      workspaceFetchedForCwd = null
+      void fetchWorkspaceFiles(cwd)
+    }
   })
   createEffect(() => {
     const v = store.input()

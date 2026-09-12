@@ -366,6 +366,15 @@ export function ChatView(props: {
 
   // Model selector
   const [selectedModel, setSelectedModel] = createSignal('')
+  const currentCwd = createMemo(() => {
+    const sess = s().sessions.find((sess) => sess.id === s().currentId) as { cwd?: string | null } | undefined
+    if (sess?.cwd) return sess.cwd
+    try {
+      const v = localStorage.getItem('mira.selectedWorkspace')
+      if (v) return v
+    } catch {}
+    return null
+  })
 
   // Slash autocomplete
   const slashQuery = () => {
@@ -1092,6 +1101,7 @@ export function ChatView(props: {
               onRemovePill={removeFilePill}
               onAddPill={addFilePill}
               slashCommands={slashCommands()}
+              cwd={currentCwd()}
             />
           </form>
         </div>

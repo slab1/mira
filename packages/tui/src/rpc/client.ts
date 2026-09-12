@@ -23,6 +23,8 @@ export type Session = {
   costUsd?: number | null
   tokensIn?: number | null
   tokensOut?: number | null
+  cwd?: string | null
+  projectId?: string | null
 }
 
 export type ProvenanceNode = {

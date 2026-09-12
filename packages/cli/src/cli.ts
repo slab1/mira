@@ -157,6 +157,7 @@ Usage:
   mira workspace add <path>                               Add workspace (validates path)
   mira workspace remove <id|path>                         Remove workspace
   mira workspace switch <id|path>                         Switch workspace (sets cwd for new sessions)
+  mira project list                                       List projects (workspaces)
   mira project init [--template ts] [--path <dir>]        Init mira.json in project
   mira manager                                            Active jobs + recent sessions
   mira health                                             Liveness (/healthz)
@@ -722,6 +723,42 @@ async function cmdWorkspaceSwitch(opts: Record<string, string | boolean>): Promi
   process.exit(1)
 }
 
+async function cmdProjectList(): Promise<void> {
+  // Alias to workspace list — projects are workspaces with mira.json
+  try {
+    const res = await apiFetch("/workspaces")
+    if (!res.ok) {
+      console.error(`project list failed: ${res.status} ${await res.text()}`)
+      process.exit(1)
+    }
+    const data = (await res.json()) as { workspaces: Array<{ id: string; path: string; name: string; addedAt: number }> }
+    const list = data.workspaces ?? []
+    if (list.length === 0) {
+      console.log("No projects — add one with: mira workspace add /path/to/repo or mira project init --template ts --path /path/to/repo")
+      return
+    }
+    for (const w of list) {
+      console.log(`${w.id.slice(0, 8)}  ${w.path}  (${w.name})`)
+    }
+  } catch (e) {
+    try {
+      const { readFileSync, existsSync } = require("node:fs") as typeof import("node:fs")
+      const home = process.env.HOME ?? ""
+      const fp = home ? `${home}/.mira/workspaces.json` : `${process.cwd()}/.mira/workspaces.json`
+      if (existsSync(fp)) {
+        const raw = readFileSync(fp, "utf-8")
+        const parsed = JSON.parse(raw) as { workspaces?: Array<{ id: string; path: string; name: string }> } | Array<{ id: string; path: string; name: string }>
+        const list = Array.isArray(parsed) ? parsed : (parsed.workspaces ?? [])
+        if (list.length === 0) console.log("No projects")
+        else for (const w of list) console.log(`${(w.id ?? "").slice(0, 8)}  ${w.path}  (${w.name ?? w.path.split("/").pop()})`)
+        return
+      }
+    } catch {}
+    console.error(`project list failed: ${String((e as Error).message ?? e)}`)
+    process.exit(1)
+  }
+}
+
 async function cmdProjectInit(opts: Record<string, string | boolean>): Promise<void> {
   const template = String(opts.template ?? opts.t ?? "default").trim() || "default"
   const targetPath = String(opts.path ?? opts.p ?? positionalPath() ?? process.cwd()).trim() || process.cwd()
@@ -922,9 +959,10 @@ async function main(): Promise<void> {
       return
     case "project":
     case "projects":
-      if (sub === "init" || sub === null) await cmdProjectInit(opts)
+      if (sub === "list" || sub === "ls" || sub === null) await cmdProjectList()
+      else if (sub === "init") await cmdProjectInit(opts)
       else {
-        console.error(`unknown project subcommand: ${sub ?? ""} — try: init`)
+        console.error(`unknown project subcommand: ${sub ?? ""} — try: list, init`)
         process.exit(1)
       }
       return
