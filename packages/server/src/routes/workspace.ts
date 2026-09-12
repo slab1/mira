@@ -1,6 +1,6 @@
 import type { Hono } from 'hono'
 import { Glob } from 'bun'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, readdirSync } from 'node:fs'
 import { isPathAllowed, sanitizePath } from '../guardrails/index.js'
 import { getConfig } from '../config/store.js'
 
@@ -15,46 +15,112 @@ const DEFAULT_IGNORES = [
   'coverage',
 ]
 
+function parseGitignoreContent(content: string): string[] {
+  const out: string[] = []
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    out.push(trimmed)
+  }
+  return out
+}
+
 function loadIgnorePatterns(cwd: string): string[] {
   const patterns = [...DEFAULT_IGNORES]
+  const seen = new Set<string>()
+  const pushPatterns = (list: string[], prefix: string) => {
+    for (const pat of list) {
+      const isNeg = pat.startsWith('!')
+      const raw = isNeg ? pat.slice(1) : pat
+      if (!raw) continue
+      // For nested .gitignore, prefix slash-containing patterns with their dir
+      let effective = pat
+      if (prefix && raw.includes('/')) {
+        const stripped = raw.replace(/^\//, '')
+        effective = (isNeg ? '!' : '') + prefix + '/' + stripped
+      }
+      if (!seen.has(effective)) {
+        seen.add(effective)
+        patterns.push(effective)
+      }
+    }
+  }
   try {
     const gitignorePath = `${cwd}/.gitignore`
     if (existsSync(gitignorePath)) {
       const content = readFileSync(gitignorePath, 'utf-8')
-      for (const line of content.split('\n')) {
-        const trimmed = line.trim()
-        if (!trimmed || trimmed.startsWith('#')) continue
-        if (trimmed.startsWith('!')) continue
-        patterns.push(trimmed)
-      }
+      pushPatterns(parseGitignoreContent(content), '')
     }
+    // Recurse **/.gitignore (not just root) — manual walk for reliability
+    try {
+      const walk = (dir: string, relPrefix: string) => {
+        let dirents: Array<{ name: string; isDirectory(): boolean }>
+        try {
+          dirents = readdirSync(dir, { withFileTypes: true }) as unknown as Array<{
+            name: string
+            isDirectory(): boolean
+          }>
+        } catch {
+          return
+        }
+        for (const d of dirents) {
+          const name = d.name
+          if (d.isDirectory()) {
+            if (name === '.git' || name === 'node_modules' || name === '.mira' || name === 'dist') continue
+            const nextRel = relPrefix ? `${relPrefix}/${name}` : name
+            // Check for .gitignore in this subdir
+            const giPath = `${dir}/${name}/.gitignore`
+            try {
+              if (existsSync(giPath)) {
+                const content = readFileSync(giPath, 'utf-8')
+                pushPatterns(parseGitignoreContent(content), nextRel)
+              }
+            } catch {}
+            walk(`${dir}/${name}`, nextRel)
+          }
+        }
+      }
+      walk(cwd, '')
+    } catch {}
   } catch {}
   return patterns
 }
 
-function isIgnored(file: string, patterns: string[]): boolean {
-  for (const pat of patterns) {
-    const p = pat.replace(/\/$/, '')
-    if (file === p || file.startsWith(p + '/')) return true
-    if (p.includes('*')) {
-      try {
-        const g = new Glob(p)
-        if (g.match(file)) return true
-        const base = file.split('/').pop() ?? file
-        if (g.match(base)) return true
-      } catch {}
-      if (p.startsWith('*.')) {
-        const suffix = p.slice(1)
-        if (file.endsWith(suffix)) return true
-      }
-      continue
+function matchesPattern(file: string, pat: string): boolean {
+  const p = pat.replace(/\/$/, '')
+  if (file === p || file.startsWith(p + '/')) return true
+  if (p.includes('*')) {
+    try {
+      const g = new Glob(p)
+      if (g.match(file)) return true
+      const base = file.split('/').pop() ?? file
+      if (g.match(base)) return true
+    } catch {}
+    if (p.startsWith('*.')) {
+      const suffix = p.slice(1)
+      if (file.endsWith(suffix)) return true
     }
-    if (!p.includes('/')) {
-      const segments = file.split('/')
-      if (segments.includes(p)) return true
-    }
+    return false
+  }
+  if (!p.includes('/')) {
+    const segments = file.split('/')
+    if (segments.includes(p)) return true
   }
   return false
+}
+
+function isIgnored(file: string, patterns: string[]): boolean {
+  let ignored = false
+  for (const pat of patterns) {
+    if (pat.startsWith('!')) {
+      const neg = pat.slice(1).replace(/\/$/, '')
+      if (!neg) continue
+      if (matchesPattern(file, neg)) ignored = false
+    } else {
+      if (matchesPattern(file, pat)) ignored = true
+    }
+  }
+  return ignored
 }
 
 // ── Workspaces helpers ───────────────────────────────────────────────
@@ -307,10 +373,10 @@ export function mountWorkspaceRoutes(app: Hono<{ Variables: { requestId: string 
     const patterns = loadIgnorePatterns(cwd)
     const glob = new Glob('**/*')
 
-    // Collect files
+    // Collect files — dot:true to include .env.example but filter via isIgnored correctly
     const allFiles: string[] = []
     try {
-      for await (const file of glob.scan({ cwd, dot: false, onlyFiles: !includeDirs })) {
+      for await (const file of glob.scan({ cwd, dot: true, onlyFiles: !includeDirs })) {
         const sanitized = sanitizePath(file)
         if (!sanitized.ok) continue
         // For explicitly requested cwd, bypass isPathAllowed (allow all within that cwd)
