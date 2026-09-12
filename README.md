@@ -58,7 +58,7 @@ Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observab
 ## Security Defaults
 
 - Server binds **127.0.0.1** — set `HOST=0.0.0.0` explicitly for remote access
-- Bearer auth via `MIRA_TOKEN`: first boot with no token anywhere auto-creates `~/.mira/mira.env` (respects `$MIRA_DIR`) with a generated 64-hex token; existing file is adopted, never overwritten. Production without auth refuses to start (`MIRA_NO_AUTOPROVISION=1` opts out). Clients pass `Authorization: Bearer …` (query-param tokens are rejected)
+- Bearer auth via `MIRA_TOKEN`: dev first boot with no token anywhere auto-creates `~/.mira/mira.env` (0o600, respects `$MIRA_DIR`) with a generated 64-hex token; existing file is adopted, never overwritten. `MIRA_NO_AUTOPROVISION=1` opts out (no file created). `~/.mira/mira.env` is dev-only — prod must set `MIRA_TOKEN` via env/secret (fail-closed without it). `VITE_MIRA_TOKEN` is dev-only fallback (gated to `NODE_ENV !== 'production'`, never baked into prod bundle). Clients pass `Authorization: Bearer …` (query-param tokens are rejected)
 - Rate limiting per real socket peer (Bun `requestIP`, unforgeable); proxy headers only honored under `MIRA_TRUST_PROXY=1`; per-route SSE bucket for streaming endpoints
 - Every mutating tool call is snapshotted; permission layer gates bash/edit/write/MCP
 
@@ -94,16 +94,18 @@ MIRA_API_URL=http://127.0.0.1:4096 MIRA_API_KEY=<key> SLACK_BOT_TOKEN=xoxb-... S
 
 ## Environment Reference
 
-| Variable                               | Purpose                                                                                           |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `OPENROUTER_API_KEY`                   | Primary provider                                                                                  |
-| `NVIDIA_API_KEY`                       | NVIDIA NIM provider + enables vision model default                                                |
-| `FIRECRAWL_API_KEY` / `TAVILY_API_KEY` | websearch quality tiers (DuckDuckGo fallback needs none)                                          |
-| `MIRA_VISION_MODEL`                    | Vision model override (default `nvidia/meta/llama-3.2-90b-vision-instruct`)                       |
-| `MIRA_LSP_GO_CMD`                      | Custom Go LSP command (default `gopls`)                                                           |
-| `MIRA_AUTOPILOT=1`                     | Open PRs for verified self-patches                                                                |
-| `MIRA_TOKEN`                           | Bearer auth (auto-provisioned to `~/.mira/mira.env` on first boot; production refuses without it) |
-| `HOST`                                 | Bind address (default `127.0.0.1`)                                                                |
+| Variable                               | Purpose                                                                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `OPENROUTER_API_KEY`                   | Primary provider                                                                                                               |
+| `NVIDIA_API_KEY`                       | NVIDIA NIM provider + enables vision model default                                                                             |
+| `FIRECRAWL_API_KEY` / `TAVILY_API_KEY` | websearch quality tiers (DuckDuckGo fallback needs none)                                                                       |
+| `MIRA_VISION_MODEL`                    | Vision model override (default `nvidia/meta/llama-3.2-90b-vision-instruct`)                                                    |
+| `MIRA_LSP_GO_CMD`                      | Custom Go LSP command (default `gopls`)                                                                                        |
+| `MIRA_AUTOPILOT=1`                     | Open PRs for verified self-patches                                                                                             |
+| `MIRA_TOKEN`                           | Bearer auth (dev auto-provisioned to `~/.mira/mira.env` 0o600 on first boot; prod must set via env/secret, refuses without it) |
+| `MIRA_NO_AUTOPROVISION=1`              | Opt out of dev auto-provision (no `~/.mira/mira.env` created)                                                                  |
+| `VITE_MIRA_TOKEN`                      | Dev-only fallback for web (gated to `NODE_ENV !== 'production'`, never baked into prod bundle)                                 |
+| `HOST`                                 | Bind address (default `127.0.0.1`)                                                                                             |
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) and [packages/server/README.md](./packages/server/README.md).
 
