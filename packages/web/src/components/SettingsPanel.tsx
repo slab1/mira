@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import type { MiraConfig, ThemeChoice, ProviderEntry, ProviderConfig } from '../api/client'
 import { getApiUrl, providerModelId } from '../api/client'
 import { ConfirmDialog } from './ConfirmDialog'
+import { McpMarketplace } from './McpMarketplace'
 import { toast } from './Toast'
 import { useFocusTrap } from '../hooks/useFocusTrap'
 
@@ -3268,6 +3269,8 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                       </button>
                     </div>
                   </form>
+
+                  <McpMarketplace onAdded={() => void props.store.loadMcp()} />
                 </div>
               </Show>
 

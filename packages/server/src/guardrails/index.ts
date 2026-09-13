@@ -215,6 +215,89 @@ export function sanitizeCommand(cmd: string): { ok: boolean; reason?: string; sa
   return { ok: true, sanitized: cmd }
 }
 
+/** Extract file paths touched by a unified diff (--- / +++ headers + diff --git). */
+export function extractPatchPaths(diff: string): string[] {
+  const out: string[] = []
+  for (const line of diff.split('\n')) {
+    let m: RegExpMatchArray | null
+    if ((m = line.match(/^(?:---|\+\+\+)\s+(\S+)/))) {
+      let p = m[1].split('\t')[0].trim().replace(/^[ab]\//, '')
+      if (!p || p === '/dev/null' || p === 'null' || p === '/dev/null/') continue
+      out.push(p)
+    } else if ((m = line.match(/^diff --git\s+\S+\s+(\S+)/))) {
+      const p = m[1].replace(/^b\//, '')
+      if (p && p !== '/dev/null') out.push(p)
+    }
+  }
+  return [...new Set(out)]
+}
+
+/** Prompt-injection / secret-exfil patterns for task subagent prompts. */
+const TASK_INJECTION_PATTERNS: RegExp[] = [
+  /ignore\s+(all\s+)?(previous|prior|above)\s+instructions/i,
+  /disregard\s+(all\s+)?(previous|safety|security|guardrails)/i,
+  /you\s+are\s+now\s+(a\s+)?(different|new|unrestricted|jailbroken)/i,
+  /\bDAN\b.*\bdo anything now\b/i,
+  /system\s*:\s*override/i,
+  /exfiltrat/i,
+  /send\s+\S*\s*(secret|key|token|password|credential)\S*\s+to\s+(an?\s+)?(external|remote|attacker)/i,
+  /\b(curl|wget)\b.*\|\s*(bash|sh)/i,
+  /process\.env\s*\[?\s*['"]?(AWS|SECRET|ANTHROPIC|OPENAI|PRIVATE|MIRA)/i,
+  /\$(\{)?(AWS_SECRET|AWS_SESSION|ANTHROPIC|OPENAI|PRIVATE)_?(KEY|TOKEN)?/i,
+  /\bcat\b[^&|;]*\.env\b/i,
+]
+
+/**
+ * SSRF validation for outbound fetch URLs.
+ * Returns a block reason, or null when the URL is allowed.
+ * Allow: only http/https with public DNS. Block: localhost, loopback,
+ * private ranges, link-local/metadata (169.254.x.x), file:// and other schemes.
+ */
+export function isBlockedFetchUrl(raw: string): string | null {
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    return 'invalid URL'
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    return `blocked scheme ${u.protocol} (only http/https allowed)`
+  }
+  if (u.username || u.password) return 'URL with embedded credentials blocked'
+  const rawHost = u.hostname.toLowerCase().replace(/\.$/, '')
+  const host = rawHost.startsWith('[') && rawHost.endsWith(']') ? rawHost.slice(1, -1) : rawHost
+  const blockedNames = new Set([
+    'localhost',
+    '127.0.0.1',
+    '0.0.0.0',
+    '::1',
+    '::ffff:127.0.0.1',
+    '169.254.169.254',
+    'metadata.google.internal',
+    'metadata.google',
+    'instance-data',
+    'instance-data-compute',
+  ])
+  if (blockedNames.has(rawHost) || blockedNames.has(host)) {
+    return `blocked host ${u.hostname} (SSRF)`
+  }
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (v4) {
+    const o = v4.slice(1).map(Number)
+    if (o.some((n) => n > 255)) return 'invalid IPv4 literal'
+    if (o[0] === 127) return 'loopback address blocked (SSRF)'
+    if (o[0] === 10) return 'private range blocked (SSRF)'
+    if (o[0] === 172 && o[1] >= 16 && o[1] <= 31) return 'private range blocked (SSRF)'
+    if (o[0] === 192 && o[1] === 168) return 'private range blocked (SSRF)'
+    if (o[0] === 169 && o[1] === 254) return 'link-local/metadata blocked (SSRF)'
+    if (o[0] === 0) return 'reserved IP blocked (SSRF)'
+  }
+  if (/\.local$|\.internal$|\.localhost$|\.invalid$/.test(host)) {
+    return `internal hostname blocked (SSRF): ${u.hostname}`
+  }
+  return null
+}
+
 /** Audit log writer with rotation (5MB cap) + optional DB mirror */
 export class AuditLogger {
   private path: string
@@ -408,28 +491,168 @@ export class GuardrailsManager {
           }
         }
       }
-      // Task/patch tools also spawn bash — check their payloads
-      if (tool === 'task' || tool === 'patch') {
-        const payload = argStr(args, 'prompt') || argStr(args, 'patch') || ''
-        if (payload && /rm\s+-rf\s+\/|:\(\)\{\s*:\|\:/i.test(payload)) {
-          decision.decision = enforce ? 'deny' : 'warn'
-          decision.reason = 'task/patch contains dangerous pattern'
-          await this.logger.log(decision)
-          if (enforce) throw new Error(`Guardrail blocked ${tool}: dangerous pattern`)
-          return decision
+      // Patch tool: unified diff content + cwd — validate every touched file + cwd.
+      // The patch schema has no `path` arg, so the generic file-tools block above
+      // cannot cover it: parse diff headers and check each path explicitly.
+      if (tool === 'patch') {
+        const cwdArg = argStr(args, 'cwd') ?? argStr(args, 'workdir')
+        if (typeof cwdArg === 'string' && cwdArg) {
+          const s = sanitizePath(cwdArg)
+          const reason = !s.ok
+            ? `patch cwd: ${s.reason}`
+            : !isPathAllowed(cwdArg, effectiveRoots)
+              ? 'patch cwd outside allowed roots'
+              : undefined
+          if (reason) {
+            decision.decision = enforce ? 'deny' : 'warn'
+            decision.reason = reason
+            await this.logger.log(decision)
+            console.warn(`[guardrails] patch blocked: ${reason}`)
+            if (enforce) throw new Error(`Guardrail blocked patch: ${reason}`)
+            return decision
+          }
+        }
+        const diff = argStr(args, 'patch') ?? ''
+        if (diff) {
+          if (/rm\s+-rf\s+\/|:\(\)\{\s*:\|\:/i.test(diff)) {
+            decision.decision = enforce ? 'deny' : 'warn'
+            decision.reason = 'patch contains dangerous pattern'
+            await this.logger.log(decision)
+            console.warn(`[guardrails] patch blocked: ${decision.reason}`)
+            if (enforce) throw new Error(`Guardrail blocked patch: dangerous pattern`)
+            return decision
+          }
+          for (const p of extractPatchPaths(diff)) {
+            const s = sanitizePath(p)
+            if (!s.ok) {
+              decision.decision = enforce ? 'deny' : 'warn'
+              decision.reason = `patch target: ${s.reason} (${p})`
+              await this.logger.log(decision)
+              console.warn(`[guardrails] patch blocked: ${decision.reason}`)
+              if (enforce) throw new Error(`Guardrail blocked patch: ${decision.reason}`)
+              return decision
+            }
+            const abs = p.startsWith('/') ? p : `${ctx.cwd ?? '.'}/${p}`
+            if (!isPathAllowed(abs, effectiveRoots) && !isPathAllowed(p, effectiveRoots)) {
+              decision.decision = enforce ? 'deny' : 'warn'
+              decision.reason = `patch target outside allowed roots (${p})`
+              await this.logger.log(decision)
+              console.warn(`[guardrails] patch blocked: ${decision.reason}`)
+              if (enforce) throw new Error(`Guardrail blocked patch: ${decision.reason}`)
+              return decision
+            }
+          }
         }
       }
 
-      // Web tools domain checks (basic)
-      if (tool === 'webfetch' || tool === 'websearch') {
-        const url = argStr(args, 'url') || argStr(args, 'query')
+      // Task tool: validate subagent prompt for injection + any cwd-like args.
+      if (tool === 'task') {
+        const prompt = argStr(args, 'prompt') ?? ''
+        const desc = argStr(args, 'description') ?? ''
+        const combined = `${desc}\n${prompt}`
+        if (/rm\s+-rf\s+\/|:\(\)\{\s*:\|\:/i.test(combined)) {
+          decision.decision = enforce ? 'deny' : 'warn'
+          decision.reason = 'task contains dangerous pattern'
+          await this.logger.log(decision)
+          console.warn(`[guardrails] task blocked: ${decision.reason}`)
+          if (enforce) throw new Error(`Guardrail blocked task: dangerous pattern`)
+          return decision
+        }
+        const hit = TASK_INJECTION_PATTERNS.find((rx) => rx.test(combined))
+        if (hit) {
+          decision.decision = enforce ? 'deny' : 'warn'
+          decision.reason = `task prompt injection detected (${hit.source.slice(0, 48)})`
+          await this.logger.log(decision)
+          console.warn(`[guardrails] task blocked: ${decision.reason}`)
+          if (enforce) throw new Error(`Guardrail blocked task: prompt injection`)
+          return decision
+        }
+        for (const key of ['cwd', 'workdir', 'childSession', 'sessionCwd']) {
+          const v = argStr(args, key)
+          if (typeof v === 'string' && v) {
+            const s = sanitizePath(v)
+            const reason = !s.ok
+              ? `task ${key}: ${s.reason}`
+              : !isPathAllowed(v, effectiveRoots)
+                ? `task ${key} outside allowed roots`
+                : undefined
+            if (reason) {
+              decision.decision = enforce ? 'deny' : 'warn'
+              decision.reason = reason
+              await this.logger.log(decision)
+              console.warn(`[guardrails] task blocked: ${reason}`)
+              if (enforce) throw new Error(`Guardrail blocked task: ${reason}`)
+              return decision
+            }
+          }
+        }
+      }
+
+      // MCP tools (mcp__<server>__<tool>): validate server name + scan args for
+      // path traversal / sensitive-file access / secret exfiltration.
+      if (tool.startsWith('mcp__')) {
+        const server = tool.split('__')[1] ?? ''
+        if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(server)) {
+          decision.decision = enforce ? 'deny' : 'warn'
+          decision.reason = `mcp: invalid server name (${server.slice(0, 32)})`
+          await this.logger.log(decision)
+          console.warn(`[guardrails] mcp blocked: ${decision.reason}`)
+          if (enforce) throw new Error(`Guardrail blocked ${tool}: ${decision.reason}`)
+          return decision
+        }
+        if (args && typeof args === 'object') {
+          for (const [k, v] of Object.entries(args as Record<string, JsonValue>)) {
+            if (typeof v !== 'string' || !v) continue
+            // Secret exfil via env-style keys/values
+            if (
+              /process\.env|AWS_SECRET|AWS_SESSION|ANTHROPIC_API_KEY|OPENAI_API_KEY|PRIVATE_KEY/i.test(
+                v,
+              ) &&
+              /env|secret|token|key|credential/i.test(k)
+            ) {
+              decision.decision = enforce ? 'deny' : 'warn'
+              decision.reason = `mcp: sensitive env access in arg ${k}`
+              await this.logger.log(decision)
+              console.warn(`[guardrails] mcp blocked: ${decision.reason}`)
+              if (enforce) throw new Error(`Guardrail blocked ${tool}: ${decision.reason}`)
+              return decision
+            }
+            // Path-like values: sanitize + root containment
+            if (/^[\/.~]/.test(v) || /^\.\//.test(v) || /path|file|dir|cwd|root/i.test(k)) {
+              const s = sanitizePath(v)
+              if (!s.ok) {
+                decision.decision = enforce ? 'deny' : 'warn'
+                decision.reason = `mcp arg ${k}: ${s.reason}`
+                await this.logger.log(decision)
+                console.warn(`[guardrails] mcp blocked: ${decision.reason}`)
+                if (enforce) throw new Error(`Guardrail blocked ${tool}: ${decision.reason}`)
+                return decision
+              }
+              if (!isPathAllowed(v, effectiveRoots)) {
+                decision.decision = enforce ? 'deny' : 'warn'
+                decision.reason = `mcp arg ${k} outside allowed roots`
+                await this.logger.log(decision)
+                console.warn(`[guardrails] mcp blocked: ${decision.reason}`)
+                if (enforce) throw new Error(`Guardrail blocked ${tool}: ${decision.reason}`)
+                return decision
+              }
+            }
+          }
+        }
+      }
+
+      // Web tools: SSRF validation for webfetch (websearch takes a query, not a URL)
+      if (tool === 'webfetch') {
+        const url = argStr(args, 'url')
         if (typeof url === 'string') {
-          // basic scheme check
-          if (!/^https?:\/\//.test(url) && tool === 'webfetch') {
+          const blocked = isBlockedFetchUrl(url)
+          if (blocked) {
             decision.decision = enforce ? 'deny' : 'warn'
-            decision.reason = 'webfetch requires http(s) URL'
+            decision.reason = `webfetch SSRF: ${blocked}`
             await this.logger.log(decision)
-            if (enforce) throw new Error(`Guardrail blocked webfetch`)
+            console.warn(`[guardrails] webfetch blocked: ${decision.reason}`)
+            if (enforce) throw new Error(`Guardrail blocked webfetch: ${blocked}`)
+            return decision
           }
         }
       }
