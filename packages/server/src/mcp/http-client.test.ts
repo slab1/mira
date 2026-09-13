@@ -17,7 +17,29 @@ afterAll(async () => {
 })
 
 /** Spawn the mock HTTP server and return { url, stop } once ready */
+// Serializes mock spawns: under `turbo run test --continue` parallel load,
+// spawning many Bun processes at once starves each server's listen path and
+// the client sees `empty body (HTTP 200)`. A module-level mutex chain plus a
+// small stagger keeps spawns off each other's critical section.
+let spawnQueue: Promise<void> = Promise.resolve()
 async function startMock(
+  opts: { sse?: boolean; requireSession?: boolean; legacy?: boolean } = {},
+): Promise<{ url: string; stop: () => void }> {
+  const ticket = spawnQueue
+  let release!: () => void
+  spawnQueue = new Promise<void>((res) => {
+    release = res
+  })
+  await ticket
+  try {
+    return await startMockInner(opts)
+  } finally {
+    await Bun.sleep(200)
+    release()
+  }
+}
+
+async function startMockInner(
   opts: { sse?: boolean; requireSession?: boolean; legacy?: boolean } = {},
 ): Promise<{ url: string; stop: () => void }> {
   const env: Record<string, string> = {
@@ -61,8 +83,8 @@ async function startMock(
     })()
   })
 
-  await Bun.sleep(150)
-  for (let i = 0; i < 20; i++) {
+  await Bun.sleep(300)
+  for (let i = 0; i < 30; i++) {
     try {
       const r = await fetch(url, { method: 'HEAD' })
       if (r.ok) break
@@ -102,7 +124,7 @@ async function startMock(
   }
 }
 
-describe('McpHttpClient (real Streamable HTTP JSON-RPC)', () => {
+describe.serial('McpHttpClient (real Streamable HTTP JSON-RPC)', () => {
   test('initialize handshake captures serverInfo + session id', async () => {
     const { url, stop } = await startMock()
     try {
@@ -202,7 +224,7 @@ describe('McpHttpClient (real Streamable HTTP JSON-RPC)', () => {
   }, 20_000)
 })
 
-describe('McpHttpClient (legacy HTTP+SSE 2024-11-05 fallback)', () => {
+describe.serial('McpHttpClient (legacy HTTP+SSE 2024-11-05 fallback)', () => {
   test('connect negotiates legacy transport and captures serverInfo + endpoint', async () => {
     const { url, stop } = await startMock({ legacy: true })
     try {

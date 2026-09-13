@@ -229,6 +229,9 @@ const server = serve({
   },
 })
 
-await Bun.sleep(100)
+// Wait for Bun.serve to finish binding before signalling readiness, so the
+// test's first probe never races a half-listening socket (flaky under turbo
+// parallel load when many mocks spawn at once).
+await Bun.sleep(500)
 // Signal readiness with the actual port
 console.log(JSON.stringify({ ready: true, port: server.port }))

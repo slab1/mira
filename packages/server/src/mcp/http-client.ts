@@ -91,9 +91,10 @@ export class McpHttpClient {
 
   static async connect(name: string, opts: McpHttpOptions): Promise<McpHttpClient> {
     // 1) Try the modern Streamable HTTP transport first (POST single endpoint).
-    // Retry on transient failures (Bun fetch race under parallel load)
+    // Retry on transient failures (Bun fetch race under parallel load:
+    // mock servers spawn slowly when turbo runs suites in parallel).
     let lastErr: unknown = null
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       const streamable = new McpHttpClient(name, opts, 'streamable')
       try {
         await streamable.handshakeStreamable()
@@ -101,7 +102,11 @@ export class McpHttpClient {
       } catch (e) {
         lastErr = e
         await streamable.shutdown()
-        if (attempt < 2) await Bun.sleep(150 * (attempt + 1))
+        // Definitive "not a streamable server" (legacy mocks answer POST
+        // /mcp with 404) — skip retries and fall back to legacy immediately.
+        const msg = String(e)
+        if (msg.includes('HTTP 404') || msg.includes('HTTP 405')) break
+        if (attempt < 4) await Bun.sleep(200 * (attempt + 1))
       }
     }
     // Streamable failed after retries — fall back to legacy (2024-11-05)
@@ -192,10 +197,15 @@ export class McpHttpClient {
       signal.addEventListener('abort', onOuterAbort, { once: true })
     }
     try {
-      // Retry on empty body (flaky under turbo parallel load — Bun fetch race)
+      // Retry on empty body / transient 5xx (flaky under turbo parallel load —
+      // Bun fetch race: GET /mcp intermittently resolves 200 with null body
+      // when many mock servers spawn at once). 404/405 are definitive
+      // ("not a legacy server") and throw immediately to preserve the
+      // streamable-fallback cue in connect(). Capped so the worst case
+      // (~10s) stays inside the 20s per-test timeout.
       let res: Response | null = null
       let lastErr: Error | null = null
-      for (let attempt = 0; attempt < 8; attempt++) {
+      for (let attempt = 0; attempt < 12; attempt++) {
         if (attempt > 0) await Bun.sleep(150 * attempt)
         try {
           res = await fetch(this.url, {
@@ -208,10 +218,22 @@ export class McpHttpClient {
           continue
         }
         if (!res.ok) {
-          const text = await res.text().catch(() => '')
-          throw new Error(
-            `Legacy SSE listen failed (HTTP ${res.status}) from MCP server ${this.name}: ${text.slice(0, 300)}`,
+          // Definitive "not legacy" — don't burn retries.
+          if (res.status === 404 || res.status === 405) {
+            const text = await res.text().catch(() => '')
+            throw new Error(
+              `Legacy SSE listen failed (HTTP ${res.status}) from MCP server ${this.name}: ${text.slice(0, 300)}`,
+            )
+          }
+          // Transient (429/5xx under load) — drain and retry.
+          await res.text().catch(() => '')
+          try {
+            await res.body?.cancel()
+          } catch {}
+          lastErr = new Error(
+            `Legacy SSE listen failed (HTTP ${res.status}) from MCP server ${this.name}`,
           )
+          continue
         }
         if (!res.body) {
           lastErr = new Error(
