@@ -205,6 +205,21 @@ export type MCPServerEntry = {
   config?: { type: 'local' | 'remote'; command?: string[]; url?: string; enabled: boolean }
 }
 
+/** Curated MCP Marketplace entry (GET /mcp/marketplace) with mcp.json snippet. */
+export type MarketplaceServer = {
+  name: string
+  description: string
+  type: 'local' | 'remote'
+  command?: string[]
+  url?: string
+  env?: Record<string, string>
+  headers?: Record<string, string>
+  category: string
+  stars?: number
+  config: { type: 'local' | 'remote'; command?: string[]; url?: string; enabled: boolean }
+  install_snippet: { mcp: Record<string, unknown> }
+}
+
 export type AgentEntry = {
   name: string
   description: string
@@ -697,6 +712,12 @@ export const rpc = {
   removeProvider: (id: string) =>
     req<{ ok: boolean }>(`/providers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   listMcp: () => req<MCPServerEntry[]>('/mcp'),
+  listMcpMarketplace: (q: string, limit = 5) =>
+    req<{ query: string; count: number; servers: MarketplaceServer[] }>(
+      `/mcp/marketplace?q=${encodeURIComponent(q)}&limit=${limit}`,
+    ),
+  addMcpFromMarketplace: (name: string) =>
+    req<MCPServerEntry>(`/mcp/marketplace/${encodeURIComponent(name)}`, { method: 'POST' }),
   addMcp: (body: {
     name: string
     type: 'local' | 'remote'
