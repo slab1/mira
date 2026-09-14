@@ -123,7 +123,7 @@ describe('session export/import roundtrip', () => {
   test('export returns versioned envelope; import copies content with fresh ids', async () => {
     const src = await seedSession()
 
-    const expRes = await fetch(`${BASE}/session/${src.id}/export`)
+    const expRes = await fetch(`${BASE}/session/${src.id}/export?format=json`)
     expect(expRes.status).toBe(200)
     const envelope = (await expRes.json()) as {
       version: number
@@ -172,7 +172,7 @@ describe('session export/import roundtrip', () => {
 
     // Re-export the copy and compare content (ids must all differ)
     const reExp = (await (
-      await fetch(`${BASE}/session/${imported.id}/export`)
+      await fetch(`${BASE}/session/${imported.id}/export?format=json`)
     ).json()) as typeof envelope
     expect(reExp.messages.map((m) => m.role)).toEqual(['user', 'assistant'])
     expect(reExp.messages[0].parts.map((p) => p.text)).toEqual(['hello mira'])

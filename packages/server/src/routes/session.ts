@@ -188,15 +188,16 @@ export function mountSessionRoutes(
 
   // ── Session export/import (P2-2, versioned JSON envelope) ──────────
   // NOTE: session-extras.ts also registers these paths, but this module is
-  // mounted first so these handlers win. They preserve the legacy behaviors
-  // (`?format=md` markdown transcript, version-less import bodies) to keep
-  // the CLI/e2e flows working.
+  // mounted first so these handlers win. They preserve the legacy contract
+  // (bare export defaults to the markdown transcript, `?format=json` opts
+  // into the versioned envelope; version-less import bodies accepted) to
+  // keep the CLI/e2e flows working.
   app.get('/session/:id/export', async (c: Context) => {
     const id = requireId(c)
     if (!id) return c.json({ error: 'not found' }, 404)
     const session = await deps.authorizedSession(id, c)
     if (!session) return c.json({ error: 'not found' }, 404)
-    if ((c.req.query('format') ?? 'json') === 'md') {
+    if ((c.req.query('format') ?? 'md') === 'md') {
       const s = session as unknown as Record<string, unknown>
       const lines: string[] = [
         `# ${s.title ?? 'Session'}`,
