@@ -30,6 +30,7 @@ import type { GatewayRouter } from '../gateway/router.js'
 import type { SubgatewayRegistry } from '../gateway/registry.js'
 import type { Subgateway } from '../gateway/subgateway.js'
 import { buildSystemPrompt, getLoopLimits, getConfig } from '../config/index.js'
+import { appendActiveWork, ensureMemoryBank } from '../memory/memory_controller.js'
 import { DoomLoopDetector } from './doom-loop-detector.js'
 import { needsCompaction, compactMessages, estimateTokens } from './compaction.js'
 import { searchKnowledge } from '../learning/knowledge.js'
@@ -1089,6 +1090,45 @@ export class SessionPrompt {
         }
         if (isError) toolErrorCount++
 
+        // P0-2: auto-append successful write/edit/finding_write to active_work.md (non-blocking, never throws)
+        if (
+          !isError &&
+          (tc.name === 'write' || tc.name === 'edit' || tc.name === 'finding_write')
+        ) {
+          try {
+            const args = tc.args as Record<string, unknown>
+            let summary = ''
+            let filePath: string | undefined
+            if (tc.name === 'write') {
+              filePath = typeof args.path === 'string' ? args.path : undefined
+              summary =
+                typeof args.content === 'string'
+                  ? args.content.slice(0, 200)
+                  : JSON.stringify(args).slice(0, 200)
+            } else if (tc.name === 'edit') {
+              filePath = typeof args.path === 'string' ? args.path : undefined
+              summary =
+                typeof args.newString === 'string'
+                  ? args.newString.slice(0, 200)
+                  : JSON.stringify(args).slice(0, 200)
+            } else {
+              // finding_write
+              const title = typeof args.title === 'string' ? args.title : ''
+              const evidence = typeof args.evidence === 'string' ? args.evidence : ''
+              summary = `${title}${evidence ? ` — ${evidence}` : ''}`.slice(0, 200)
+              filePath = title || undefined
+            }
+            appendActiveWork({
+              tool: tc.name,
+              path: filePath,
+              summary,
+              cwd: sessionCwd ?? process.cwd(),
+            })
+          } catch (e) {
+            console.warn('[prompt] appendActiveWork failed:', String(e))
+          }
+        }
+
         await this.persistToolResult(assistantMessageID, sessionID, tc, result, isError)
         toolResults.push({ toolCallID: tc.id, name: tc.name, result, isError })
         this.deps.bus.publish({
@@ -1204,6 +1244,10 @@ export class SessionPrompt {
     // Hierarchical memory: systemPrompt already contains AGENTS.md via buildSystemPrompt (project instructions)
     // This method wires L1 working (messages) + L2 episodic (todos/findings) + L3 semantic (knowledge) + procedural (skills) + Memory Bank (Kilo K3)
     const context: LoopMessage[] = [{ role: 'system', content: systemPrompt }]
+    // Ensure memory_bank exists on boot (idempotent, non-blocking) — P0-2
+    try {
+      ensureMemoryBank(sessionCwd)
+    } catch {}
     // Memory Bank (Kilo K3 parity) — flat file notes that survive restarts, injected before other memory
     try {
       const bank = await this.loadMemoryBank(sessionCwd)

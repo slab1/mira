@@ -87,6 +87,10 @@ export class MemoryController {
     this.episodicPath = path.join(this.memoryDir, 'episodic_memory.jsonl')
     this.semanticPath = path.join(this.memoryDir, 'semantic_memory.json')
     this._initStorage()
+    // P0-2: ensure data/memory_bank/active_work.md exists on boot (idempotent)
+    try {
+      ensureMemoryBank()
+    } catch {}
   }
 
   private _initStorage(): void {
@@ -504,3 +508,73 @@ export async function generate_cognitive_packet(
   }
 }
 export const generateCognitivePacketExport = generate_cognitive_packet
+
+// ── P0-2: active_work.md auto-append (exp-1 remainder) ─────────────────
+// Appends concise outcome after successful write/edit/finding_write.
+// Non-blocking: never throws, warns on failure. Idempotent mkdir + create.
+export function appendActiveWork(opts: {
+  tool: string
+  path?: string
+  summary: string
+  cwd?: string
+}): void {
+  try {
+    const cwd = opts.cwd ?? process.cwd()
+    const dbPath = process.env.MIRA_DB
+    let bankDir: string
+    if (dbPath) {
+      const slash = dbPath.lastIndexOf('/')
+      bankDir = slash >= 0 ? `${dbPath.slice(0, slash)}/memory_bank` : `${cwd}/data/memory_bank`
+      // Handle relative dbPath without slash
+      if (!path.isAbsolute(bankDir) && !bankDir.startsWith(cwd)) {
+        bankDir = path.join(cwd, bankDir)
+      }
+    } else {
+      bankDir = path.join(cwd, 'data', 'memory_bank')
+    }
+    fs.mkdirSync(bankDir, { recursive: true })
+    const file = path.join(bankDir, 'active_work.md')
+    if (!fs.existsSync(file)) {
+      fs.writeFileSync(
+        file,
+        '# Active Work\n\nIn-progress branches, mid-migration notes, what the next session should resume.\n\n',
+        'utf-8',
+      )
+    }
+    const timestamp = new Date().toISOString()
+    const cleanSummary = opts.summary.slice(0, 200).replace(/\r?\n/g, ' ').trim()
+    const pathPart = opts.path ? ` ${opts.path}` : ''
+    const line = `- ${timestamp} [${opts.tool}]${pathPart} — ${cleanSummary}\n`
+    fs.appendFileSync(file, line, 'utf-8')
+  } catch (e) {
+    console.warn('[memory] appendActiveWork failed:', String(e))
+  }
+}
+
+// Ensure data/memory_bank/active_work.md exists on boot (idempotent)
+export function ensureMemoryBank(cwd?: string): void {
+  try {
+    const cwdEff = cwd ?? process.cwd()
+    const dbPath = process.env.MIRA_DB
+    let bankDir: string
+    if (dbPath) {
+      const slash = dbPath.lastIndexOf('/')
+      bankDir = slash >= 0 ? `${dbPath.slice(0, slash)}/memory_bank` : `${cwdEff}/data/memory_bank`
+      if (!path.isAbsolute(bankDir) && !bankDir.startsWith(cwdEff))
+        bankDir = path.join(cwdEff, bankDir)
+    } else {
+      bankDir = path.join(cwdEff, 'data', 'memory_bank')
+    }
+    fs.mkdirSync(bankDir, { recursive: true })
+    const file = path.join(bankDir, 'active_work.md')
+    if (!fs.existsSync(file)) {
+      fs.writeFileSync(
+        file,
+        '# Active Work\n\nIn-progress branches, mid-migration notes, what the next session should resume.\n\n',
+        'utf-8',
+      )
+    }
+  } catch (e) {
+    console.warn('[memory] ensureMemoryBank failed:', String(e))
+  }
+}
