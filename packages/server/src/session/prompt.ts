@@ -37,7 +37,8 @@ import { openFindingsForContext } from '../tools/findings.js'
 import type { Todo, JsonValue, MiraConfig } from '../types/index.js'
 import type { MiraDB } from '../storage/db.js'
 import { loadSkills } from '../skills/loader.js'
-import { getAgentTemplates, isKnownAgent } from '../agents/templates.js'
+import { getAgentTemplates, isKnownAgent, isBashCommandAllowed } from '../agents/templates.js'
+import { buildRegistry, resolveModel } from '../gateway/provider.js'
 import { initLangfuse } from '../telemetry/langfuse.js'
 import { eq } from 'drizzle-orm'
 import { trace as otelTrace } from '@opentelemetry/api'
@@ -200,32 +201,54 @@ function estimateCostUSD(modelID: string, inputTokens: number, outputTokens: num
   const [pin, pout] = priceForModel(modelID)
   return (inputTokens * pin + outputTokens * pout) / 1_000_000
 }
-function resolveEffectiveModel(input: {
+export function resolveEffectiveModel(input: {
   explicitModel?: string
   agent?: string | null
   sessionModel?: string
 }): string {
   // Precedence: explicit > agent.template.model > autoModel tier > session default > global default
-  if (input.explicitModel) return input.explicitModel
-  if (input.agent) {
-    const tpl = getAgentTemplates()[input.agent]
-    if (tpl?.model) return tpl.model
-  }
-  try {
-    const cfg = getConfig() as MiraConfig & {
-      autoModel?: { enabled?: boolean; tier?: string }
-      smallModel?: string
+  const candidate = ((): string => {
+    if (input.explicitModel) return input.explicitModel
+    if (input.agent) {
+      const tpl = getAgentTemplates()[input.agent]
+      if (tpl?.model) return tpl.model
     }
-    if (cfg.autoModel?.enabled) {
-      return tierModel(cfg.autoModel.tier, cfg.smallModel)
+    try {
+      const cfg = getConfig() as MiraConfig & {
+        autoModel?: { enabled?: boolean; tier?: string }
+        smallModel?: string
+      }
+      if (cfg.autoModel?.enabled) {
+        return tierModel(cfg.autoModel.tier, cfg.smallModel)
+      }
+    } catch {}
+    if (input.sessionModel) return input.sessionModel
+    try {
+      return getConfig().model
+    } catch {
+      return 'openrouter/anthropic/claude-sonnet-4'
+    }
+  })()
+  // Route the winner through the gateway so agent model selection honors
+  // aliases, provider prefixes, and default-provider fallback. Falls back to
+  // the raw candidate when the gateway cannot resolve (e.g. no API key
+  // configured) — model resolution must never throw here.
+  return resolveModelViaGateway(candidate)
+}
+
+/**
+ * Normalize a model string via the gateway ProviderRegistry
+ * (alias expansion + provider-prefix resolution). Never throws —
+ * returns the raw candidate when resolution fails.
+ */
+export function resolveModelViaGateway(candidate: string): string {
+  try {
+    const resolved = resolveModel(buildRegistry(getConfig()), candidate)
+    if (resolved?.providerKey && typeof resolved?.modelID === 'string' && resolved.modelID) {
+      return `${resolved.providerKey}/${resolved.modelID}`
     }
   } catch {}
-  if (input.sessionModel) return input.sessionModel
-  try {
-    return getConfig().model
-  } catch {
-    return 'openrouter/anthropic/claude-sonnet-4'
-  }
+  return candidate
 }
 
 // ── SessionPrompt ──────────────────────────────────────────────────
@@ -970,6 +993,17 @@ export class SessionPrompt {
         let perm: Awaited<ReturnType<typeof this.deps.permissions.check>> | null = null
         if (opts.agent && getConfig().features?.perAgentPermissionProfiles !== false) {
           const tpl = getAgentTemplates()[opts.agent]
+          // Template-level bash allowlist (e.g. plan agent: read+bash, no writes).
+          // Denied here even when the permission layer would merely ask.
+          if (!perm && tpl?.bashAllowlist?.length && tc.name === 'bash') {
+            const cmd = (tc.args as Record<string, JsonValue>).command as string | undefined
+            if (!cmd || !isBashCommandAllowed(cmd, tpl.bashAllowlist)) {
+              perm = {
+                action: 'deny',
+                reason: `lane contract: agent "${opts.agent}" — bash command not in template allowlist (${(cmd ?? '').slice(0, 60)})`,
+              }
+            }
+          }
           if (tpl?.permissions === 'readonly') {
             const mutating = new Set(['write', 'edit', 'patch', 'todowrite'])
             if (mutating.has(tc.name)) {

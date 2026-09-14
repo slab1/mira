@@ -190,6 +190,8 @@ export interface AgentDefinition {
   permissions?: 'readonly' | 'standard' | 'elevated'
   /** per-agent model override (Kilo K1: ask=cheap, code=opus) */
   model?: string
+  /** optional bash allowlist — read-only command prefixes enforced at template level */
+  bashAllowlist?: string[]
 }
 
 export type { MCPServerConfig } from '../../../shared/src/schemas/config.js'
