@@ -51,6 +51,8 @@ export interface StreamOptions {
   maxTokens?: number
   temperature?: number
   signal?: AbortSignal
+  /** Session ID for per-session cost tracking and enforcement */
+  sessionID?: string
 }
 
 export interface GatewayStats {

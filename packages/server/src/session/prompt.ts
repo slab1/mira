@@ -29,6 +29,7 @@ import type { Gateway } from '../gateway/index.js'
 import type { GatewayRouter } from '../gateway/router.js'
 import type { SubgatewayRegistry } from '../gateway/registry.js'
 import type { Subgateway } from '../gateway/subgateway.js'
+import { getSessionCost } from '../gateway/subgateway.js'
 import { buildSystemPrompt, getLoopLimits, getConfig } from '../config/index.js'
 import { appendActiveWork, ensureMemoryBank } from '../memory/memory_controller.js'
 import { DoomLoopDetector } from './doom-loop-detector.js'
@@ -879,6 +880,7 @@ export class SessionPrompt {
         tools: this.filterToolsForAgent(opts.agent), // lane-contract enforcement (agent allowlist)
         system: systemPrompt,
         signal: opts?.signal,
+        sessionID,
       })
 
       let stepText = ''
@@ -1189,6 +1191,27 @@ export class SessionPrompt {
             `UPDATE sessions SET tokens_in = COALESCE(tokens_in, 0) + ?, tokens_out = COALESCE(tokens_out, 0) + ?, cost_usd = COALESCE(cost_usd, 0) + ?, updated_at = ? WHERE id = ?`,
           )
           .run(totalTokensIn, totalTokensOut, costDelta, Date.now(), sessionID)
+        // Emit cost.warning if session is near or over cost cap
+        const cfg = getConfig() as MiraConfig & { costCap?: { perSession?: number } }
+        const perSessionCap = cfg.costCap?.perSession
+        if (perSessionCap) {
+          const sessCost = getSessionCost(sessionID)
+          if (sessCost.costUSD >= perSessionCap * 0.9) {
+            this.deps.bus.publish({
+              type: 'cost.warning',
+              sessionID,
+              payload: {
+                currentUSD: sessCost.costUSD,
+                capUSD: perSessionCap,
+                pct: Math.round((sessCost.costUSD / perSessionCap) * 100),
+                inputTokens: sessCost.inputTokens,
+                outputTokens: sessCost.outputTokens,
+                requests: sessCost.requests,
+              },
+              timestamp: Date.now(),
+            })
+          }
+        }
       } catch {}
     }
     try {

@@ -176,6 +176,26 @@ export function mountSessionRoutes(
     if (!session) return c.json({ error: 'not found' }, 404)
     return c.json(session)
   })
+  app.get('/session/:id/cost', async (c: Context) => {
+    const id = requireId(c)
+    if (!id) return c.json({ error: 'not found' }, 404)
+    const session = await deps.authorizedSession(id, c)
+    if (!session) return c.json({ error: 'not found' }, 404)
+    const { getSessionCost } = await import('../gateway/subgateway.js')
+    const live = getSessionCost(id)
+    return c.json({
+      sessionID: id,
+      tokensIn: live.inputTokens,
+      tokensOut: live.outputTokens,
+      costUSD: live.costUSD,
+      requests: live.requests,
+      persisted: {
+        tokensIn: (session as SessionRow).tokensIn ?? 0,
+        tokensOut: (session as SessionRow).tokensOut ?? 0,
+        costUSD: (session as SessionRow).costUsd ?? 0,
+      },
+    })
+  })
   app.delete('/session/:id', async (c: Context) => {
     const id = requireId(c)
     if (!id) return c.json({ error: 'not found' }, 404)

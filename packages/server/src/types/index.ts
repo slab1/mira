@@ -113,6 +113,7 @@ export type BusEventType =
   | 'permission.reply'
   | 'question.ask'
   | 'question.reply'
+  | 'cost.warning'
   | 'server.heartbeat'
   | 'server.error'
   | 'config.updated'

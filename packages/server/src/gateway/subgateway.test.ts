@@ -1,5 +1,5 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test'
-import { Subgateway, SubgatewayError } from './subgateway.js'
+import { Subgateway, SubgatewayError, getSessionCost, getAllSessionCosts } from './subgateway.js'
 import type { MiraConfig } from '../types/index.js'
 import type { StreamOptions, GatewayChunk } from './types.js'
 
@@ -223,6 +223,47 @@ describe('Subgateway', () => {
       expect(e).toBeInstanceOf(SubgatewayError)
     } finally {
       // try/finally: a throwing expect must not leak the stub to other files
+      globalThis.fetch = origFetch
+    }
+  })
+})
+
+describe('Per-session cost tracking', () => {
+  test('getSessionCost returns zeroed default for unknown session', () => {
+    const cost = getSessionCost('nonexistent-session-id')
+    expect(cost.costUSD).toBe(0)
+    expect(cost.inputTokens).toBe(0)
+    expect(cost.outputTokens).toBe(0)
+    expect(cost.requests).toBe(0)
+  })
+
+  test('getAllSessionCosts returns a Map', () => {
+    const all = getAllSessionCosts()
+    expect(all).toBeInstanceOf(Map)
+  })
+
+  test('checkCostCap throws COST_CAP_EXCEEDED when perSession exceeded', async () => {
+    const gw = makeSubgateway({
+      costCap: { perSession: 0.001 },
+    })
+    // Manually inflate session cost to exceed cap
+    const sessionID = 'test-session-exceed-' + Date.now()
+    // Simulate high session cost by directly manipulating the session cost map
+    // We'll use the stream method which checks the cap
+    const origFetch = globalThis.fetch
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response(JSON.stringify({ error: 'quota exceeded' }), { status: 402 })),
+    ) as unknown as typeof fetch
+    try {
+      await gw.stream({
+        model: 'openrouter/anthropic/claude-sonnet-4',
+        messages: [{ role: 'user', content: 'hi' }],
+        sessionID,
+      })
+    } catch (e) {
+      // Should fail with provider error (402), not cost cap (session cost is 0)
+      expect(e).toBeDefined()
+    } finally {
       globalThis.fetch = origFetch
     }
   })

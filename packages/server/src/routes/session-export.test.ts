@@ -229,4 +229,37 @@ describe('session export/import roundtrip', () => {
     }
     expect(got.parentID).toBeNull()
   })
+
+  test('GET /session/:id/cost returns cost data for existing session', async () => {
+    // Create a session
+    const createRes = await fetch(`${BASE}/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'cost-test' }),
+    })
+    expect(createRes.status).toBe(201)
+    const { id } = (await createRes.json()) as { id: string }
+
+    const res = await fetch(`${BASE}/session/${id}/cost`)
+    expect(res.status).toBe(200)
+    const cost = (await res.json()) as {
+      sessionID: string
+      tokensIn: number
+      tokensOut: number
+      costUSD: number
+      requests: number
+      persisted: { tokensIn: number; tokensOut: number; costUSD: number }
+    }
+    expect(cost.sessionID).toBe(id)
+    expect(cost.tokensIn).toBe(0)
+    expect(cost.tokensOut).toBe(0)
+    expect(cost.costUSD).toBe(0)
+    expect(cost.requests).toBe(0)
+    expect(cost.persisted.tokensIn).toBe(0)
+  })
+
+  test('GET /session/:id/cost returns 404 for unknown session', async () => {
+    const res = await fetch(`${BASE}/session/nonexistent-id/cost`)
+    expect(res.status).toBe(404)
+  })
 })

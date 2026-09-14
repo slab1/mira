@@ -198,6 +198,18 @@ export function createAppStore() {
         })
         break
       }
+      case 'cost.warning': {
+        const p = e.payload as {
+          currentUSD?: number
+          capUSD?: number
+          pct?: number
+        } | null
+        if (p && typeof p.currentUSD === 'number' && typeof p.capUSD === 'number') {
+          const pct = p.pct ?? Math.round((p.currentUSD / p.capUSD) * 100)
+          setState('budgetWarning', `Cost $${p.currentUSD.toFixed(4)} / $${p.capUSD} (${pct}%)`)
+        }
+        break
+      }
     }
   }
 

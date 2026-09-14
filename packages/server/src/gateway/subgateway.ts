@@ -118,6 +118,17 @@ async function* trackedStream(
   }
 }
 
+/** Per-session cost tracker — shared across all Subgateway instances */
+const sessionCosts = new Map<string, { costUSD: number; inputTokens: number; outputTokens: number; requests: number }>()
+
+export function getSessionCost(sessionID: string) {
+  return sessionCosts.get(sessionID) ?? { costUSD: 0, inputTokens: 0, outputTokens: 0, requests: 0 }
+}
+
+export function getAllSessionCosts() {
+  return new Map(sessionCosts)
+}
+
 export class Subgateway implements Gateway {
   readonly lane: string
   readonly statsCollector: SubgatewayStatsCollector
@@ -204,11 +215,12 @@ export class Subgateway implements Gateway {
     estimatedInputTokens: number,
     estimatedOutputTokens: number,
     modelID?: string,
+    sessionID?: string,
   ): void {
     const cap = this.subConfig.costCap ?? readGlobalCostCap(this.globalConfig)
     if (!cap) return
     const current = this.statsCollector.snapshot().costUSD
-    // Check already-over-cap
+    // Check already-over-cap (per-task)
     if (cap.perTask !== undefined && current > cap.perTask) {
       throw new SubgatewayError({
         message: `Cost cap exceeded on lane "${this.lane}": $${current.toFixed(4)} > $${cap.perTask.toFixed(4)} per-task`,
@@ -217,18 +229,41 @@ export class Subgateway implements Gateway {
         status: 402,
       })
     }
+    // Check per-session cap
+    if (cap.perSession !== undefined && sessionID) {
+      const sess = getSessionCost(sessionID)
+      if (sess.costUSD > cap.perSession) {
+        throw new SubgatewayError({
+          message: `Cost cap exceeded for session: $${sess.costUSD.toFixed(4)} > $${cap.perSession.toFixed(4)} per-session`,
+          code: 'COST_CAP_EXCEEDED',
+          lane: this.lane,
+          status: 402,
+        })
+      }
+    }
     // Estimate cost for this request before making it
-    if (modelID && estimatedInputTokens + estimatedOutputTokens > 0 && cap.perTask !== undefined) {
+    if (modelID && estimatedInputTokens + estimatedOutputTokens > 0) {
       const [inputPrice, outputPrice] = priceFor(modelID)
       const estimatedCost =
         (estimatedInputTokens * inputPrice + estimatedOutputTokens * outputPrice) / 1_000_000
-      if (current + estimatedCost > cap.perTask) {
+      if (cap.perTask !== undefined && current + estimatedCost > cap.perTask) {
         throw new SubgatewayError({
           message: `Cost cap would be exceeded on lane "${this.lane}": $${current.toFixed(4)} + $${estimatedCost.toFixed(4)} > $${cap.perTask.toFixed(4)} per-task (model ${modelID})`,
           code: 'COST_CAP_EXCEEDED',
           lane: this.lane,
           status: 402,
         })
+      }
+      if (cap.perSession !== undefined && sessionID) {
+        const sess = getSessionCost(sessionID)
+        if (sess.costUSD + estimatedCost > cap.perSession) {
+          throw new SubgatewayError({
+            message: `Cost cap would be exceeded for session: $${sess.costUSD.toFixed(4)} + $${estimatedCost.toFixed(4)} > $${cap.perSession.toFixed(4)} per-session (model ${modelID})`,
+            code: 'COST_CAP_EXCEEDED',
+            lane: this.lane,
+            status: 402,
+          })
+        }
       }
     }
   }
@@ -264,7 +299,7 @@ export class Subgateway implements Gateway {
     const est = this.estimateTokens(opts.messages as GatewayMessage[], opts.maxTokens)
     // cost cap check with estimate before making the call
     const modelForCap = this.resolveModelID(opts.model)
-    this.checkCostCap(est.input, est.output, modelForCap)
+    this.checkCostCap(est.input, est.output, modelForCap, opts.sessionID)
 
     const t0 = Date.now()
     const model = this.resolveModelID(opts.model)
@@ -345,6 +380,18 @@ export class Subgateway implements Gateway {
             this.recordSuccess()
             return trackedStream(iter, (usage) => {
               this.statsCollector.record(cand.modelID, usage.input, usage.output, Date.now() - t0)
+              // Per-session cost tracking
+              if (opts.sessionID) {
+                const [inputPrice, outputPrice] = priceFor(cand.modelID)
+                const cost =
+                  (usage.input * inputPrice + usage.output * outputPrice) / 1_000_000
+                const sess = sessionCosts.get(opts.sessionID) ?? { costUSD: 0, inputTokens: 0, outputTokens: 0, requests: 0 }
+                sess.costUSD += cost
+                sess.inputTokens += usage.input
+                sess.outputTokens += usage.output
+                sess.requests++
+                sessionCosts.set(opts.sessionID, sess)
+              }
               const cap = this.subConfig.costCap ?? readGlobalCostCap(this.globalConfig)
               if (cap?.perTask !== undefined) {
                 const cur = this.statsCollector.snapshot().costUSD
