@@ -1,0 +1,113 @@
+{
+  "model": "openrouter/anthropic/claude-sonnet-4",
+  "loop": {
+    "maxSteps": 32,
+    "contextLimit": 128000,
+    "compactionThreshold": 0.8,
+    "smallModel": "openrouter/deepseek/deepseek-v3.2-exp"
+  },
+  "provider": {
+    "openrouter": {
+      "name": "OpenRouter",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "https://openrouter.ai/api/v1",
+        "apiKey": "{env:OPENROUTER_API_KEY}"
+      },
+      "models": {}
+    },
+    "anthropic": {
+      "name": "Anthropic Direct",
+      "npm": "@ai-sdk/anthropic",
+      "options": {
+        "baseURL": "https://api.anthropic.com/v1",
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      },
+      "models": {
+        "claude-sonnet-4": {
+          "name": "Claude Sonnet 4",
+          "limit": { "context": 200000, "output": 8192 }
+        }
+      }
+    },
+    "openai": {
+      "name": "OpenAI",
+      "npm": "@ai-sdk/openai",
+      "options": {
+        "baseURL": "https://api.openai.com/v1",
+        "apiKey": "{env:OPENAI_API_KEY}"
+      },
+      "models": {
+        "gpt-4o": {
+          "name": "GPT-4o",
+          "limit": { "context": 128000, "output": 4096 }
+        }
+      }
+    },
+    "google": {
+      "npm": "@ai-sdk/google",
+      "name": "Google Generative AI",
+      "options": {
+        "baseURL": "https://generativelanguage.googleapis.com/v1beta",
+        "apiKey": "{env:GOOGLE_API_KEY}",
+        "timeout": 120000,
+        "kind": "google"
+      },
+      "models": {}
+    },
+    "deepseek": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "DeepSeek",
+      "options": {
+        "baseURL": "https://api.deepseek.com/v1",
+        "apiKey": "{env:DEEPSEEK_API_KEY}",
+        "timeout": 120000,
+        "kind": "deepseek"
+      },
+      "models": {}
+    },
+    "nvidia": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "NVIDIA NIM",
+      "options": {
+        "baseURL": "https://integrate.api.nvidia.com/v1",
+        "apiKey": "{env:NVIDIA_API_KEY}",
+        "timeout": 120000,
+        "kind": "nvidia"
+      },
+      "models": {}
+    }
+  },
+  "mcp": {
+    "firecrawl": {
+      "type": "remote",
+      "url": "https://mcp.firecrawl.dev/mcp",
+      "enabled": false,
+      "headers": {
+        "Authorization": "Bearer {env:FIRECRAWL_API_KEY}"
+      }
+    },
+    "tavily": {
+      "type": "remote",
+      "url": "https://mcp.tavily.com/mcp",
+      "enabled": false
+    }
+  },
+  "routing": {
+    "aliases": {},
+    "fallbacks": [],
+    "defaultProvider": "openrouter"
+  },
+  "features": {
+    "injectTodosIntoLoadContext": true,
+    "enforceLaneContracts": true,
+    "perAgentPermissionProfiles": true
+  },
+  "tools": {
+    "terminal": {
+      "enabled": true,
+      "sandbox": true,
+      "timeoutMs": 30000
+    }
+  }
+}

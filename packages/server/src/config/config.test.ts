@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, copyFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -238,5 +238,189 @@ describe('getLoopLimits', () => {
     await loadConfig(testDir)
     const limits = getLoopLimits()
     expect(limits.contextLimit).toBe(256_000)
+  })
+})
+
+describe('config validation warnings', () => {
+  let warns: string[]
+  const origWarn = console.warn
+
+  beforeEach(() => {
+    warns = []
+    console.warn = (...args: unknown[]) => warns.push(args.map(String).join(' '))
+  })
+  afterEach(() => {
+    console.warn = origWarn
+  })
+
+  test('malformed JSON → warning + defaults loaded', async () => {
+    writeFileSync(join(testDir, 'mira.json'), '{ broken json !!!')
+    const config = await loadConfig(testDir)
+    // Should still return defaults
+    expect(config).toBeDefined()
+    expect(config.model).toBeDefined()
+    // Should have warned about JSON parse error
+    const jsonWarn = warns.find((w) => w.includes('invalid JSON'))
+    expect(jsonWarn).toBeDefined()
+    expect(jsonWarn).toContain('mira.json')
+  })
+
+  test('unknown top-level keys → warning', async () => {
+    writeFileSync(
+      join(testDir, 'mira.json'),
+      JSON.stringify({ model: 'test', moedl: 'typo', provder: 'typo2' }),
+    )
+    await loadConfig(testDir)
+    const keyWarns = warns.filter((w) => w.includes('unknown key'))
+    expect(keyWarns.length).toBeGreaterThanOrEqual(2)
+    expect(keyWarns.some((w) => w.includes('moedl'))).toBe(true)
+    expect(keyWarns.some((w) => w.includes('provder'))).toBe(true)
+  })
+
+  test('bad MCP config → warnings for missing type/command/url', async () => {
+    writeFileSync(
+      join(testDir, 'mira.json'),
+      JSON.stringify({
+        mcp: {
+          noType: { command: ['node'] },
+          localNoCmd: { type: 'local' },
+          remoteNoUrl: { type: 'remote' },
+          badType: { type: 'docker' },
+        },
+      }),
+    )
+    await loadConfig(testDir)
+    const mcpWarns = warns.filter((w) => w.includes('mcp.'))
+    expect(mcpWarns.length).toBeGreaterThanOrEqual(3)
+    expect(mcpWarns.some((w) => w.includes('noType') && w.includes('missing'))).toBe(true)
+    expect(mcpWarns.some((w) => w.includes('localNoCmd') && w.includes('command'))).toBe(true)
+    expect(mcpWarns.some((w) => w.includes('remoteNoUrl') && w.includes('url'))).toBe(true)
+  })
+
+  test('bad provider config → warnings', async () => {
+    writeFileSync(
+      join(testDir, 'mira.json'),
+      JSON.stringify({
+        provider: {
+          bad: {
+            npm: 123,
+            options: { baseURL: true, timeout: -5 },
+          },
+        },
+      }),
+    )
+    await loadConfig(testDir)
+    const provWarns = warns.filter((w) => w.includes('provider.bad'))
+    expect(provWarns.length).toBeGreaterThanOrEqual(2)
+  })
+
+  test('bad agent config → warnings', async () => {
+    writeFileSync(
+      join(testDir, 'mira.json'),
+      JSON.stringify({
+        agents: {
+          noSystem: { description: 'missing system' },
+          badPerm: { system: 'prompt', permissions: 'superadmin' },
+        },
+      }),
+    )
+    await loadConfig(testDir)
+    const agentWarns = warns.filter((w) => w.includes('agents.'))
+    expect(agentWarns.length).toBeGreaterThanOrEqual(2)
+    expect(agentWarns.some((w) => w.includes('noSystem') && w.includes('system'))).toBe(true)
+    expect(agentWarns.some((w) => w.includes('badPerm') && w.includes('permissions'))).toBe(true)
+  })
+
+  test('bad loop config → warnings', async () => {
+    writeFileSync(
+      join(testDir, 'mira.json'),
+      JSON.stringify({
+        loop: { maxSteps: -1, compactionThreshold: 5 },
+      }),
+    )
+    await loadConfig(testDir)
+    const loopWarns = warns.filter((w) => w.includes('loop.'))
+    expect(loopWarns.length).toBeGreaterThanOrEqual(1)
+  })
+
+  test('bad theme → warning', async () => {
+    writeFileSync(join(testDir, 'mira.json'), JSON.stringify({ theme: 'rainbow' }))
+    await loadConfig(testDir)
+    const themeWarn = warns.find((w) => w.includes('theme') && w.includes('rainbow'))
+    expect(themeWarn).toBeDefined()
+  })
+
+  test('bad features → warnings', async () => {
+    writeFileSync(
+      join(testDir, 'mira.json'),
+      JSON.stringify({ features: { injectTodos: 'yes', enforce: 1 } }),
+    )
+    await loadConfig(testDir)
+    const featWarns = warns.filter((w) => w.includes('features.'))
+    expect(featWarns.length).toBeGreaterThanOrEqual(1)
+  })
+
+  test('valid config → no warnings', async () => {
+    writeFileSync(
+      join(testDir, 'mira.json'),
+      JSON.stringify({
+        model: 'openrouter/test',
+        loop: { maxSteps: 16, contextLimit: 64000, compactionThreshold: 0.7 },
+        mcp: { myserver: { type: 'local', command: ['node', 's.js'] } },
+      }),
+    )
+    await loadConfig(testDir)
+    const configWarns = warns.filter((w) => w.includes('config issue'))
+    expect(configWarns.length).toBe(0)
+  })
+
+  test('config loads with defaults despite bad JSON', async () => {
+    writeFileSync(join(testDir, 'mira.json'), 'not json at all {{{')
+    const config = await loadConfig(testDir)
+    expect(config).toBeDefined()
+    expect(config.provider).toBeDefined()
+    expect(config.model).toBeDefined()
+  })
+})
+
+describe('auto-generate mira.json from example', () => {
+  test('creates mira.json from mira.json.example when no config exists', async () => {
+    // Copy example to test dir
+    const exampleSrc = join(process.cwd(), 'mira.json.example')
+    if (!existsSync(exampleSrc)) return // skip if example not found
+    copyFileSync(exampleSrc, join(testDir, 'mira.json.example'))
+
+    const miraPath = join(testDir, 'mira.json')
+    expect(existsSync(miraPath)).toBe(false)
+
+    const config = await loadConfig(testDir)
+
+    // mira.json should now exist
+    expect(existsSync(miraPath)).toBe(true)
+    // Should have loaded the config from the generated file
+    expect(config).toBeDefined()
+    expect(config.model).toBeDefined()
+    // Verify the generated file has the example content
+    const written = JSON.parse(readFileSync(miraPath, 'utf-8'))
+    expect(written.model).toBe('openrouter/anthropic/claude-sonnet-4')
+  })
+
+  test('does not overwrite existing mira.json', async () => {
+    writeFileSync(join(testDir, 'mira.json'), JSON.stringify({ model: 'my-custom-model' }))
+    // Also create example
+    writeFileSync(join(testDir, 'mira.json.example'), JSON.stringify({ model: 'example-model' }))
+
+    const config = await loadConfig(testDir)
+    expect(config.model).toBe('my-custom-model')
+  })
+
+  test('no example → no mira.json created, uses defaults', async () => {
+    const miraPath = join(testDir, 'mira.json')
+    expect(existsSync(miraPath)).toBe(false)
+
+    const config = await loadConfig(testDir)
+    expect(existsSync(miraPath)).toBe(false)
+    expect(config).toBeDefined()
+    expect(config.model).toBeDefined()
   })
 })

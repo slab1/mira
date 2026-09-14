@@ -3,20 +3,252 @@ import type { PartialMiraConfig } from './types.js'
 import { DEFAULT_CONFIG } from './defaults.js'
 import { z } from 'zod'
 import { existsSync, readFileSync } from 'node:fs'
+import { warn, log } from '../util/logger.js'
 
 const configCache = new Map<string, MiraConfig>()
 let cached: MiraConfig | null = null
 
+// ── Config validation helpers ────────────────────────────────────────
+
+/** Known top-level keys in mira.json — flag unknowns as typos. */
+const KNOWN_TOP_KEYS = new Set([
+  'model',
+  'smallModel',
+  'loop',
+  'permission',
+  'guardrails',
+  'mcp',
+  'provider',
+  'routing',
+  'subgateways',
+  'agents',
+  'autoModel',
+  'costCap',
+  'features',
+  'tools',
+  'theme',
+  'debug',
+])
+
+function validateConfig(raw: Record<string, unknown>, source: string): void {
+  const issues: string[] = []
+
+  // Unknown top-level keys (likely typos)
+  for (const key of Object.keys(raw)) {
+    if (!KNOWN_TOP_KEYS.has(key)) {
+      issues.push(`unknown key "${key}" — did you mean one of: ${[...KNOWN_TOP_KEYS].join(', ')}?`)
+    }
+  }
+
+  // Model validation
+  if (raw.model !== undefined && typeof raw.model !== 'string') {
+    issues.push(`model: expected string, got ${typeof raw.model}`)
+  }
+  if (raw.smallModel !== undefined && typeof raw.smallModel !== 'string') {
+    issues.push(`smallModel: expected string, got ${typeof raw.smallModel}`)
+  }
+
+  // Loop validation
+  if (raw.loop && typeof raw.loop === 'object' && !Array.isArray(raw.loop)) {
+    const loop = raw.loop as Record<string, unknown>
+    if (loop.maxSteps !== undefined && (typeof loop.maxSteps !== 'number' || loop.maxSteps < 1)) {
+      issues.push(`loop.maxSteps: expected positive integer, got ${JSON.stringify(loop.maxSteps)}`)
+    }
+    if (
+      loop.contextLimit !== undefined &&
+      (typeof loop.contextLimit !== 'number' || loop.contextLimit < 1)
+    ) {
+      issues.push(
+        `loop.contextLimit: expected positive integer, got ${JSON.stringify(loop.contextLimit)}`,
+      )
+    }
+    if (
+      loop.compactionThreshold !== undefined &&
+      (typeof loop.compactionThreshold !== 'number' ||
+        loop.compactionThreshold < 0 ||
+        loop.compactionThreshold > 1)
+    ) {
+      issues.push(
+        `loop.compactionThreshold: expected 0-1, got ${JSON.stringify(loop.compactionThreshold)}`,
+      )
+    }
+  }
+
+  // MCP validation
+  if (raw.mcp && typeof raw.mcp === 'object' && !Array.isArray(raw.mcp)) {
+    for (const [name, srv] of Object.entries(raw.mcp as Record<string, unknown>)) {
+      if (!srv || typeof srv !== 'object' || Array.isArray(srv)) {
+        issues.push(
+          `mcp.${name}: expected object, got ${Array.isArray(srv) ? 'array' : typeof srv}`,
+        )
+        continue
+      }
+      const cfg = srv as Record<string, unknown>
+      if (!cfg.type) {
+        issues.push(`mcp.${name}: missing "type" (expected "local" or "remote")`)
+      } else if (
+        cfg.type === 'local' &&
+        (!cfg.command || !Array.isArray(cfg.command) || cfg.command.length === 0)
+      ) {
+        issues.push(`mcp.${name}: type "local" requires "command" array`)
+      } else if (cfg.type === 'remote' && !cfg.url) {
+        issues.push(`mcp.${name}: type "remote" requires "url"`)
+      }
+      if (cfg.type && !['local', 'remote'].includes(String(cfg.type))) {
+        issues.push(`mcp.${name}.type: invalid "${cfg.type}" — expected "local" or "remote"`)
+      }
+    }
+  }
+
+  // Provider validation
+  if (raw.provider && typeof raw.provider === 'object' && !Array.isArray(raw.provider)) {
+    for (const [name, prov] of Object.entries(raw.provider as Record<string, unknown>)) {
+      if (!prov || typeof prov !== 'object' || Array.isArray(prov)) {
+        issues.push(`provider.${name}: expected object`)
+        continue
+      }
+      const p = prov as Record<string, unknown>
+      if (p.npm !== undefined && typeof p.npm !== 'string') {
+        issues.push(`provider.${name}.npm: expected string, got ${typeof p.npm}`)
+      }
+      if (p.options && typeof p.options === 'object') {
+        const opts = p.options as Record<string, unknown>
+        if (opts.baseURL !== undefined && typeof opts.baseURL !== 'string') {
+          issues.push(
+            `provider.${name}.options.baseURL: expected string, got ${typeof opts.baseURL}`,
+          )
+        }
+        if (
+          opts.apiKey !== undefined &&
+          typeof opts.apiKey !== 'string' &&
+          !Array.isArray(opts.apiKey)
+        ) {
+          issues.push(
+            `provider.${name}.options.apiKey: expected string or array, got ${typeof opts.apiKey}`,
+          )
+        }
+        if (opts.timeout !== undefined && (typeof opts.timeout !== 'number' || opts.timeout < 1)) {
+          issues.push(
+            `provider.${name}.options.timeout: expected positive integer, got ${JSON.stringify(opts.timeout)}`,
+          )
+        }
+      }
+      if (p.models && typeof p.models === 'object' && !Array.isArray(p.models)) {
+        for (const [mName, mDef] of Object.entries(p.models as Record<string, unknown>)) {
+          if (!mDef || typeof mDef !== 'object') {
+            issues.push(`provider.${name}.models.${mName}: expected object`)
+            continue
+          }
+          const m = mDef as Record<string, unknown>
+          if (!m.name) issues.push(`provider.${name}.models.${mName}: missing "name"`)
+          if (!m.limit || typeof m.limit !== 'object') {
+            issues.push(`provider.${name}.models.${mName}: missing "limit" object`)
+          } else {
+            const lim = m.limit as Record<string, unknown>
+            if (lim.context === undefined)
+              issues.push(`provider.${name}.models.${mName}.limit: missing "context"`)
+            if (lim.output === undefined)
+              issues.push(`provider.${name}.models.${mName}.limit: missing "output"`)
+          }
+        }
+      }
+    }
+  }
+
+  // Agent validation
+  if (raw.agents && typeof raw.agents === 'object' && !Array.isArray(raw.agents)) {
+    for (const [name, agent] of Object.entries(raw.agents as Record<string, unknown>)) {
+      if (!agent || typeof agent !== 'object' || Array.isArray(agent)) {
+        issues.push(`agents.${name}: expected object`)
+        continue
+      }
+      const a = agent as Record<string, unknown>
+      if (!a.system || typeof a.system !== 'string') {
+        issues.push(`agents.${name}: missing or invalid "system" prompt (expected string)`)
+      }
+      if (
+        a.permissions !== undefined &&
+        !['readonly', 'standard', 'elevated'].includes(String(a.permissions))
+      ) {
+        issues.push(
+          `agents.${name}.permissions: invalid "${a.permissions}" — expected "readonly", "standard", or "elevated"`,
+        )
+      }
+    }
+  }
+
+  // Routing validation
+  if (raw.routing && typeof raw.routing === 'object' && !Array.isArray(raw.routing)) {
+    const r = raw.routing as Record<string, unknown>
+    if (r.defaultProvider !== undefined && typeof r.defaultProvider !== 'string') {
+      issues.push(`routing.defaultProvider: expected string, got ${typeof r.defaultProvider}`)
+    }
+    if (r.fallbacks !== undefined && !Array.isArray(r.fallbacks)) {
+      issues.push(`routing.fallbacks: expected array, got ${typeof r.fallbacks}`)
+    }
+  }
+
+  // Feature flags validation
+  if (raw.features && typeof raw.features === 'object' && !Array.isArray(raw.features)) {
+    for (const [key, val] of Object.entries(raw.features as Record<string, unknown>)) {
+      if (typeof val !== 'boolean') {
+        issues.push(`features.${key}: expected boolean, got ${typeof val}`)
+      }
+    }
+  }
+
+  // Theme validation
+  if (raw.theme !== undefined && !['dark', 'light', 'system'].includes(String(raw.theme))) {
+    issues.push(`theme: invalid "${raw.theme}" — expected "dark", "light", or "system"`)
+  }
+
+  if (issues.length > 0) {
+    warn(`⚠ ${source}: ${issues.length} config issue(s):`)
+    for (const issue of issues) {
+      warn(`  • ${issue}`)
+    }
+  }
+}
+
 export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
   if (configCache.has(cwd)) return configCache.get(cwd)!
   if (cached && cwd === process.cwd()) return cached
-  // Try mira.json, mira.jsonc, .mira/config.json
+
+  // Auto-generate mira.json from example on first boot
   const candidates = ['mira.json', 'mira.jsonc', '.mira/config.json']
+  const hasConfig = candidates.some((name) => existsSync(`${cwd}/${name}`))
+  if (!hasConfig) {
+    const examplePath = `${cwd}/mira.json.example`
+    try {
+      const example = Bun.file(examplePath)
+      if (await example.exists()) {
+        const { copyFileSync } = await import('node:fs')
+        copyFileSync(examplePath, `${cwd}/mira.json`)
+        log(`✓ created mira.json from mira.json.example — edit to add your API keys`)
+      }
+    } catch {}
+  }
+
+  // Try mira.json, mira.jsonc, .mira/config.json
   for (const name of candidates) {
     try {
       const file = Bun.file(`${cwd}/${name}`)
       if (await file.exists()) {
-        const raw = (await file.json()) as Partial<MiraConfig>
+        let raw: Partial<MiraConfig>
+        try {
+          raw = (await file.json()) as Partial<MiraConfig>
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          warn(`⚠ ${name}: invalid JSON — ${msg}`)
+          warn(`  → fix the syntax error in ${cwd}/${name} and restart`)
+          continue
+        }
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+          warn(`⚠ ${name}: expected JSON object, got ${Array.isArray(raw) ? 'array' : typeof raw}`)
+          continue
+        }
+        // Validate config structure and report issues
+        validateConfig(raw as Record<string, unknown>, name)
         // Deep-merge object sections so a partial mira.json (e.g. {"permission":{"bash":"ask"}})
         // overrides only the keys it names — never wipes sibling defaults.
         function mergeSection<T>(base: T | undefined, override: T | undefined): T | undefined {
@@ -52,7 +284,10 @@ export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
         if (cwd === process.cwd()) cached = configCache.get(cwd)!
         return cached
       }
-    } catch {}
+    } catch (e) {
+      warn(`⚠ ${name}: failed to load — ${e instanceof Error ? e.message : String(e)}`)
+      warn(`  → check ${cwd}/${name} for structural issues`)
+    }
   }
   cached = DEFAULT_CONFIG
   configCache.set(cwd, cached)
@@ -69,7 +304,20 @@ export function getConfig(cwd?: string): MiraConfig {
       for (const name of candidates) {
         const p = `${cwd}/${name}`
         if (existsSync(p)) {
-          const raw = JSON.parse(readFileSync(p, 'utf-8')) as Partial<MiraConfig>
+          let raw: PartialMiraConfig
+          try {
+            raw = JSON.parse(readFileSync(p, 'utf-8')) as Partial<MiraConfig>
+          } catch (e) {
+            warn(`⚠ ${name}: invalid JSON — ${e instanceof Error ? e.message : String(e)}`)
+            continue
+          }
+          if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+            warn(
+              `⚠ ${name}: expected JSON object, got ${Array.isArray(raw) ? 'array' : typeof raw}`,
+            )
+            continue
+          }
+          validateConfig(raw as Record<string, unknown>, name)
           function mergeSection<T>(base: T | undefined, override: T | undefined): T | undefined {
             if (override === undefined) return base
             if (base === undefined) return override
@@ -104,7 +352,9 @@ export function getConfig(cwd?: string): MiraConfig {
           return merged
         }
       }
-    } catch {}
+    } catch (e) {
+      warn(`⚠ config: failed to load — ${e instanceof Error ? e.message : String(e)}`)
+    }
     return cached ?? DEFAULT_CONFIG
   }
   return cached ?? DEFAULT_CONFIG
