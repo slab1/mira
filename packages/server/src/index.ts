@@ -35,7 +35,12 @@ import { MCPManager } from './mcp/index.js'
 import { loadConfig, getConfig } from './config/index.js'
 import { createLearningSystem, mountLearningRoutes } from './learning/index.js'
 import { setSharedKnowledge } from './learning/knowledge.js'
-import { GuardrailsManager } from './guardrails/index.js'
+import {
+  GuardrailsManager,
+  parseEnforceEnv,
+  isProductionEnvironment,
+  warnIfEnforcementOffInProduction,
+} from './guardrails/index.js'
 import type { BusEvent, MiraConfig, JsonValue } from './types/index.js'
 import { mountHealthRoutes } from './routes/health.js'
 import { mountSessionRoutes } from './routes/session.js'
@@ -395,11 +400,12 @@ async function main() {
   log(`permissions: ${Object.keys(config.permission).length} rules`)
 
   const guardrails = new GuardrailsManager(undefined, config, db)
+  // Prod-default-on: enforcement defaults ON in production; explicit opt-out
+  // via MIRA_GUARDRAILS_ENFORCE=0 or config guardrails.enforce=false still wins.
+  // Dev (non-production, no explicit choice) stays fail-open with warn.
   const enforceEnabled =
-    config.guardrails?.enforce ??
-    (process.env.NODE_ENV === 'production' ||
-      process.env.HOST === '0.0.0.0' ||
-      process.env.MIRA_STRICT_AUTH === '1')
+    parseEnforceEnv() ?? config.guardrails?.enforce ?? isProductionEnvironment()
+  warnIfEnforcementOffInProduction(enforceEnabled)
   const rootsInfo = WORKSPACE_ROOTS.length
     ? WORKSPACE_ROOTS.join(',')
     : (config.guardrails?.allowedRoots?.join(',') ??

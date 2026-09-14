@@ -17,7 +17,11 @@ Security guardrails for Mira tool execution.
 - **Sandbox checks**
   - File tools checked against `allowedRoots`
   - Bash `workdir` checked against roots
-  - Non-enforcing by default (warn + audit), enforceable via config
+  - Fail-open with warn in dev; **enforced by default in production**
+    (prod = `NODE_ENV=production`, `HOST=0.0.0.0`, or `MIRA_STRICT_AUTH=1`).
+    Explicit opt-out via `MIRA_GUARDRAILS_ENFORCE=0` or
+    `guardrails.enforce: false` still wins. When enforcement is off in
+    production the server logs a `console.warn` at boot (never silent).
 
 - **Audit logging**
   - Every tool check and execution logged to `data/audit.log` (JSON lines)
@@ -30,7 +34,7 @@ Add to `mira.json` / `mira.jsonc`:
 ```json
 {
   "guardrails": {
-    "enforce": false,
+    "enforce": true,
     "allowedRoots": ["/home/user/projects", "/home/user/projects"],
     "blockedPaths": ["/etc", "/root"],
     "blockedCommands": ["rm -rf /", "mkfs"],
@@ -39,11 +43,15 @@ Add to `mira.json` / `mira.jsonc`:
 }
 ```
 
-When `enforce: true`, warnings become hard denials.
+Enforcement precedence: `MIRA_GUARDRAILS_ENFORCE` (`1`/`0`) >
+`guardrails.enforce` in config > production default (ON in production,
+OFF in dev). When `enforce` is on, warnings become hard denials; when off,
+violations are warn + audit only.
 
 ## Integration
 
 Guardrails are instantiated in `src/index.ts` and injected into `ToolRegistry`:
+
 ```ts
 const guardrails = new GuardrailsManager(undefined, config)
 const tools = new ToolRegistry({ ..., guardrails })
@@ -51,4 +59,5 @@ const tools = new ToolRegistry({ ..., guardrails })
 
 `ToolRegistry.execute` runs pre-check → executes tool → post-audit log.
 
-Existing tools continue to work; guardrails default to permissive (warn only).
+Existing tools continue to work; guardrails default to warn-only in dev and
+enforce in production (explicit opt-out available).

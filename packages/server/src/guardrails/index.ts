@@ -7,7 +7,9 @@
  *   - Sandbox checks (workdir containment)
  *   - Audit logging (every tool call)
  *
- * Design: Non-blocking by default (log + warn), but can be enforced via config.guardrails.enforce
+ * Design: fail-open with warn in dev, fail-closed (enforced) by default in
+ * production. Explicit opt-out via MIRA_GUARDRAILS_ENFORCE=0 or
+ * config.guardrails.enforce=false still wins over the prod default.
  */
 
 import type { MiraConfig, JsonValue } from '../types/index.js'
@@ -31,13 +33,43 @@ export interface GuardrailConfig {
   auditLogPath?: string // file path for audit log (defaults to ./data/audit.log)
 }
 
-/** Whether guardrails should enforce (fail-closed) — dynamic per call */
-export function isEnforceEnabled(): boolean {
+/** Explicit MIRA_GUARDRAILS_ENFORCE override: '0'/false-like => false, '1'/true-like => true, unset/invalid => undefined */
+export function parseEnforceEnv(): boolean | undefined {
+  const raw = process.env.MIRA_GUARDRAILS_ENFORCE?.trim().toLowerCase()
+  if (!raw) return undefined
+  if (['0', 'false', 'no', 'off', 'disabled'].includes(raw)) return false
+  if (['1', 'true', 'yes', 'on', 'enabled'].includes(raw)) return true
+  return undefined
+}
+
+/** Whether this process looks like production (NODE_ENV, HOST, or STRICT marker) */
+export function isProductionEnvironment(): boolean {
   return (
     process.env.NODE_ENV === 'production' ||
     process.env.HOST === '0.0.0.0' ||
     process.env.MIRA_STRICT_AUTH === '1'
   )
+}
+
+/**
+ * Whether guardrails should enforce (fail-closed) — dynamic per call.
+ * Precedence: explicit MIRA_GUARDRAILS_ENFORCE > production default.
+ * Dev (non-production, no override) stays fail-open with warn, as before.
+ */
+export function isEnforceEnabled(): boolean {
+  const env = parseEnforceEnv()
+  if (env !== undefined) return env
+  return isProductionEnvironment()
+}
+
+/** Warn (never silent) when enforcement is off in production — call at boot */
+export function warnIfEnforcementOffInProduction(enforce: boolean): void {
+  if (!enforce && isProductionEnvironment()) {
+    console.warn(
+      '[guardrails] WARNING: enforcement is DISABLED in production (fail-open). ' +
+        'Set guardrails.enforce=true or MIRA_GUARDRAILS_ENFORCE=1 to enforce.',
+    )
+  }
 }
 
 /** Parse MIRA_WORKSPACE_ROOTS env (comma-separated) into allowedRoots override */
@@ -64,16 +96,17 @@ export function getEffectiveAllowedRoots(cwd?: string): string[] {
   return isEnforceEnabled() ? ['./data', './packages', './src'] : []
 }
 
-/** Resolve effective enforce per-project: env strict > config > default */
+/** Resolve effective enforce per-project: env explicit > config explicit > prod default > fail-open */
 export function getEffectiveEnforce(cwd?: string): boolean {
-  if (isEnforceEnabled()) return true
+  const env = parseEnforceEnv()
+  if (env !== undefined) return env
   if (cwd) {
     try {
       const cfg = getConfig(cwd)
       if (cfg.guardrails?.enforce !== undefined) return !!cfg.guardrails.enforce
     } catch {}
   }
-  return false
+  return isProductionEnvironment()
 }
 
 const DEFAULT_GUARDRAILS: Required<GuardrailConfig> = {
@@ -221,7 +254,10 @@ export function extractPatchPaths(diff: string): string[] {
   for (const line of diff.split('\n')) {
     let m: RegExpMatchArray | null
     if ((m = line.match(/^(?:---|\+\+\+)\s+(\S+)/))) {
-      let p = m[1].split('\t')[0].trim().replace(/^[ab]\//, '')
+      let p = m[1]
+        .split('\t')[0]
+        .trim()
+        .replace(/^[ab]\//, '')
       if (!p || p === '/dev/null' || p === 'null' || p === '/dev/null/') continue
       out.push(p)
     } else if ((m = line.match(/^diff --git\s+\S+\s+(\S+)/))) {
@@ -366,10 +402,19 @@ export class GuardrailsManager {
   private config: Required<GuardrailConfig>
   private logger: AuditLogger
   private db?: { sqlite: Database }
+  /** Explicit enforce from ctor cfg or MiraConfig (undefined = no explicit choice) */
+  private enforceExplicit: boolean | undefined
 
   constructor(cfg?: Partial<GuardrailConfig>, config?: MiraConfig, db?: { sqlite: Database }) {
     const guardCfg = config?.guardrails ?? {}
+    this.enforceExplicit = cfg?.enforce ?? guardCfg.enforce
     this.config = { ...DEFAULT_GUARDRAILS, ...guardCfg, ...cfg }
+    // DEFAULT_GUARDRAILS is a module-load snapshot — recompute enforce dynamically
+    // so tests/boot that set env after import still see the prod default.
+    // Precedence: env explicit > ctor/config explicit > prod default.
+    const env = parseEnforceEnv()
+    this.config.enforce =
+      env ?? this.enforceExplicit ?? (isProductionEnvironment() ? true : DEFAULT_GUARDRAILS.enforce)
     this.logger = new AuditLogger(this.config.auditLogPath, db)
     this.db = db
   }
@@ -383,11 +428,27 @@ export class GuardrailsManager {
   /** Main check — returns decision (per-project: cwd drives allowedRoots/enforce) */
   async check(tool: string, args: JsonValue, ctx: { sessionID: string; cwd?: string }) {
     const decision: AuditEntry = { sessionID: ctx.sessionID, tool, args, decision: 'allow' }
-    // Per-project isolation: derive effective roots/enforce from session cwd
+    // Per-project isolation: derive effective roots/enforce from session cwd.
+    // Precedence: env explicit > per-project config explicit > ctor/config explicit > prod default.
     const effectiveRoots = ctx.cwd ? getEffectiveAllowedRoots(ctx.cwd) : this.config.allowedRoots
-    const effectiveEnforce = ctx.cwd ? getEffectiveEnforce(ctx.cwd) : this.config.enforce
-    // Env override for enforce (MIRA_STRICT_AUTH/HOST) always wins
-    const enforce = isEnforceEnabled() || effectiveEnforce || this.config.enforce
+    const envExplicit = parseEnforceEnv()
+    let effectiveEnforce: boolean
+    if (envExplicit !== undefined) {
+      effectiveEnforce = envExplicit
+    } else if (ctx.cwd) {
+      try {
+        const cfg = getConfig(ctx.cwd)
+        effectiveEnforce =
+          cfg.guardrails?.enforce !== undefined
+            ? !!cfg.guardrails.enforce
+            : (this.enforceExplicit ?? isProductionEnvironment())
+      } catch {
+        effectiveEnforce = this.enforceExplicit ?? isProductionEnvironment()
+      }
+    } else {
+      effectiveEnforce = this.enforceExplicit ?? isProductionEnvironment()
+    }
+    const enforce = effectiveEnforce
 
     try {
       // File tools path checks — now includes patch
