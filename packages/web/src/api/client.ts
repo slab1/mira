@@ -973,7 +973,12 @@ export const api = {
   streamPrompt: async (
     id: string,
     prompt: string,
-    opts: { model?: string; onChunk: (chunk: string) => void; signal?: AbortSignal },
+    opts: {
+      model?: string
+      onChunk: (chunk: string) => void
+      onEvent?: (event: { type: string; payload: JsonValue }) => void
+      signal?: AbortSignal
+    },
   ) => {
     // fresh token + baseUrl on each call (watchdog may have redeployed)
     const headers = {
@@ -1011,30 +1016,47 @@ export const api = {
       const { done, value } = await reader.read()
       if (done) break
       buf += decoder.decode(value, { stream: true })
-      // SSE frames: data: {...}\n\n
+      // SSE frames: event: <type>\ndata: <json>\n\n
       const frames = buf.split('\n\n')
       buf = frames.pop() || ''
       for (const f of frames) {
-        const lines = f.split('\n').filter((l) => l.startsWith('data:'))
-        for (const l of lines) {
-          const data = l.slice(5).trim()
-          if (data === '[DONE]') return
-          if (!data) continue
-          // Try JSON unwrap: some servers send JSON per frame
+        const allLines = f.split('\n')
+        let eventType = ''
+        const dataLines: string[] = []
+        for (const l of allLines) {
+          if (l.startsWith('event:')) eventType = l.slice(6).trim()
+          else if (l.startsWith('data:')) dataLines.push(l.slice(5).trim())
+        }
+        if (dataLines.length === 0 && !eventType) continue
+        const data = dataLines.join('\n')
+        if (data === '[DONE]') return
+        if (!data) continue
+
+        // Emit typed event for structured handlers (tool_call, step_start, etc.)
+        if (eventType && opts.onEvent) {
+          try {
+            opts.onEvent({ type: eventType, payload: JSON.parse(data) as JsonValue })
+          } catch {
+            opts.onEvent({ type: eventType, payload: data as unknown as JsonValue })
+          }
+        }
+
+        // Backward-compat: still call onChunk for text deltas
+        if (!eventType || eventType === 'text_delta') {
           try {
             const j = JSON.parse(data) as {
               textDelta?: string
               text?: string
               content?: string
               delta?: string
+              delta_?: string
             }
-            // Vercel AI SDK style: { type: "text-delta", textDelta: "..." }
             const text =
-              j.textDelta ?? j.text ?? j.content ?? j.delta ?? (typeof j === 'string' ? j : '')
+              j.textDelta ?? j.text ?? j.content ?? j.delta ?? j.delta_ ?? (typeof j === 'string' ? j : '')
             if (text) opts.onChunk(String(text))
-            else opts.onChunk(data)
+            else if (!eventType) opts.onChunk(data)
           } catch {
-            opts.onChunk(data)
+            if (!eventType) opts.onChunk(data)
           }
         }
       }
@@ -1050,7 +1072,14 @@ export const api = {
   getLearningLastEvalDelta: () => Promise.resolve({ delta: 0, sessionID: '' }),
   listPendingPatches: () => Promise.resolve([]),
   approvePatch: (_id: string) => Promise.resolve({ ok: true }),
-  getModelEval: (_model: string) => Promise.resolve({ model: _model, score: 0 }),
+  getModelEval: (model: string) =>
+    req<ModelEval>(`/eval/model/${encodeURIComponent(model)}`).then((d) => ({
+      model: d.model,
+      score: d.successRate != null ? Math.round(d.successRate * 100) : 0,
+      successRate: d.successRate ?? undefined,
+      sessions: d.sessions ?? 0,
+      lastEvalAt: d.lastEvalAt ?? undefined,
+    })),
   reorderQueue: (id: string, orderedItems: string[]) =>
     req<{ ok: boolean }>(`/session/${id}/queue/reorder`, {
       method: 'POST',

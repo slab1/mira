@@ -14,6 +14,7 @@ import {
   type Session,
   type Message,
   type Todo,
+  type Job,
   type BusEvent,
 } from '../api/client'
 import { toast } from '../components/Toast'
@@ -59,6 +60,14 @@ type AppState = {
   budgetWarning: string | null
   /** cost cap from config.costCap (perSession/perTask) — wired to gateway */
   costCap: { perSession?: number; perTask?: number } | null
+  /** live streaming SSE events (step_start, tool_call, text_delta, etc.) for real-time activity panel */
+  liveStreamEvents: Array<{
+    type: string
+    payload: Record<string, unknown>
+    timestamp: number
+  }>
+  /** live job patches from BusEvent stream (job.created / job.updated / job.cancelled) */
+  liveJobs: Record<string, Partial<Job>>
 }
 
 function uid() {
@@ -82,6 +91,8 @@ export function createAppStore() {
     doomLoop: null,
     budgetWarning: null,
     costCap: null,
+    liveStreamEvents: [],
+    liveJobs: {},
   })
 
   const [input, setInput] = createSignal('')
@@ -154,6 +165,41 @@ export function createAppStore() {
       }
       case 'todo.updated': {
         if (e.sessionID === state.currentId) setState('todos', e.payload as Todo[])
+        break
+      }
+      case 'job.created': {
+        if (e.sessionID !== state.currentId) break
+        const p = e.payload as { jobID?: string; agent?: string; title?: string } | null
+        if (p?.jobID) {
+          setState('liveJobs', p.jobID, {
+            id: p.jobID,
+            agent: p.agent ?? null,
+            prompt: p.title ?? '',
+            status: 'running',
+          })
+        }
+        break
+      }
+      case 'job.updated': {
+        if (e.sessionID !== state.currentId) break
+        const p = e.payload as { jobID?: string; status?: string; childSessionID?: string; preview?: string } | null
+        if (p?.jobID) {
+          const existing = state.liveJobs[p.jobID] ?? {}
+          const patch: Partial<Job> = { ...existing, id: p.jobID }
+          if (p.status) patch.status = p.status as Job['status']
+          if (p.childSessionID) patch.childSessionID = p.childSessionID
+          if (p.preview) patch.result = p.preview
+          setState('liveJobs', p.jobID, patch)
+        }
+        break
+      }
+      case 'job.cancelled': {
+        if (e.sessionID !== state.currentId) break
+        const p = e.payload as { jobID?: string } | null
+        if (p?.jobID) {
+          const existing = state.liveJobs[p.jobID] ?? {}
+          setState('liveJobs', p.jobID, { ...existing, status: 'cancelled' as const })
+        }
         break
       }
       case 'message.created':
@@ -267,6 +313,7 @@ export function createAppStore() {
       streamText: '',
       error: null,
       doomLoop: null,
+      liveJobs: {},
     })
     await Promise.all([loadMessages(id), loadTodos(id)])
   }
@@ -409,7 +456,7 @@ export function createAppStore() {
       createdAt: new Date().toISOString(),
     }
     setState('messages', (m) => [...m, userMsg])
-    setState({ streaming: true, streamText: '', error: null })
+    setState({ streaming: true, streamText: '', error: null, liveStreamEvents: [] })
     abort?.abort()
     abort = new AbortController()
 
@@ -439,11 +486,18 @@ export function createAppStore() {
             ),
           )
         },
+        onEvent: (event) => {
+          // Push live streaming events for the activity panel
+          setState('liveStreamEvents', (prev) => [
+            ...prev,
+            { type: event.type, payload: event.payload as Record<string, unknown>, timestamp: Date.now() },
+          ])
+        },
       })
     } catch (e) {
       if ((e as Error).name !== 'AbortError') setState('error', (e as Error).message)
     } finally {
-      setState({ streaming: false, streamText: '' })
+      setState({ streaming: false, streamText: '', liveStreamEvents: [] })
       // final sync from server to get tool parts / persisted state + fresh spend
       if (state.currentId) await loadMessages(state.currentId)
       void loadCost()

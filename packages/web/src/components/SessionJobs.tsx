@@ -5,30 +5,29 @@ import { JobRow } from './JobRow'
 import { toast } from './Toast'
 
 /**
- * SessionJobs — per-session background-job list (P2-2 slice 1).
+ * SessionJobs — per-session background-job list (P2-4 live tail).
  *
- * Polls `api.listJobs(sessionId)` on session change + every 3s (same rhythm
- * as QueueRail) and renders one `JobRow` per job. Opening a child session
- * reuses the store's `selectSession`; cancelling posts `api.cancelJob`
- * then refreshes. No live tail display (slice 2).
+ * Polls `api.listJobs(sessionId)` on session change + every 3s as fallback,
+ * and merges live BusEvent updates (job.created / job.updated / job.cancelled)
+ * so the UI reacts instantly without waiting for the next poll cycle.
  */
 export function SessionJobs(props: { store: AppStore }) {
   const sessionId = () => props.store.state.currentId
-  const [jobs, setJobs] = createSignal<Job[]>([])
+  const [polledJobs, setPolledJobs] = createSignal<Job[]>([])
   const [loading, setLoading] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
 
   const load = async () => {
     const id = sessionId()
     if (!id) {
-      setJobs([])
+      setPolledJobs([])
       return
     }
     setLoading(true)
     setError(null)
     try {
       const list = await api.listJobs(id)
-      setJobs(list ?? [])
+      setPolledJobs(list ?? [])
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -48,6 +47,39 @@ export function SessionJobs(props: { store: AppStore }) {
     }, 3000)
     onCleanup(() => clearInterval(timer))
   })
+
+  /** Merge polled jobs with live BusEvent updates — live wins on conflict by ID */
+  const jobs = () => {
+    const live = props.store.state.liveJobs
+    const polled = polledJobs()
+    const byId = new Map<string, Job>()
+    for (const j of polled) byId.set(j.id, j)
+    for (const [id, patch] of Object.entries(live)) {
+      const existing = byId.get(id)
+      if (existing) {
+        byId.set(id, { ...existing, ...patch })
+      } else {
+        // job.created arrived before next poll — create placeholder row
+        byId.set(id, {
+          id,
+          parentSessionID: sessionId()!,
+          childSessionID: null,
+          agent: null,
+          prompt: patch.prompt ?? '',
+          status: (patch.status as Job['status']) ?? 'running',
+          result: null,
+          error: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          ...patch,
+        })
+      }
+    }
+    return Array.from(byId.values())
+  }
+
+  /** Whether the WebSocket is connected (live indicator) */
+  const isLive = () => props.store.state.connected
 
   const handleOpenChild = (childId: string) => {
     void props.store.selectSession(childId).catch(() => {})
@@ -88,6 +120,20 @@ export function SessionJobs(props: { store: AppStore }) {
               {' '}
               · {jobs().length}
             </span>
+          </Show>
+          <Show when={isLive()}>
+            <span
+              style={{
+                display: 'inline-block',
+                width: '6px',
+                height: '6px',
+                'border-radius': '50%',
+                background: 'var(--ok)',
+                'margin-left': '6px',
+                'vertical-align': 'middle',
+              }}
+              title="Live — receiving real-time updates"
+            />
           </Show>
         </span>
         <Show when={sessionId()}>

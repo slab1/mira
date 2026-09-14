@@ -506,6 +506,27 @@ export function mountLearningRoutes(
       metric: metric ?? null,
     })
   })
+
+  // GET /eval/model/:model — per-model eval stats (success rate, sessions, last eval time)
+  app.get('/eval/model/:model', (c) => {
+    const model = decodeURIComponent(c.req.param('model'))
+    if (!model) return c.json({ model, successRate: null, sessions: 0 }, 200)
+
+    const all = system.usage.getAllSessionMetrics()
+    const modelSessions = all.filter((s) => s.model === model)
+    if (!modelSessions.length) {
+      return c.json({ model, successRate: null, sessions: 0 }, 200)
+    }
+
+    const sessions = modelSessions.length
+    const successes = modelSessions.filter((s) => s.success).length
+    const successRate = successes / sessions
+    const lastEvalAt = modelSessions.length
+      ? new Date(modelSessions[modelSessions.length - 1]!.createdAt).toISOString()
+      : undefined
+
+    return c.json({ model, successRate, sessions, lastEvalAt })
+  })
 }
 
 function badgeColor(score: number): string {

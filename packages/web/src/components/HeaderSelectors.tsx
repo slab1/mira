@@ -3,6 +3,7 @@ import type { SettingsStore } from '../stores/settings'
 import type { AgentEntry } from '../api/client'
 import { providerModelId } from '../api/client'
 import { toast } from './Toast'
+import { EvalBadge } from './EvalBadge'
 
 // ── Shared helpers ──────────────────────────────────────────────────
 
@@ -374,6 +375,10 @@ export function HeaderModelSelector(props: { settings: SettingsStore; id?: strin
           ▾
         </span>
       </button>
+
+      <Show when={currentModel()}>
+        <EvalBadge model={currentModel()} />
+      </Show>
 
       <Show when={open()}>
         <div
