@@ -49,7 +49,7 @@ export class GatewayRouter {
     // Check messages for image_url parts (GatewayMessage content may be stringified)
     if (
       ctx.messages?.some((m) => {
-        const c = m.content as unknown
+        const c: unknown = m.content
         if (typeof c === 'string' && c.includes('image_url')) return true
         if (
           Array.isArray(c) &&
@@ -142,7 +142,7 @@ export function createRoutingGateway(
     async stream(opts: StreamOptions): Promise<AsyncIterable<import('./types.js').GatewayChunk>> {
       // Detect vision from messages
       const isVision = opts.messages.some((m) => {
-        const c = m.content as unknown
+        const c: unknown = m.content
         if (typeof c === 'string' && c.includes('image_url')) return true
         return false
       })

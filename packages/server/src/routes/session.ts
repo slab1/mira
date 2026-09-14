@@ -198,11 +198,10 @@ export function mountSessionRoutes(
     const session = await deps.authorizedSession(id, c)
     if (!session) return c.json({ error: 'not found' }, 404)
     if ((c.req.query('format') ?? 'md') === 'md') {
-      const s = session as unknown as Record<string, unknown>
       const lines: string[] = [
-        `# ${s.title ?? 'Session'}`,
+        `# ${session.title ?? 'Session'}`,
         '',
-        `- Model: \`${s.model ?? 'unknown'}\``,
+        `- Model: \`${session.model ?? 'unknown'}\``,
         `- Exported: ${new Date().toISOString()}`,
         '',
       ]

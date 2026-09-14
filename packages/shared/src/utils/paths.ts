@@ -19,7 +19,7 @@ export function resolveBunBinary(): string {
   } catch {}
   try {
     // Bun.which exists in Bun runtime; falls back to PATH lookup
-    const which = (Bun as unknown as { which?: (bin: string) => string | null })?.which
+    const which = Bun?.which
     if (which) {
       const found = which('bun')
       if (found) return found

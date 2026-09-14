@@ -92,7 +92,7 @@ async function safeFetch(url: string, init?: RequestInit, retries = 4): Promise<
       return res
     }
     lastErr = new Error(
-      `malformed fetch response from ${url} (status=${(res as unknown as { status?: unknown })?.status}, headers=${typeof (res as unknown as { headers?: unknown })?.headers}) — Bun fetch race under load, retrying`,
+      `malformed fetch response from ${url} (status=${res?.status}, headers=${typeof res?.headers}) — Bun fetch race under load, retrying`,
     )
   }
   throw lastErr

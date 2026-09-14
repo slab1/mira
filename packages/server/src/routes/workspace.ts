@@ -56,17 +56,15 @@ function loadIgnorePatterns(cwd: string): string[] {
       const walk = (dir: string, relPrefix: string) => {
         let dirents: Array<{ name: string; isDirectory(): boolean }>
         try {
-          dirents = readdirSync(dir, { withFileTypes: true }) as unknown as Array<{
-            name: string
-            isDirectory(): boolean
-          }>
+          dirents = readdirSync(dir, { withFileTypes: true })
         } catch {
           return
         }
         for (const d of dirents) {
           const name = d.name
           if (d.isDirectory()) {
-            if (name === '.git' || name === 'node_modules' || name === '.mira' || name === 'dist') continue
+            if (name === '.git' || name === 'node_modules' || name === '.mira' || name === 'dist')
+              continue
             const nextRel = relPrefix ? `${relPrefix}/${name}` : name
             // Check for .gitignore in this subdir
             const giPath = `${dir}/${name}/.gitignore`
@@ -178,7 +176,12 @@ function envWorkspaces(): WorkspaceEntry[] {
   const single = process.env.MIRA_WORKSPACE?.trim()
   if (single) {
     const p = single.replace(/\/$/, '') || '/'
-    out.push({ id: workspaceIdForPath(p), path: p, name: p.split('/').pop() || p, addedAt: Date.now() })
+    out.push({
+      id: workspaceIdForPath(p),
+      path: p,
+      name: p.split('/').pop() || p,
+      addedAt: Date.now(),
+    })
   }
   const roots = (process.env.MIRA_WORKSPACE_ROOTS ?? '')
     .split(',')
@@ -187,7 +190,12 @@ function envWorkspaces(): WorkspaceEntry[] {
   for (const r of roots) {
     const p = r.replace(/\/$/, '') || '/'
     if (out.some((w) => w.path === p)) continue
-    out.push({ id: workspaceIdForPath(p), path: p, name: p.split('/').pop() || p, addedAt: Date.now() })
+    out.push({
+      id: workspaceIdForPath(p),
+      path: p,
+      name: p.split('/').pop() || p,
+      addedAt: Date.now(),
+    })
   }
   return out
 }
@@ -280,12 +288,17 @@ export function mountWorkspaceRoutes(app: Hono<{ Variables: { requestId: string 
       }
     })()
     const existing = loadWorkspacesFromFile()
-    const idx = existing.findIndex((w) => w.id === id || w.path === id || (decoded && w.path === decoded))
+    const idx = existing.findIndex(
+      (w) => w.id === id || w.path === id || (decoded && w.path === decoded),
+    )
     if (idx === -1) {
       // Also check env workspaces — cannot delete env ones
       const env = envWorkspaces()
       if (env.some((w) => w.id === id || w.path === id || (decoded && w.path === decoded))) {
-        return c.json({ error: 'cannot delete env workspace (MIRA_WORKSPACE/MIRA_WORKSPACE_ROOTS)' }, 403)
+        return c.json(
+          { error: 'cannot delete env workspace (MIRA_WORKSPACE/MIRA_WORKSPACE_ROOTS)' },
+          403,
+        )
       }
       return c.json({ error: 'workspace not found' }, 404)
     }

@@ -124,7 +124,7 @@ export class MCPManager {
     const timeoutMs = cfg.timeoutMs ?? 60_000
     // Real MCP handshake over stdio: initialize → initialized → tools/list
     const client = await McpStdioClient.spawn([command, ...args], { env })
-    this.clients.set(name, client as unknown as MCPClient)
+    this.clients.set(name, client)
     this.processes.set(name, client.handle)
 
     const discovered = await client.listTools()
@@ -199,7 +199,7 @@ export class MCPManager {
 
     // Real Streamable HTTP handshake: initialize → initialized → tools/list
     const client = await McpHttpClient.connect(name, { url, headers })
-    this.clients.set(name, client as unknown as MCPClient)
+    this.clients.set(name, client)
 
     const discovered = await client.listTools()
     const registered: string[] = []

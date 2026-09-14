@@ -60,10 +60,12 @@ export function createGateway(
   const gateway = createRoutingGateway(registry, router)
 
   // Attach sync helper for config hot-reload (used by server when config changes)
-  ;(gateway as unknown as Record<string, unknown>).syncFromConfig = (newConfig: MiraConfig) => {
-    registry.syncFromConfig(newConfig)
-    router.syncConfig(newConfig)
-  }
+  Object.assign(gateway, {
+    syncFromConfig: (newConfig: MiraConfig) => {
+      registry.syncFromConfig(newConfig)
+      router.syncConfig(newConfig)
+    },
+  })
 
   return gateway as Gateway & { registry: SubgatewayRegistry; router: GatewayRouter }
 }

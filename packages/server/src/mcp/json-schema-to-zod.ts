@@ -28,13 +28,12 @@ function convert(node: Record<string, JsonValue>): z.ZodTypeAny {
     if (enumVals.length === 0) return z.any()
     if (enumVals.every((v) => typeof v === 'string'))
       return z.enum(enumVals as [string, ...string[]])
-    return z.union(
-      enumVals.map((v) => z.literal(v as string | number | boolean)) as unknown as [
-        z.ZodTypeAny,
-        z.ZodTypeAny,
-        ...z.ZodTypeAny[],
-      ],
-    )
+    const literals = enumVals.map((v) => z.literal(v as string | number | boolean))
+    const [first, second, ...rest] = literals
+    // Single-value enums collapse to the literal itself (validation-equivalent
+    // to a one-option union); empty is already handled above.
+    if (first === undefined || second === undefined) return first ?? z.any()
+    return z.union([first, second, ...rest])
   }
 
   switch (t) {

@@ -66,6 +66,22 @@ export interface SubgatewayOptions {
 
 type CircuitState = 'closed' | 'open' | 'half-open'
 
+/** Read the optional global costCap (not part of the base MiraConfig type). */
+function readGlobalCostCap(
+  config: MiraConfig,
+): { perTask?: number; perSession?: number } | undefined {
+  if (!('costCap' in config)) return undefined
+  const cc: unknown = config.costCap
+  if (typeof cc !== 'object' || cc === null || Array.isArray(cc)) return undefined
+  if (!('perTask' in cc) && !('perSession' in cc)) return undefined
+  const perTask: unknown = 'perTask' in cc ? cc.perTask : undefined
+  const perSession: unknown = 'perSession' in cc ? cc.perSession : undefined
+  return {
+    ...(typeof perTask === 'number' ? { perTask } : {}),
+    ...(typeof perSession === 'number' ? { perSession } : {}),
+  }
+}
+
 async function* trackedStream(
   iter: AsyncIterable<GatewayChunk>,
   onUsage: (u: { input: number; output: number }) => void,
@@ -105,7 +121,8 @@ async function* trackedStream(
 export class Subgateway implements Gateway {
   readonly lane: string
   readonly statsCollector: SubgatewayStatsCollector
-  readonly rateLimiter: TokenBucket
+  // Mutable: recreated in syncConfig when rate-limit settings change
+  rateLimiter: TokenBucket
   private registry: ProviderRegistry
   private globalConfig: MiraConfig
   private subConfig: SubgatewayConfig
@@ -139,7 +156,7 @@ export class Subgateway implements Gateway {
     const rps = subConfig.rateLimit?.rps ?? 10
     const burst = subConfig.rateLimit?.burst ?? rps * 2
     if (rps !== this.rateLimiter.config.rps || burst !== this.rateLimiter.config.burst) {
-      ;(this as unknown as { rateLimiter: TokenBucket }).rateLimiter = new TokenBucket({ rps, burst })
+      this.rateLimiter = new TokenBucket({ rps, burst })
     }
     // recreate breaker if threshold changed
     const ft = subConfig.circuitBreaker?.failureThreshold ?? 5
@@ -183,8 +200,12 @@ export class Subgateway implements Gateway {
     }
   }
 
-  private checkCostCap(estimatedInputTokens: number, estimatedOutputTokens: number, modelID?: string): void {
-    const cap = this.subConfig.costCap ?? (this.globalConfig as unknown as { costCap?: { perTask?: number; perSession?: number } }).costCap
+  private checkCostCap(
+    estimatedInputTokens: number,
+    estimatedOutputTokens: number,
+    modelID?: string,
+  ): void {
+    const cap = this.subConfig.costCap ?? readGlobalCostCap(this.globalConfig)
     if (!cap) return
     const current = this.statsCollector.snapshot().costUSD
     // Check already-over-cap
@@ -199,7 +220,8 @@ export class Subgateway implements Gateway {
     // Estimate cost for this request before making it
     if (modelID && estimatedInputTokens + estimatedOutputTokens > 0 && cap.perTask !== undefined) {
       const [inputPrice, outputPrice] = priceFor(modelID)
-      const estimatedCost = (estimatedInputTokens * inputPrice + estimatedOutputTokens * outputPrice) / 1_000_000
+      const estimatedCost =
+        (estimatedInputTokens * inputPrice + estimatedOutputTokens * outputPrice) / 1_000_000
       if (current + estimatedCost > cap.perTask) {
         throw new SubgatewayError({
           message: `Cost cap would be exceeded on lane "${this.lane}": $${current.toFixed(4)} + $${estimatedCost.toFixed(4)} > $${cap.perTask.toFixed(4)} per-task (model ${modelID})`,
@@ -212,7 +234,10 @@ export class Subgateway implements Gateway {
   }
 
   /** Estimate tokens from messages: ~4 chars per token heuristic */
-  private estimateTokens(messages: GatewayMessage[], maxTokens?: number): { input: number; output: number } {
+  private estimateTokens(
+    messages: GatewayMessage[],
+    maxTokens?: number,
+  ): { input: number; output: number } {
     let chars = 0
     for (const m of messages) {
       if (typeof m.content === 'string') chars += m.content.length
@@ -320,18 +345,25 @@ export class Subgateway implements Gateway {
             this.recordSuccess()
             return trackedStream(iter, (usage) => {
               this.statsCollector.record(cand.modelID, usage.input, usage.output, Date.now() - t0)
-              const cap = (this.subConfig.costCap ?? (this.globalConfig as unknown as { costCap?: { perTask?: number } }).costCap)
+              const cap = this.subConfig.costCap ?? readGlobalCostCap(this.globalConfig)
               if (cap?.perTask !== undefined) {
                 const cur = this.statsCollector.snapshot().costUSD
                 if (cur > cap.perTask) {
-                  console.warn(`[subgateway:${this.lane}] cost cap exceeded $${cur.toFixed(4)} > $${cap.perTask.toFixed(4)}`)
+                  console.warn(
+                    `[subgateway:${this.lane}] cost cap exceeded $${cur.toFixed(4)} > $${cap.perTask.toFixed(4)}`,
+                  )
                 }
               }
             })
           } catch (e) {
             const err = e as ProviderError & { retryAfter?: string | null; headers?: Headers }
             const msg = err.message ?? String(e)
-            const status = err.status ?? (() => { const m = msg.match(/\b(\d{3})\b/); return m ? Number(m[1]) : undefined })()
+            const status =
+              err.status ??
+              (() => {
+                const m = msg.match(/\b(\d{3})\b/)
+                return m ? Number(m[1]) : undefined
+              })()
             const isRotatable = KeyRing.isRotatableError(status, msg)
             const cls = classifyError(status ?? 0, msg)
             const retryable = err.retryable ?? cls === 'retryable'
@@ -340,7 +372,12 @@ export class Subgateway implements Gateway {
             if (isRotatable) {
               lastError = new SubgatewayError({
                 message: msg,
-                code: status === 429 ? 'RATE_LIMITED' : status === 401 ? 'UNAUTHORIZED' : 'PROVIDER_ERROR',
+                code:
+                  status === 429
+                    ? 'RATE_LIMITED'
+                    : status === 401
+                      ? 'UNAUTHORIZED'
+                      : 'PROVIDER_ERROR',
                 provider: cand.providerKey,
                 lane: this.lane,
                 status,
@@ -354,7 +391,7 @@ export class Subgateway implements Gateway {
               keyExhausted = true
               break
             }
-            const retryAfterHeader = (err as unknown as { retryAfter?: string }).retryAfter ?? err.headers?.get?.('retry-after') ?? null
+            const retryAfterHeader = err.retryAfter ?? err.headers?.get?.('retry-after') ?? null
             const parsed = parseRetryAfter(retryAfterHeader)
             const delay = parsed !== null ? parsed : backoffWithJitter(attempt, baseMs, maxMs)
             await new Promise<void>((resolve, reject) => {
@@ -362,31 +399,63 @@ export class Subgateway implements Gateway {
               if (opts.signal) {
                 const onAbort = () => {
                   if (timer) clearTimeout(timer)
-                  reject(new SubgatewayError({ message: 'Aborted', code: 'ABORTED', provider: cand.providerKey, lane: this.lane, status: 499 }))
+                  reject(
+                    new SubgatewayError({
+                      message: 'Aborted',
+                      code: 'ABORTED',
+                      provider: cand.providerKey,
+                      lane: this.lane,
+                      status: 499,
+                    }),
+                  )
                 }
                 if (opts.signal!.aborted) {
                   if (timer) clearTimeout(timer)
-                  reject(new SubgatewayError({ message: 'Aborted', code: 'ABORTED', provider: cand.providerKey, lane: this.lane, status: 499 }))
+                  reject(
+                    new SubgatewayError({
+                      message: 'Aborted',
+                      code: 'ABORTED',
+                      provider: cand.providerKey,
+                      lane: this.lane,
+                      status: 499,
+                    }),
+                  )
                   return
                 }
                 opts.signal!.addEventListener('abort', onAbort, { once: true })
               }
-            }).catch((abortErr) => { throw abortErr }).finally(() => { if (timer) clearTimeout(timer) })
+            })
+              .catch((abortErr) => {
+                throw abortErr
+              })
+              .finally(() => {
+                if (timer) clearTimeout(timer)
+              })
           } finally {
             if (timer) clearTimeout(timer)
           }
         }
         // If key was rotatable, continue to next key; otherwise break candidate
-        if (keyExhausted && lastError instanceof ProviderError && (lastError.code === 'RATE_LIMITED' || lastError.code === 'UNAUTHORIZED')) {
+        if (
+          keyExhausted &&
+          lastError instanceof ProviderError &&
+          (lastError.code === 'RATE_LIMITED' || lastError.code === 'UNAUTHORIZED')
+        ) {
           // Check if more keys remain
           const remaining = keysToTry.slice(keysToTry.indexOf(key) + 1)
           if (remaining.length > 0) continue
         }
-        if (lastError) { candidateFailed = true; break }
+        if (lastError) {
+          candidateFailed = true
+          break
+        }
       }
       if (candidateFailed && lastError) {
         // If last error was rotatable and we exhausted keys, try next candidate
-        if (lastError instanceof ProviderError && (lastError.code === 'RATE_LIMITED' || lastError.code === 'UNAUTHORIZED')) {
+        if (
+          lastError instanceof ProviderError &&
+          (lastError.code === 'RATE_LIMITED' || lastError.code === 'UNAUTHORIZED')
+        ) {
           continue
         }
         break
@@ -654,7 +723,8 @@ export class Subgateway implements Gateway {
 
   health(): { lane: string; circuit: CircuitState; failureCount: number; stats: GatewayStats } {
     const state = this.breaker.getState()
-    const circuit: CircuitState = state === 'CLOSED' ? 'closed' : state === 'OPEN' ? 'open' : 'half-open'
+    const circuit: CircuitState =
+      state === 'CLOSED' ? 'closed' : state === 'OPEN' ? 'open' : 'half-open'
     return {
       lane: this.lane,
       circuit,

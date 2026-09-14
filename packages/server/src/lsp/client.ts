@@ -280,7 +280,7 @@ export class LSPClient {
     )
     if (!r) return []
     // Handle both SymbolInformation[] and DocumentSymbol[] — normalize to SymbolInformation shape
-    return Array.isArray(r) ? (r as unknown as SymbolInformation[]) : []
+    return Array.isArray(r) ? r : []
   }
 
   async workspaceSymbol(query: string): Promise<SymbolInformation[]> {

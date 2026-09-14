@@ -85,9 +85,7 @@ export function extractiveFallback(messages: GatewayMessage[]): string {
   const firstUser = messages.find((m) => m.role === 'user')
   if (firstUser) lines.push(`Original task: ${String(firstUser.content).slice(0, 300)}`)
   let toolsUsed = 0
-  for (const m of messages)
-    if (Array.isArray((m as unknown as { toolCalls?: unknown[] }).toolCalls))
-      toolsUsed += (m as unknown as { toolCalls: unknown[] }).toolCalls.length
+  for (const m of messages) if (Array.isArray(m.toolCalls)) toolsUsed += m.toolCalls.length
   if (toolsUsed) lines.push(`Tool calls in this span: ${toolsUsed}`)
   const lastAssistant = [...messages]
     .reverse()
