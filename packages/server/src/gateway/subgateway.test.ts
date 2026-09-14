@@ -202,8 +202,10 @@ describe('Subgateway', () => {
     } catch (e) {
       // Expected to fail at fetch, not at model resolution
       expect(e).toBeDefined()
+    } finally {
+      // try/finally: a throwing expect must not leak the stub to other files
+      globalThis.fetch = origFetch
     }
-    globalThis.fetch = origFetch
   })
 
   test('stream throws SubgatewayError on network failure', async () => {
@@ -219,7 +221,9 @@ describe('Subgateway', () => {
       })
     } catch (e) {
       expect(e).toBeInstanceOf(SubgatewayError)
+    } finally {
+      // try/finally: a throwing expect must not leak the stub to other files
+      globalThis.fetch = origFetch
     }
-    globalThis.fetch = origFetch
   })
 })

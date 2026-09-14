@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test'
+import { describe, test, expect, mock, beforeEach, afterAll } from 'bun:test'
 import { listModels, clearModelsCache } from './models.js'
 
 // Mock fetch to avoid network calls
@@ -16,6 +16,14 @@ function mockFetchJson(response: unknown, ok = true, status = 200) {
 
 beforeEach(() => {
   clearModelsCache()
+  globalThis.fetch = originalFetch
+})
+
+// The fetch stub MUST NOT leak to other test files sharing this bun test
+// process (e.g. mcp/http-client.test.ts runs after gateway/ alphabetically
+// and needs the real fetch to reach its mock servers). beforeEach restores
+// before each test here, but after the LAST test the stub would persist —
+afterAll(() => {
   globalThis.fetch = originalFetch
 })
 

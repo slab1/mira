@@ -62,6 +62,42 @@ interface Pending {
 
 type TransportMode = 'streamable' | 'legacy-sse'
 
+/**
+ * Bun fetch race guard: under heavy parallel load (turbo running all suites
+ * at once), fetch() can resolve with a MALFORMED Response — `status` is set
+ * but `headers` is undefined and `body` is null (observed as
+ * `TypeError: undefined is not an object (evaluating 'res.headers.get')` and
+ * `Legacy SSE listen failed: empty body (HTTP 200)`). A real Response ALWAYS
+ * has a Headers object, so validate the shape and retry with backoff.
+ * AbortErrors are rethrown immediately (no retry on intentional abort).
+ */
+async function safeFetch(url: string, init?: RequestInit, retries = 4): Promise<Response> {
+  let lastErr: unknown = null
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) await Bun.sleep(100 * attempt)
+    let res: Response
+    try {
+      res = await fetch(url, init)
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') throw e
+      lastErr = e
+      continue
+    }
+    if (
+      res &&
+      typeof res.status === 'number' &&
+      res.headers &&
+      typeof (res.headers as Headers).get === 'function'
+    ) {
+      return res
+    }
+    lastErr = new Error(
+      `malformed fetch response from ${url} (status=${(res as unknown as { status?: unknown })?.status}, headers=${typeof (res as unknown as { headers?: unknown })?.headers}) — Bun fetch race under load, retrying`,
+    )
+  }
+  throw lastErr
+}
+
 export class McpHttpClient {
   public serverInfo: Record<string, JsonValue> = {}
   public capabilities: Record<string, JsonValue> = {}
@@ -197,18 +233,19 @@ export class McpHttpClient {
       signal.addEventListener('abort', onOuterAbort, { once: true })
     }
     try {
-      // Retry on empty body / transient 5xx (flaky under turbo parallel load —
-      // Bun fetch race: GET /mcp intermittently resolves 200 with null body
-      // when many mock servers spawn at once). 404/405 are definitive
-      // ("not a legacy server") and throw immediately to preserve the
-      // streamable-fallback cue in connect(). Capped so the worst case
-      // (~10s) stays inside the 20s per-test timeout.
+      // Retry on empty body / transient 5xx. Note: fetch() itself goes
+      // through safeFetch (validates the Response shape — Bun can resolve
+      // malformed Responses under parallel load), so this outer loop only
+      // sees well-formed responses. 404/405 are definitive ("not a legacy
+      // server") and throw immediately to preserve the streamable-fallback
+      // cue in connect(). Capped so the worst case stays inside the 20s
+      // per-test timeout.
       let res: Response | null = null
       let lastErr: Error | null = null
-      for (let attempt = 0; attempt < 12; attempt++) {
+      for (let attempt = 0; attempt < 8; attempt++) {
         if (attempt > 0) await Bun.sleep(150 * attempt)
         try {
-          res = await fetch(this.url, {
+          res = await safeFetch(this.url, {
             method: 'GET',
             headers: { Accept: 'text/event-stream', ...this.headers },
             signal: controller.signal,
@@ -363,7 +400,7 @@ export class McpHttpClient {
     const onOuterAbort = () => controller.abort()
     if (signal) signal.addEventListener('abort', onOuterAbort, { once: true })
     try {
-      const res = await fetch(endpoint, {
+      const res = await safeFetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -543,7 +580,7 @@ export class McpHttpClient {
     // The handshake request sets no Mcp-Session-Id, so nothing to clear here.
 
     try {
-      const res = await fetch(this.url, {
+      const res = await safeFetch(this.url, {
         method: 'POST',
         headers,
         body: JSON.stringify(message),
