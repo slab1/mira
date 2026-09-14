@@ -77,13 +77,22 @@ export class MCPManager {
   constructor(private deps: MCPManagerDeps) {}
 
   async connectAll(): Promise<void> {
+    const CONNECT_TIMEOUT_MS = 20_000
     for (const [name, cfg] of Object.entries(this.deps.config)) {
       if (!cfg.enabled) {
         this.servers.set(name, { name, config: cfg, tools: [], status: 'disabled' })
         continue
       }
       try {
-        await this.connect(name, cfg)
+        await Promise.race([
+          this.connect(name, cfg),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error(`MCP connect timeout after ${CONNECT_TIMEOUT_MS}ms`)),
+              CONNECT_TIMEOUT_MS,
+            ),
+          ),
+        ])
       } catch (e) {
         console.warn(`[mcp] ${sanitizeForLog(name)} failed:`, sanitizeForLog((e as Error).message))
         this.servers.set(name, { name, config: cfg, tools: [], status: 'error', error: String(e) })
