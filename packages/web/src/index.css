@@ -1885,6 +1885,77 @@ input:focus-visible,
   border-color: var(--accent-border);
 }
 
+/* Session export — hover-reveal trigger left of the pin overlay (same
+   reveal pattern as .session-del) + small download menu. */
+.session-export-btn {
+  position: absolute;
+  top: 8px;
+  right: 60px;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--fg-faint);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  opacity: 0;
+  font-size: 13px;
+  line-height: 1;
+  transition:
+    opacity var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+.session-row:hover .session-export-btn,
+.session-row:focus-within .session-export-btn {
+  opacity: 1;
+}
+.session-export-btn:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+@media (hover: none) {
+  .session-export-btn {
+    opacity: 1;
+  }
+}
+.session-export-scrim {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: default;
+  z-index: 40;
+}
+.session-export-menu {
+  position: absolute;
+  top: 32px;
+  right: 56px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  min-width: 200px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+.session-export-menu > button {
+  width: 100%;
+  text-align: left;
+  justify-content: flex-start;
+  padding: 6px 8px;
+  font-size: var(--fs-xs);
+  min-height: 32px;
+}
+
 /* Message pin + branch */
 .msg-actions {
   display: flex;

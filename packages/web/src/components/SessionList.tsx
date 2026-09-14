@@ -71,6 +71,101 @@ function projectLabel(sess: { projectId?: string | null; cwd?: string | null }):
   return 'default'
 }
 
+/** Download a session export via Blob — `.json` envelope or `.md` transcript. */
+async function downloadSessionExport(id: string, format: 'json' | 'md'): Promise<void> {
+  try {
+    const text = await api.exportSession(id, format)
+    const blob = new Blob([text], {
+      type: format === 'json' ? 'application/json;charset=utf-8' : 'text/markdown;charset=utf-8',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `mira-${id.slice(0, 8)}.${format === 'json' ? 'json' : 'md'}`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    toast.success('Export downloaded')
+  } catch (e) {
+    toast.error(`Export failed: ${(e as Error).message}`)
+  }
+}
+
+/**
+ * Per-session export menu — one hover-reveal trigger (same pattern as the
+ * pin/delete overlays) opening a small menu with `.json` + `.md` downloads.
+ * Rendered as a sibling of `.session-main` (never nested inside the <button>).
+ */
+function SessionExportMenu(props: { sessionId: string; title: string }) {
+  const [open, setOpen] = createSignal(false)
+  let trigger: HTMLButtonElement | undefined
+
+  const close = (refocus: boolean) => {
+    setOpen(false)
+    if (refocus) trigger?.focus()
+  }
+
+  const download = (format: 'json' | 'md') => {
+    setOpen(false)
+    void downloadSessionExport(props.sessionId, format)
+  }
+
+  return (
+    <>
+      <button
+        ref={(el) => (trigger = el)}
+        type="button"
+        class="session-export-btn btn btn-ghost"
+        onClick={() => setOpen((v) => !v)}
+        title={`Export "${props.title}" (.json envelope or .md transcript)`}
+        aria-label={`Export session ${props.title}`}
+        aria-haspopup="menu"
+        aria-expanded={open() ? 'true' : 'false'}
+      >
+        ⤓
+      </button>
+      <Show when={open()}>
+        <button
+          type="button"
+          class="session-export-scrim"
+          aria-hidden="true"
+          tabindex={-1}
+          onClick={() => close(false)}
+        />
+        <div
+          class="session-export-menu"
+          role="menu"
+          aria-label={`Export ${props.title}`}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.stopPropagation()
+              close(true)
+            }
+          }}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            class="btn btn-ghost"
+            onClick={() => download('json')}
+          >
+            Download .json envelope
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            class="btn btn-ghost"
+            onClick={() => download('md')}
+          >
+            Download .md transcript
+          </button>
+        </div>
+      </Show>
+    </>
+  )
+}
+
 export function SessionList(props: { store: AppStore; open?: boolean }) {
   const s = () => props.store.state
   const [confirmDelete, setConfirmDelete] = createSignal<{ id: string; title: string } | null>(null)
@@ -161,9 +256,34 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
     void props.store.createSession(undefined, cwd ? { cwd } : {}).catch(() => {})
   }
 
+  // ── Session import (P2-2) ────────────────────────────────────
+  let fileInput: HTMLInputElement | undefined
+
+  const handleImportFile = async (input: HTMLInputElement) => {
+    const file = input.files?.[0]
+    input.value = ''
+    if (!file) return
+    let envelope: unknown
+    try {
+      envelope = JSON.parse(await file.text())
+    } catch {
+      toast.error(`Import failed: "${file.name}" is not valid JSON`)
+      return
+    }
+    try {
+      const res = await api.importSession(envelope)
+      await props.store.loadSessions()
+      if (res?.id) await props.store.selectSession(res.id).catch(() => {})
+      toast.success('Session imported')
+    } catch (e) {
+      toast.error(`Import failed: ${(e as Error).message}`)
+    }
+  }
+
   const availableProjects = createMemo(() => {
     const set = new Set<string>()
-    for (const sess of s().sessions) set.add(projectLabel(sess as { projectId?: string | null; cwd?: string | null }))
+    for (const sess of s().sessions)
+      set.add(projectLabel(sess as { projectId?: string | null; cwd?: string | null }))
     return [...set].sort()
   })
 
@@ -190,7 +310,9 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
       })
     }
     if (pf !== 'all') {
-      list = list.filter((sess) => projectLabel(sess as { projectId?: string | null; cwd?: string | null }) === pf)
+      list = list.filter(
+        (sess) => projectLabel(sess as { projectId?: string | null; cwd?: string | null }) === pf,
+      )
     }
     // Pinned first, then by updatedAt desc
     const pinSet = pinned()
@@ -208,7 +330,10 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
 
   const grouped = createMemo(() => {
     if (!groupByProject()) return null
-    const map = new Map<string, typeof filtered extends () => infer T ? T extends Array<infer U> ? U[] : never : never>()
+    const map = new Map<
+      string,
+      typeof filtered extends () => infer T ? (T extends Array<infer U> ? U[] : never) : never
+    >()
     for (const sess of filtered()) {
       const key = projectLabel(sess as { projectId?: string | null; cwd?: string | null })
       const arr = map.get(key) ?? []
@@ -324,7 +449,13 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
               }}
             >
               <option value="">Default (cwd)</option>
-              <For each={workspaces()}>{(w) => <option value={w.path}>{w.name} — {w.path}</option>}</For>
+              <For each={workspaces()}>
+                {(w) => (
+                  <option value={w.path}>
+                    {w.name} — {w.path}
+                  </option>
+                )}
+              </For>
             </select>
             <button
               type="button"
@@ -543,6 +674,34 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
             {filtered().length}/{s().sessions.length}
           </span>
         </div>
+
+        {/* Import session from a .json envelope (P2-2) */}
+        <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+          <button
+            type="button"
+            class="btn btn-ghost"
+            onClick={() => fileInput?.click()}
+            title="Import a session from a .json envelope file"
+            style={{
+              flex: '1',
+              padding: '5px 8px',
+              'font-size': 'var(--fs-xs)',
+              border: '1px dashed var(--border)',
+              'border-radius': 'var(--r-md)',
+              color: 'var(--fg-subtle)',
+            }}
+          >
+            ⤒ Import session (.json)
+          </button>
+          <input
+            ref={(el) => (fileInput = el)}
+            type="file"
+            accept=".json,application/json"
+            aria-label="Import session file"
+            style={{ display: 'none' }}
+            onChange={(e) => void handleImportFile(e.currentTarget)}
+          />
+        </div>
       </div>
 
       {/* list */}
@@ -645,14 +804,18 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
             <Show
               when={grouped()}
               fallback={
-                <div role="list" style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+                <div
+                  role="list"
+                  style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}
+                >
                   <For each={filtered()}>
                     {(sess) => {
                       const active = () => s().currentId === sess.id
                       const isPinned = () => pinned().has(sess.id)
                       const st = () => sessionStatus(sess, props.store)
                       const cost = () => costLabel(sess)
-                      const proj = () => projectLabel(sess as { projectId?: string | null; cwd?: string | null })
+                      const proj = () =>
+                        projectLabel(sess as { projectId?: string | null; cwd?: string | null })
                       return (
                         <div class={`session-row ${active() ? 'active' : ''}`} role="listitem">
                           <button
@@ -722,120 +885,124 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                                 </span>
                               </Show>
                             </div>
-                        <span
-                          style={{
-                            display: 'block',
-                            'font-size': 'var(--fs-sm)',
-                            'font-weight': active() ? '600' : '500',
-                            color: active() ? 'var(--fg)' : 'var(--fg-muted)',
-                            overflow: 'hidden',
-                            'text-overflow': 'ellipsis',
-                            'white-space': 'nowrap',
-                          }}
-                        >
-                          {sess.title || `Session ${sess.id.slice(0, 6)}`}
-                        </span>
-                        <span
-                          style={{
-                            display: 'block',
-                            'margin-top': '3px',
-                            'font-size': 'var(--fs-2xs)',
-                            color: 'var(--fg-subtle)',
-                          }}
-                        >
-                          {sess.model || 'default'} ·{' '}
-                          {new Date(sess.updatedAt || sess.createdAt).toLocaleString()}
-                        </span>
-                        <span
-                          style={{
-                            display: 'block',
-                            'margin-top': '2px',
-                            'font-family': 'var(--font-mono)',
-                            'font-size': 'var(--fs-2xs)',
-                            color: 'var(--fg-faint)',
-                            overflow: 'hidden',
-                            'text-overflow': 'ellipsis',
-                            'white-space': 'nowrap',
-                          }}
-                        >
-                          {sess.id}
-                        </span>
-                        <Show when={cost()}>
-                          {(() => {
-                            const cap = props.store.state.costCap?.perSession
-                            const over = cap != null && (sess.costUsd ?? 0) >= cap
-                            return (
-                              <span
-                                title={
-                                  over
-                                    ? `Budget cap $${cap} exceeded`
-                                    : cap
-                                      ? `Cap $${cap}`
-                                      : undefined
-                                }
-                                style={{
-                                  display: 'inline-flex',
-                                  'align-items': 'center',
-                                  gap: '4px',
-                                  'margin-top': '4px',
-                                  'font-family': 'var(--font-mono)',
-                                  'font-size': 'var(--fs-2xs)',
-                                  color: over ? 'var(--danger)' : 'var(--fg-subtle)',
-                                  background: over
-                                    ? 'color-mix(in srgb, var(--danger) 10%, var(--bg-surface))'
-                                    : 'var(--bg-surface)',
-                                  border: `1px solid ${over ? 'var(--danger-border)' : 'var(--border)'}`,
-                                  'border-radius': 'var(--r-full)',
-                                  padding: '1px 6px',
-                                }}
-                              >
-                                {cost()}
-                                {over ? ' ⚠' : ''}
-                              </span>
-                            )
-                          })()}
-                        </Show>
-                      </button>
-                      {/* Pin button */}
-                      <button
-                        type="button"
-                        class={`session-pin-btn ${isPinned() ? 'pinned' : ''}`}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          togglePin(sess.id)
-                        }}
-                        title={isPinned() ? 'Unpin session' : 'Pin session'}
-                        aria-label={isPinned() ? 'Unpin session' : 'Pin session'}
-                        aria-pressed={isPinned() ? 'true' : 'false'}
-                        style={{ position: 'absolute', top: '8px', right: '32px' }}
-                      >
-                        📌
-                      </button>
-                      <button
-                        type="button"
-                        class="session-del btn btn-ghost"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setConfirmDelete({
-                            id: sess.id,
-                            title: sess.title || sess.id.slice(0, 6),
-                          })
-                        }}
-                        title="Delete session"
-                        aria-label={`Delete session ${sess.title || sess.id.slice(0, 6)}`}
-                        style={{
-                          width: '28px',
-                          height: '28px',
-                          'min-height': '28px',
-                          'min-width': '28px',
-                        }}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  )
-                }}
-              </For>
+                            <span
+                              style={{
+                                display: 'block',
+                                'font-size': 'var(--fs-sm)',
+                                'font-weight': active() ? '600' : '500',
+                                color: active() ? 'var(--fg)' : 'var(--fg-muted)',
+                                overflow: 'hidden',
+                                'text-overflow': 'ellipsis',
+                                'white-space': 'nowrap',
+                              }}
+                            >
+                              {sess.title || `Session ${sess.id.slice(0, 6)}`}
+                            </span>
+                            <span
+                              style={{
+                                display: 'block',
+                                'margin-top': '3px',
+                                'font-size': 'var(--fs-2xs)',
+                                color: 'var(--fg-subtle)',
+                              }}
+                            >
+                              {sess.model || 'default'} ·{' '}
+                              {new Date(sess.updatedAt || sess.createdAt).toLocaleString()}
+                            </span>
+                            <span
+                              style={{
+                                display: 'block',
+                                'margin-top': '2px',
+                                'font-family': 'var(--font-mono)',
+                                'font-size': 'var(--fs-2xs)',
+                                color: 'var(--fg-faint)',
+                                overflow: 'hidden',
+                                'text-overflow': 'ellipsis',
+                                'white-space': 'nowrap',
+                              }}
+                            >
+                              {sess.id}
+                            </span>
+                            <Show when={cost()}>
+                              {(() => {
+                                const cap = props.store.state.costCap?.perSession
+                                const over = cap != null && (sess.costUsd ?? 0) >= cap
+                                return (
+                                  <span
+                                    title={
+                                      over
+                                        ? `Budget cap $${cap} exceeded`
+                                        : cap
+                                          ? `Cap $${cap}`
+                                          : undefined
+                                    }
+                                    style={{
+                                      display: 'inline-flex',
+                                      'align-items': 'center',
+                                      gap: '4px',
+                                      'margin-top': '4px',
+                                      'font-family': 'var(--font-mono)',
+                                      'font-size': 'var(--fs-2xs)',
+                                      color: over ? 'var(--danger)' : 'var(--fg-subtle)',
+                                      background: over
+                                        ? 'color-mix(in srgb, var(--danger) 10%, var(--bg-surface))'
+                                        : 'var(--bg-surface)',
+                                      border: `1px solid ${over ? 'var(--danger-border)' : 'var(--border)'}`,
+                                      'border-radius': 'var(--r-full)',
+                                      padding: '1px 6px',
+                                    }}
+                                  >
+                                    {cost()}
+                                    {over ? ' ⚠' : ''}
+                                  </span>
+                                )
+                              })()}
+                            </Show>
+                          </button>
+                          <SessionExportMenu
+                            sessionId={sess.id}
+                            title={sess.title || sess.id.slice(0, 6)}
+                          />
+                          {/* Pin button */}
+                          <button
+                            type="button"
+                            class={`session-pin-btn ${isPinned() ? 'pinned' : ''}`}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              togglePin(sess.id)
+                            }}
+                            title={isPinned() ? 'Unpin session' : 'Pin session'}
+                            aria-label={isPinned() ? 'Unpin session' : 'Pin session'}
+                            aria-pressed={isPinned() ? 'true' : 'false'}
+                            style={{ position: 'absolute', top: '8px', right: '32px' }}
+                          >
+                            📌
+                          </button>
+                          <button
+                            type="button"
+                            class="session-del btn btn-ghost"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setConfirmDelete({
+                                id: sess.id,
+                                title: sess.title || sess.id.slice(0, 6),
+                              })
+                            }}
+                            title="Delete session"
+                            aria-label={`Delete session ${sess.title || sess.id.slice(0, 6)}`}
+                            style={{
+                              width: '28px',
+                              height: '28px',
+                              'min-height': '28px',
+                              'min-width': '28px',
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      )
+                    }}
+                  </For>
                 </div>
               }
             >
@@ -865,9 +1032,14 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                             const st = () => sessionStatus(sess, props.store)
                             const cost = () => costLabel(sess)
                             const proj = () =>
-                              projectLabel(sess as { projectId?: string | null; cwd?: string | null })
+                              projectLabel(
+                                sess as { projectId?: string | null; cwd?: string | null },
+                              )
                             return (
-                              <div class={`session-row ${active() ? 'active' : ''}`} role="listitem">
+                              <div
+                                class={`session-row ${active() ? 'active' : ''}`}
+                                role="listitem"
+                              >
                                 <button
                                   type="button"
                                   class="session-main"
@@ -896,7 +1068,11 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                                     >
                                       <span
                                         class={`dot ${st().label === 'streaming' ? 'dot-pulse' : ''}`}
-                                        style={{ background: st().color, width: '6px', height: '6px' }}
+                                        style={{
+                                          background: st().color,
+                                          width: '6px',
+                                          height: '6px',
+                                        }}
                                       />
                                       {st().label}
                                     </span>
@@ -926,7 +1102,10 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                                       </span>
                                     </Show>
                                     <Show when={isPinned()}>
-                                      <span style={{ 'font-size': '10px', color: 'var(--accent)' }} title="Pinned">
+                                      <span
+                                        style={{ 'font-size': '10px', color: 'var(--accent)' }}
+                                        title="Pinned"
+                                      >
                                         📌
                                       </span>
                                     </Show>
@@ -1005,6 +1184,10 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
                                     })()}
                                   </Show>
                                 </button>
+                                <SessionExportMenu
+                                  sessionId={sess.id}
+                                  title={sess.title || sess.id.slice(0, 6)}
+                                />
                                 <button
                                   type="button"
                                   class={`session-pin-btn ${isPinned() ? 'pinned' : ''}`}

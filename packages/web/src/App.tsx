@@ -12,6 +12,7 @@ import { CommandPalette } from './components/CommandPalette'
 import { MemoryGraph } from './components/MemoryGraph'
 import { TraceViewer } from './components/TraceViewer'
 import { QueueRail } from './components/QueueRail'
+import { SessionJobs } from './components/SessionJobs'
 import { ToastViewport, toast } from './components/Toast'
 import { ConnectModal } from './components/ConnectModal'
 import { HeaderModelSelector, HeaderAgentSelector } from './components/HeaderSelectors'
@@ -916,6 +917,7 @@ export default function App() {
                 })()}
               </Show>
               <QueueRail store={store} />
+              <SessionJobs store={store} />
               <HeaderModelSelector settings={settings} id="header-model" />
               <HeaderAgentSelector
                 agents={agents() ?? []}

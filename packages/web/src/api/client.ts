@@ -14,6 +14,8 @@
  *   GET    /session/:id/jobs   → Job[] (task UI + TraceViewer DAG poll)
  *   GET    /job/:id            → Job (TraceViewer DAG poll)
  *   POST   /job/:id/cancel     → Job (TraceViewer per-node / cancel-all)
+ *   GET    /session/:id/export?format=json|md → raw envelope / transcript
+ *   POST   /session/import     → { id, copiedMessages, copiedParts, copiedTodos }
  *   GET    /tools
  *   POST   /permission/check
  *   WS     /                   → BusEvent stream
@@ -319,7 +321,8 @@ function getRuntimeApiUrl(): string {
         // Validate ?api= is only for URL, not token — only localhost or https allowed
         try {
           const u = new URL(trimmed)
-          const isLocalhost = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1'
+          const isLocalhost =
+            u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1'
           const isHttps = u.protocol === 'https:'
           if (isLocalhost || isHttps) return trimmed
           if (!runtimeApiUrlWarned) {
@@ -691,16 +694,24 @@ export const api = {
       () => ({ ok: false }) as { ok: boolean },
     ),
 
-  /** Export session transcript — markdown or JSON (triggers download in caller) */
-  exportSession: async (id: string, format: 'md' | 'json' = 'md'): Promise<string> => {
+  /**
+   * Export session — raw text for download in caller.
+   * `json` returns the versioned envelope; `md` the transcript.
+   * Raw fetch (not req()) because the body is text, not JSON —
+   * same pattern as getScoreMarkdown/streamPrompt.
+   */
+  exportSession: async (id: string, format: 'json' | 'md' = 'md'): Promise<string> => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 10_000)
     try {
-      const res = await fetch(`${baseUrl()}/session/${id}/export?format=${format}`, {
-        mode: 'cors',
-        signal: controller.signal,
-        headers: authHeaders(),
-      })
+      const res = await fetch(
+        `${baseUrl()}/session/${encodeURIComponent(id)}/export?format=${format}`,
+        {
+          mode: 'cors',
+          signal: controller.signal,
+          headers: authHeaders(),
+        },
+      )
       if (res.status === 401) {
         clearTokenOn401()
         throw new ApiError(401, 'unauthorized')
@@ -724,6 +735,16 @@ export const api = {
       clearTimeout(timer)
     }
   },
+
+  /**
+   * Import a session from a versioned envelope (as produced by
+   * exportSession(id, 'json')). Server copies content under fresh ids.
+   */
+  importSession: (envelope: unknown) =>
+    req<{ id: string; copiedMessages?: number; copiedParts?: number; copiedTodos?: number }>(
+      '/session/import',
+      { method: 'POST', body: JSON.stringify(envelope) },
+    ),
 
   checkPermission: (body: Record<string, JsonValue>) =>
     req<{
