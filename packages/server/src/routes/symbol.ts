@@ -18,7 +18,11 @@ export function mountSymbolRoutes(app: Hono<{ Variables: { requestId: string } }
     const sanitizedCwd = sanitizePath(cwd)
     if (!sanitizedCwd.ok) {
       const reason = sanitizedCwd.reason ?? ''
-      if (reason.includes('traversal') || reason.includes('null byte') || reason.includes('encoded')) {
+      if (
+        reason.includes('traversal') ||
+        reason.includes('null byte') ||
+        reason.includes('encoded')
+      ) {
         return c.json({ error: `invalid cwd: ${reason}` }, 400)
       }
     } else {
@@ -68,7 +72,7 @@ export function mountSymbolRoutes(app: Hono<{ Variables: { requestId: string } }
 
     // List all symbols (glob + parse)
     try {
-      const files = await (idx as unknown as { glob: (p: string, cwd?: string) => Promise<string[]> }).glob('**/*.{ts,tsx,js,jsx}', cwd)
+      const files = await idx.listFiles('**/*.{ts,tsx,js,jsx}', cwd)
       const all: unknown[] = []
       for (const f of files.slice(0, 50)) {
         const syms = await idx.ensureIndexed(f, cwd)

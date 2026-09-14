@@ -126,7 +126,12 @@ export class SymbolIndex {
     this.lruCache.invalidate(file)
   }
 
-  async findSymbolAt(file: string, line: number, character: number, cwd?: string): Promise<SymbolInfo | null> {
+  async findSymbolAt(
+    file: string,
+    line: number,
+    character: number,
+    cwd?: string,
+  ): Promise<SymbolInfo | null> {
     const symbols = await this.ensureIndexed(file, cwd)
     const content = await this.readFile(file, cwd)
     const lines = content.split('\n')
@@ -144,7 +149,12 @@ export class SymbolIndex {
     return sym ?? null
   }
 
-  async findDefinition(file: string, line: number, character: number, cwd?: string): Promise<SymbolInfo | null> {
+  async findDefinition(
+    file: string,
+    line: number,
+    character: number,
+    cwd?: string,
+  ): Promise<SymbolInfo | null> {
     const sym = await this.findSymbolAt(file, line, character, cwd)
     if (!sym) return null
     // For simplicity, try to find exact symbol definition in same file first
@@ -235,6 +245,11 @@ export class SymbolIndex {
     return { files: [...filesSet], count }
   }
 
+  /** Public file listing for route handlers (delegates to the private glob). */
+  async listFiles(pattern: string, cwd?: string): Promise<string[]> {
+    return this.glob(pattern, cwd)
+  }
+
   private async glob(pattern: string, cwd?: string): Promise<string[]> {
     const base = this.resolveRoot(cwd)
     // Use Bun.Glob for workspace-aware scanning (respects cwd)
@@ -244,7 +259,12 @@ export class SymbolIndex {
       const results: string[] = []
       for await (const file of glob.scan({ cwd: base, dot: false, onlyFiles: true })) {
         // Filter to source files only
-        if (file.endsWith('.ts') || file.endsWith('.tsx') || file.endsWith('.js') || file.endsWith('.jsx')) {
+        if (
+          file.endsWith('.ts') ||
+          file.endsWith('.tsx') ||
+          file.endsWith('.js') ||
+          file.endsWith('.jsx')
+        ) {
           results.push(file)
         } else if (!pattern.includes('.')) {
           results.push(file)
@@ -267,14 +287,27 @@ export class SymbolIndex {
         const full = `${dir}/${entry}`
         if (entry === '.' || entry === '..') continue
         // Skip ignored dirs
-        if (entry === 'node_modules' || entry === '.git' || entry === 'dist' || entry === '.turbo' || entry === '.mira' || entry === 'coverage') continue
+        if (
+          entry === 'node_modules' ||
+          entry === '.git' ||
+          entry === 'dist' ||
+          entry === '.turbo' ||
+          entry === '.mira' ||
+          entry === 'coverage'
+        )
+          continue
         const stat = await Bun.file(full)
           .stat()
           .catch(() => null)
         if (!stat) continue
         if (stat.isDirectory()) {
           await this.walk(full, pattern, results, base)
-        } else if (full.endsWith('.ts') || full.endsWith('.tsx') || full.endsWith('.js') || full.endsWith('.jsx')) {
+        } else if (
+          full.endsWith('.ts') ||
+          full.endsWith('.tsx') ||
+          full.endsWith('.js') ||
+          full.endsWith('.jsx')
+        ) {
           // Respect session.cwd: return relative path to base (workspace root)
           const rel = full.startsWith(base + '/') ? full.slice(base.length + 1) : full
           results.push(rel)
