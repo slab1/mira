@@ -28,6 +28,7 @@ import type { PermissionManager } from '../permission/index.js'
 import type { Gateway } from '../gateway/index.js'
 import type { GatewayRouter } from '../gateway/router.js'
 import type { SubgatewayRegistry } from '../gateway/registry.js'
+import type { Subgateway } from '../gateway/subgateway.js'
 import { buildSystemPrompt, getLoopLimits, getConfig } from '../config/index.js'
 import { DoomLoopDetector } from './doom-loop-detector.js'
 import { needsCompaction, compactMessages, estimateTokens } from './compaction.js'
@@ -109,11 +110,31 @@ export interface LoopOptions {
 // ── Subgateway routing helpers ─────────────────────────────────────
 
 function getRouter(gateway: Gateway): GatewayRouter | null {
-  return (gateway as unknown as { router?: GatewayRouter }).router ?? null
+  if (!('router' in gateway)) return null
+  const router: unknown = gateway.router
+  return isGatewayRouter(router) ? router : null
 }
 
 function getRegistry(gateway: Gateway): SubgatewayRegistry | null {
-  return (gateway as unknown as { registry?: SubgatewayRegistry }).registry ?? null
+  if (!('registry' in gateway)) return null
+  const registry: unknown = gateway.registry
+  return isSubgatewayRegistry(registry) ? registry : null
+}
+
+/** Structural guards for the optional router/registry augmentations. */
+function isGatewayRouter(value: unknown): value is GatewayRouter {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'resolve' in value &&
+    typeof value.resolve === 'function'
+  )
+}
+
+function isSubgatewayRegistry(value: unknown): value is SubgatewayRegistry {
+  return (
+    typeof value === 'object' && value !== null && 'get' in value && typeof value.get === 'function'
+  )
 }
 
 function resolveLane(
@@ -136,12 +157,10 @@ function laneCostCap(
 ): { perTask?: number; perSession?: number } | undefined {
   const registry = getRegistry(gateway)
   if (!registry) return undefined
-  const gw = registry.get(lane) as unknown as {
-    subConfig?: { costCap?: { perTask?: number; perSession?: number } }
-  }
+  const gw: Subgateway | undefined = registry.get(lane)
   // Subgateway exposes config via private subConfig; fallback to global
   try {
-    const sub = registry.get(lane) as unknown as { statsCollector?: unknown; lane?: string }
+    const sub: Subgateway | undefined = registry.get(lane)
     // Try to read costCap from subgateway's config via sync
     const cfg = (
       getConfig() as MiraConfig & {
@@ -335,8 +354,8 @@ export class SessionPrompt {
       tokensIn: null as number | null,
       tokensOut: null as number | null,
       costUsd: null as number | null,
-      cwd: input.cwd ?? null as string | null,
-      projectId: input.projectId ?? null as string | null,
+      cwd: input.cwd ?? (null as string | null),
+      projectId: input.projectId ?? (null as string | null),
     }
     await this.deps.db.insert(this.deps.db.schema.sessions).values(session as never)
     return session
@@ -434,8 +453,8 @@ export class SessionPrompt {
       model: source.model,
       parentID: source.id,
       agent: source.agent ?? undefined,
-      cwd: (source as unknown as { cwd?: string | null }).cwd ?? undefined,
-      projectId: (source as unknown as { projectId?: string | null }).projectId ?? undefined,
+      cwd: source.cwd ?? undefined,
+      projectId: source.projectId ?? undefined,
     })
 
     const now = Date.now()
@@ -492,7 +511,7 @@ export class SessionPrompt {
     let parentCwd: string | undefined
     let parentProjectId: string | undefined
     try {
-      const parent = await this.getSession(opts.parentID) as unknown as { cwd?: string | null; projectId?: string | null } | undefined
+      const parent = await this.getSession(opts.parentID)
       parentCwd = parent?.cwd ?? undefined
       parentProjectId = parent?.projectId ?? undefined
     } catch {}
@@ -523,7 +542,7 @@ export class SessionPrompt {
       const runModel = effectiveModel ?? s.model
       // Agent persona for subagent loop
       const persona = opts.agent ? getAgentTemplates()[opts.agent]?.system : undefined
-      const basePrompt = await buildSystemPrompt((s as unknown as { cwd?: string | null }).cwd ?? parentCwd ?? process.cwd())
+      const basePrompt = await buildSystemPrompt(s.cwd ?? parentCwd ?? process.cwd())
       const systemPrompt = persona ? `${persona}\n\n${basePrompt}` : basePrompt
       await this.runLoop({
         sessionID: s.id,
@@ -567,7 +586,7 @@ export class SessionPrompt {
       agent: effectiveAgent,
       sessionModel: session.model,
     })
-    const basePrompt = await buildSystemPrompt((session as unknown as { cwd?: string | null }).cwd ?? process.cwd())
+    const basePrompt = await buildSystemPrompt(session.cwd ?? process.cwd())
     // Agent persona (researcher/coder/reviewer) prepended when set on the session or per-turn
     const persona = effectiveAgent ? getAgentTemplates()[effectiveAgent]?.system : undefined
     const systemPrompt = persona ? `${persona}\n\n${basePrompt}` : basePrompt
@@ -712,7 +731,7 @@ export class SessionPrompt {
     // Resolve session cwd for tool execution (P0-1: thread cwd through prompt/tools)
     let sessionCwd: string | undefined
     try {
-      const s = await this.getSession(sessionID) as unknown as { cwd?: string | null } | undefined
+      const s = await this.getSession(sessionID)
       sessionCwd = s?.cwd ?? undefined
     } catch {}
 
@@ -1146,7 +1165,7 @@ export class SessionPrompt {
 
   private async loadContext(sessionID: string, systemPrompt: string): Promise<LoopMessage[]> {
     const messages = await this.getMessages(sessionID)
-    const session = await this.getSession(sessionID) as unknown as { cwd?: string | null } | undefined
+    const session = await this.getSession(sessionID)
     const sessionCwd = session?.cwd ?? process.cwd()
     // Hierarchical memory: systemPrompt already contains AGENTS.md via buildSystemPrompt (project instructions)
     // This method wires L1 working (messages) + L2 episodic (todos/findings) + L3 semantic (knowledge) + procedural (skills) + Memory Bank (Kilo K3)

@@ -60,20 +60,17 @@ export async function liveOpenAIStream(ctx: {
   const { baseURL, apiKey, headers, timeout, modelID, opts } = ctx
 
   const isClaude = /claude|anthropic/i.test(modelID)
+  const claudeCacheEntry: Record<string, JsonValue> = opts.system
+    ? {
+        type: 'text',
+        text: opts.system,
+        cache_control: { type: 'ephemeral' },
+      }
+    : {}
   const systemMsg: ChatRequestMessage | null = opts.system
     ? {
         role: 'system',
-        ...(isClaude
-          ? {
-              content: [
-                {
-                  type: 'text',
-                  text: opts.system,
-                  cache_control: { type: 'ephemeral' },
-                } as unknown as Record<string, JsonValue>,
-              ],
-            }
-          : { content: opts.system }),
+        ...(isClaude ? { content: [claudeCacheEntry] } : { content: opts.system }),
       }
     : null
 
@@ -99,10 +96,8 @@ export async function liveOpenAIStream(ctx: {
         }
       : {}),
   }
-  if (opts.maxTokens !== undefined)
-    (body as unknown as Record<string, unknown>).max_tokens = opts.maxTokens
-  if (opts.temperature !== undefined)
-    (body as unknown as Record<string, unknown>).temperature = opts.temperature
+  if (opts.maxTokens !== undefined) body.max_tokens = opts.maxTokens
+  if (opts.temperature !== undefined) body.temperature = opts.temperature
 
   const timeoutSignal = AbortSignal.timeout(timeout ?? 120_000)
   const combinedSignal = opts.signal ? AbortSignal.any([timeoutSignal, opts.signal]) : timeoutSignal
@@ -155,9 +150,8 @@ export async function liveOpenAIStream(ctx: {
       provider: modelID,
       status,
     })
-    // Attach retry-after for retry logic
-    ;(err as unknown as Record<string, unknown>).retryAfter = retryAfter
-    ;(err as unknown as Record<string, unknown>).headers = res.headers
+    // Attach retry-after for retry logic (same runtime shape as before)
+    Object.assign(err, { retryAfter, headers: res.headers })
     throw err
   }
 
@@ -292,12 +286,12 @@ export async function liveOpenAIStream(ctx: {
         }
 
         // Race read vs per-chunk timeout with clearable timer
-        let readResult: ReadableStreamReadResult<Uint8Array> | null = null
+        let readResult: Awaited<ReturnType<typeof reader.read>> | null = null
         let timedOut = false
 
         const readPromise = reader.read().then((r) => {
-          readResult = r as unknown as ReadableStreamReadResult<Uint8Array>
-          return r as unknown as ReadableStreamReadResult<Uint8Array>
+          readResult = r
+          return r
         })
 
         const timeoutPromise = new Promise<never>((_, reject) => {
