@@ -566,13 +566,19 @@ export function ensureMemoryBank(cwd?: string): void {
       bankDir = path.join(cwdEff, 'data', 'memory_bank')
     }
     fs.mkdirSync(bankDir, { recursive: true })
-    const file = path.join(bankDir, 'active_work.md')
-    if (!fs.existsSync(file)) {
-      fs.writeFileSync(
-        file,
+    const files: Record<string, string> = {
+      'active_work.md':
         '# Active Work\n\nIn-progress branches, mid-migration notes, what the next session should resume.\n\n',
-        'utf-8',
-      )
+      'decisions.md': '# Decisions\n\nArchitectural decisions and rationale.\n\n',
+      'conventions.md': '# Conventions\n\nCode style, naming, repo patterns.\n\n',
+      'tech_debt.md': '# Tech Debt\n\nKnown shortcuts, TODOs, and fragility.\n\n',
+      'file_paths.md': '# File Paths\n\nFrequently referenced files and their roles.\n\n',
+    }
+    for (const [name, content] of Object.entries(files)) {
+      const file = path.join(bankDir, name)
+      if (!fs.existsSync(file)) {
+        fs.writeFileSync(file, content, 'utf-8')
+      }
     }
   } catch (e) {
     console.warn('[memory] ensureMemoryBank failed:', String(e))
