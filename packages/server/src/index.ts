@@ -48,6 +48,7 @@ import { mountConfigRoutes } from './routes/config.js'
 import { mountMcpRoutes } from './routes/mcp.js'
 import { mountAdminRoutes } from './routes/admin.js'
 import { mountFindingRoutes } from './routes/finding.js'
+import { mountMeRoutes } from './routes/me.js'
 import { mountSessionExtrasRoutes } from './routes/session-extras.js'
 import { mountToolsRoutes } from './routes/tools-routes.js'
 import { mountWorkspaceRoutes } from './routes/workspace.js'
@@ -542,6 +543,8 @@ async function main() {
   })
 
   mountFindingRoutes(app, { db, bus })
+
+  mountMeRoutes(app, { db, resolveOwner, bearerOf })
 
   mountSessionExtrasRoutes(app, {
     db,

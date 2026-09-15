@@ -38,6 +38,7 @@ import { searchKnowledge } from '../learning/knowledge.js'
 import { openFindingsForContext } from '../tools/findings.js'
 import type { Todo, JsonValue, MiraConfig } from '../types/index.js'
 import type { MiraDB } from '../storage/db.js'
+import { getUserNameForOwner } from '../storage/users.js'
 import { loadSkills } from '../skills/loader.js'
 import { getAgentTemplates, isKnownAgent, isBashCommandAllowed } from '../agents/templates.js'
 import { buildRegistry, resolveModel } from '../gateway/provider.js'
@@ -569,7 +570,10 @@ export class SessionPrompt {
       const runModel = effectiveModel ?? s.model
       // Agent persona for subagent loop
       const persona = opts.agent ? getAgentTemplates()[opts.agent]?.system : undefined
-      const basePrompt = await buildSystemPrompt(s.cwd ?? parentCwd ?? process.cwd())
+      const basePrompt = await buildSystemPrompt(
+        s.cwd ?? parentCwd ?? process.cwd(),
+        await getUserNameForOwner(this.deps.db, s.ownerID),
+      )
       const systemPrompt = persona ? `${persona}\n\n${basePrompt}` : basePrompt
       await this.runLoop({
         sessionID: s.id,
@@ -613,7 +617,10 @@ export class SessionPrompt {
       agent: effectiveAgent,
       sessionModel: session.model,
     })
-    const basePrompt = await buildSystemPrompt(session.cwd ?? process.cwd())
+    const basePrompt = await buildSystemPrompt(
+      session.cwd ?? process.cwd(),
+      await getUserNameForOwner(this.deps.db, session.ownerID),
+    )
     // Agent persona (researcher/coder/reviewer) prepended when set on the session or per-turn
     const persona = effectiveAgent ? getAgentTemplates()[effectiveAgent]?.system : undefined
     const systemPrompt = persona ? `${persona}\n\n${basePrompt}` : basePrompt

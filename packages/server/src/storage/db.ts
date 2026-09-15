@@ -8,12 +8,12 @@
  * Env: MIRA_DB=./data/mira.db (default)
  */
 
-import { drizzle } from "drizzle-orm/bun-sqlite"
-import { Database } from "bun:sqlite"
-import { mkdirSync } from "node:fs"
-import { dirname } from "node:path"
-import * as schema from "./schema.js"
-import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite"
+import { drizzle } from 'drizzle-orm/bun-sqlite'
+import { Database } from 'bun:sqlite'
+import { mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
+import * as schema from './schema.js'
+import type { BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite'
 
 /** Drizzle instance (schema-aware → typed db.query.*) + raw client + schema refs */
 export type MiraDB = BunSQLiteDatabase<typeof schema> & {
@@ -21,22 +21,29 @@ export type MiraDB = BunSQLiteDatabase<typeof schema> & {
   schema: typeof schema
 }
 
-export function createDatabase(path = "./data/mira.db") {
+export function createDatabase(path = './data/mira.db') {
   // Validate DB path — prevent writing to sensitive locations like /etc/mira.db
-  const normalized = path.replace(/\/$/, "")
-  if (normalized.startsWith("/etc/") || normalized.startsWith("/proc/") || normalized.startsWith("/sys/") || normalized.includes("..")) {
+  const normalized = path.replace(/\/$/, '')
+  if (
+    normalized.startsWith('/etc/') ||
+    normalized.startsWith('/proc/') ||
+    normalized.startsWith('/sys/') ||
+    normalized.includes('..')
+  ) {
     throw new Error(`MIRA_DB path blocked: ${path}`)
   }
   // Ensure parent dir exists
-  try { mkdirSync(dirname(path), { recursive: true }) } catch {}
+  try {
+    mkdirSync(dirname(path), { recursive: true })
+  } catch {}
 
   const sqlite = new Database(path)
 
   // WAL mode + sane pragmas (Mira pattern — pragmatism over Postgres for local)
-  sqlite.exec("PRAGMA journal_mode = WAL;")
-  sqlite.exec("PRAGMA synchronous = NORMAL;")
-  sqlite.exec("PRAGMA foreign_keys = ON;")
-  sqlite.exec("PRAGMA busy_timeout = 5000;")
+  sqlite.exec('PRAGMA journal_mode = WAL;')
+  sqlite.exec('PRAGMA synchronous = NORMAL;')
+  sqlite.exec('PRAGMA foreign_keys = ON;')
+  sqlite.exec('PRAGMA busy_timeout = 5000;')
 
   // Augment the drizzle instance with the raw client + schema (consumers use
   // both: query builder for ORM reads, raw sqlite for ad-hoc SQL like backups).
@@ -183,6 +190,16 @@ export async function migrate(db: MiraDB) {
     );
     CREATE INDEX IF NOT EXISTS api_keys_owner_idx ON api_keys(owner);
 
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      owner TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL DEFAULT 'user',
+      profile TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS users_owner_idx ON users(owner);
+
     CREATE TABLE IF NOT EXISTS audit_entries (
       id TEXT PRIMARY KEY,
       session_id TEXT,
@@ -201,46 +218,64 @@ export async function migrate(db: MiraDB) {
   // Idempotent column adds (SQLite lacks IF NOT EXISTS for columns)
   // Log real errors but ignore duplicate column
   const addColumn = (table: string, col: string, type: string) => {
-    try { sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type};`) } catch (e) {
+    try {
+      sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type};`)
+    } catch (e) {
       const msg = String(e)
-      if (!msg.includes("duplicate column name")) console.warn(`[storage] addColumn ${table}.${col} failed:`, msg)
+      if (!msg.includes('duplicate column name'))
+        console.warn(`[storage] addColumn ${table}.${col} failed:`, msg)
     }
   }
-  addColumn("sessions", "tokens_in", "INTEGER")
-  addColumn("sessions", "tokens_out", "INTEGER")
-  addColumn("sessions", "cost_usd", "REAL")
-  addColumn("sessions", "owner_id", "TEXT")
-  addColumn("sessions", "agent", "TEXT")
-  addColumn("sessions", "cwd", "TEXT")
-  addColumn("sessions", "project_id", "TEXT")
-  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS sessions_project_id_idx ON sessions(project_id);`) } catch {}
+  addColumn('sessions', 'tokens_in', 'INTEGER')
+  addColumn('sessions', 'tokens_out', 'INTEGER')
+  addColumn('sessions', 'cost_usd', 'REAL')
+  addColumn('sessions', 'owner_id', 'TEXT')
+  addColumn('sessions', 'agent', 'TEXT')
+  addColumn('sessions', 'cwd', 'TEXT')
+  addColumn('sessions', 'project_id', 'TEXT')
+  try {
+    sqlite.exec(`CREATE INDEX IF NOT EXISTS sessions_project_id_idx ON sessions(project_id);`)
+  } catch {}
   // P3-1: api_keys hash/prefix for DB-dump protection
-  addColumn("api_keys", "key_hash", "TEXT")
-  addColumn("api_keys", "key_prefix", "TEXT")
+  addColumn('api_keys', 'key_hash', 'TEXT')
+  addColumn('api_keys', 'key_prefix', 'TEXT')
   // H2-1 Memory v2: temporal decay + entity graph columns
-  addColumn("knowledge_entries", "tier", "TEXT")
-  addColumn("knowledge_entries", "source", "TEXT")
-  addColumn("knowledge_entries", "title", "TEXT")
-  addColumn("knowledge_entries", "tags", "TEXT")
-  addColumn("knowledge_entries", "graph_links", "TEXT")
-  addColumn("knowledge_entries", "embedding", "TEXT")
-  addColumn("knowledge_entries", "metadata", "TEXT")
-  addColumn("knowledge_entries", "updated_at", "INTEGER")
-  addColumn("knowledge_entries", "last_accessed_at", "INTEGER")
-  addColumn("knowledge_entries", "access_count", "INTEGER")
-  addColumn("knowledge_entries", "entities", "TEXT")
+  addColumn('knowledge_entries', 'tier', 'TEXT')
+  addColumn('knowledge_entries', 'source', 'TEXT')
+  addColumn('knowledge_entries', 'title', 'TEXT')
+  addColumn('knowledge_entries', 'tags', 'TEXT')
+  addColumn('knowledge_entries', 'graph_links', 'TEXT')
+  addColumn('knowledge_entries', 'embedding', 'TEXT')
+  addColumn('knowledge_entries', 'metadata', 'TEXT')
+  addColumn('knowledge_entries', 'updated_at', 'INTEGER')
+  addColumn('knowledge_entries', 'last_accessed_at', 'INTEGER')
+  addColumn('knowledge_entries', 'access_count', 'INTEGER')
+  addColumn('knowledge_entries', 'entities', 'TEXT')
   // Create tier/source indexes after columns exist (for old DBs)
-  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS knowledge_entries_tier_idx ON knowledge_entries(tier);`) } catch {}
-  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS knowledge_entries_source_idx ON knowledge_entries(source);`) } catch {}
+  try {
+    sqlite.exec(`CREATE INDEX IF NOT EXISTS knowledge_entries_tier_idx ON knowledge_entries(tier);`)
+  } catch {}
+  try {
+    sqlite.exec(
+      `CREATE INDEX IF NOT EXISTS knowledge_entries_source_idx ON knowledge_entries(source);`,
+    )
+  } catch {}
   // Retention: prune old knowledge_entries >30d if table large
   try {
-    const count = sqlite.prepare("SELECT COUNT(*) as c FROM knowledge_entries").get() as { c: number } | undefined
+    const count = sqlite.prepare('SELECT COUNT(*) as c FROM knowledge_entries').get() as
+      { c: number } | undefined
     if (count && count.c > 5000) {
-      sqlite.exec("DELETE FROM knowledge_entries WHERE created_at < " + (Date.now() - 30 * 24 * 60 * 60 * 1000) + " LIMIT 1000")
+      sqlite.exec(
+        'DELETE FROM knowledge_entries WHERE created_at < ' +
+          (Date.now() - 30 * 24 * 60 * 60 * 1000) +
+          ' LIMIT 1000',
+      )
     }
   } catch {}
-  if (process.env.MIRA_VACUUM === "1") {
-    try { sqlite.exec("VACUUM;") } catch {}
+  if (process.env.MIRA_VACUUM === '1') {
+    try {
+      sqlite.exec('VACUUM;')
+    } catch {}
   }
   // console.log("[storage] migrated")
 }

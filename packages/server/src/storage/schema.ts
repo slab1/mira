@@ -4,118 +4,164 @@
  * Pragmatism: SQLite over Postgres, Drizzle over Prisma (Mira pattern)
  * Postgres+pgvector is for memory/knowledge-graph (separate DB in prod)
  */
-import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core"
-import { relations } from "drizzle-orm"
-import type { JsonValue } from "../types/index.js"
+import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core'
+import { relations } from 'drizzle-orm'
+import type { JsonValue } from '../types/index.js'
 
-export const sessions = sqliteTable("sessions", {
-  id: text("id").primaryKey(),
-  title: text("title").notNull().default("New Session"),
-  model: text("model").notNull().default("openrouter/anthropic/claude-sonnet-4"),
-  provider: text("provider").notNull().default("openrouter"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-  parentID: text("parent_id"),
-  // Lane-contract agent key ("architect", custom mira.json agents, …)
-  agent: text("agent"),
-  // Multi-tenant ownership — null on legacy rows (accessible to all authenticated users)
-  ownerID: text("owner_id"),
-  // Token/cost tracking — populated by SessionPrompt.runLoop, migrated via ALTER TABLE if missing
-  tokensIn: integer("tokens_in"),
-  tokensOut: integer("tokens_out"),
-  costUsd: real("cost_usd"),
-  cwd: text("cwd"),
-  projectId: text("project_id"),
-}, (t) => [
-  index("sessions_updated_idx").on(t.updatedAt),
-  index("sessions_project_id_idx").on(t.projectId),
-])
+export const sessions = sqliteTable(
+  'sessions',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull().default('New Session'),
+    model: text('model').notNull().default('openrouter/anthropic/claude-sonnet-4'),
+    provider: text('provider').notNull().default('openrouter'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    parentID: text('parent_id'),
+    // Lane-contract agent key ("architect", custom mira.json agents, …)
+    agent: text('agent'),
+    // Multi-tenant ownership — null on legacy rows (accessible to all authenticated users)
+    ownerID: text('owner_id'),
+    // Token/cost tracking — populated by SessionPrompt.runLoop, migrated via ALTER TABLE if missing
+    tokensIn: integer('tokens_in'),
+    tokensOut: integer('tokens_out'),
+    costUsd: real('cost_usd'),
+    cwd: text('cwd'),
+    projectId: text('project_id'),
+  },
+  (t) => [
+    index('sessions_updated_idx').on(t.updatedAt),
+    index('sessions_project_id_idx').on(t.projectId),
+  ],
+)
 
-export const messages = sqliteTable("messages", {
-  id: text("id").primaryKey(),
-  sessionID: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
-  role: text("role", { enum: ["user", "assistant", "system"] }).notNull(),
-  createdAt: integer("created_at").notNull(),
-}, (t) => [
-  index("messages_session_idx").on(t.sessionID),
-  index("messages_created_idx").on(t.createdAt),
-])
+export const messages = sqliteTable(
+  'messages',
+  {
+    id: text('id').primaryKey(),
+    sessionID: text('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    role: text('role', { enum: ['user', 'assistant', 'system'] }).notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    index('messages_session_idx').on(t.sessionID),
+    index('messages_created_idx').on(t.createdAt),
+  ],
+)
 
-export const parts = sqliteTable("parts", {
-  id: text("id").primaryKey(),
-  messageID: text("message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
-  sessionID: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
-  type: text("type", { enum: ["text", "tool-call", "tool-result", "reasoning", "file"] }).notNull(),
-  text: text("text"),
-  tool: text("tool"),
-  toolCallID: text("tool_call_id"),
-  args: text("args", { mode: "json" }).$type<Record<string, JsonValue> | null>(),
-  result: text("result", { mode: "json" }).$type<JsonValue>(),
-  isError: integer("is_error", { mode: "boolean" }),
-  createdAt: integer("created_at").notNull(),
-}, (t) => [
-  index("parts_message_idx").on(t.messageID),
-  index("parts_session_idx").on(t.sessionID),
-])
+export const parts = sqliteTable(
+  'parts',
+  {
+    id: text('id').primaryKey(),
+    messageID: text('message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    sessionID: text('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    type: text('type', {
+      enum: ['text', 'tool-call', 'tool-result', 'reasoning', 'file'],
+    }).notNull(),
+    text: text('text'),
+    tool: text('tool'),
+    toolCallID: text('tool_call_id'),
+    args: text('args', { mode: 'json' }).$type<Record<string, JsonValue> | null>(),
+    result: text('result', { mode: 'json' }).$type<JsonValue>(),
+    isError: integer('is_error', { mode: 'boolean' }),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('parts_message_idx').on(t.messageID), index('parts_session_idx').on(t.sessionID)],
+)
 
-export const todos = sqliteTable("todos", {
-  id: text("id").primaryKey(),
-  sessionID: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
-  content: text("content").notNull(),
-  status: text("status", { enum: ["pending", "in_progress", "completed", "cancelled"] }).notNull().default("pending"),
-  priority: text("priority", { enum: ["high", "medium", "low"] }).notNull().default("medium"),
-  createdAt: integer("created_at").notNull(),
-}, (t) => [
-  index("todos_session_idx").on(t.sessionID),
-])
+export const todos = sqliteTable(
+  'todos',
+  {
+    id: text('id').primaryKey(),
+    sessionID: text('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    content: text('content').notNull(),
+    status: text('status', { enum: ['pending', 'in_progress', 'completed', 'cancelled'] })
+      .notNull()
+      .default('pending'),
+    priority: text('priority', { enum: ['high', 'medium', 'low'] })
+      .notNull()
+      .default('medium'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('todos_session_idx').on(t.sessionID)],
+)
 
 // File snapshots — taken before every mutating tool call, enables /undo
-export const fileSnapshots = sqliteTable("file_snapshots", {
-  id: text("id").primaryKey(),
-  sessionID: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
-  messageID: text("message_id"),
-  path: text("path").notNull(),          // absolute path
-  content: text("content"),              // null = file did not exist (revert → delete)
-  createdAt: integer("created_at").notNull(),
-}, (t) => [
-  index("file_snapshots_session_idx").on(t.sessionID),
-  index("file_snapshots_created_idx").on(t.createdAt),
-])
+export const fileSnapshots = sqliteTable(
+  'file_snapshots',
+  {
+    id: text('id').primaryKey(),
+    sessionID: text('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    messageID: text('message_id'),
+    path: text('path').notNull(), // absolute path
+    content: text('content'), // null = file did not exist (revert → delete)
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    index('file_snapshots_session_idx').on(t.sessionID),
+    index('file_snapshots_created_idx').on(t.createdAt),
+  ],
+)
 
 // Background subagent jobs — spawned by the `task` tool, pollable by job ID
-export const jobs = sqliteTable("jobs", {
-  id: text("id").primaryKey(),
-  parentSessionID: text("parent_session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
-  // No FK: child sessions are created by the runner and may be ephemeral
-  childSessionID: text("child_session_id"),
-  agent: text("agent"),
-  prompt: text("prompt").notNull(),
-  status: text("status", { enum: ["running", "completed", "failed", "cancelled"] }).notNull().default("running"),
-  result: text("result"),
-  error: text("error"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-}, (t) => [
-  index("jobs_parent_session_idx").on(t.parentSessionID),
-  index("jobs_status_idx").on(t.status),
-])
+export const jobs = sqliteTable(
+  'jobs',
+  {
+    id: text('id').primaryKey(),
+    parentSessionID: text('parent_session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    // No FK: child sessions are created by the runner and may be ephemeral
+    childSessionID: text('child_session_id'),
+    agent: text('agent'),
+    prompt: text('prompt').notNull(),
+    status: text('status', { enum: ['running', 'completed', 'failed', 'cancelled'] })
+      .notNull()
+      .default('running'),
+    result: text('result'),
+    error: text('error'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [
+    index('jobs_parent_session_idx').on(t.parentSessionID),
+    index('jobs_status_idx').on(t.status),
+  ],
+)
 
 // Structured cross-agent findings — typed team memory (server-native capability)
-export const findings = sqliteTable("findings", {
-  id: text("id").primaryKey(),
-  sessionID: text("session_id"),
-  source: text("source", { enum: ["agent", "tool", "user"] }).notNull().default("agent"),
-  severity: text("severity", { enum: ["info", "minor", "major", "critical"] }).notNull().default("info"),
-  title: text("title").notNull(),
-  evidence: text("evidence"),
-  status: text("status", { enum: ["open", "resolved"] }).notNull().default("open"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-  resolvedAt: integer("resolved_at"),
-}, (t) => [
-  index("findings_status_idx").on(t.status),
-  index("findings_session_idx").on(t.sessionID),
-])
+export const findings = sqliteTable(
+  'findings',
+  {
+    id: text('id').primaryKey(),
+    sessionID: text('session_id'),
+    source: text('source', { enum: ['agent', 'tool', 'user'] })
+      .notNull()
+      .default('agent'),
+    severity: text('severity', { enum: ['info', 'minor', 'major', 'critical'] })
+      .notNull()
+      .default('info'),
+    title: text('title').notNull(),
+    evidence: text('evidence'),
+    status: text('status', { enum: ['open', 'resolved'] })
+      .notNull()
+      .default('open'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    resolvedAt: integer('resolved_at'),
+  },
+  (t) => [index('findings_status_idx').on(t.status), index('findings_session_idx').on(t.sessionID)],
+)
 
 // ── Relations (for db.query.*.findMany with: { parts: true }) ──────
 
@@ -147,60 +193,105 @@ export const findingsRelations = relations(findings, ({ one }) => ({
   session: one(sessions, { fields: [findings.sessionID], references: [sessions.id] }),
 }))
 
-export const knowledgeEntries = sqliteTable("knowledge_entries", {
-  id: text("id").primaryKey(),
-  // Legacy columns (kept for backward compat with old DBs)
-  sessionID: text("session_id"),
-  kind: text("kind"),
-  // Rich memory v2 columns (H2-1)
-  tier: text("tier"),
-  source: text("source"),
-  title: text("title"),
-  content: text("content").notNull(),
-  tags: text("tags"),
-  graphLinks: text("graph_links"),
-  embedding: text("embedding"),
-  metadata: text("metadata"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at"),
-  lastAccessedAt: integer("last_accessed_at"),
-  accessCount: integer("access_count"),
-  entities: text("entities"),
-}, (t) => [
-  index("knowledge_entries_session_idx").on(t.sessionID),
-  index("knowledge_entries_kind_idx").on(t.kind),
-  index("knowledge_entries_tier_idx").on(t.tier),
-  index("knowledge_entries_source_idx").on(t.source),
-])
+export const knowledgeEntries = sqliteTable(
+  'knowledge_entries',
+  {
+    id: text('id').primaryKey(),
+    // Legacy columns (kept for backward compat with old DBs)
+    sessionID: text('session_id'),
+    kind: text('kind'),
+    // Rich memory v2 columns (H2-1)
+    tier: text('tier'),
+    source: text('source'),
+    title: text('title'),
+    content: text('content').notNull(),
+    tags: text('tags'),
+    graphLinks: text('graph_links'),
+    embedding: text('embedding'),
+    metadata: text('metadata'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at'),
+    lastAccessedAt: integer('last_accessed_at'),
+    accessCount: integer('access_count'),
+    entities: text('entities'),
+  },
+  (t) => [
+    index('knowledge_entries_session_idx').on(t.sessionID),
+    index('knowledge_entries_kind_idx').on(t.kind),
+    index('knowledge_entries_tier_idx').on(t.tier),
+    index('knowledge_entries_source_idx').on(t.source),
+  ],
+)
 
 // Audit log — queryable DB mirror of file audit log (Risk 2: file-only audit not queryable)
-export const auditEntries = sqliteTable("audit_entries", {
-  id: text("id").primaryKey(),
-  sessionID: text("session_id"),
-  tool: text("tool").notNull(),
-  decision: text("decision", { enum: ["allow", "deny", "warn"] }).notNull(),
-  reason: text("reason"),
-  args: text("args", { mode: "json" }).$type<JsonValue>(),
-  result: text("result", { mode: "json" }).$type<JsonValue>(),
-  createdAt: integer("created_at").notNull(),
-}, (t) => [
-  index("audit_entries_session_idx").on(t.sessionID),
-  index("audit_entries_tool_idx").on(t.tool),
-  index("audit_entries_decision_idx").on(t.decision),
-  index("audit_entries_created_idx").on(t.createdAt),
-])
+export const auditEntries = sqliteTable(
+  'audit_entries',
+  {
+    id: text('id').primaryKey(),
+    sessionID: text('session_id'),
+    tool: text('tool').notNull(),
+    decision: text('decision', { enum: ['allow', 'deny', 'warn'] }).notNull(),
+    reason: text('reason'),
+    args: text('args', { mode: 'json' }).$type<JsonValue>(),
+    result: text('result', { mode: 'json' }).$type<JsonValue>(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    index('audit_entries_session_idx').on(t.sessionID),
+    index('audit_entries_tool_idx').on(t.tool),
+    index('audit_entries_decision_idx').on(t.decision),
+    index('audit_entries_created_idx').on(t.createdAt),
+  ],
+)
 
 // Runtime-issued API keys — persisted via admin routes, loaded on startup
 // P3-1: key_hash + key_prefix for DB-dump protection (keep key for backward compat)
-export const apiKeys = sqliteTable("api_keys", {
-  key: text("key").primaryKey(),
-  keyHash: text("key_hash"),
-  keyPrefix: text("key_prefix"),
-  owner: text("owner").notNull(),
-  createdAt: integer("created_at").notNull(),
-  createdBy: text("created_by").notNull().default("default"),
-}, (t) => [
-  index("api_keys_owner_idx").on(t.owner),
-])
+export const apiKeys = sqliteTable(
+  'api_keys',
+  {
+    key: text('key').primaryKey(),
+    keyHash: text('key_hash'),
+    keyPrefix: text('key_prefix'),
+    owner: text('owner').notNull(),
+    createdAt: integer('created_at').notNull(),
+    createdBy: text('created_by').notNull().default('default'),
+  },
+  (t) => [index('api_keys_owner_idx').on(t.owner)],
+)
 
-export const schema = { sessions, messages, parts, todos, fileSnapshots, jobs, findings, knowledgeEntries, auditEntries, apiKeys, sessionsRelations, messagesRelations, partsRelations, todosRelations, jobsRelations, findingsRelations }
+// Lane B: user identity — one row per authenticated owner (MIRA_TOKEN → "default",
+// MIRA_API_KEYS → the key's owner). Auto-created on first GET /me with name "user";
+// the web onboarding + `mira profile set` personalize it. Lane C injects the name
+// into the system prompt so agents address the user by name.
+export const users = sqliteTable(
+  'users',
+  {
+    id: text('id').primaryKey(),
+    owner: text('owner').notNull().unique(),
+    name: text('name').notNull().default('user'),
+    profile: text('profile', { mode: 'json' }).$type<Record<string, unknown> | null>(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('users_owner_idx').on(t.owner)],
+)
+
+export const schema = {
+  sessions,
+  messages,
+  parts,
+  todos,
+  fileSnapshots,
+  jobs,
+  findings,
+  knowledgeEntries,
+  auditEntries,
+  apiKeys,
+  users,
+  sessionsRelations,
+  messagesRelations,
+  partsRelations,
+  todosRelations,
+  jobsRelations,
+  findingsRelations,
+}
