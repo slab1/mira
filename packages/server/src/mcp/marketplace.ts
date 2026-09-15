@@ -6,15 +6,16 @@
  * tool (tools/mcp_marketplace.ts) search through this module so results stay
  * identical. Remote mcp.so fetch is a future extension — currently offline-only.
  */
-import { existsSync, readFileSync } from "node:fs"
-import { dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export type MarketplaceEntry = {
   name: string
   description: string
-  type: "local" | "remote"
-  command?: string[]
+  type: 'local' | 'remote'
+  command?: string
+  args?: string[]
   url?: string
   env?: Record<string, string>
   headers?: Record<string, string>
@@ -25,7 +26,7 @@ export type MarketplaceEntry = {
 export type MarketplaceResult = MarketplaceEntry & {
   /** mira.json `mcp` section snippet for one-click add */
   config: {
-    type: "local" | "remote"
+    type: 'local' | 'remote'
     command?: string[]
     url?: string
     enabled: boolean
@@ -37,16 +38,99 @@ export type MarketplaceResult = MarketplaceEntry & {
 
 function fallbackRegistry(): MarketplaceEntry[] {
   return [
-    { name: "filesystem", description: "File operations over a sandboxed root — list, read, write, search files", type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"], category: "file", stars: 2100 },
-    { name: "postgres", description: "Postgres read/query — expose tables, run SELECTs", type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-postgres", "postgresql://localhost/mydb"], env: { POSTGRES_CONNECTION_STRING: "{env:POSTGRES_CONNECTION_STRING}" }, category: "database", stars: 1800 },
-    { name: "github", description: "GitHub API — repos, PRs, issues, search", type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-github"], env: { GITHUB_PERSONAL_ACCESS_TOKEN: "{env:GITHUB_PAT}" }, category: "vcs", stars: 2400 },
-    { name: "brave-search", description: "Web search via Brave API", type: "local", command: ["npx", "-y", "@brave/brave-search-mcp-server"], env: { BRAVE_API_KEY: "{env:BRAVE_API_KEY}" }, category: "web", stars: 1200 },
-    { name: "puppeteer", description: "Browser automation via Puppeteer (navigate, click, screenshot)", type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-puppeteer"], category: "browser", stars: 1600 },
-    { name: "slack", description: "Slack workspace — messages, channels, search", type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-slack"], env: { SLACK_BOT_TOKEN: "{env:SLACK_BOT_TOKEN}", SLACK_TEAM_ID: "{env:SLACK_TEAM_ID}" }, category: "collab", stars: 1100 },
-    { name: "memory", description: "Knowledge graph memory — persistent entities/relations", type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-memory"], category: "memory", stars: 1900 },
-    { name: "fetch", description: "Fetch URL content (alternative to webfetch)", type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-fetch"], category: "web", stars: 1400 },
-    { name: "sequential-thinking", description: "Structured reasoning — step-by-step thought chaining", type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-sequential-thinking"], category: "reasoning", stars: 1700 },
-    { name: "firecrawl", description: "Firecrawl web scrape (already wired as example remote MCP)", type: "remote", url: "https://mcp.firecrawl.dev/mcp", category: "web", stars: 2500 },
+    {
+      name: 'filesystem',
+      description: 'File operations over a sandboxed root — list, read, write, search files',
+      type: 'local',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp'],
+      category: 'file',
+      stars: 2100,
+    },
+    {
+      name: 'postgres',
+      description: 'Postgres read/query — expose tables, run SELECTs',
+      type: 'local',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-postgres', 'postgresql://localhost/mydb'],
+      env: { POSTGRES_CONNECTION_STRING: '{env:POSTGRES_CONNECTION_STRING}' },
+      category: 'database',
+      stars: 1800,
+    },
+    {
+      name: 'github',
+      description: 'GitHub API — repos, PRs, issues, search',
+      type: 'local',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-github'],
+      env: { GITHUB_PERSONAL_ACCESS_TOKEN: '{env:GITHUB_PAT}' },
+      category: 'vcs',
+      stars: 2400,
+    },
+    {
+      name: 'brave-search',
+      description: 'Web search via Brave API',
+      type: 'local',
+      command: 'npx',
+      args: ['-y', '@brave/brave-search-mcp-server'],
+      env: { BRAVE_API_KEY: '{env:BRAVE_API_KEY}' },
+      category: 'web',
+      stars: 1200,
+    },
+    {
+      name: 'puppeteer',
+      description: 'Browser automation via Puppeteer (navigate, click, screenshot)',
+      type: 'local',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-puppeteer'],
+      category: 'browser',
+      stars: 1600,
+    },
+    {
+      name: 'slack',
+      description: 'Slack workspace — messages, channels, search',
+      type: 'local',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-slack'],
+      env: { SLACK_BOT_TOKEN: '{env:SLACK_BOT_TOKEN}', SLACK_TEAM_ID: '{env:SLACK_TEAM_ID}' },
+      category: 'collab',
+      stars: 1100,
+    },
+    {
+      name: 'memory',
+      description: 'Knowledge graph memory — persistent entities/relations',
+      type: 'local',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-memory'],
+      category: 'memory',
+      stars: 1900,
+    },
+    {
+      name: 'fetch',
+      description: 'Fetch URL content (alternative to webfetch)',
+      type: 'local',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-fetch'],
+      category: 'web',
+      stars: 1400,
+    },
+    {
+      name: 'sequential-thinking',
+      description: 'Structured reasoning — step-by-step thought chaining',
+      type: 'local',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-sequential-thinking'],
+      category: 'reasoning',
+      stars: 1700,
+    },
+    {
+      name: 'firecrawl',
+      description: 'Firecrawl web scrape (already wired as example remote MCP)',
+      type: 'remote',
+      url: 'https://mcp.firecrawl.dev/mcp',
+      category: 'web',
+      stars: 2500,
+    },
   ]
 }
 
@@ -58,14 +142,14 @@ export function loadMarketplaceRegistry(): MarketplaceEntry[] {
     const here = dirname(fileURLToPath(import.meta.url))
     // Co-located curated list (committed) + legacy data-dir override (gitignored, runtime only)
     const candidates = [
-      join(here, "mcp-registry.json"),
-      join(here, "..", "..", "data", "mcp-registry.json"),
-      join(process.cwd(), "packages", "server", "data", "mcp-registry.json"),
-      join(process.cwd(), "data", "mcp-registry.json"),
+      join(here, 'mcp-registry.json'),
+      join(here, '..', '..', 'data', 'mcp-registry.json'),
+      join(process.cwd(), 'packages', 'server', 'data', 'mcp-registry.json'),
+      join(process.cwd(), 'data', 'mcp-registry.json'),
     ]
     for (const p of candidates) {
       if (existsSync(p)) {
-        const raw = JSON.parse(readFileSync(p, "utf-8")) as MarketplaceEntry[]
+        const raw = JSON.parse(readFileSync(p, 'utf-8')) as MarketplaceEntry[]
         if (Array.isArray(raw) && raw.length > 0) {
           cache = raw
           return cache
@@ -95,10 +179,11 @@ function score(entry: MarketplaceEntry, q: string): number {
 }
 
 export function toMarketplaceResult(e: MarketplaceEntry): MarketplaceResult {
-  const config: MarketplaceResult["config"] =
-    e.type === "local"
-      ? { type: "local", command: e.command, enabled: true, ...(e.env ? { env: e.env } : {}) }
-      : { type: "remote", url: e.url, enabled: true, ...(e.headers ? { headers: e.headers } : {}) }
+  const commandArray = e.command ? [e.command, ...(e.args ?? [])] : undefined
+  const config: MarketplaceResult['config'] =
+    e.type === 'local'
+      ? { type: 'local', command: commandArray, enabled: true, ...(e.env ? { env: e.env } : {}) }
+      : { type: 'remote', url: e.url, enabled: true, ...(e.headers ? { headers: e.headers } : {}) }
   return {
     ...e,
     config,
