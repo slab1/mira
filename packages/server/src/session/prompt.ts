@@ -50,7 +50,7 @@ import { classifyBashArity } from '../permission/index.js'
 // ── Types ──────────────────────────────────────────────────────────
 
 /** One turn-context message fed back into gateway.stream (loop working set). */
-interface LoopMessage {
+export interface LoopMessage {
   role: string
   content: string
   toolCalls?: Array<{ id: string; name: string; args: Record<string, JsonValue> }>

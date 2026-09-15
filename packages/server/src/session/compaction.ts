@@ -11,6 +11,7 @@
 import type { JsonValue } from '../types/index.js'
 import type { GatewayMessage } from '../gateway/index.js'
 import type { Gateway } from '../gateway/index.js'
+import type { LoopMessage } from './prompt.js'
 
 export interface CompactionOptions {
   threshold?: number // 0.8 = compact at 80% of limit
@@ -19,13 +20,8 @@ export interface CompactionOptions {
   contextLimit?: number // tokens
 }
 
-/** Minimal message shape accepted by compaction (superset of GatewayMessage) — mirrors LoopMessage */
-export interface CompactionMessage {
-  role: string
-  content: string
-  toolCalls?: Array<{ id: string; name: string; args: Record<string, JsonValue> }>
-  toolResults?: Array<{ toolCallID: string; name: string; result: JsonValue; isError: boolean }>
-  toolCallID?: string
+/** Minimal message shape accepted by compaction (superset of GatewayMessage) — extends LoopMessage */
+export interface CompactionMessage extends LoopMessage {
   __meta?: { compacted?: true; originalCount?: number }
 }
 
@@ -149,10 +145,15 @@ export async function compactMessages(
   // Build summarization prompt with context boundaries — fallback to extractive if provider unavailable
   let summary: string
   try {
-    summary = await gateway.summarize(
-      head.filter((m) => typeof m.content === 'string') as GatewayMessage[],
-      smallModel,
-    )
+    const gatewayMessages: GatewayMessage[] = head
+      .filter((m) => typeof m.content === 'string')
+      .map((m) => ({
+        role: m.role,
+        content: m.content,
+        toolCallID: m.toolCallID,
+        toolCalls: m.toolCalls?.map((tc) => ({ id: tc.id, name: tc.name })),
+      }))
+    summary = await gateway.summarize(gatewayMessages, smallModel)
   } catch (e) {
     // ProviderError (no key) → extractive fallback so compaction still works offline
     const msg = (e as Error).message ?? ''
@@ -164,9 +165,34 @@ export async function compactMessages(
       const lines: string[] = []
       const firstUser = head.find((m) => m.role === 'user')
       if (firstUser) lines.push(`Original task: ${String(firstUser.content).slice(0, 300)}`)
-      let toolsUsed = 0
-      for (const m of head) if (Array.isArray(m.toolCalls)) toolsUsed += m.toolCalls.length
-      if (toolsUsed) lines.push(`Tool calls in this span: ${toolsUsed}`)
+      const toolCalls: Array<{ name: string; args: Record<string, JsonValue> }> = []
+      const toolResults: Array<{ name: string; isError: boolean }> = []
+      for (const m of head) {
+        if (Array.isArray(m.toolCalls)) {
+          for (const tc of m.toolCalls) {
+            toolCalls.push({ name: tc.name, args: tc.args ?? {} })
+          }
+        }
+        if (Array.isArray(m.toolResults)) {
+          for (const tr of m.toolResults) {
+            toolResults.push({ name: tr.name, isError: tr.isError })
+          }
+        }
+      }
+      if (toolCalls.length) {
+        lines.push(`Tool calls in this span: ${toolCalls.length}`)
+        const toolSummary = toolCalls
+          .slice(0, 10)
+          .map((tc) => `- ${tc.name}(${JSON.stringify(tc.args).slice(0, 100)})`)
+          .join('\n')
+        lines.push(toolSummary)
+      }
+      if (toolResults.length) {
+        const errors = toolResults.filter((tr) => tr.isError).length
+        lines.push(
+          `Tool results in this span: ${toolResults.length}${errors ? ` (${errors} errors)` : ''}`,
+        )
+      }
       const lastAssistant = [...head]
         .reverse()
         .find((m) => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim())
@@ -284,10 +310,15 @@ export async function smartCompact(
     if (head.length > 1) {
       let summary: string
       try {
-        summary = await gateway.summarize(
-          head.filter((m) => typeof m.content === 'string') as GatewayMessage[],
-          opts.smallModel,
-        )
+        const gatewayMessages: GatewayMessage[] = head
+          .filter((m) => typeof m.content === 'string')
+          .map((m) => ({
+            role: m.role,
+            content: m.content,
+            toolCallID: m.toolCallID,
+            toolCalls: m.toolCalls?.map((tc) => ({ id: tc.id, name: tc.name })),
+          }))
+        summary = await gateway.summarize(gatewayMessages, opts.smallModel)
       } catch (e) {
         const msg = (e as Error).message ?? ''
         if (
