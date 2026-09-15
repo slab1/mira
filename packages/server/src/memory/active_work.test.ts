@@ -173,10 +173,10 @@ describe('active_work.md auto-append (P0-2)', () => {
   })
 
   test('prompt.ts hook exists and guards on isError', async () => {
-    const promptPath = join(process.cwd(), 'packages', 'server', 'src', 'session', 'prompt.ts')
-    // When running from packages/server, process.cwd() is /tmp/aether, so try both
-    const altPath = join('/tmp/aether', 'packages', 'server', 'src', 'session', 'prompt.ts')
-    const file = existsSync(promptPath) ? promptPath : altPath
+    // Resolve relative to this test file (import.meta.dir), not process.cwd()
+    // — beforeEach chdir's to a temp dir, and CI checks out elsewhere.
+    const promptPath = join(import.meta.dir, '..', 'session', 'prompt.ts')
+    const file = existsSync(promptPath) ? promptPath : join('/tmp/aether', 'packages', 'server', 'src', 'session', 'prompt.ts')
     const content = readFileSync(file, 'utf-8')
     expect(content).toContain('appendActiveWork')
     expect(content).toContain("tc.name === 'write'")
