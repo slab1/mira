@@ -2,6 +2,7 @@ import { describe, test, expect, mock, beforeEach } from 'bun:test'
 import { Subgateway, SubgatewayError, getSessionCost, getAllSessionCosts } from './subgateway.js'
 import type { MiraConfig } from '../types/index.js'
 import type { StreamOptions, GatewayChunk } from './types.js'
+import { GlobalBus } from '../bus/index.js'
 
 function makeConfig(overrides: Record<string, unknown> = {}): MiraConfig {
   return {
@@ -59,6 +60,10 @@ function makeSubgateway(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Subgateway', () => {
+  beforeEach(() => {
+    GlobalBus.clear()
+  })
+
   test('constructor initializes with lane name', () => {
     const gw = makeSubgateway()
     expect(gw.lane).toBe('default')
@@ -229,6 +234,10 @@ describe('Subgateway', () => {
 })
 
 describe('Per-session cost tracking', () => {
+  beforeEach(() => {
+    GlobalBus.clear()
+  })
+
   test('getSessionCost returns zeroed default for unknown session', () => {
     const cost = getSessionCost('nonexistent-session-id')
     expect(cost.costUSD).toBe(0)
@@ -266,5 +275,88 @@ describe('Per-session cost tracking', () => {
     } finally {
       globalThis.fetch = origFetch
     }
+  })
+
+  test('cost cap perTask enforcement throws and publishes BusEvent', async () => {
+    const gw = makeSubgateway({
+      costCap: { perTask: 0.0001 },
+    })
+    // Force stats to exceed cap by recording usage
+    gw.statsCollector.record('openrouter/anthropic/claude-sonnet-4', 1000, 1000, 100)
+    const origFetch = globalThis.fetch
+    globalThis.fetch = mock(() => Promise.reject(new Error('mock'))) as unknown as typeof fetch
+    try {
+      await expect(
+        gw.stream({
+          model: 'openrouter/anthropic/claude-sonnet-4',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      ).rejects.toThrow(SubgatewayError)
+      const err = await gw
+        .stream({
+          model: 'openrouter/anthropic/claude-sonnet-4',
+          messages: [{ role: 'user', content: 'hi' }],
+        })
+        .catch((e) => e)
+      expect(err).toBeInstanceOf(SubgatewayError)
+      expect((err as SubgatewayError).code).toBe('COST_CAP_EXCEEDED')
+      // Verify BusEvent published
+      const events = GlobalBus.recent(10, 'server.error')
+      expect(events.length).toBeGreaterThan(0)
+      expect(events[0].payload.source).toBe('cost-cap')
+    } finally {
+      globalThis.fetch = origFetch
+    }
+  })
+
+  test('cost cap perSession enforcement throws and publishes BusEvent', async () => {
+    const gw = makeSubgateway({
+      costCap: { perSession: 0.0001 },
+    })
+    const sessionID = 'test-session-cap-' + Date.now()
+    // Manually set session cost to exceed cap
+    const sessionCosts = (await import('./subgateway.js')).getAllSessionCosts()
+    sessionCosts.set(sessionID, {
+      costUSD: 0.001,
+      inputTokens: 1000,
+      outputTokens: 1000,
+      requests: 1,
+    })
+    const origFetch = globalThis.fetch
+    globalThis.fetch = mock(() => Promise.reject(new Error('mock'))) as unknown as typeof fetch
+    try {
+      await expect(
+        gw.stream({
+          model: 'openrouter/anthropic/claude-sonnet-4',
+          messages: [{ role: 'user', content: 'hi' }],
+          sessionID,
+        }),
+      ).rejects.toThrow(SubgatewayError)
+      const err = await gw
+        .stream({
+          model: 'openrouter/anthropic/claude-sonnet-4',
+          messages: [{ role: 'user', content: 'hi' }],
+          sessionID,
+        })
+        .catch((e) => e)
+      expect(err).toBeInstanceOf(SubgatewayError)
+      expect((err as SubgatewayError).code).toBe('COST_CAP_EXCEEDED')
+      const events = GlobalBus.recent(10, 'server.error')
+      expect(events.length).toBeGreaterThan(0)
+      expect(events[0].payload.source).toBe('cost-cap')
+      expect(events[0].sessionID).toBe(sessionID)
+    } finally {
+      globalThis.fetch = origFetch
+    }
+  })
+
+  test('health includes costCap', () => {
+    const gw = makeSubgateway({
+      costCap: { perTask: 1, perSession: 10 },
+    })
+    const h = gw.health()
+    expect(h.costCap).toBeDefined()
+    expect(h.costCap?.perTask).toBe(1)
+    expect(h.costCap?.perSession).toBe(10)
   })
 })

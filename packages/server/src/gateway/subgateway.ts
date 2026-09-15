@@ -20,6 +20,7 @@ import { TokenBucket } from './rate-limiter.js'
 import { SubgatewayStatsCollector } from './stats.js'
 import { CircuitBreaker } from '../providers/circuit-breaker.js'
 import { priceFor } from '../providers/pricing.js'
+import { GlobalBus } from '../bus/index.js'
 
 export class SubgatewayError extends ProviderError {
   lane: string
@@ -119,7 +120,10 @@ async function* trackedStream(
 }
 
 /** Per-session cost tracker — shared across all Subgateway instances */
-const sessionCosts = new Map<string, { costUSD: number; inputTokens: number; outputTokens: number; requests: number }>()
+const sessionCosts = new Map<
+  string,
+  { costUSD: number; inputTokens: number; outputTokens: number; requests: number }
+>()
 
 export function getSessionCost(sessionID: string) {
   return sessionCosts.get(sessionID) ?? { costUSD: 0, inputTokens: 0, outputTokens: 0, requests: 0 }
@@ -222,6 +226,18 @@ export class Subgateway implements Gateway {
     const current = this.statsCollector.snapshot().costUSD
     // Check already-over-cap (per-task)
     if (cap.perTask !== undefined && current > cap.perTask) {
+      GlobalBus.publish({
+        type: 'server.error',
+        sessionID,
+        payload: {
+          error: `Cost cap exceeded on lane "${this.lane}": $${current.toFixed(4)} > $${cap.perTask.toFixed(4)} per-task`,
+          source: 'cost-cap',
+          lane: this.lane,
+          cap: cap.perTask,
+          current,
+        },
+        timestamp: Date.now(),
+      })
       throw new SubgatewayError({
         message: `Cost cap exceeded on lane "${this.lane}": $${current.toFixed(4)} > $${cap.perTask.toFixed(4)} per-task`,
         code: 'COST_CAP_EXCEEDED',
@@ -233,6 +249,18 @@ export class Subgateway implements Gateway {
     if (cap.perSession !== undefined && sessionID) {
       const sess = getSessionCost(sessionID)
       if (sess.costUSD > cap.perSession) {
+        GlobalBus.publish({
+          type: 'server.error',
+          sessionID,
+          payload: {
+            error: `Cost cap exceeded for session: $${sess.costUSD.toFixed(4)} > $${cap.perSession.toFixed(4)} per-session`,
+            source: 'cost-cap',
+            lane: this.lane,
+            cap: cap.perSession,
+            current: sess.costUSD,
+          },
+          timestamp: Date.now(),
+        })
         throw new SubgatewayError({
           message: `Cost cap exceeded for session: $${sess.costUSD.toFixed(4)} > $${cap.perSession.toFixed(4)} per-session`,
           code: 'COST_CAP_EXCEEDED',
@@ -247,6 +275,19 @@ export class Subgateway implements Gateway {
       const estimatedCost =
         (estimatedInputTokens * inputPrice + estimatedOutputTokens * outputPrice) / 1_000_000
       if (cap.perTask !== undefined && current + estimatedCost > cap.perTask) {
+        GlobalBus.publish({
+          type: 'server.error',
+          sessionID,
+          payload: {
+            error: `Cost cap would be exceeded on lane "${this.lane}": $${current.toFixed(4)} + $${estimatedCost.toFixed(4)} > $${cap.perTask.toFixed(4)} per-task (model ${modelID})`,
+            source: 'cost-cap',
+            lane: this.lane,
+            cap: cap.perTask,
+            current,
+            estimatedCost,
+          },
+          timestamp: Date.now(),
+        })
         throw new SubgatewayError({
           message: `Cost cap would be exceeded on lane "${this.lane}": $${current.toFixed(4)} + $${estimatedCost.toFixed(4)} > $${cap.perTask.toFixed(4)} per-task (model ${modelID})`,
           code: 'COST_CAP_EXCEEDED',
@@ -257,6 +298,19 @@ export class Subgateway implements Gateway {
       if (cap.perSession !== undefined && sessionID) {
         const sess = getSessionCost(sessionID)
         if (sess.costUSD + estimatedCost > cap.perSession) {
+          GlobalBus.publish({
+            type: 'server.error',
+            sessionID,
+            payload: {
+              error: `Cost cap would be exceeded for session: $${sess.costUSD.toFixed(4)} + $${estimatedCost.toFixed(4)} > $${cap.perSession.toFixed(4)} per-session (model ${modelID})`,
+              source: 'cost-cap',
+              lane: this.lane,
+              cap: cap.perSession,
+              current: sess.costUSD,
+              estimatedCost,
+            },
+            timestamp: Date.now(),
+          })
           throw new SubgatewayError({
             message: `Cost cap would be exceeded for session: $${sess.costUSD.toFixed(4)} + $${estimatedCost.toFixed(4)} > $${cap.perSession.toFixed(4)} per-session (model ${modelID})`,
             code: 'COST_CAP_EXCEEDED',
@@ -383,9 +437,13 @@ export class Subgateway implements Gateway {
               // Per-session cost tracking
               if (opts.sessionID) {
                 const [inputPrice, outputPrice] = priceFor(cand.modelID)
-                const cost =
-                  (usage.input * inputPrice + usage.output * outputPrice) / 1_000_000
-                const sess = sessionCosts.get(opts.sessionID) ?? { costUSD: 0, inputTokens: 0, outputTokens: 0, requests: 0 }
+                const cost = (usage.input * inputPrice + usage.output * outputPrice) / 1_000_000
+                const sess = sessionCosts.get(opts.sessionID) ?? {
+                  costUSD: 0,
+                  inputTokens: 0,
+                  outputTokens: 0,
+                  requests: 0,
+                }
                 sess.costUSD += cost
                 sess.inputTokens += usage.input
                 sess.outputTokens += usage.output
@@ -396,9 +454,18 @@ export class Subgateway implements Gateway {
               if (cap?.perTask !== undefined) {
                 const cur = this.statsCollector.snapshot().costUSD
                 if (cur > cap.perTask) {
-                  console.warn(
-                    `[subgateway:${this.lane}] cost cap exceeded $${cur.toFixed(4)} > $${cap.perTask.toFixed(4)}`,
-                  )
+                  GlobalBus.publish({
+                    type: 'server.error',
+                    sessionID: opts.sessionID,
+                    payload: {
+                      error: `Cost cap exceeded on lane "${this.lane}": $${cur.toFixed(4)} > $${cap.perTask.toFixed(4)} per-task`,
+                      source: 'cost-cap',
+                      lane: this.lane,
+                      cap: cap.perTask,
+                      current: cur,
+                    },
+                    timestamp: Date.now(),
+                  })
                 }
               }
             })
@@ -768,15 +835,23 @@ export class Subgateway implements Gateway {
     return this.statsCollector.snapshot()
   }
 
-  health(): { lane: string; circuit: CircuitState; failureCount: number; stats: GatewayStats } {
+  health(): {
+    lane: string
+    circuit: CircuitState
+    failureCount: number
+    stats: GatewayStats
+    costCap?: { perTask?: number; perSession?: number }
+  } {
     const state = this.breaker.getState()
     const circuit: CircuitState =
       state === 'CLOSED' ? 'closed' : state === 'OPEN' ? 'open' : 'half-open'
+    const cap = this.subConfig.costCap ?? readGlobalCostCap(this.globalConfig)
     return {
       lane: this.lane,
       circuit,
       failureCount: this.breaker.getFailureCount(),
       stats: this.stats(),
+      costCap: cap,
     }
   }
 
