@@ -3,28 +3,37 @@ import { describe, test, beforeAll, afterAll, expect } from 'bun:test'
 
 const PORT = 4790
 const BASE = `http://localhost:${PORT}`
-const TOKEN = "test-queue-token"
+const TOKEN = 'test-queue-token'
 const AUTH = { Authorization: `Bearer ${TOKEN}` }
 let serverProc: ReturnType<typeof Bun.spawn> | null = null
 
 beforeAll(async () => {
-  const { resolveBunBinary, safeTempFile } = await import("../../shared/src/utils/paths.js")
+  const { resolveBunBinary, safeTempFile } = await import('../../shared/src/utils/paths.js')
   const BUN_BIN = resolveBunBinary()
-  const { MIRA_TOKEN: _mt, MIRA_API_KEYS: _mak, ...cleanEnv } = process.env as Record<string, string | undefined>
+  const {
+    MIRA_TOKEN: _mt,
+    MIRA_API_KEYS: _mak,
+    ...cleanEnv
+  } = process.env as Record<string, string | undefined>
   serverProc = Bun.spawn([BUN_BIN, 'src/index.ts'], {
     cwd: import.meta.dir + '/..',
-    env: { ...cleanEnv, PORT: String(PORT), MIRA_DB: safeTempFile('mira-e2e-queue.db'), MIRA_TOKEN: TOKEN },
+    env: {
+      ...cleanEnv,
+      PORT: String(PORT),
+      MIRA_DB: safeTempFile('mira-e2e-queue.db'),
+      MIRA_TOKEN: TOKEN,
+    },
     stdout: 'pipe',
     stderr: 'pipe',
   })
-  const deadline = Date.now() + 15_000
+  const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
     try {
       if ((await fetch(`${BASE}/healthz`)).ok) break
     } catch {}
     await Bun.sleep(250)
   }
-}, 30_000) // server boot here is slow (~9s); exceed bun's 5s default hook timeout
+}, 45_000) // server boot here is slow (~14s in sandbox); exceed bun's 5s default hook timeout
 afterAll(() => serverProc?.kill())
 
 describe('message queue', () => {
@@ -51,10 +60,9 @@ describe('message queue', () => {
       headers: { 'Content-Type': 'application/json', ...AUTH },
       body: JSON.stringify({ prompt: 'second queued' }),
     })
-    expect(await (await fetch(`${BASE}/session/${session.id}/queue`, { headers: AUTH })).json()).toEqual([
-      'first queued',
-      'second queued',
-    ])
+    expect(
+      await (await fetch(`${BASE}/session/${session.id}/queue`, { headers: AUTH })).json(),
+    ).toEqual(['first queued', 'second queued'])
 
     // Start a real turn — with real gateway may error if no key, else drains queue
     const promptRes = await fetch(`${BASE}/session/${session.id}/prompt`, {
@@ -85,7 +93,9 @@ describe('message queue', () => {
 
     // If drained, chained turn persisted its own user+assistant messages
     if (!promptHadError) {
-      const msgs = (await (await fetch(`${BASE}/session/${session.id}/message`, { headers: AUTH })).json()) as Array<{
+      const msgs = (await (
+        await fetch(`${BASE}/session/${session.id}/message`, { headers: AUTH })
+      ).json()) as Array<{
         role?: string
         parts?: Array<{ type?: string; text?: string }>
       }>

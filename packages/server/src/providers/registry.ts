@@ -16,7 +16,14 @@ import {
   type ProviderHealth,
   type RouteResult,
 } from './types.js'
-import { expandEnv, expandEnvArray, expandHeaders, KeyRing, exponentialBackoff, classifyError } from './auth.js'
+import {
+  expandEnv,
+  expandEnvArray,
+  expandHeaders,
+  KeyRing,
+  exponentialBackoff,
+  classifyError,
+} from './auth.js'
 import { priceFor } from './pricing.js'
 import { RateLimiter } from './rate-limiter.js'
 import { CircuitBreaker, createCircuitBreaker } from './circuit-breaker.js'
@@ -57,7 +64,14 @@ export interface RegistryOptions {
   fallbacks?: string[]
   defaultProvider?: string
   /** Optional OTel-compatible tracing callback */
-  onTrace?: (event: { type: string; provider: string; model: string; latencyMs: number; costUSD: number; error?: string }) => void
+  onTrace?: (event: {
+    type: string
+    provider: string
+    model: string
+    latencyMs: number
+    costUSD: number
+    error?: string
+  }) => void
   /** Optional rate limiter (per-identity token bucket) */
   rateLimiter?: RateLimiter
 }
@@ -95,6 +109,7 @@ export class ProviderRegistry {
   /** Longest-prefix resolution: "openrouter/anthropic/claude-sonnet-4" → provider openrouter, model "anthropic/claude-sonnet-4" */
   resolve(modelStr: string): ResolvedProvider {
     const expanded = this.expandAlias(modelStr)
+    const expandedLower = expanded.toLowerCase()
 
     // Sort provider keys by length descending for longest-prefix match
     const sortedKeys = [...this.providers.keys()].sort((a, b) => b.length - a.length)
@@ -103,12 +118,13 @@ export class ProviderRegistry {
     let modelID = expanded
 
     for (const key of sortedKeys) {
-      if (expanded === key) {
+      const keyLower = key.toLowerCase()
+      if (expandedLower === keyLower) {
         providerKey = key
         modelID = expanded
         break
       }
-      if (expanded.startsWith(key + '/')) {
+      if (expandedLower.startsWith(keyLower + '/')) {
         providerKey = key
         modelID = expanded.slice(key.length + 1)
         break
@@ -308,7 +324,8 @@ export class ProviderRegistry {
         return result
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err))
-        const error = err instanceof ProviderError ? err : new ProviderError({ message: String(err) })
+        const error =
+          err instanceof ProviderError ? err : new ProviderError({ message: String(err) })
 
         // Only retry on retryable errors — 400/401/404 should NOT retry
         if (!ProviderRegistry.shouldFallback(error)) {
@@ -415,7 +432,12 @@ export class ProviderRegistry {
   getHealth(providerKey: string): ProviderHealth {
     const breaker = createCircuitBreaker(providerKey)
     const state = breaker.getState()
-    const status = state === 'OPEN' ? 'down' as const : state === 'HALF_OPEN' ? 'degraded' as const : 'healthy' as const
+    const status =
+      state === 'OPEN'
+        ? ('down' as const)
+        : state === 'HALF_OPEN'
+          ? ('degraded' as const)
+          : ('healthy' as const)
     return {
       providerKey,
       state,
@@ -576,8 +598,6 @@ export class ProviderRegistry {
       return caps ? caps.includes(capability) : false
     })
   }
-
-
 
   /** Emit a trace event if onTrace callback is configured */
   private emitTrace(

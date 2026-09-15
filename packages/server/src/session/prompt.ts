@@ -366,11 +366,13 @@ export class SessionPrompt {
       agent: input.agent ?? null,
       sessionModel: 'openrouter/anthropic/claude-sonnet-4',
     })
+    // Derive the provider from the resolved model prefix ("google/gemini-2.0-flash" → "google")
+    const provider = effectiveModel.includes('/') ? effectiveModel.split('/')[0] : 'openrouter'
     const session = {
       id,
       title: input.title ?? (input.agent ? `${input.agent} session` : 'New Session'),
       model: effectiveModel,
-      provider: 'openrouter',
+      provider,
       createdAt: now,
       updatedAt: now,
       parentID: input.parentID,

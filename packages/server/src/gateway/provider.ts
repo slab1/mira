@@ -14,11 +14,17 @@ export { expandEnv, expandEnvArray, expandHeaders } from '../providers/auth.js'
 /**
  * Build a ProviderRegistry from MiraConfig.
  * Mirrors the logic previously in gateway/index.ts buildRegistry.
+ *
+ * Provider keys are normalized to lowercase and merged case-insensitively:
+ * "Nvidia" + "nvidia" → single "nvidia" entry (the one with an apiKey wins).
+ * This prevents case-duplicate providers from shadowing configured keys
+ * during longest-prefix model resolution.
  */
 export function buildRegistry(config: MiraConfig): ProviderRegistry {
   const providerMap: Record<string, ProviderConfig> = {}
   for (const [k, v] of Object.entries(config.provider ?? {})) {
-    providerMap[k] = {
+    const key = k.toLowerCase()
+    const entry: ProviderConfig = {
       npm: v.npm,
       name: v.name,
       options: {
@@ -29,6 +35,25 @@ export function buildRegistry(config: MiraConfig): ProviderRegistry {
         kind: (v.options as { kind?: string }).kind,
       },
       models: v.models ?? {},
+    }
+    const existing = providerMap[key]
+    if (!existing) {
+      providerMap[key] = entry
+      continue
+    }
+    // Case-duplicate: prefer the entry that actually has an apiKey configured.
+    const existingKey = existing.options.apiKey
+    const entryKey = entry.options.apiKey
+    const existingHasKey = Array.isArray(existingKey) ? existingKey.length > 0 : !!existingKey
+    const entryHasKey = Array.isArray(entryKey) ? entryKey.length > 0 : !!entryKey
+    if (entryHasKey && !existingHasKey) {
+      providerMap[key] = entry
+    } else if (entryHasKey && existingHasKey) {
+      // Both have keys — keep the first, but merge any models the second adds.
+      providerMap[key] = {
+        ...existing,
+        models: { ...(existing.models ?? {}), ...(entry.models ?? {}) },
+      }
     }
   }
   const routing = (

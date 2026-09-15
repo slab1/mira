@@ -387,6 +387,12 @@ function mergePartialMiraConfig(
         v as PartialMiraConfig,
       ) as never
     } else {
+      // Redaction sentinel: the web/TUI clients round-trip masked keys as
+      // "***". Never let that clobber a real key (or {env:VAR} reference)
+      // already stored — keep the existing value instead.
+      if (k === 'apiKey' && v === '***' && prev !== undefined && prev !== '') {
+        continue
+      }
       out[k as keyof PartialMiraConfig] = v as never
     }
   }
