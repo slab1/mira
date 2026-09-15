@@ -1132,6 +1132,39 @@ export class SessionPrompt {
         }
         if (isError) toolErrorCount++
 
+        // Doom-loop detection for repeated errors
+        if (isError) {
+          const errSignal = this.getDoomDetector(sessionID).checkError(tc.name, result)
+          if (errSignal.detected) {
+            const msg = `Doom-loop detected: ${errSignal.reason ?? 'repeating error'} — tool "${tc.name}". Breaking loop and asking user.`
+            send('doom_loop', {
+              tool: tc.name,
+              args: tc.args,
+              step,
+              reason: errSignal.reason,
+            })
+            this.deps.bus.publish({
+              type: 'server.error',
+              sessionID,
+              payload: {
+                error: msg,
+                source: 'doom-loop',
+                tool: tc.name,
+              } as JsonValue,
+              timestamp: Date.now(),
+            })
+            await this.persistToolResult(assistantMessageID, sessionID, tc, { error: msg }, true)
+            doomLoopCount++
+            accumulatedText += `\n\n[System: ${msg}]\n`
+            messages.push({ role: 'assistant', content: accumulatedText })
+            messages.push({
+              role: 'user',
+              content: `[Doom-loop guard: ${msg} — please clarify or adjust.]`,
+            })
+            break
+          }
+        }
+
         // P0-2: auto-append successful write/edit/finding_write to active_work.md (non-blocking, never throws)
         if (
           !isError &&
@@ -1179,6 +1212,34 @@ export class SessionPrompt {
           payload: { tool: tc.name, toolCallID: tc.id, result },
           timestamp: Date.now(),
         })
+      }
+
+      // Doom-loop detection for repeated LLM outputs
+      const llmSignal = this.getDoomDetector(sessionID).checkLLMOutput(stepText)
+      if (llmSignal.detected) {
+        const msg = `Doom-loop detected: ${llmSignal.reason ?? 'repeating LLM output'} — breaking loop and asking user.`
+        send('doom_loop', {
+          step,
+          reason: llmSignal.reason,
+        })
+        this.deps.bus.publish({
+          type: 'server.error',
+          sessionID,
+          payload: {
+            error: msg,
+            source: 'doom-loop',
+            tool: 'llm-output',
+          } as JsonValue,
+          timestamp: Date.now(),
+        })
+        doomLoopCount++
+        accumulatedText += `\n\n[System: ${msg}]\n`
+        messages.push({ role: 'assistant', content: accumulatedText })
+        messages.push({
+          role: 'user',
+          content: `[Doom-loop guard: ${msg} — please clarify or adjust.]`,
+        })
+        break
       }
 
       // ── finish-step: append tool results to context for next iteration ──
