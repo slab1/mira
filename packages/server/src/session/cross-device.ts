@@ -74,6 +74,13 @@ interface ExportEnvelope {
     priority: string
     createdAt: number
   }>
+  snapshots: Array<{
+    id: string
+    path: string
+    messageID: string | null
+    content: string | null
+    createdAt: number
+  }>
 }
 
 /**
@@ -118,6 +125,12 @@ export async function autoExportSession(
     where: (t, { eq }) => eq(t.sessionID, sessionID),
   })
 
+  // Fetch snapshots
+  const snapshots = await db.query.fileSnapshots.findMany({
+    where: (s, { eq }) => eq(s.sessionID, sessionID),
+    orderBy: (s, { asc }) => [asc(s.createdAt)],
+  })
+
   const envelope: ExportEnvelope = {
     version: 1,
     exportedAt: new Date().toISOString(),
@@ -160,10 +173,19 @@ export async function autoExportSession(
       priority: t.priority,
       createdAt: t.createdAt,
     })),
+    snapshots: snapshots.map((s) => ({
+      id: s.id,
+      path: s.path,
+      messageID: s.messageID,
+      content: s.content,
+      createdAt: s.createdAt,
+    })),
   }
 
   await writeFile(filePath, JSON.stringify(envelope, null, 2), 'utf-8')
-  log(`cross-device: exported session ${sessionID} (${messages.length} messages, ${todos.length} todos) → ${filePath}`)
+  log(
+    `cross-device: exported session ${sessionID} (${messages.length} messages, ${todos.length} todos, ${snapshots.length} snapshots) → ${filePath}`,
+  )
   return true
 }
 
@@ -174,10 +196,7 @@ export async function autoExportSession(
  * Uses the ORIGINAL session ID (true restore, not a copy).
  * @returns number of sessions imported
  */
-export async function autoImportSessions(
-  db: MiraDB,
-  exportDir?: string,
-): Promise<number> {
+export async function autoImportSessions(db: MiraDB, exportDir?: string): Promise<number> {
   const dir = exportDir ?? getExportDir()
   await ensureExportDir(dir)
 
@@ -247,7 +266,10 @@ export async function autoImportSessions(
               text: p.text,
               tool: p.tool,
               toolCallID: p.toolCallID,
-              args: (typeof p.args === "object" && p.args !== null ? p.args : null) as Record<string, JsonValue> | null,
+              args: (typeof p.args === 'object' && p.args !== null ? p.args : null) as Record<
+                string,
+                JsonValue
+              > | null,
               result: p.result,
               isError: p.isError,
               createdAt: p.createdAt,
@@ -277,8 +299,28 @@ export async function autoImportSessions(
         }
       }
 
+      // Insert snapshots with ORIGINAL ids
+      let copiedSnapshots = 0
+      for (const s of envelope.snapshots ?? []) {
+        try {
+          await db.insert(db.schema.fileSnapshots).values({
+            id: s.id,
+            sessionID,
+            messageID: s.messageID,
+            path: s.path,
+            content: s.content,
+            createdAt: s.createdAt,
+          })
+          copiedSnapshots++
+        } catch {
+          /* skip malformed snapshot */
+        }
+      }
+
       imported++
-      log(`cross-device: imported session ${sessionID} "${envelope.session.title}" (${copiedMessages} msgs, ${copiedParts} parts, ${copiedTodos} todos)`)
+      log(
+        `cross-device: imported session ${sessionID} "${envelope.session.title}" (${copiedMessages} msgs, ${copiedParts} parts, ${copiedTodos} todos, ${copiedSnapshots} snapshots)`,
+      )
     } catch (e) {
       warn(`cross-device: failed to import ${file}:`, String(e))
     }

@@ -68,6 +68,15 @@ const exportTodoSchema = z
   })
   .passthrough()
 
+const exportSnapshotSchema = z
+  .object({
+    path: z.string(),
+    messageID: z.string().nullable().optional(),
+    content: z.string().nullable().optional(),
+    createdAt: z.number().nullable().optional(),
+  })
+  .passthrough()
+
 const sessionImportSchema = z
   .object({
     // New envelope marker. Absent (or the legacy "0.1.0" string) = legacy body.
@@ -85,6 +94,7 @@ const sessionImportSchema = z
       .optional(),
     messages: z.array(exportMessageSchema).optional(),
     todos: z.array(exportTodoSchema).optional(),
+    snapshots: z.array(exportSnapshotSchema).optional(),
     // Legacy top-level aliases (pre-envelope import bodies)
     title: z.string().max(200).nullable().optional(),
     model: z.string().min(1).nullable().optional(),
@@ -247,7 +257,18 @@ export function mountSessionRoutes(
     }
     const messages = await prompt.getMessages(id)
     const todos = await prompt.getTodos(id)
-    return c.json({ version: 1, exportedAt: new Date().toISOString(), session, messages, todos })
+    const snapshots = await db.query.fileSnapshots.findMany({
+      where: (s, { eq }) => eq(s.sessionID, id),
+      orderBy: (s, { asc }) => [asc(s.createdAt)],
+    })
+    return c.json({
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      session,
+      messages,
+      todos,
+      snapshots,
+    })
   })
   app.post('/session/import', async (c: Context) => {
     const raw = await c.req.json().catch(() => null)
@@ -339,6 +360,22 @@ export function mountSessionRoutes(
       })
       copiedTodos++
     }
+    let copiedSnapshots = 0
+    for (const s of body.snapshots ?? []) {
+      try {
+        await db.insert(db.schema.fileSnapshots).values({
+          id: crypto.randomUUID(),
+          sessionID: created.id,
+          messageID: s.messageID ?? null,
+          path: s.path,
+          content: s.content ?? null,
+          createdAt: s.createdAt ?? Date.now(),
+        })
+        copiedSnapshots++
+      } catch {
+        /* skip malformed snapshot */
+      }
+    }
     deps.sessionOwnerCache.set(created.id, {
       owner: (created as { ownerID?: string | null }).ownerID ?? owner,
       ts: Date.now(),
@@ -352,11 +389,19 @@ export function mountSessionRoutes(
         copiedMessages,
         copiedParts,
         copiedTodos,
+        copiedSnapshots,
       } as JsonValue,
       timestamp: Date.now(),
     })
     return c.json(
-      { id: created.id, session: created, copiedMessages, copiedParts, copiedTodos },
+      {
+        id: created.id,
+        session: created,
+        copiedMessages,
+        copiedParts,
+        copiedTodos,
+        copiedSnapshots,
+      },
       201,
     )
   })
