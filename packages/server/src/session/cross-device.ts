@@ -15,6 +15,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import type { MiraDB } from '../storage/db.js'
+import type { JsonValue } from '../types/index.js'
 import { eq } from 'drizzle-orm'
 import { log, warn } from '../util/logger.js'
 
@@ -60,8 +61,8 @@ interface ExportEnvelope {
       text: string | null
       tool: string | null
       toolCallID: string | null
-      args: unknown
-      result: unknown
+      args: JsonValue | null
+      result: JsonValue
       isError: boolean | null
       createdAt: number
     }>
@@ -246,8 +247,8 @@ export async function autoImportSessions(
               text: p.text,
               tool: p.tool,
               toolCallID: p.toolCallID,
-              args: p.args as Record<string, unknown> | null,
-              result: p.result as unknown,
+              args: (typeof p.args === "object" && p.args !== null ? p.args : null) as Record<string, JsonValue> | null,
+              result: p.result,
               isError: p.isError,
               createdAt: p.createdAt,
             })

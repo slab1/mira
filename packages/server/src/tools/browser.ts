@@ -19,7 +19,7 @@ type Page = Awaited<ReturnType<Browser["newPage"]>>
 
 let _pw: PW | null = null
 let _browser: Browser | null = null
-let _launching: Promise<Browser> | null = null
+let _launching: Promise<Browser | null> | null = null
 
 async function getPlaywright(): Promise<PW | null> {
   if (_pw) return _pw
@@ -71,8 +71,8 @@ const browserSchema = z.object({
   url: z.string().url().optional().describe("URL for navigate/fetch"),
   selector: z.string().max(500).optional().describe("CSS selector for click/type/scroll"),
   text: z.string().max(5000).optional().describe("Text to type (for type action)"),
-  direction: z.enum(["up", "down", "left", "right"]).default("down").describe("Scroll direction (default: down)"),
-  amount: z.number().int().min(1).max(10000).default(500).describe("Scroll amount in pixels (default: 500)"),
+  direction: z.enum(["up", "down", "left", "right"]).optional().describe("Scroll direction (default: down)"),
+  amount: z.number().int().min(1).max(10000).optional().describe("Scroll amount in pixels (default: 500)"),
   maxChars: z.number().int().min(100).max(100000).optional().describe("Max chars for fetch (default 15000)"),
 }).superRefine((v, ctx) => {
   if ((v.action === "navigate" || v.action === "fetch") && !v.url) {
@@ -181,29 +181,6 @@ async function nativeFetch(url: string, maxChars: number): Promise<JsonValue> {
   return { url, content: text, truncated, via: "fetch" } as JsonValue
 }
 
-async function pwClick(selector: string): Promise<JsonValue> {
-  const page = await getPage()
-  if (!page) return { error: "Playwright chromium not available", via: "click", selector }
-
-  try {
-    await page.goto("about:blank")
-    // For click, the page must already have content. We use page.evaluate to click
-    // or page.locator.click. Since we don't have a pre-loaded page, we need a URL context.
-    // The tool receives a click instruction, but we need a URL to navigate to first.
-    // Return an honest error about the workflow.
-    return {
-      error: "click requires a page URL to navigate to first. Use navigate + click in sequence, or provide a URL.",
-      selector,
-      via: "playwright",
-      note: "Playwright click works on a loaded page. Call navigate first, then click on the same page.",
-    } as JsonValue
-  } catch (err) {
-    return { ...formatError(err), via: "click", selector }
-  } finally {
-    await page.close().catch(() => {})
-  }
-}
-
 // ── Persistent page for multi-step interactions ────────────────────
 
 let _activePage: Page | null = null
@@ -261,29 +238,29 @@ async function pwScreenshotWithUrl(url: string, selector?: string): Promise<Json
       await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 })
     }
 
-    const opts: Record<string, JsonValue> = { type: "png", encoding: "base64" }
+    const opts = { type: "png" as const, encoding: "base64" as const }
     if (selector) {
       const element = await page.$(selector)
       if (!element) {
         return { error: `Element not found for selector: ${selector}`, code: "NO_SUCH_ELEMENT", via: "screenshot" }
       }
-      const buffer = await element.screenshot(opts) as unknown as Buffer
+      const buf = await element.screenshot(opts)
       return {
         success: true,
         action: "screenshot",
         selector,
         url: page.url(),
-        base64: buffer.toString("base64"),
+        base64: Buffer.from(buf).toString("base64"),
         via: "playwright",
       } as JsonValue
     }
 
-    const buffer = await page.screenshot(opts) as unknown as Buffer
+    const buf = await page.screenshot(opts)
     return {
       success: true,
       action: "screenshot",
       url: page.url(),
-      base64: buffer.toString("base64"),
+      base64: Buffer.from(buf).toString("base64"),
       via: "playwright",
     } as JsonValue
   } catch (err) {

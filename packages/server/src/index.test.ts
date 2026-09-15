@@ -23,13 +23,15 @@ import { mountSessionExtrasRoutes } from './routes/session-extras.js'
 // Each call to stream() yields one identical tool call.
 // The doom-loop detector accumulates across steps and fires on the 3rd.
 const doomLoopGateway: Gateway = {
-  async *stream(_opts: StreamOptions): AsyncGenerator<GatewayChunk> {
-    yield { type: 'tool-call', toolCall: { id: crypto.randomUUID(), name: 'bash', args: { command: 'ls' } } }
-    yield {
-      type: 'finish',
-      finishReason: 'tool-calls',
-      usage: { inputTokens: 10, outputTokens: 5 },
-    }
+  async stream(_opts: StreamOptions): Promise<AsyncIterable<GatewayChunk>> {
+    return (async function* () {
+      yield { type: 'tool-call', toolCall: { id: crypto.randomUUID(), name: 'bash', args: { command: 'ls' } } }
+      yield {
+        type: 'finish',
+        finishReason: 'tool-calls',
+        usage: { inputTokens: 10, outputTokens: 5 },
+      }
+    })()
   },
   complete: async () => ({ text: '' }),
   summarize: async () => '',
@@ -256,22 +258,24 @@ describe('doom-loop detection E2E', () => {
     let callIndex = 0
     const commands = ['echo hello', 'cat file.txt', 'grep pattern src/', 'wc -l README.md']
     const safeGateway: Gateway = {
-      async *stream(_opts: StreamOptions): AsyncGenerator<GatewayChunk> {
-        const cmd = commands[callIndex % commands.length]
-        callIndex++
-        yield {
-          type: 'tool-call',
-          toolCall: {
-            id: crypto.randomUUID(),
-            name: 'bash',
-            args: { command: cmd },
-          },
-        }
-        yield {
-          type: 'finish',
-          finishReason: 'tool-calls',
-          usage: { inputTokens: 10, outputTokens: 5 },
-        }
+      async stream(_opts: StreamOptions): Promise<AsyncIterable<GatewayChunk>> {
+        return (async function* () {
+          const cmd = commands[callIndex % commands.length]
+          callIndex++
+          yield {
+            type: 'tool-call',
+            toolCall: {
+              id: crypto.randomUUID(),
+              name: 'bash',
+              args: { command: cmd },
+            },
+          }
+          yield {
+            type: 'finish',
+            finishReason: 'tool-calls',
+            usage: { inputTokens: 10, outputTokens: 5 },
+          }
+        })()
       },
       complete: async () => ({ text: '' }),
       summarize: async () => '',
