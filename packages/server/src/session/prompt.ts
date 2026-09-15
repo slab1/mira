@@ -208,6 +208,7 @@ export function resolveEffectiveModel(input: {
   explicitModel?: string
   agent?: string | null
   sessionModel?: string
+  task?: 'summarize' | 'stream' | 'complete' | 'vision'
 }): string {
   // Precedence: explicit > agent.template.model > autoModel tier > session default > global default
   const candidate = ((): string => {
@@ -222,7 +223,19 @@ export function resolveEffectiveModel(input: {
         smallModel?: string
       }
       if (cfg.autoModel?.enabled) {
-        return tierModel(cfg.autoModel.tier, cfg.smallModel)
+        // Auto-model routing by task type
+        let tier = cfg.autoModel.tier
+        if (input.task) {
+          if (input.task === 'summarize' || input.task === 'complete') {
+            tier = 'cheap'
+          } else if (input.task === 'vision') {
+            tier = 'max'
+          } else if (input.task === 'stream') {
+            // keep configured tier or default to balanced
+            tier = tier ?? 'balanced'
+          }
+        }
+        return tierModel(tier, cfg.smallModel)
       }
     } catch {}
     if (input.sessionModel) return input.sessionModel
@@ -541,6 +554,7 @@ export class SessionPrompt {
         explicitModel: opts.model,
         agent: agent ?? null,
         sessionModel: undefined,
+        task: 'stream',
       }) || undefined
     // Inherit cwd/projectId from parent for workspace-aware subagents
     let parentCwd: string | undefined
@@ -627,6 +641,7 @@ export class SessionPrompt {
       explicitModel: modelOverride,
       agent: effectiveAgent,
       sessionModel: session.model,
+      task: 'stream',
     })
     const basePrompt = await buildSystemPrompt(
       session.cwd ?? process.cwd(),

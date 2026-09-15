@@ -74,6 +74,23 @@ export function mountHealthRoutes(
       uptime: process.uptime(),
     }),
   )
+  app.get('/dev/cost', (c) => {
+    const stats = deps.gateway.stats()
+    const costCap = (deps.config as any).costCap
+    return c.json({
+      ok: true,
+      gateway: {
+        costUSD: stats.costUSD,
+        requests: stats.requests,
+        inputTokens: stats.inputTokens,
+        outputTokens: stats.outputTokens,
+        byModel: stats.byModel,
+      },
+      costCap,
+      activeSessions: deps.metrics.activeSessions,
+      timestamp: Date.now(),
+    })
+  })
   app.get('/metrics', async (c) => {
     const gatewayStats = deps.gateway.stats() as { costUSD: number }
     const cost = gatewayStats.costUSD
