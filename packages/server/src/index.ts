@@ -55,6 +55,7 @@ import { mountSymbolRoutes } from './routes/symbol.js'
 import { mountStaticRoutes } from './routes/static.js'
 import { mountMiddleware } from './middleware/index.js'
 import { boundSend, WS_CLOSE_TOO_SLOW } from './ws-backpressure.js'
+import { autoImportSessions, exportAllSessions } from './session/cross-device.js'
 import { log, warn, error } from './util/logger.js'
 
 type PartialMiraConfig = Partial<MiraConfig>
@@ -378,6 +379,14 @@ async function main() {
     }
   } catch (e) {
     warn('memory_bank init failed:', String(e))
+  }
+
+  // Cross-device resume: import any sessions from ~/.mira/exports/ not already in DB
+  try {
+    const imported = await autoImportSessions(db)
+    if (imported) log(`cross-device: imported ${imported} session(s) on startup`)
+  } catch (e) {
+    warn('cross-device import failed:', String(e))
   }
 
   // Load runtime-issued API keys from db
@@ -1016,6 +1025,9 @@ async function main() {
     try {
       const { shutdownAllServers } = await import('./lsp/client.js')
       await shutdownAllServers().catch(() => {})
+    } catch {}
+    try {
+      await exportAllSessions(db)
     } catch {}
     try {
       db.sqlite?.close?.()

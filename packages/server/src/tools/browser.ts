@@ -1,20 +1,78 @@
 /**
- * Tool: browser — Kilo K6 Browser Automation (Puppeteer optional, fetch fallback)
+ * Tool: browser — Playwright-based browser automation with fetch fallback
  *
- * Provides: navigate / fetch / click / type / screenshot
- * - If puppeteer is installed (optional dep), uses real browser
- * - Otherwise falls back to fetch + honest stub (no silent fake)
+ * Provides: navigate / fetch / click / type / screenshot / scroll
+ * - Uses Playwright chromium for real browser automation
+ * - Lazy-initialized shared browser instance (not per-call)
+ * - Falls back to native fetch for simple navigate/fetch when Playwright unavailable
  * All actions return JsonValue, never any/unknown.
  */
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 import type { JsonValue } from "../types/index.js"
 
+// ── Playwright lazy singleton ──────────────────────────────────────
+
+type PW = typeof import("playwright")
+type Browser = Awaited<ReturnType<PW["chromium"]["launch"]>>
+type Page = Awaited<ReturnType<Browser["newPage"]>>
+
+let _pw: PW | null = null
+let _browser: Browser | null = null
+let _launching: Promise<Browser> | null = null
+
+async function getPlaywright(): Promise<PW | null> {
+  if (_pw) return _pw
+  try {
+    _pw = await import("playwright")
+    return _pw
+  } catch {
+    return null
+  }
+}
+
+async function getBrowser(): Promise<Browser | null> {
+  if (_browser) return _browser
+  if (_launching) return _launching
+
+  const pw = await getPlaywright()
+  if (!pw) return null
+
+  _launching = pw.chromium.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+  }).then(b => {
+    _browser = b
+    _launching = null
+    // Handle browser disconnect (process crash, etc.)
+    b.on("disconnected", () => {
+      _browser = null
+    })
+    return b
+  }).catch(err => {
+    _launching = null
+    console.error("[browser] failed to launch chromium:", err)
+    return null
+  })
+
+  return _launching
+}
+
+async function getPage(): Promise<Page | null> {
+  const browser = await getBrowser()
+  if (!browser) return null
+  return browser.newPage()
+}
+
+// ── Schema ─────────────────────────────────────────────────────────
+
 const browserSchema = z.object({
-  action: z.enum(["navigate", "fetch", "click", "type", "screenshot"]).describe("Browser action"),
+  action: z.enum(["navigate", "fetch", "click", "type", "screenshot", "scroll"]).describe("Browser action"),
   url: z.string().url().optional().describe("URL for navigate/fetch"),
-  selector: z.string().max(500).optional().describe("CSS selector for click/type"),
+  selector: z.string().max(500).optional().describe("CSS selector for click/type/scroll"),
   text: z.string().max(5000).optional().describe("Text to type (for type action)"),
+  direction: z.enum(["up", "down", "left", "right"]).default("down").describe("Scroll direction (default: down)"),
+  amount: z.number().int().min(1).max(10000).default(500).describe("Scroll amount in pixels (default: 500)"),
   maxChars: z.number().int().min(100).max(100000).optional().describe("Max chars for fetch (default 15000)"),
 }).superRefine((v, ctx) => {
   if ((v.action === "navigate" || v.action === "fetch") && !v.url) {
@@ -28,77 +86,346 @@ const browserSchema = z.object({
   }
 })
 
-async function tryPuppeteer(action: string, _args: Record<string, JsonValue>): Promise<JsonValue | null> {
-  // Optional dep: only if puppeteer is installed. Avoid hard dep for CI / lightweight installs.
-  try {
-    // @ts-expect-error — optional peer dep; may not be installed
-    const puppeteer = await import("puppeteer") as {
-      launch: (opts: Record<string, JsonValue>) => Promise<{
-        newPage: () => Promise<{
-          goto: (url: string, opts: Record<string, JsonValue>) => Promise<void>
-          content: () => Promise<string>
-          click: (sel: string) => Promise<void>
-          type: (sel: string, text: string) => Promise<void>
-          screenshot: (opts: Record<string, JsonValue>) => Promise<Buffer>
-          close: () => Promise<void>
-        }>
-        close: () => Promise<void>
-      }>
-    }
-    // Minimal happy path for navigate/fetch — real browser would support all actions
-    if (action === "navigate" || action === "fetch") {
-      const url = String(_args.url ?? "")
-      const browser = await puppeteer.launch({ headless: true } as Record<string, JsonValue>)
-      const page = await browser.newPage()
-      await page.goto(url, { waitUntil: "networkidle0" } as Record<string, JsonValue>)
-      const html = await page.content()
-      await browser.close()
-      const text = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, Number(_args.maxChars ?? 15000))
-      return { url, content: text, via: "puppeteer", truncated: html.length > Number(_args.maxChars ?? 15000) } as JsonValue
-    }
-    return null
-  } catch {
-    return null
+// ── Helper: strip HTML to readable text ────────────────────────────
+
+function stripHtml(html: string, maxChars: number): { text: string; truncated: boolean } {
+  const cleaned = html
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  return {
+    text: cleaned.slice(0, maxChars),
+    truncated: cleaned.length > maxChars,
   }
 }
 
+// ── Error formatting ───────────────────────────────────────────────
+
+function formatError(err: unknown): { error: string; code?: string } {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (msg.includes("timeout") || msg.includes("Timeout")) {
+    return { error: `Timeout: element not found or page did not respond in time`, code: "TIMEOUT" }
+  }
+  if (msg.includes("strict mode violation") || msg.includes("multiple elements")) {
+    return { error: `Multiple elements matched selector — use a more specific selector`, code: "STRICT_MODE" }
+  }
+  if (msg.includes("element is not attached") || msg.includes("detached")) {
+    return { error: `Element detached from DOM (page may have navigated)`, code: "STALE_ELEMENT" }
+  }
+  if (msg.includes("page.click") || msg.includes("page.fill") || msg.includes("waiting for selector")) {
+    return { error: `Element not found: ${msg}`, code: "NO_SUCH_ELEMENT" }
+  }
+  return { error: msg }
+}
+
+// ── Playwright action handlers ─────────────────────────────────────
+
+async function pwNavigate(url: string, maxChars: number): Promise<JsonValue> {
+  const page = await getPage()
+  if (!page) return { error: "Playwright chromium not available", via: "navigate", url }
+
+  try {
+    const response = await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 })
+    const html = await page.content()
+    const { text, truncated } = stripHtml(html, maxChars)
+    return {
+      url,
+      content: text,
+      via: "playwright",
+      truncated,
+      status: response?.status() ?? 0,
+    } as JsonValue
+  } catch (err) {
+    return { ...formatError(err), via: "navigate", url }
+  } finally {
+    await page.close().catch(() => {})
+  }
+}
+
+async function pwFetch(url: string, maxChars: number): Promise<JsonValue> {
+  const page = await getPage()
+  if (!page) {
+    // Fallback to native fetch
+    return nativeFetch(url, maxChars)
+  }
+
+  try {
+    const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 })
+    const html = await page.content()
+    const { text, truncated } = stripHtml(html, maxChars)
+    return {
+      url,
+      content: text,
+      via: "playwright",
+      truncated,
+      status: response?.status() ?? 0,
+    } as JsonValue
+  } catch (err) {
+    // Fallback to native fetch on Playwright failure
+    return nativeFetch(url, maxChars)
+  } finally {
+    await page.close().catch(() => {})
+  }
+}
+
+async function nativeFetch(url: string, maxChars: number): Promise<JsonValue> {
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Mira/0.1 (+https://mira.ai)" },
+    signal: AbortSignal.timeout(30_000),
+  })
+  if (!res.ok) throw new Error(`Browser fetch failed: ${res.status} ${res.statusText} for ${url}`)
+  const html = await res.text()
+  const { text, truncated } = stripHtml(html, maxChars)
+  return { url, content: text, truncated, via: "fetch" } as JsonValue
+}
+
+async function pwClick(selector: string): Promise<JsonValue> {
+  const page = await getPage()
+  if (!page) return { error: "Playwright chromium not available", via: "click", selector }
+
+  try {
+    await page.goto("about:blank")
+    // For click, the page must already have content. We use page.evaluate to click
+    // or page.locator.click. Since we don't have a pre-loaded page, we need a URL context.
+    // The tool receives a click instruction, but we need a URL to navigate to first.
+    // Return an honest error about the workflow.
+    return {
+      error: "click requires a page URL to navigate to first. Use navigate + click in sequence, or provide a URL.",
+      selector,
+      via: "playwright",
+      note: "Playwright click works on a loaded page. Call navigate first, then click on the same page.",
+    } as JsonValue
+  } catch (err) {
+    return { ...formatError(err), via: "click", selector }
+  } finally {
+    await page.close().catch(() => {})
+  }
+}
+
+// ── Persistent page for multi-step interactions ────────────────────
+
+let _activePage: Page | null = null
+
+async function getOrCreatePage(): Promise<Page | null> {
+  if (_activePage && !_activePage.isClosed()) return _activePage
+  const page = await getPage()
+  if (!page) return null
+  _activePage = page
+  return page
+}
+
+async function pwClickWithUrl(url: string, selector: string): Promise<JsonValue> {
+  const page = await getOrCreatePage()
+  if (!page) return { error: "Playwright chromium not available", via: "click", selector }
+
+  try {
+    // Navigate if not on the right page
+    const currentUrl = page.url()
+    if (currentUrl === "about:blank" || !url.startsWith(new URL(currentUrl).origin)) {
+      await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 })
+    }
+
+    await page.click(selector, { timeout: 10_000 })
+    return { success: true, action: "click", selector, url: page.url(), via: "playwright" } as JsonValue
+  } catch (err) {
+    return { ...formatError(err), via: "click", selector, url }
+  }
+}
+
+async function pwTypeWithUrl(url: string, selector: string, text: string): Promise<JsonValue> {
+  const page = await getOrCreatePage()
+  if (!page) return { error: "Playwright chromium not available", via: "type", selector }
+
+  try {
+    const currentUrl = page.url()
+    if (currentUrl === "about:blank" || !url.startsWith(new URL(currentUrl).origin)) {
+      await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 })
+    }
+
+    await page.fill(selector, text, { timeout: 10_000 })
+    return { success: true, action: "type", selector, url: page.url(), via: "playwright", textLength: text.length } as JsonValue
+  } catch (err) {
+    return { ...formatError(err), via: "type", selector, url }
+  }
+}
+
+async function pwScreenshotWithUrl(url: string, selector?: string): Promise<JsonValue> {
+  const page = await getOrCreatePage()
+  if (!page) return { error: "Playwright chromium not available", via: "screenshot" }
+
+  try {
+    const currentUrl = page.url()
+    if (currentUrl === "about:blank" || (url && !url.startsWith(new URL(currentUrl).origin))) {
+      await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 })
+    }
+
+    const opts: Record<string, JsonValue> = { type: "png", encoding: "base64" }
+    if (selector) {
+      const element = await page.$(selector)
+      if (!element) {
+        return { error: `Element not found for selector: ${selector}`, code: "NO_SUCH_ELEMENT", via: "screenshot" }
+      }
+      const buffer = await element.screenshot(opts) as unknown as Buffer
+      return {
+        success: true,
+        action: "screenshot",
+        selector,
+        url: page.url(),
+        base64: buffer.toString("base64"),
+        via: "playwright",
+      } as JsonValue
+    }
+
+    const buffer = await page.screenshot(opts) as unknown as Buffer
+    return {
+      success: true,
+      action: "screenshot",
+      url: page.url(),
+      base64: buffer.toString("base64"),
+      via: "playwright",
+    } as JsonValue
+  } catch (err) {
+    return { ...formatError(err), via: "screenshot" }
+  }
+}
+
+async function pwScrollWithUrl(url: string, selector: string | undefined, direction: string, amount: number): Promise<JsonValue> {
+  const page = await getOrCreatePage()
+  if (!page) return { error: "Playwright chromium not available", via: "scroll" }
+
+  try {
+    const currentUrl = page.url()
+    if (currentUrl === "about:blank" || (url && !url.startsWith(new URL(currentUrl).origin))) {
+      await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 })
+    }
+
+    if (selector) {
+      // Scroll a specific element
+      await page.evaluate(
+        ({ sel, dir, amt }) => {
+          const el = document.querySelector(sel)
+          if (!el) throw new Error(`Element not found: ${sel}`)
+          const scrollMap: Record<string, [number, number]> = {
+            down: [0, amt], up: [0, -amt], right: [amt, 0], left: [-amt, 0],
+          }
+          const [x, y] = scrollMap[dir] ?? [0, amt]
+          el.scrollBy({ left: x, top: y, behavior: "smooth" })
+        },
+        { sel: selector, dir: direction, amt: amount },
+      )
+      return {
+        success: true,
+        action: "scroll",
+        selector,
+        direction,
+        amount,
+        url: page.url(),
+        via: "playwright",
+      } as JsonValue
+    }
+
+    // Scroll the page
+    const scrollMap: Record<string, [number, number]> = {
+      down: [0, amount], up: [0, -amount], right: [amount, 0], left: [-amount, 0],
+    }
+    const [x, y] = scrollMap[direction] ?? [0, amount]
+    await page.evaluate(
+      ({ px, py }) => window.scrollBy({ left: px, top: py, behavior: "smooth" }),
+      { px: x, py: y },
+    )
+
+    // Wait briefly for smooth scroll to settle
+    await new Promise(r => setTimeout(r, 300))
+
+    const scrollY = await page.evaluate(() => window.scrollY)
+    const docHeight = await page.evaluate(() => document.documentElement.scrollHeight)
+    const viewHeight = await page.evaluate(() => window.innerHeight)
+
+    return {
+      success: true,
+      action: "scroll",
+      direction,
+      amount,
+      scrollY,
+      docHeight,
+      viewHeight,
+      atBottom: scrollY + viewHeight >= docHeight - 10,
+      atTop: scrollY <= 10,
+      url: page.url(),
+      via: "playwright",
+    } as JsonValue
+  } catch (err) {
+    return { ...formatError(err), via: "scroll" }
+  }
+}
+
+// ── Tool definition ────────────────────────────────────────────────
+
 export const browserTool = {
   name: "browser",
-  description: "Browser automation (Kilo K6): navigate/fetch a URL, click/type selectors, or screenshot. Uses Puppeteer when installed, otherwise fetch fallback. Use for end-to-end testing or dashboard automation without leaving the agent loop.",
+  description: "Browser automation: navigate/fetch a URL, click/type selectors, screenshot, or scroll. Uses Playwright chromium when installed, otherwise fetch fallback. Use for end-to-end testing, form filling, or dashboard automation.",
   category: "web",
   schema: browserSchema,
   async execute(args, _ctx) {
-    const { action, url, selector, text, maxChars = 15000 } = args as { action: string; url?: string; selector?: string; text?: string; maxChars?: number }
+    const { action, url, selector, text, direction = "down", amount = 500, maxChars = 15000 } = args as {
+      action: string; url?: string; selector?: string; text?: string;
+      direction?: string; amount?: number; maxChars?: number
+    }
 
-    // Try Puppeteer first for richer actions
-    const puppResult = await tryPuppeteer(action, { url, selector, text, maxChars } as Record<string, JsonValue>)
-    if (puppResult) return puppResult
+    // Validate action early (before Playwright check)
+    const validActions = ["navigate", "fetch", "click", "type", "screenshot", "scroll"]
+    if (!validActions.includes(action)) {
+      return { error: `unknown browser action: ${action}` } as JsonValue
+    }
 
-    // Fallback paths (no puppeteer)
-    if (action === "navigate" || action === "fetch") {
-      const u = String(url ?? "")
-      const res = await fetch(u, {
-        headers: { "User-Agent": "Mira/0.1 (+https://mira.ai)" },
-        signal: AbortSignal.timeout(30_000),
-      })
-      if (!res.ok) throw new Error(`Browser fetch failed: ${res.status} ${res.statusText} for ${u}`)
-      const html = await res.text()
-      const content = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, maxChars)
-      return { url: u, content, truncated: html.length > maxChars, via: "fetch", note: action === "navigate" ? "Puppeteer not installed — used fetch fallback (static HTML only, no JS execution)" : undefined } as JsonValue
+    // Check if Playwright is available
+    const pw = await getPlaywright()
+    if (!pw) {
+      // Pure fallback path
+      if (action === "navigate" || action === "fetch") {
+        return nativeFetch(String(url ?? ""), maxChars)
+      }
+      return {
+        error: "Playwright not installed. Install with: bun add playwright",
+        action,
+        via: "fallback",
+      } as JsonValue
     }
-    if (action === "click") {
-      return { selector, via: "stub", note: "Puppeteer not installed — click requires puppeteer. Install with: bun add puppeteer (then browser click will use real browser). For now, try webfetch on the page URL." } as JsonValue
+
+    // Playwright-powered actions
+    switch (action) {
+      case "navigate":
+        return pwNavigate(String(url!), maxChars)
+      case "fetch":
+        return pwFetch(String(url!), maxChars)
+      case "click":
+        return pwClickWithUrl(String(url!), String(selector!))
+      case "type":
+        return pwTypeWithUrl(String(url!), String(selector!), String(text!))
+      case "screenshot":
+        return pwScreenshotWithUrl(String(url ?? ""), selector)
+      case "scroll":
+        return pwScrollWithUrl(String(url ?? ""), selector, direction, amount)
+      default:
+        return { error: `unknown browser action: ${action}` } as JsonValue
     }
-    if (action === "type") {
-      return { selector, text, via: "stub", note: "Puppeteer not installed — type requires puppeteer. Install puppeteer or use edit/write tools for file edits." } as JsonValue
-    }
-    if (action === "screenshot") {
-      return { via: "stub", note: "Puppeteer not installed — screenshot requires puppeteer. Install: bun add puppeteer. Fallback: use webfetch to get page content." } as JsonValue
-    }
-    return { error: `unknown browser action: ${action}` } as JsonValue
   },
 } satisfies ToolDef<typeof browserSchema>
 
 export default browserTool
 export const tools = [browserTool]
 export const tool = browserTool
+
+/** Shutdown the shared browser instance (call on process exit) */
+export async function closeBrowser(): Promise<void> {
+  if (_activePage) {
+    await _activePage.close().catch(() => {})
+    _activePage = null
+  }
+  if (_browser) {
+    await _browser.close().catch(() => {})
+    _browser = null
+  }
+}

@@ -200,6 +200,13 @@ export function mountSessionRoutes(
     const id = requireId(c)
     if (!id) return c.json({ error: 'not found' }, 404)
     if (!(await deps.authorizedSession(id, c))) return c.json({ error: 'not found' }, 404)
+    // Cross-device: export before deleting so session is recoverable
+    try {
+      const { autoExportSession } = await import('../session/cross-device.js')
+      await autoExportSession(db, id)
+    } catch {
+      /* best-effort — don't fail the delete if export fails */
+    }
     deps.sessionOwnerCache.delete(id)
     await prompt.deleteSession(id)
     bus.publish({ type: 'session.deleted', payload: { id }, timestamp: Date.now() })

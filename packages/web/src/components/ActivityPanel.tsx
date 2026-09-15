@@ -255,8 +255,59 @@ function StepGroup(props: { todo: Todo; entries: ActivityEntry[]; index: number;
 
 export function ActivityPanel(props: { store: AppStore; collapsed: boolean; onToggle: () => void }) {
   const [filter, setFilter] = createSignal<FilterType>('all')
-  const [liveEntries, setLiveEntries] = createSignal<ActivityEntry[]>([])
-  const [liveStart] = createSignal(Date.now())
+
+  // Derive live entries from store's liveStreamEvents (SSE events during streaming)
+  const liveEntries = createMemo<ActivityEntry[]>(() => {
+    const events = props.store.state.liveStreamEvents
+    if (events.length === 0) return []
+    const entries: ActivityEntry[] = []
+    // Track running tools by ID for status transitions
+    const runningTools = new Map<string, ActivityEntry>()
+
+    for (const ev of events) {
+      if (ev.type === 'step_start') {
+        entries.push({
+          id: `live-step-${ev.timestamp}`,
+          tool: 'step',
+          status: 'running',
+          timestamp: ev.timestamp,
+          type: 'tool_call',
+          raw: ev.payload as unknown as Part,
+        })
+      } else if (ev.type === 'tool_call') {
+        const p = ev.payload as Record<string, unknown>
+        const id = String(p.id ?? p.name ?? `tool-${ev.timestamp}`)
+        const entry: ActivityEntry = {
+          id: `live-tc-${id}`,
+          tool: String(p.name ?? 'tool'),
+          status: 'running',
+          input: p.args ?? p.input,
+          timestamp: ev.timestamp,
+          type: 'tool_call',
+          raw: ev.payload as unknown as Part,
+        }
+        runningTools.set(id, entry)
+        entries.push(entry)
+      } else if (ev.type === 'tool_result') {
+        const p = ev.payload as Record<string, unknown>
+        const tcId = String(p.toolCallID ?? '')
+        const running = runningTools.get(tcId)
+        if (running) {
+          running.status = (p.isError || p.error) ? 'error' : 'done'
+          running.output = p.result ?? p.error
+        }
+      } else if (ev.type === 'step_finish') {
+        // Mark the most recent step entry as done
+        for (let i = entries.length - 1; i >= 0; i--) {
+          if (entries[i].tool === 'step' && entries[i].status === 'running') {
+            entries[i].status = 'done'
+            break
+          }
+        }
+      }
+    }
+    return entries
+  })
 
   // Derive entries from messages' parts (tool_call / tool_result / reasoning)
   const derivedEntries = createMemo<ActivityEntry[]>(() => {
@@ -298,6 +349,27 @@ export function ActivityPanel(props: { store: AppStore; collapsed: boolean; onTo
   // For real-time feel, we also listen to BusEvent tool updates if available.
   // Here we synthesize a "streaming" entry when store is streaming but no new parts yet.
   const isStreaming = () => props.store.state.streaming
+
+  // Current step/model from live SSE events
+  const currentStep = createMemo(() => {
+    const events = props.store.state.liveStreamEvents
+    let step = 0
+    let model = ''
+    let lastTool = ''
+    let tokensOut = 0
+    for (const ev of events) {
+      if (ev.type === 'step_start') {
+        step = (ev.payload as Record<string, unknown>).step as number ?? step + 1
+        model = String((ev.payload as Record<string, unknown>).model ?? '')
+      } else if (ev.type === 'tool_call') {
+        lastTool = String((ev.payload as Record<string, unknown>).name ?? '')
+      } else if (ev.type === 'step_finish') {
+        const usage = (ev.payload as Record<string, unknown>).usage as Record<string, unknown> | undefined
+        if (usage) tokensOut = Number(usage.completionTokens ?? usage.outputTokens ?? 0) || tokensOut
+      }
+    }
+    return { step, model, lastTool, tokensOut }
+  })
 
   // Elapsed timer for running entries
   const [now, setNow] = createSignal(Date.now())
@@ -457,16 +529,27 @@ export function ActivityPanel(props: { store: AppStore; collapsed: boolean; onTo
 
             {/* Live streaming indicator */}
             <Show when={isStreaming()}>
-              <div style={{ display: 'flex', gap: '10px', padding: '8px 12px', 'align-items': 'center' }}>
+              <div class="activity-stream-status" aria-label="Agent is working">
                 <div class="activity-step-dot activity-step-dot-running" aria-hidden="true">
                   ◷
                 </div>
-                <div class="streaming-indicator" aria-label="Agent is working">
+                <div class="streaming-indicator" aria-label="Streaming">
                   <span class="streaming-dot" />
                   <span class="streaming-dot" />
                   <span class="streaming-dot" />
                 </div>
-                <span style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>Agent working…</span>
+                <div style={{ display: 'flex', 'flex-direction': 'column', gap: '1px', 'min-width': '0' }}>
+                  <span style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>
+                    {currentStep().lastTool ? `Using ${currentStep().lastTool}` : 'Thinking…'}
+                  </span>
+                  <Show when={currentStep().model || currentStep().step > 0}>
+                    <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'font-family': 'var(--font-mono)' }}>
+                      {currentStep().model && <span>{currentStep().model}</span>}
+                      {currentStep().step > 0 && <span>{currentStep().model ? ' · ' : ''}step {currentStep().step}</span>}
+                      {currentStep().tokensOut > 0 && <span> · {currentStep().tokensOut} tok</span>}
+                    </span>
+                  </Show>
+                </div>
               </div>
             </Show>
           </Show>
