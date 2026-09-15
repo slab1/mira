@@ -6,7 +6,7 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "bun --watch src/index.ts",
-    "build": "tsc --noEmit && bun build src/index.ts --outdir dist --target bun",
+    "build": "tsc --noEmit && bun build src/index.ts --outdir dist --target bun --external playwright",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "eval": "bun src/eval/index.ts",
