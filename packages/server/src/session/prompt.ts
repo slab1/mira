@@ -528,11 +528,18 @@ export class SessionPrompt {
     title?: string
     signal?: AbortSignal
   }): Promise<{ sessionID: string; text: string }> {
+    // Validate agent name
+    const agent = opts.agent
+    if (agent && !isKnownAgent(agent)) {
+      const err = new Error(`Unknown agent "${agent}"`)
+      ;(err as any).code = 'UNKNOWN_AGENT'
+      throw err
+    }
     // Per-agent model routing: explicit > agent.model > autoModel tier > default (Kilo K1+K8)
     const effectiveModel =
       resolveEffectiveModel({
         explicitModel: opts.model,
-        agent: opts.agent ?? null,
+        agent: agent ?? null,
         sessionModel: undefined,
       }) || undefined
     // Inherit cwd/projectId from parent for workspace-aware subagents
@@ -546,7 +553,7 @@ export class SessionPrompt {
     const s = await this.createSession({
       title: opts.title ?? `↳ ${opts.prompt.slice(0, 48)}`,
       parentID: opts.parentID,
-      agent: opts.agent,
+      agent: agent,
       model: effectiveModel,
       cwd: parentCwd,
       projectId: parentProjectId,
@@ -569,7 +576,7 @@ export class SessionPrompt {
     try {
       const runModel = effectiveModel ?? s.model
       // Agent persona for subagent loop
-      const persona = opts.agent ? getAgentTemplates()[opts.agent]?.system : undefined
+      const persona = agent ? getAgentTemplates()[agent]?.system : undefined
       const basePrompt = await buildSystemPrompt(
         s.cwd ?? parentCwd ?? process.cwd(),
         await getUserNameForOwner(this.deps.db, s.ownerID),
@@ -583,7 +590,7 @@ export class SessionPrompt {
         systemPrompt,
         send,
         writer: noopWriter,
-        agent: opts.agent ?? s.agent,
+        agent: agent ?? s.agent,
         signal: opts.signal,
       })
     } catch (err) {
@@ -611,7 +618,11 @@ export class SessionPrompt {
     if (!session) throw new Error('session not found')
 
     // Model resolution: explicit > agent.model > autoModel tier > session default (Kilo K1+K8)
-    const effectiveAgent = options?.agent ?? session.agent ?? null
+    let effectiveAgent = options?.agent ?? session.agent ?? null
+    if (effectiveAgent && !isKnownAgent(effectiveAgent)) {
+      console.warn(`[session] unknown agent "${effectiveAgent}" — nullifying`)
+      effectiveAgent = null
+    }
     const model = resolveEffectiveModel({
       explicitModel: modelOverride,
       agent: effectiveAgent,
@@ -738,6 +749,10 @@ export class SessionPrompt {
     onStreamClosed?: () => void
     signal?: AbortSignal
   }) {
+    // Validate agent name early — unknown agents are nullified
+    if (opts.agent && !isKnownAgent(opts.agent)) {
+      opts.agent = null
+    }
     const { sessionID, assistantMessageID, model, systemPrompt, send, writer } = opts
     const tracer = otelTrace.getTracer('mira-server')
     const span = tracer.startSpan('session.prompt.loop', {
@@ -1080,6 +1095,7 @@ export class SessionPrompt {
             messageID: assistantMessageID,
             signal: opts.signal,
             cwd: sessionCwd ?? process.cwd(),
+            agent: opts.agent ?? null,
           })
           send('tool_result', { toolCallID: tc.id, name: tc.name, result })
         } catch (err) {
@@ -1263,8 +1279,11 @@ export class SessionPrompt {
     // Feature flag: enforceLaneContracts (default true). Off = every session sees the full registry.
     if (getConfig().features?.enforceLaneContracts === false) return all
     if (!agent) return all
+    // Validate agent known — unknown agents get empty toolset
+    if (!isKnownAgent(agent)) return {}
     const tpl = getAgentTemplates()[agent]
-    if (!tpl?.tools?.length) return all
+    if (!tpl) return {}
+    if (!tpl.tools?.length) return all
     const allow = new Set<string>(tpl.tools)
     return Object.fromEntries(Object.entries(all).filter(([name]) => allow.has(name)))
   }

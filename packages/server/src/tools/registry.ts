@@ -26,6 +26,7 @@ import type { MiraDB } from '../storage/db.js'
 import type { PermissionManager } from '../permission/index.js'
 import type { Gateway } from '../gateway/index.js'
 import type { GuardrailsManager } from '../guardrails/index.js'
+import { getAgentTemplates, isKnownAgent } from '../agents/templates.js'
 
 // Single source of truth for JSON values lives in types/index.ts
 export type { JsonValue }
@@ -52,6 +53,7 @@ export interface ToolContext {
   bus?: Bus
   db?: MiraDB
   signal?: AbortSignal
+  agent?: string | null
   /** injected by ToolRegistry — spawns an isolated subagent session */
   subagentRunner?: (opts: {
     prompt: string
@@ -205,6 +207,70 @@ export class ToolRegistry {
       ...ctx,
       cwd: ctx.cwd ?? this.defaultCtx.cwd ?? process.cwd(),
       subagentRunner: ctx.subagentRunner ?? this.subagentRunner,
+    }
+
+    // Agent allowlist enforcement
+    if (fullCtx.agent && isKnownAgent(fullCtx.agent)) {
+      const tpl = getAgentTemplates()[fullCtx.agent]
+      if (tpl) {
+        if (tpl.tools && !tpl.tools.includes(name)) {
+          const err = new Error(`Agent "${fullCtx.agent}" cannot use tool "${name}"`)
+          ;(err as any).code = 'AGENT_TOOL_NOT_ALLOWED'
+          ;(ctx.bus as any)?.emit?.('agent.tool.denied', {
+            sessionID: ctx.sessionID,
+            agent: fullCtx.agent,
+            tool: name,
+            reason: err.message,
+            timestamp: Date.now(),
+          })
+          throw err
+        }
+        // Permission posture enforcement
+        if (tpl.permissions === 'readonly') {
+          const MUTATING_TOOLS = new Set(['write', 'edit', 'patch', 'bash'])
+          if (MUTATING_TOOLS.has(name)) {
+            const err = new Error(`Agent "${fullCtx.agent}" is readonly and cannot use "${name}"`)
+            ;(err as any).code = 'AGENT_PERMISSION_DENIED'
+            ;(ctx.bus as any)?.emit?.('agent.tool.denied', {
+              sessionID: ctx.sessionID,
+              agent: fullCtx.agent,
+              tool: name,
+              reason: err.message,
+              timestamp: Date.now(),
+            })
+            throw err
+          }
+        }
+        // Bash allowlist enforcement
+        if (name === 'bash' && tpl.bashAllowlist && tpl.bashAllowlist.length > 0) {
+          const cmd = (args as Record<string, JsonValue>)?.command as string | undefined
+          if (cmd) {
+            const allowed = tpl.bashAllowlist.some((p) => cmd.startsWith(p))
+            if (!allowed) {
+              const err = new Error(`Agent "${fullCtx.agent}" bash command not allowed: ${cmd}`)
+              ;(err as any).code = 'AGENT_BASH_NOT_ALLOWED'
+              ;(ctx.bus as any)?.emit?.('agent.tool.denied', {
+                sessionID: ctx.sessionID,
+                agent: fullCtx.agent,
+                tool: name,
+                reason: err.message,
+                timestamp: Date.now(),
+              })
+              throw err
+            }
+          }
+        }
+      }
+    }
+
+    // Emit agent tool metrics after allowlist enforcement
+    if (fullCtx.agent && isKnownAgent(fullCtx.agent)) {
+      ;(ctx.bus as any)?.emit?.('agent.tool.allowed', {
+        sessionID: ctx.sessionID,
+        agent: fullCtx.agent,
+        tool: name,
+        timestamp: Date.now(),
+      })
     }
 
     // Zod validation — fail fast with structured error (LLM sees it as tool-result isError)
