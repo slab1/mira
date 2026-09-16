@@ -39,6 +39,16 @@
       "sim_id": null,
       "durationMs": 95,
       "at": "2026-09-08T09:04:07.720317+00:00"
+    },
+    {
+      "strategy_chosen": "fixer",
+      "agent_target": "fixer",
+      "outcome": "success",
+      "reason": "Fix all TypeScript errors in packages/server (5 files, tsc exit 0)",
+      "file_line": null,
+      "sim_id": null,
+      "durationMs": 300,
+      "at": "2026-09-16T15:45:29.916984+00:00"
     }
   ],
   "active_tasks": [
@@ -51,9 +61,7 @@
     }
   ],
   "artifacts": {
-    "files_created": [
-      "shared/simulation_sandbox.ts"
-    ],
+    "files_created": ["shared/simulation_sandbox.ts"],
     "files_modified": [
       "packages/server/src/learning/ledger.ts",
       "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -137,9 +145,16 @@
       "successes": 1,
       "success_rate": 0.33,
       "last_updated": "2026-09-08T09:04:07.720317+00:00"
+    },
+    "fixer": {
+      "count": 1,
+      "completed": 1,
+      "successes": 1,
+      "success_rate": 1.0,
+      "last_updated": "2026-09-16T15:45:29.916984+00:00"
     }
   },
-  "last_updated": "2026-09-12T04:26:16.116109+00:00",
+  "last_updated": "2026-09-16T15:45:29.916984+00:00",
   "workflow_trace": [
     {
       "agent": "fixer",
@@ -147,11 +162,7 @@
       "task": "P1 MCP CI flake Legacy SSE listen failed (HTTP 200)",
       "status": "completed",
       "timestamp": "2026-09-09T18:05:26.207624+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -174,11 +185,7 @@
       "task": "P1 MCP CI flake Legacy SSE listen failed (HTTP 200)",
       "status": "completed",
       "timestamp": "2026-09-09T19:30:00.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -200,11 +207,7 @@
       "task": "P1 workspace @ mentions \u2014 real workspace tree via GET /workspace/tree",
       "status": "completed",
       "timestamp": "2026-09-09T19:06:28.241103+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/routes/workspace.ts (new) \u2014 GET /workspace/tree via Bun.Glob('**/*') + isPathAllowed/sanitizePath, .gitignore + defaults (.git, node_modules, dist, .turbo, data, *.db, .mira, coverage), sorted 500",
@@ -226,11 +229,7 @@
       "task": "P1 CORS MIRA_ALLOW_LOCALHOST gate",
       "status": "completed",
       "timestamp": "2026-09-09T20:05:06.509550+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/middleware/index.ts:36-64 corsOrigin function with MIRA_ALLOW_LOCALHOST gate + normalizedAllowSet + header-smuggling protection",
@@ -250,11 +249,7 @@
       "task": "P2 queue rail reorder/cancel \u2014 QueueRail polling + App.tsx placement + api/client verification",
       "status": "completed",
       "timestamp": "2026-09-09T20:58:58.684555+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/web/src/components/QueueRail.tsx:1-35 polling 3s visibility-aware onCleanup + \u2191\u2193 reorder and \u2715 cancel per-item (existing styling)",
@@ -275,12 +270,7 @@
       "task": "TUI vs web parity crosscheck @80a6e743 (8 fixes)",
       "status": "completed",
       "timestamp": "2026-09-09T21:44:43Z",
-      "stages": [
-        "parse_context",
-        "examine_tui",
-        "examine_web",
-        "verify"
-      ],
+      "stages": ["parse_context", "examine_tui", "examine_web", "verify"],
       "verdict": "REVISE",
       "artifacts": {
         "report": "/tmp/report_tui_crosscheck.md",
@@ -296,11 +286,7 @@
       "task": "Fix CI gaps.test.ts auth 401 \u2014 GET /providers hasKey",
       "status": "completed",
       "timestamp": "2026-09-09T22:30:00.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/e2e/gaps.test.ts: beforeAll MIRA_TOKEN=test-gaps-token deterministic + AUTH headers on GET /providers, POST /providers/:id/test, GET /terminal, GET /health, WS /terminal + WS vscode-webview (header + auth message fallback), WS timeout 15s",
@@ -323,11 +309,7 @@
       "task": "TUI P0 slash preload + skeleton + P1 workspace @",
       "status": "completed",
       "timestamp": "2026-09-10T06:00:24.509200+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/App.tsx:95-96 slashVisible fix + preload createEffect + workspace @ (MOCK_FILES, workspaceFiles, fetchWorkspaceFiles, atVisible/atFiltered, AtMentionAutocomplete, onInput/onFocus/onKeyDown)",
@@ -348,11 +330,7 @@
       "task": "TUI P1 cost + queue \u2014 per-session cost/cap bar + queue polling + proxy",
       "status": "completed",
       "timestamp": "2026-09-10T06:33:51.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/rpc/client.ts:13-23 Session costUsd/tokensIn/tokensOut",
@@ -376,11 +354,7 @@
       "task": "P1 auth gaps ora-3: CORS WS vs HTTP, api_keys schema, placeholder token",
       "status": "completed",
       "timestamp": "2026-09-10T07:25:25.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/storage/schema.ts: apiKeys table added (key TEXT PK, owner TEXT, created_at INTEGER, created_by TEXT DEFAULT default) + index api_keys_owner_idx, schema export includes apiKeys",
@@ -405,11 +379,7 @@
       "task": "TUI P2 history grouping + abortPrompt",
       "status": "completed",
       "timestamp": "2026-09-10T07:40:00.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
@@ -431,11 +401,7 @@
       "task": "TUI P2 history grouping + abortPrompt",
       "status": "completed",
       "timestamp": "2026-09-10T08:35:23.513735+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
@@ -457,11 +423,7 @@
       "task": "P0-2 workspace tree project-aware + prod bug",
       "status": "completed",
       "timestamp": "2026-09-10T10:35:44.628986+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/routes/workspace.ts:63-82 project-aware with cwd/projectId/limit/cursor/includeDirs, sanitizePath+isPathAllowed with real allowedRoots, pagination, return {files:[{path,isDir,size,mtime}], truncated, cwd}",
@@ -483,11 +445,7 @@
       "task": "P0-1 Add projectId/cwd to sessions + thread through prompt/tools",
       "status": "completed",
       "timestamp": "2026-09-10T11:08:50.872685+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/storage/schema.ts:11 cwd: text(\"cwd\"), projectId: text(\"project_id\") + index sessions_project_id_idx",
@@ -516,11 +474,7 @@
       "run_id": "run_20260909_96b605",
       "task": "P2-1 Workspace-aware symbols/LSP/memory",
       "status": "completed",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "timestamp": "2026-09-10T20:45:00.000000+00:00",
       "artifacts": {
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_96b605",
@@ -545,11 +499,7 @@
       "task": "P2-2 project lifecycle \u2014 create/switch/templates/recent",
       "status": "completed",
       "timestamp": "2026-09-11T00:29:53.681711+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/routes/workspace.ts (already had GET/POST/DELETE /workspaces with sanitizePath+isPathAllowed+getConfig guardrails, ~/.mira/workspaces.json + MIRA_WORKSPACE_ROOTS)",
@@ -574,11 +524,7 @@
       "task": "P2-3 CLI env-only + P3-3 VITE_MIRA_TOKEN prod bake",
       "status": "completed",
       "timestamp": "2026-09-11T06:54:36.238176+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/cli/src/cli.ts:68-95 readMiraEnvFile() (MIRA_DIR, XDG_CONFIG_HOME/mira/mira.env, ~/.mira/mira.env) + token() now process.env.MIRA_TOKEN ?? readMiraEnvFile() ?? \"\"",
@@ -603,11 +549,7 @@
       "task": "P2-2 validateToken double 401 \u2014 single gated endpoint",
       "status": "completed",
       "timestamp": "2026-09-11T08:16:50.719522+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/web/src/api/client.ts:440-449 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)",
@@ -629,11 +571,7 @@
       "task": "P3 auth gaps \u2014 api_keys hash, admin loopback gate, tokenEquals hash, isPublicUiPath normalize, ?api= validate",
       "status": "completed",
       "timestamp": "2026-09-11T10:11:59.270194+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/index.ts: tokenEquals hash-then-compare (createHash sha256 32B constant time, P3-4)",
@@ -661,11 +599,7 @@
       "task": "F1 Sync Vite proxies to server route table",
       "status": "completed",
       "timestamp": "2026-09-11T15:33:35.462703+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/web/vite.config.ts:79-99 add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + keep WS catch-all last",
@@ -689,11 +623,7 @@
       "task": "F2 Make slack#dev opt-in, not persistent",
       "status": "completed",
       "timestamp": "2026-09-11T20:15:00.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
@@ -717,11 +647,7 @@
       "task": "F2 Make slack#dev opt-in, not persistent",
       "status": "completed",
       "timestamp": "2026-09-12T01:35:47.379650+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
@@ -745,11 +671,7 @@
       "task": "F5 Align WS isOriginAllowed with HTTP CORS",
       "status": "completed",
       "timestamp": "2026-09-12T04:26:16.115820+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/middleware/index.ts:32-101 isLocalDevOrigin now ws/wss + isVscodeOrigin + corsOrigin vscode allowlist both branches",
@@ -1008,6 +930,19 @@
         "fix": "middleware isLocalDevOrigin now http/https/ws/wss + isVscodeOrigin helper, corsOrigin both branches handle vscode (return origin directly, not URL.origin null) and ws/wss; index.ts isOriginAllowed now mirrors corsOrigin: empty list \u2192 only isLocalDevOrigin, prod normalizedAllowSet + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes; added cors.test.ts 5 tests parity",
         "verify": "turbo typecheck 6 successful, bun test cors.test.ts 5 pass 69 expect, gaps 7 pass, HTTP dev localhost 200 with CORS, evil blocked, prod evil blocked, WS vscode true, localhost true dev/gate, evil false",
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_650858"
+      },
+      {
+        "run_id": "fixer_admin_security_20260916",
+        "at": "2026-09-16T15:03:16.931390+00:00",
+        "task": "Fix two security gaps in packages/server: (1) admin auth bypass via HOST=0.0.0.0, (2) raw API key leaked in admin responses",
+        "files_modified": [
+          "packages/server/src/routes/admin.ts: isAdmin strict gate now applies to 0.0.0.0 (removed host!=0.0.0.0 escape); mint returns {key_prefix,key_hash:true,owner} not {key,owner}; list SELECTs key_prefix,key_hash (no raw key column) and returns key_prefix+key_hash presence",
+          "packages/server/src/routes/admin.test.ts (new): 10 regression tests - 0.0.0.0/non-loopback 401 in open mode, loopback 200 preserved, MIRA_STRICT_AUTH=0 opt-out, mint/list/revoke responses never contain 96-hex raw key"
+        ],
+        "root_cause": "Gap1: isAdmin guard \"host !== 0.0.0.0\" skipped the strict-loopback deny when HOST=0.0.0.0, leaving admin open without auth on a public bind. Gap2: POST /admin/api-keys returned the raw 96-hex key in the response body; GET list selected the raw key column.",
+        "fix": "Gap1: removed the 0.0.0.0 escape - strict gate now denies any non-loopback bind unless MIRA_STRICT_AUTH=0 (explicit opt-out, still warned). Gap2: mint returns key_prefix (12 chars) + key_hash:true + owner; list selects only key_prefix/key_hash/owner/created_at/created_by and returns key_prefix + key_hash presence; raw key stays server-side (DB + API_KEY_OWNERS) for verification. index.ts:429 startup load untouched (internal only).",
+        "verify": "bun test src/routes/admin.test.ts 10 pass 0 fail (36 expect); full suite 482 pass 13 fail - all 13 pre-existing/environmental (doom-loop flake confirmed failing on base via git stash, e2e server-boot/port conflicts, network-dependent online tests, live vision 403 no API key); bunx tsc --noEmit zero errors in admin.ts/admin.test.ts, full error set identical to base (pre-existing in subgateway.test.ts/index.ts:390/prompt.ts/resolve-effective-model.test.ts/cors.test.ts)",
+        "deviation": "Mint endpoint no longer returns the raw key (per spec \"never the full raw key\"). Functional consequence: admin cannot retrieve a minted key via API - docs (README.md:90, packages/slack/README.md:27-30, docs/production-setup.md:49-53) show {\"key\":\"<96-hex>\"} and need updating; key is only obtainable via DB access or MIRA_API_KEYS env. DELETE /admin/api-keys/:key still requires the full key as path param (unchanged)."
       }
     ]
   }

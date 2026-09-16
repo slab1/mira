@@ -1,3 +1,4 @@
+import { describe, it, expect } from 'bun:test'
 import { resolveEffectiveModel } from './prompt.js'
 
 describe('resolveEffectiveModel retired guard', () => {

@@ -114,6 +114,7 @@ export type BusEventType =
   | 'question.ask'
   | 'question.reply'
   | 'cost.warning'
+  | 'model.retired'
   | 'server.heartbeat'
   | 'server.error'
   | 'config.updated'

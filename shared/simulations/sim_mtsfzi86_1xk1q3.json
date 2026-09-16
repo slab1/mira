@@ -1,0 +1,12 @@
+{
+  "sim_id": "sim_mtsfzi86_1xk1q3",
+  "file": "shared/context.json",
+  "virtual_diff": {
+    "file": "shared/context.json",
+    "from": "{}",
+    "to": "{\"a\":1}"
+  },
+  "risk_score": 0.3,
+  "reviewer": "agents/critic.md",
+  "createdAt": "2026-09-08T09:03:21.644Z"
+}

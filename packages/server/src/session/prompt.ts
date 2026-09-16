@@ -291,7 +291,7 @@ export function resolveEffectiveModel(input: {
     console.warn(`[mira] model "${resolved}" is retired, attempting fallback chain`)
     try {
       const registry = buildRegistry(getConfig())
-      const fallbackResolved = resolveWithFallbacks(registry, candidate)
+      const fallbackResolved = resolveWithFallbacks(registry, candidate)[0]
       if (
         fallbackResolved?.providerKey &&
         fallbackResolved?.modelID &&

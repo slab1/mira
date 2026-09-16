@@ -104,8 +104,11 @@ describe('gaps: terminal', () => {
 
   test('WS /terminal PTY echoes', async () => {
     // WS upgrade requires auth when MIRA_TOKEN is set — send via header if supported, plus auth message fallback
+    // Null-origin upgrades are rejected (parity with HTTP CORS) — send a valid allowlisted Origin like a browser.
     // @ts-expect-error — Bun WebSocket types lack `headers` option, but runtime supports it
-    const ws = new WebSocket(`ws://localhost:${PORT}/terminal`, { headers: AUTH })
+    const ws = new WebSocket(`ws://localhost:${PORT}/terminal`, {
+      headers: { Origin: 'https://slab1.github.io', ...AUTH },
+    })
     const out: string[] = []
     await new Promise<void>((resolve, reject) => {
       // Full-suite load (parallel server boots) makes the PTY echo roundtrip

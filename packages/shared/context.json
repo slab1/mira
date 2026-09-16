@@ -39,6 +39,16 @@
       "sim_id": null,
       "durationMs": 95,
       "at": "2026-09-08T09:04:07.720317+00:00"
+    },
+    {
+      "strategy_chosen": "fixer",
+      "agent_target": "fixer",
+      "outcome": "success",
+      "reason": "Fix all TypeScript errors in packages/server (5 files, tsc exit 0)",
+      "file_line": null,
+      "sim_id": null,
+      "durationMs": 300,
+      "at": "2026-09-16T15:45:29.916984+00:00"
     }
   ],
   "active_tasks": [
@@ -51,18 +61,82 @@
     }
   ],
   "artifacts": {
-    "files_created": [
-      "shared/simulation_sandbox.ts"
-    ],
+    "files_created": ["shared/simulation_sandbox.ts"],
     "files_modified": [
-      "packages/server/src/learning/ledger.ts"
+      "packages/server/src/learning/ledger.ts",
+      "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
+      "packages/server/src/mcp/mock-http-mcp-server.ts:168-189 non-legacy GET /mcp 404 + HEAD /mcp 200 + await Bun.sleep(10) before ready",
+      "packages/server/src/mcp/http-client.test.ts:1-80 startMock await Bun.sleep(50) + poll HEAD fallback GET 10x20ms",
+      "packages/server/src/routes/workspace.ts (new) \u2014 GET /workspace/tree via Bun.Glob('**/*') + isPathAllowed/sanitizePath, .gitignore + defaults (.git, node_modules, dist, .turbo, data, *.db, .mira, coverage), sorted 500",
+      "packages/server/src/index.ts \u2014 import mountWorkspaceRoutes + mountWorkspaceRoutes(app)",
+      "packages/web/src/api/client.ts \u2014 getWorkspaceTree: () => req<{files:string[]}>('/workspace/tree').then(r=>r.files)",
+      "packages/web/src/components/PromptInput.tsx \u2014 keep MOCK_FILES fallback, workspaceFiles signal + fetchWorkspaceFiles once via api.getWorkspaceTree, createEffect atVisible, onMount prefetch, onFocus, atFiltered uses workspaceFiles()",
+      "packages/server/src/middleware/index.ts:36-64 corsOrigin function with MIRA_ALLOW_LOCALHOST gate + normalizedAllowSet + header-smuggling protection",
+      ".env.example:28-35 CORS docs dev default (empty=allow localhost) vs prod (list set=deny localhost unless MIRA_ALLOW_LOCALHOST=1)",
+      "packages/web/src/components/QueueRail.tsx:1-35 polling 3s visibility-aware onCleanup + \u2191\u2193 reorder and \u2715 cancel per-item (existing styling)",
+      "packages/web/src/App.tsx:895 QueueRail outside <Show when={store.state.cost}> verified (already outside, preserved)",
+      "packages/web/src/api/client.ts:967-976 reorderQueue/deleteQueueItem signatures verified vs session-extras.ts POST /session/:id/queue/reorder {texts} + DELETE /session/:id/queue/item {text}",
+      "packages/server/e2e/gaps.test.ts: beforeAll MIRA_TOKEN=test-gaps-token + AUTH headers + WS auth + 15s timeout",
+      "packages/server/e2e/queue.test.ts: MIRA_TOKEN=test-queue-token + AUTH + /healthz",
+      "packages/server/e2e/server.e2e.test.ts: MIRA_TOKEN=test-e2e-token + AUTH + /healthz",
+      "packages/tui/src/App.tsx:95-96 slashVisible fix + preload createEffect + workspace @ (MOCK_FILES, workspaceFiles, fetchWorkspaceFiles, atVisible/atFiltered, AtMentionAutocomplete, onInput/onFocus/onKeyDown)",
+      "packages/tui/src/components/CommandPalette.tsx:321-381 palette double-gate Loading fallback + 418-505 SlashAutocomplete loading prop + fallback",
+      "packages/tui/src/rpc/client.ts:679 getWorkspaceTree: () => req<{files:string[]}>('/workspace/tree').then(r=>r.files)",
+      "packages/tui/src/rpc/client.ts:13-23 Session costUsd/tokensIn/tokensOut",
+      "packages/tui/src/stores/session.ts:405-427 loadCost costCap+session refresh 15s visibility-aware + costCap state",
+      "packages/tui/src/components/Layout.tsx:144-156 per-session $ pill cap bar sparkline \u26a0 costCap",
+      "packages/tui/src/App.tsx:368-379 budget per-session fallback + Header costCap/tokens",
+      "packages/tui/src/components/QueueRail.tsx:41-49 3s polling visibility guard onCleanup",
+      "packages/tui/vite.config.ts:43-48 13 proxies /workspace/tree /config /providers /commands /agents /skills /mcp /dev /learning /knowledge /finding /job /guardrails",
+      "packages/server/src/storage/schema.ts: apiKeys table added (key TEXT PK, owner TEXT, created_at INTEGER, created_by TEXT DEFAULT default) + index api_keys_owner_idx, schema export includes apiKeys",
+      "packages/server/src/index.ts:137-155 placeholder token strict handling (let REQUIRED_TOKEN, prod error+exit, non-prod error/warn+empty)",
+      "packages/server/src/index.ts:186-205 WS isOriginAllowed aligned to MIRA_ALLOW_LOCALHOST==='1' strict (https + ::1, prod gate, dev early return)",
+      "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
+      "packages/tui/src/components/Inspector.tsx:70-89 grouped history same as HistoryView + toast + line counts, consistent",
+      "packages/tui/src/stores/session.ts:586-589 stopStream now void rpc.abortPrompt(id).catch(()=>{}) + abort?.abort() + setState(streaming:false)",
+      "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))",
+      "packages/server/src/routes/workspace.ts:63-82 project-aware with cwd/projectId/limit/cursor/includeDirs, sanitizePath+isPathAllowed with real allowedRoots, pagination, return {files:[{path,isDir,size,mtime}], truncated, cwd}",
+      "packages/server/src/guardrails/index.ts:105 isPathAllowed per-project roots fix normalize ./ prefix, enforce logic correct for prod vs dev",
+      "packages/server/src/config/store.ts:328 getConfig(cwd) per-project cache with sync fallback, getConfigLayers already supports 6 layers",
+      "packages/server/src/storage/schema.ts:11 cwd: text(\"cwd\"), projectId: text(\"project_id\") + index sessions_project_id_idx",
+      "packages/server/src/storage/db.ts:52-210 CREATE TABLE sessions cwd/project_id + addColumn cwd/project_id + index",
+      "packages/server/src/routes/session.ts:28 createSessionSchema cwd/projectId + SessionRow cwd/projectId",
+      "packages/server/src/session/prompt.ts:300 createSession cwd/projectId + fork/subagent inherit + streamResponse buildSystemPrompt cwd + loadContext/loadMemoryBank cwd + tools.execute cwd",
+      "packages/server/src/tools/registry.ts:200 execute cwd fallback ctx.cwd ?? process.cwd()",
+      "packages/server/src/tools/glob.ts:20 glob/grep use ctx.cwd",
+      "packages/server/src/tools/bash.ts:25 workdir fallback ctx.cwd",
+      "packages/server/src/config/prompt.ts:2 buildSystemPrompt(cwd) already exists, callers now pass session.cwd",
+      "packages/cli/src/cli.ts:68-95 readMiraEnvFile() (MIRA_DIR, XDG_CONFIG_HOME/mira/mira.env, ~/.mira/mira.env) + token() now process.env.MIRA_TOKEN ?? readMiraEnvFile() ?? \"\"",
+      "packages/web/vite.config.ts:52-63 FIRST_RUN_TOKEN gated by NODE_ENV !== 'production' + define gated by NODE_ENV !== 'production' && FIRST_RUN_TOKEN (DEV ONLY)",
+      "packages/web/src/api/client.ts:409-414 getToken() VITE_MIRA_TOKEN fallback marked // DEV ONLY (vite dev injects, never in prod bundle)",
+      "packages/web/.env removed (was baking VITE_MIRA_TOKEN=01df... into prod dist)",
+      "packages/web/src/api/client.ts:440-449 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)",
+      "packages/tui/src/rpc/client.ts:498-506 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)",
+      "packages/server/src/index.ts: tokenEquals hash-then-compare (createHash sha256 32B constant time, P3-4)",
+      "packages/server/src/storage/schema.ts: apiKeys key_hash/key_prefix columns (P3-1)",
+      "packages/server/src/storage/db.ts: CREATE TABLE api_keys key_hash/key_prefix + addColumn idempotent (P3-1)",
+      "packages/server/src/routes/admin.ts: isAdmin loopback gate (HOST check + warn, P3-2) + ensureTable key_hash/prefix + mint stores sha256+prefix (P3-1)",
+      "packages/server/src/middleware/index.ts: isPublicUiPath normalize via URL + traversal block + normalizedPath in auth gate (P3-5)",
+      "packages/web/src/api/client.ts: getRuntimeApiUrl ?api= validate localhost/https only (P3-6)",
+      "packages/web/vite.config.ts:79-99 add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + keep WS catch-all last",
+      "packages/tui/vite.config.ts:43-48 replace /workspace/tree with /workspace + add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + add WS catch-all '/' ws:true last",
+      "packages/server/src/routes/static.ts:10-20 API_ROUTE_PREFIXES add /workspaces /workspace",
+      "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
+      "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials \u2014 skipping\"; exit 0; fi; bun --watch src/bot.ts",
+      "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1",
+      "packages/server/src/middleware/index.ts:32-101 isLocalDevOrigin now ws/wss + isVscodeOrigin + corsOrigin vscode allowlist both branches",
+      "packages/server/src/index.ts:212-250 isOriginAllowed now mirrors corsOrigin (empty list \u2192 only isLocalDevOrigin, prod allowlist normalized + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes)",
+      "packages/server/src/middleware/cors.test.ts (new) \u2014 5 tests parity: empty list only localhost, prod allowlist + gate, vscode always, isLocalDevOrigin ws/wss, parity true iff cors non-empty"
     ]
   },
   "checkpoints": {
     "enabled": true,
     "dir": "shared/checkpoints",
     "retentionHours": 168,
-    "keep": 5
+    "keep": 5,
+    "helper": "~/.config/opencode/scripts/oc-checkpoint.sh",
+    "directory_expanded": "/root/.config/opencode/shared/checkpoints/",
+    "directory": "shared/checkpoints"
   },
   "strategy_effectiveness": {
     "critic": {
@@ -71,7 +145,805 @@
       "successes": 1,
       "success_rate": 0.33,
       "last_updated": "2026-09-08T09:04:07.720317+00:00"
+    },
+    "fixer": {
+      "count": 1,
+      "completed": 1,
+      "successes": 1,
+      "success_rate": 1.0,
+      "last_updated": "2026-09-16T15:45:29.916984+00:00"
     }
   },
-  "last_updated": "2026-09-08T09:04:07.720317+00:00"
+  "last_updated": "2026-09-16T15:45:29.916984+00:00",
+  "workflow_trace": [
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_l45vab",
+      "task": "P1 MCP CI flake Legacy SSE listen failed (HTTP 200)",
+      "status": "completed",
+      "timestamp": "2026-09-09T18:05:26.207624+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
+          "packages/server/src/mcp/mock-http-mcp-server.ts:168-189 non-legacy GET /mcp 404 + HEAD /mcp 200 + await Bun.sleep(10) before ready",
+          "packages/server/src/mcp/http-client.test.ts:1-80 startMock await Bun.sleep(50) + poll HEAD fallback GET 10x20ms"
+        ],
+        "verify": {
+          "isolated": "bun test packages/server/src/mcp/http-client.test.ts 11 pass 55.83s",
+          "under_load": "42 pass 1 skip with tools batch 53.79s, 197 pass gateway batch, 5 pass mcp manager/stdio",
+          "typecheck": "tsc --noEmit exit 0 (packages/server)",
+          "full_suite": "72 pass 1 fail (pre-existing OnlineLearner timeout) across learning/lsp/session"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_l45vab"
+      },
+      "outcome": "P1 fix complete: split conflated !res.ok||!res.body into separate checks (HTTP status + body text vs empty body), mock non-legacy GET now 404 with HEAD 200 and sleep(10) to avoid Bun serve race, startMock polls HEAD/GET 10x20ms after sleep(50); 11 tests pass isolated and under load, typecheck green, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_mxj27k",
+      "task": "P1 MCP CI flake Legacy SSE listen failed (HTTP 200)",
+      "status": "completed",
+      "timestamp": "2026-09-09T19:30:00.000000+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
+          "packages/server/src/mcp/mock-http-mcp-server.ts:168-189 non-legacy GET /mcp 404 + HEAD /mcp 200 + await Bun.sleep(10) before ready",
+          "packages/server/src/mcp/http-client.test.ts:1-80 startMock await Bun.sleep(50) + poll HEAD fallback GET 10x20ms"
+        ],
+        "verify": {
+          "isolated": "bun test ./packages/server/src/mcp/http-client.test.ts 11 pass 39.66s",
+          "typecheck": "turbo typecheck 6 successful, server tsc --noEmit pass",
+          "full_suite": "verified minimal diff preserved design, no web files touched"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_mxj27k"
+      },
+      "outcome": "P1 fix verified: split conflated !res.ok||!res.body into separate checks (HTTP status + body text vs empty body), mock non-legacy GET now 404 with HEAD 200 and sleep(10) to avoid Bun serve race, startMock polls HEAD/GET 10x20ms after sleep(50); 11 tests pass, typecheck green, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_alz3gg",
+      "task": "P1 workspace @ mentions \u2014 real workspace tree via GET /workspace/tree",
+      "status": "completed",
+      "timestamp": "2026-09-09T19:06:28.241103+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/routes/workspace.ts (new) \u2014 GET /workspace/tree via Bun.Glob('**/*') + isPathAllowed/sanitizePath, .gitignore + defaults (.git, node_modules, dist, .turbo, data, *.db, .mira, coverage), sorted 500",
+          "packages/server/src/index.ts \u2014 import mountWorkspaceRoutes + mountWorkspaceRoutes(app)",
+          "packages/web/src/api/client.ts \u2014 getWorkspaceTree: () => req<{files:string[]}>('/workspace/tree').then(r=>r.files)",
+          "packages/web/src/components/PromptInput.tsx \u2014 keep MOCK_FILES fallback, workspaceFiles signal + fetchWorkspaceFiles once via api.getWorkspaceTree, createEffect atVisible, onMount prefetch, onFocus, atFiltered uses workspaceFiles()"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (server+web) \u2014 tsc --noEmit pass",
+          "vite_build": "vite build 31 modules, 300.38kB (gzip 80.65kB), built 11.82s"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_alz3gg"
+      },
+      "outcome": "P1 fix complete: workspace tree now real via GET /workspace/tree (Bun.Glob + guardrails + .gitignore defaults, sorted 500), client getWorkspaceTree, PromptInput workspaceFiles signal with once-fetch (createEffect atVisible + onMount + onFocus) and fallback to MOCK_FILES; typecheck + vite build green, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_a9jvhr",
+      "task": "P1 CORS MIRA_ALLOW_LOCALHOST gate",
+      "status": "completed",
+      "timestamp": "2026-09-09T20:05:06.509550+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/middleware/index.ts:36-64 corsOrigin function with MIRA_ALLOW_LOCALHOST gate + normalizedAllowSet + header-smuggling protection",
+          ".env.example:28-35 CORS docs dev default (empty=allow localhost) vs prod (list set=deny localhost unless MIRA_ALLOW_LOCALHOST=1)"
+        ],
+        "verify": {
+          "typecheck": "bun run typecheck (server) tsc --noEmit exit 0",
+          "manual": "prod allowlist normalized, localhost gated behind MIRA_ALLOW_LOCALHOST==='1', dev default reflects localhost, header-smuggling via u.origin preserved"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_a9jvhr"
+      },
+      "outcome": "P1 fix complete: middleware corsOrigin now function when CORS_ORIGIN_LIST non-empty (normalized allowlist + MIRA_ALLOW_LOCALHOST==='1' gate for localhost, deny otherwise), dev default still reflects localhost via normalized origin, header-smuggling protection preserved; .env.example CORS docs updated; bun typecheck pass, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_hdh8ak",
+      "task": "P2 queue rail reorder/cancel \u2014 QueueRail polling + App.tsx placement + api/client verification",
+      "status": "completed",
+      "timestamp": "2026-09-09T20:58:58.684555+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/web/src/components/QueueRail.tsx:1-35 polling 3s visibility-aware onCleanup + \u2191\u2193 reorder and \u2715 cancel per-item (existing styling)",
+          "packages/web/src/App.tsx:895 QueueRail outside <Show when={store.state.cost}> verified (already outside, preserved)",
+          "packages/web/src/api/client.ts:967-976 reorderQueue/deleteQueueItem signatures verified vs session-extras.ts POST /session/:id/queue/reorder {texts} + DELETE /session/:id/queue/item {text}"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 5 cached + server tsc --noEmit pass, web tsc --noEmit pass (bunx tsc --noEmit exit 0 both)",
+          "vite_build": "vite build 31 modules 300.52kB gzip 80.71kB built 11.80s"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_hdh8ak"
+      },
+      "outcome": "P2 fix complete: QueueRail now polls GET /session/:id/queue every 3s (visibility-aware, onCleanup clear) + existing \u2191\u2193 reorder (api.reorderQueue) and \u2715 cancel (api.deleteQueueItem) per-item buttons preserved with existing styling; App.tsx QueueRail verified outside cost Show (visible regardless of cost); api/client signatures verified match server routes POST /session/:id/queue/reorder {texts} and DELETE /session/:id/queue/item {text}; typecheck + vite build green, minimal diff preserved design, no PromptInput/ChatView/mcp/workspace/middleware/cost UI touched"
+    },
+    {
+      "agent": "oracle",
+      "run_id": "run_20260909_3dc4b2",
+      "task": "TUI vs web parity crosscheck @80a6e743 (8 fixes)",
+      "status": "completed",
+      "timestamp": "2026-09-09T21:44:43Z",
+      "stages": ["parse_context", "examine_tui", "examine_web", "verify"],
+      "verdict": "REVISE",
+      "artifacts": {
+        "report": "/tmp/report_tui_crosscheck.md",
+        "parity": "3 missing (slash, workspace, cost), 3 partial (composer, queue, time-travel), 2 N/A (MCP, CORS)",
+        "typecheck": "tui tsc --noEmit EXIT 0, 0 TODOs, 0 tests",
+        "fix_list": "P0 slash preload (S), P1 workspace @ (M), P1 per-session cost (M), P1 queue polling+proxy (S), P2 history grouping+abort (S) \u2014 total ~8.5h"
+      },
+      "outcome": "REVISE \u2014 TUI not regressed but left behind on 3/8 fixes; 5 concrete fixes prioritized (P0 slash double-gate, P1 workspace @, P1 cost cap, P1 queue polling, P2 history grouping); shared rpc/client duplication is drift risk; vite proxy missing 11 routes"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_4416b3",
+      "task": "Fix CI gaps.test.ts auth 401 \u2014 GET /providers hasKey",
+      "status": "completed",
+      "timestamp": "2026-09-09T22:30:00.000000+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/e2e/gaps.test.ts: beforeAll MIRA_TOKEN=test-gaps-token deterministic + AUTH headers on GET /providers, POST /providers/:id/test, GET /terminal, GET /health, WS /terminal + WS vscode-webview (header + auth message fallback), WS timeout 15s",
+          "packages/server/e2e/queue.test.ts: MIRA_TOKEN=test-queue-token + AUTH on all /session, /queue, /prompt, /message + /healthz waitForHealth",
+          "packages/server/e2e/server.e2e.test.ts: MIRA_TOKEN=test-e2e-token + AUTH on all routes + /healthz waitForHealth"
+        ],
+        "verify": {
+          "gaps": "bun test packages/server/e2e/gaps.test.ts 7 pass 0 fail 20.20s (was 4 pass 3 fail ConnectionRefused)",
+          "queue": "bun test packages/server/e2e/queue.test.ts 1 pass 0 fail 23.23s",
+          "server_e2e": "bun test packages/server/e2e/server.e2e.test.ts 7 pass 1 fail (LIVE 401 from OpenRouter when key invalid, 7 non-live pass) 30.80s",
+          "typecheck": "turbo typecheck 6 successful, 6 total, 56.341s"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_4416b3"
+      },
+      "outcome": "Fix complete: gaps.test.ts beforeAll now sets deterministic MIRA_TOKEN and all fetches include Authorization Bearer header (providers, terminal, health, config fallback) + WS auth via header + auth message fallback with 15s timeout; queue.test.ts and server.e2e.test.ts similarly fixed to use deterministic tokens and /healthz for waitForHealth; 7/7 gaps pass, queue 1/1 pass, server.e2e 7/7 non-live pass, typecheck green, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_1ed11a",
+      "task": "TUI P0 slash preload + skeleton + P1 workspace @",
+      "status": "completed",
+      "timestamp": "2026-09-10T06:00:24.509200+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/tui/src/App.tsx:95-96 slashVisible fix + preload createEffect + workspace @ (MOCK_FILES, workspaceFiles, fetchWorkspaceFiles, atVisible/atFiltered, AtMentionAutocomplete, onInput/onFocus/onKeyDown)",
+          "packages/tui/src/components/CommandPalette.tsx:321-381 palette double-gate Loading fallback + 418-505 SlashAutocomplete loading prop + fallback",
+          "packages/tui/src/rpc/client.ts:679 getWorkspaceTree: () => req<{files:string[]}>('/workspace/tree').then(r=>r.files)"
+        ],
+        "verify": {
+          "typecheck": "bun run typecheck (tui) tsc --noEmit exit 0",
+          "vite_build": "vite build 39 modules 333.24kB gzip 83.89kB built 11.46s"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_1ed11a"
+      },
+      "outcome": "P0 slash fix complete: preload createEffect on authorized() -> settingsStore.loadAll(), slashVisible now (filtered.length>0 || loading) && !dismissed with effect watching commands.length, SlashAutocomplete loading prop + fallback; P1 workspace @ complete: rpc.getWorkspaceTree, App workspaceFiles signal + once-fetch (onMount + createEffect atVisible + onFocus), atFiltered via workspaceFiles(), AtMentionAutocomplete with workspaceFiles(), @ detection + Tab/Enter/Esc nav; typecheck + vite build green, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_o8ybgp",
+      "task": "TUI P1 cost + queue \u2014 per-session cost/cap bar + queue polling + proxy",
+      "status": "completed",
+      "timestamp": "2026-09-10T06:33:51.000000+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/tui/src/rpc/client.ts:13-23 Session costUsd/tokensIn/tokensOut",
+          "packages/tui/src/stores/session.ts:405-427 loadCost costCap+session refresh 15s visibility-aware + costCap state",
+          "packages/tui/src/components/Layout.tsx:144-156 per-session $ pill cap bar sparkline \u26a0 costCap",
+          "packages/tui/src/App.tsx:368-379 budget per-session fallback + Header costCap/tokens",
+          "packages/tui/src/components/QueueRail.tsx:41-49 3s polling visibility guard onCleanup",
+          "packages/tui/vite.config.ts:43-48 13 proxies /workspace/tree /config /providers /commands /agents /skills /mcp /dev /learning /knowledge /finding /job /guardrails"
+        ],
+        "verify": {
+          "typecheck": "bun run typecheck (tui) tsc --noEmit exit 0",
+          "vite_build": "vite build 39 modules 335.47kB gzip 84.64kB built 12.00s"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_o8ybgp"
+      },
+      "outcome": "P1 fix complete: Session type now costUsd/tokensIn/tokensOut, store loadCost fetches /config costCap + /session/:id per-session cost 15s visibility-aware, Layout Header per-session $ pill with cap bar/sparkline + \u26a0 when cost>=cap, App budget uses per-session fallback, QueueRail 3s polling with visibility+sessionId guard, vite 13 proxies added; typecheck + vite build green, minimal diff preserved design, no web/server/mcp/slash/workspace/history touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_ce5524",
+      "task": "P1 auth gaps ora-3: CORS WS vs HTTP, api_keys schema, placeholder token",
+      "status": "completed",
+      "timestamp": "2026-09-10T07:25:25.000000+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/storage/schema.ts: apiKeys table added (key TEXT PK, owner TEXT, created_at INTEGER, created_by TEXT DEFAULT default) + index api_keys_owner_idx, schema export includes apiKeys",
+          "packages/server/src/index.ts:137-155 placeholder token strict handling (let REQUIRED_TOKEN, prod error+exit, non-prod error/warn+empty)",
+          "packages/server/src/index.ts:186-205 WS isOriginAllowed aligned to MIRA_ALLOW_LOCALHOST==='1' strict (https + ::1, prod gate, dev early return)"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (bunx tsc --noEmit exit 0, re-verified after re-apply)",
+          "gaps": "bun test packages/server/e2e/gaps.test.ts 7 pass 0 fail 20.34s (re-verified)",
+          "queue": "bun test packages/server/e2e/queue.test.ts 1 pass",
+          "server_e2e": "bun test packages/server/e2e/server.e2e.test.ts 8 pass 1 fail LIVE expected",
+          "manual": "api_keys table exists YES, schema has apiKeys true, WS CORS prod blocked/allowed PASS, placeholder prod exit PASS (re-verified)",
+          "migrate": "createDatabase + migrate creates api_keys, SELECT key,owner FROM api_keys succeeds 0 rows"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ce5524"
+      },
+      "outcome": "P1 auth gaps fixed: WS isOriginAllowed now strict MIRA_ALLOW_LOCALHOST==='1' (https + ::1, prod gate, dev early return true), apiKeys added to Drizzle schema (migrate already had it, now schema matches, admin ensureTable idempotent), placeholder token now let + prod error+exit, non-prod error/warn+empty (no guessable auth); typecheck green, gaps 7 pass, minimal diff preserved design, no web/tui slash/workspace/cost/queue/history touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_q7x9k2",
+      "task": "TUI P2 history grouping + abortPrompt",
+      "status": "completed",
+      "timestamp": "2026-09-10T07:40:00.000000+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
+          "packages/tui/src/components/Inspector.tsx:70-89 grouped history same as HistoryView + toast + line counts, consistent",
+          "packages/tui/src/stores/session.ts:586-589 stopStream now void rpc.abortPrompt(id).catch(()=>{}) + abort?.abort() + setState(streaming:false)",
+          "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))"
+        ],
+        "verify": {
+          "typecheck": "bun run typecheck (tui) tsc --noEmit exit 0",
+          "vite_build": "vite build 39 modules 339.16kB gzip 85.83kB built 19.30s"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_q7x9k2"
+      },
+      "outcome": "P2 fix complete: HistoryView + Inspector now grouped by messageID (__no_message__ sentinel) with per-group header (msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> revertSession + refetch + toast), per-file card (path+time+edit/new file+diff -> getSnapshot -> DiffViewer before/after + line-count delta); rpc abortPrompt added (POST /session/:id/abort catch 404), store stopStream now fire-and-forget abortPrompt + abort + streaming:false; typecheck + vite build green, minimal diff preserved design, no web/server/mcp/slash/workspace/cost/queue touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_ed9ad5",
+      "task": "TUI P2 history grouping + abortPrompt",
+      "status": "completed",
+      "timestamp": "2026-09-10T08:35:23.513735+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
+          "packages/tui/src/components/Inspector.tsx:70-89 grouped history same as HistoryView + toast + line counts, consistent",
+          "packages/tui/src/stores/session.ts:586-589 stopStream now void rpc.abortPrompt(id).catch(()=>{}) + abort?.abort() + setState(streaming:false)",
+          "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))"
+        ],
+        "verify": {
+          "typecheck": "bun run typecheck (tui) tsc --noEmit exit 0",
+          "vite_build": "vite build 39 modules 339.16kB gzip 85.83kB built 19.30s"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ed9ad5"
+      },
+      "outcome": "P2 fix complete: HistoryView + Inspector now grouped by messageID (__no_message__ sentinel) with per-group header (msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> revertSession + refetch + toast), per-file card (path+time+edit/new file+diff -> getSnapshot -> DiffViewer before/after + line-count delta); rpc abortPrompt added (POST /session/:id/abort catch 404), store stopStream now fire-and-forget abortPrompt + abort + streaming:false; typecheck + vite build green, minimal diff preserved design, no web/server/mcp/slash/workspace/cost/queue touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_ea1b0b",
+      "task": "P0-2 workspace tree project-aware + prod bug",
+      "status": "completed",
+      "timestamp": "2026-09-10T10:35:44.628986+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/routes/workspace.ts:63-82 project-aware with cwd/projectId/limit/cursor/includeDirs, sanitizePath+isPathAllowed with real allowedRoots, pagination, return {files:[{path,isDir,size,mtime}], truncated, cwd}",
+          "packages/server/src/guardrails/index.ts:105 isPathAllowed per-project roots fix normalize ./ prefix, enforce logic correct for prod vs dev",
+          "packages/server/src/config/store.ts:328 getConfig(cwd) per-project cache with sync fallback, getConfigLayers already supports 6 layers"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (server tsc --noEmit pass)",
+          "workspace": "GET /workspace/tree?cwd=/tmp/other_test returns 3 files with {path,isDir,size,mtime}, prod with CORS_ORIGINS returns 277 files (not 0), limit/cursor/includeDirs pagination works",
+          "config": "bun test packages/server/src/config/config.test.ts 18 pass"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ea1b0b"
+      },
+      "outcome": "P0-2 fix complete: workspace tree now project-aware (cwd/projectId query, per-project allowedRoots via getConfig(cwd), pagination limit/cursor/includeDirs, return {files:[{path,isDir,size,mtime}], truncated, cwd}), prod bug fixed (real allowedRoots not []), guardrails isPathAllowed fixed for ./ prefix, config store per-project cache; typecheck green, workspace verified, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_iebhd3",
+      "task": "P0-1 Add projectId/cwd to sessions + thread through prompt/tools",
+      "status": "completed",
+      "timestamp": "2026-09-10T11:08:50.872685+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/storage/schema.ts:11 cwd: text(\"cwd\"), projectId: text(\"project_id\") + index sessions_project_id_idx",
+          "packages/server/src/storage/db.ts:52-210 CREATE TABLE sessions cwd/project_id + addColumn cwd/project_id + index",
+          "packages/server/src/routes/session.ts:28 createSessionSchema cwd/projectId + SessionRow cwd/projectId",
+          "packages/server/src/session/prompt.ts:300 createSession cwd/projectId + fork/subagent inherit + streamResponse buildSystemPrompt cwd + loadContext/loadMemoryBank cwd + tools.execute cwd",
+          "packages/server/src/tools/registry.ts:200 execute cwd fallback ctx.cwd ?? process.cwd()",
+          "packages/server/src/tools/glob.ts:20 glob/grep use ctx.cwd",
+          "packages/server/src/tools/bash.ts:25 workdir fallback ctx.cwd",
+          "packages/server/src/config/prompt.ts:2 buildSystemPrompt(cwd) already exists, callers now pass session.cwd"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful, server tsc --noEmit exit 0",
+          "gaps": "bun test gaps.test.ts 7 pass 0 fail 17.69s",
+          "queue": "bun test queue.test.ts 1 pass 0 fail 14.68s",
+          "server_e2e": "7 pass 1 fail LIVE expected 20.44s",
+          "mcp_isolated": "11 pass 0 fail 56.82s",
+          "cwd_test": "ALL CHECKS PASSED: schema cwd/project_id + index, createSession persist, buildSystemPrompt cwd, loadMemoryBank cwd, tools cwd, session route cwd/projectId"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_iebhd3"
+      },
+      "outcome": "P0-1 fix complete: sessions table now has cwd/project_id with index, migrate idempotent (CREATE TABLE + addColumn + index), session route accepts cwd/projectId, prompt createSession persists and threads cwd through buildSystemPrompt/loadMemoryBank/tools.execute (fork/subagent inherit), registry ensures ctx.cwd fallback, glob/grep/bash use ctx.cwd; typecheck green, gaps/queue/server_e2e pass, cwd functional test ALL CHECKS PASSED, minimal diff preserved design, no workspace/guardrails/web/tui touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_96b605",
+      "task": "P2-1 Workspace-aware symbols/LSP/memory",
+      "status": "completed",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "timestamp": "2026-09-10T20:45:00.000000+00:00",
+      "artifacts": {
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_96b605",
+        "files_modified": [
+          "packages/server/src/symbols/index.ts:261 walk fix baseRoot param for workspace-aware relative paths",
+          "packages/server/src/tools/edit-fallback.ts:21 import getSymbolIndex, 442 applyWorkspaceEdit cwdForLsp, 484-487 heuristic rename workspace-aware",
+          "packages/server/src/tools/edit.ts:24 pass cwd to applyEditWithFallback, 55 patch tool ctx.cwd fallback",
+          "packages/server/src/tools/other.ts:204 diagnose tool ctx.cwd fallback"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful, server tsc --noEmit pass",
+          "lsp": "8 pass 1 skip (lsp/client.test.ts)",
+          "tools": "31 pass 1 skip (tools/*)",
+          "workspace": "manual test: getSymbolIndex per-cwd isolates symbols, glob/read respect session.cwd, GET /workspace/symbol?cwd returns correct"
+        }
+      },
+      "outcome": "P2-1 fix complete: walk now respects session.cwd via baseRoot param, edit-fallback LSP/heuristic renames use session cwd via getSymbolIndex(cwdForLsp), edit patch/diagnose tools respect ctx.cwd, workspace-aware symbols/LSP/memory verified"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_7cf010",
+      "task": "P2-2 project lifecycle \u2014 create/switch/templates/recent",
+      "status": "completed",
+      "timestamp": "2026-09-11T00:29:53.681711+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/routes/workspace.ts (already had GET/POST/DELETE /workspaces with sanitizePath+isPathAllowed+getConfig guardrails, ~/.mira/workspaces.json + MIRA_WORKSPACE_ROOTS)",
+          "packages/cli/src/cli.ts: workspace add/list/remove/switch + project init --template ts (mira.json creation, offline fallback to ~/.mira/workspaces.json)",
+          "packages/web/src/api/client.ts: WorkspaceEntry + listWorkspaces/addWorkspace/removeWorkspace",
+          "packages/web/src/components/SessionList.tsx: workspace switcher dropdown (GET /workspaces, cwd for new sessions, add workspace inline)",
+          "packages/web/src/stores/app.ts: createSession now accepts cwd/projectId"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (server+web+tui+shared+slack+cli)",
+          "cli": "mira workspace add/list/switch + project init --template ts verified offline",
+          "web": "workspace switcher renders, cwd passed to createSession",
+          "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_7cf010"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_7cf010"
+      },
+      "outcome": "P2-2 complete: workspace lifecycle (create/switch/templates/recent) via ~/.mira/workspaces.json + MIRA_WORKSPACE_ROOTS, CLI workspace/project commands with offline fallback, web switcher dropdown with cwd for new sessions, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_ecb0ef",
+      "task": "P2-3 CLI env-only + P3-3 VITE_MIRA_TOKEN prod bake",
+      "status": "completed",
+      "timestamp": "2026-09-11T06:54:36.238176+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/cli/src/cli.ts:68-95 readMiraEnvFile() (MIRA_DIR, XDG_CONFIG_HOME/mira/mira.env, ~/.mira/mira.env) + token() now process.env.MIRA_TOKEN ?? readMiraEnvFile() ?? \"\"",
+          "packages/web/vite.config.ts:52-63 FIRST_RUN_TOKEN gated by NODE_ENV !== 'production' + define gated by NODE_ENV !== 'production' && FIRST_RUN_TOKEN (DEV ONLY)",
+          "packages/web/src/api/client.ts:409-414 getToken() VITE_MIRA_TOKEN fallback marked // DEV ONLY (vite dev injects, never in prod bundle)",
+          "packages/web/.env removed (was baking VITE_MIRA_TOKEN=01df... into prod dist)"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (server+web+tui+shared+slack+cli) \u2014 tsc --noEmit pass",
+          "cli": "MIRA_DIR=/tmp/test-mira-dir token fallback PASS, XDG_CONFIG_HOME fallback PASS, env precedence PASS, mira session list without source now works via file read",
+          "vite_prod": "NODE_ENV=production vite build 31 modules 309.14kB \u2014 dist/assets/*.js no VITE_MIRA_TOKEN value (bl without token, Hn() returns \"\"), prod clean",
+          "vite_dev": "dev still injects via mira.env when NODE_ENV != production",
+          "server_tests": "bun test packages/server 250+ pass 1 fail LIVE expected (pre-existing), gaps 7 pass, queue 1 pass"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ecb0ef"
+      },
+      "outcome": "P2-3+P3-3 complete: CLI now reads ~/.mira/mira.env (MIRA_DIR > XDG_CONFIG_HOME/mira/mira.env > ~/.mira/mira.env) via readMiraEnvFile() (15 LOC, copy index.ts:91-101 logic) and token() falls back to file when env not set \u2014 mira session list without source now works; vite.config FIRST_RUN_TOKEN and define now gated by NODE_ENV !== 'production' (DEV ONLY) \u2014 prod build no longer bakes token (verified dist clean, .env removed), client getToken marked DEV ONLY; typecheck green, minimal diff preserved design, no validateToken/api_keys/admin/tokenEquals/isPublicUiPath/?api= touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_ad3821",
+      "task": "P2-2 validateToken double 401 \u2014 single gated endpoint",
+      "status": "completed",
+      "timestamp": "2026-09-11T08:16:50.719522+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/web/src/api/client.ts:440-449 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)",
+          "packages/tui/src/rpc/client.ts:498-506 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)"
+        ],
+        "verify": {
+          "typecheck": "web tsc --noEmit exit 0, tui tsc --noEmit exit 0, server tsc --noEmit exit 0",
+          "gaps": "bun test packages/server/e2e/gaps.test.ts 7 pass 0 fail 21.17s",
+          "validateToken": "web validateToken single /config PASS, tui validateToken single /config PASS, AuthGate Invalid token error PASS (single 401, saves 1 RTT)",
+          "manual": "grep validateToken shows 0 /health refs, 1 /config ref, no double logic"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ad3821"
+      },
+      "outcome": "P2-2 fix complete: web/api/client.ts:440 and tui/rpc/client.ts:498 now single GET /config (gated, requires auth) instead of /health then /config double 401 \u2014 saves 1 RTT on invalid token, AuthGate shows Invalid token after single 401; typecheck green (web+tui+server), gaps 7 pass, minimal diff preserved design, no cli/vite/api_keys/admin/tokenEquals/isPublicUiPath/?api= touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_38b045",
+      "task": "P3 auth gaps \u2014 api_keys hash, admin loopback gate, tokenEquals hash, isPublicUiPath normalize, ?api= validate",
+      "status": "completed",
+      "timestamp": "2026-09-11T10:11:59.270194+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/index.ts: tokenEquals hash-then-compare (createHash sha256 32B constant time, P3-4)",
+          "packages/server/src/storage/schema.ts: apiKeys key_hash/key_prefix columns (P3-1)",
+          "packages/server/src/storage/db.ts: CREATE TABLE api_keys key_hash/key_prefix + addColumn idempotent (P3-1)",
+          "packages/server/src/routes/admin.ts: isAdmin loopback gate (HOST check + warn, P3-2) + ensureTable key_hash/prefix + mint stores sha256+prefix (P3-1)",
+          "packages/server/src/middleware/index.ts: isPublicUiPath normalize via URL + traversal block + normalizedPath in auth gate (P3-5)",
+          "packages/web/src/api/client.ts: getRuntimeApiUrl ?api= validate localhost/https only (P3-6)"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (server tsc --noEmit exit 0, web tsc --noEmit exit 0)",
+          "gaps": "bun test packages/server/e2e/gaps.test.ts 7 pass 0 fail 22.05s",
+          "traversal": "GET /assets/../session 401 PASS (was 200 bypass), /assets/app.js public, /session 401 without auth",
+          "admin": "GET /admin/api-keys 401 without auth, 200 with auth, mint stores key_hash 64 hex + key_prefix 12 chars PASS",
+          "tokenEquals": "hash-then-compare 32B constant time, no length leak PASS",
+          "api_validate": "?api= https/localhost allowed, http evil/file rejected PASS"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_38b045"
+      },
+      "outcome": "P3 fix complete: tokenEquals now hash-then-compare (sha256 32B constant time, no length leak), api_keys now stores key_hash (sha256 hex) + key_prefix (12 chars) with migrate idempotent and backward compat (raw key kept), admin isAdmin now gated to loopback when no REQUIRED_TOKEN (HOST check + warn, 401 on non-loopback), isPublicUiPath now normalizes via URL and blocks .. traversal (GET /assets/../session 401), ?api= now validates localhost/https only; typecheck green, gaps 7 pass, minimal diff preserved design, no validateToken/cli/vite touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_52a377",
+      "task": "F1 Sync Vite proxies to server route table",
+      "status": "completed",
+      "timestamp": "2026-09-11T15:33:35.462703+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/web/vite.config.ts:79-99 add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + keep WS catch-all last",
+          "packages/tui/vite.config.ts:43-48 replace /workspace/tree with /workspace + add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + add WS catch-all '/' ws:true last",
+          "packages/server/src/routes/static.ts:10-20 API_ROUTE_PREFIXES add /workspaces /workspace"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (web tsc --noEmit pass, tui tsc --noEmit pass, server tsc --noEmit pass)",
+          "vite_build_web": "vite build 31 modules 309.42kB gzip 82.80kB built 12.21s",
+          "vite_build_tui": "vite build 39 modules 339.46kB gzip 85.91kB built 13.40s",
+          "proxy_direct": "GET /admin/api-keys 200, GET /workspace/symbol?cwd=/tmp 200, GET /metrics 200, GET /workspaces 200, GET /workspace/tree 200, GET /terminal 200 via direct server (vite proxy forwards to same)",
+          "vite_proxy_config": "web 7 proxies + WS catch-all verified, tui 7 proxies + WS catch-all verified, static API_ROUTE_PREFIXES includes all"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_52a377"
+      },
+      "outcome": "F1 fix complete: web vite.config now proxies 22 routes (15+7) with WS catch-all last, tui vite.config now proxies 20 routes (13+7) with WS catch-all last (replaced /workspace/tree with /workspace to cover /workspace/tree + /workspace/symbol), static API_ROUTE_PREFIXES now includes /workspaces + /workspace (32 prefixes total); typecheck + vite build green, direct server routes 200, vite proxy config verified, minimal diff preserved design, no turbo.json/slack/bot.ts/server/index.ts WS touched"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_98abc0",
+      "task": "F2 Make slack#dev opt-in, not persistent",
+      "status": "completed",
+      "timestamp": "2026-09-11T20:15:00.000000+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
+          "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials \u2014 skipping\"; exit 0; fi; bun --watch src/bot.ts",
+          "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (server tsc --noEmit pass, slack tsc --noEmit pass)",
+          "turbo_dev_filter": "turbo dev --filter=!@mira/slack --dry shows 6 packages without slack, turbo dev --filter=@mira/slack --dry shows slack only, turbo dev --dry shows 7 packages with slack",
+          "slack_bot": "SLACK_BOT_TOKEN=\"\" bun src/bot.ts exits 0 with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', MIRA_SLACK_STRICT=1 exits 1, NODE_ENV=production parks (timeout 124), with creds via .env runs",
+          "slack_dev_guard": "if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then skip else run \u2014 handles .env creds",
+          "sigint": "turbo dev --filter=!@mira/slack runs 4 tasks (server, web, tui, cli) without slack, SIGINT draining fast (4 tasks shutting down, no 25m50s park)"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_98abc0"
+      },
+      "outcome": "F2 fix complete: slack#dev now opt-in \u2014 root dev filters out @mira/slack (dev:all keeps it), slack package dev guards missing creds via shell + .env check, bot.ts exits 0 in dev (not park) with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still fails fast; turbo dev with 4 tasks runs cleanly without slack, turbo dev --filter=@mira/slack still works, SIGINT fast, typecheck green, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_cf1c5c",
+      "task": "F2 Make slack#dev opt-in, not persistent",
+      "status": "completed",
+      "timestamp": "2026-09-12T01:35:47.379650+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
+          "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials \u2014 skipping\"; exit 0; fi; bun --watch src/bot.ts",
+          "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (server tsc --noEmit pass, slack tsc --noEmit pass)",
+          "turbo_dev_filter": "turbo dev --filter=!@mira/slack --dry shows 6 packages without slack, turbo dev --filter=@mira/slack --dry shows slack only, turbo dev --dry shows 7 packages with slack",
+          "slack_bot": "SLACK_BOT_TOKEN=\"\" bun src/bot.ts exits 0 with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', MIRA_SLACK_STRICT=1 exits 1, NODE_ENV=production parks (timeout 124), with creds via .env runs",
+          "slack_dev_guard": "if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then skip else run \u2014 handles .env creds",
+          "sigint": "turbo dev --filter=!@mira/slack runs 4 tasks (server, web, tui, cli) without slack, SIGINT draining fast (4 tasks shutting down, no 25m50s park)"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_cf1c5c"
+      },
+      "outcome": "F2 fix complete: slack#dev now opt-in \u2014 root dev filters out @mira/slack (dev:all keeps it), slack package dev guards missing creds via shell + .env check, bot.ts exits 0 in dev (not park) with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still fails fast; turbo dev with 4 tasks runs cleanly without slack, turbo dev --filter=@mira/slack still works, SIGINT fast, typecheck green, minimal diff preserved design"
+    },
+    {
+      "agent": "fixer",
+      "run_id": "run_20260909_650858",
+      "task": "F5 Align WS isOriginAllowed with HTTP CORS",
+      "status": "completed",
+      "timestamp": "2026-09-12T04:26:16.115820+00:00",
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "artifacts": {
+        "files_modified": [
+          "packages/server/src/middleware/index.ts:32-101 isLocalDevOrigin now ws/wss + isVscodeOrigin + corsOrigin vscode allowlist both branches",
+          "packages/server/src/index.ts:212-250 isOriginAllowed now mirrors corsOrigin (empty list \u2192 only isLocalDevOrigin, prod allowlist normalized + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes)",
+          "packages/server/src/middleware/cors.test.ts (new) \u2014 5 tests parity: empty list only localhost, prod allowlist + gate, vscode always, isLocalDevOrigin ws/wss, parity true iff cors non-empty"
+        ],
+        "verify": {
+          "typecheck": "turbo typecheck 6 successful (server tsc --noEmit pass)",
+          "cors_parity": "bun test packages/server/src/middleware/cors.test.ts 5 pass 69 expect",
+          "gaps": "bun test packages/server/e2e/gaps.test.ts 7 pass 0 fail",
+          "http_dev": "GET /health Origin http://localhost:3000 200 with CORS http://localhost:3000, Origin https://evil.com 200 without CORS (blocked), Origin vscode-webview://123 200 with CORS vscode-webview://123",
+          "http_prod": "GET /health Origin https://evil.com 200 without CORS (blocked), Origin https://slab1.github.io 200 with CORS, Origin http://localhost:3000 without gate blocked (no CORS)",
+          "ws": "WS isOriginAllowed vscode-webview:// true, http://localhost:3000 true in dev and prod with MIRA_ALLOW_LOCALHOST=1, https://evil.com false; WS upgrade evil.com 403, vscode 500 not 403, dev localhost 500 not 403, prod localhost no gate 403"
+        },
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_650858"
+      },
+      "outcome": "F5 fix complete: isOriginAllowed now mirrors corsOrigin (empty list \u2192 only isLocalDevOrigin not any origin, prod allowlist normalized + MIRA_ALLOW_LOCALHOST=1 gate, vscode-webview:// always allowed, isLocalDevOrigin now http/https/ws/wss for localhost/127.0.0.1/[::1]); middleware corsOrigin updated with isVscodeOrigin + ws/wss; parity test 5 pass, typecheck green, HTTP dev localhost 200 with CORS, evil blocked, prod evil blocked, WS vscode true, localhost true in dev/gate, evil false, minimal diff preserved design, no web/vite.config.ts, tui/vite.config.ts, server/routes/static.ts, turbo.json, slack/bot.ts, server/index.ts WS writeAfterFIN, web/vite.config.ts VITE_MIRA_TOKEN touched"
+    }
+  ],
+  "findings": {
+    "oracle": [
+      {
+        "run_id": "run_20260909_3dc4b2",
+        "verdict": "REVISE",
+        "at": "2026-09-09T21:44:43Z",
+        "scope": "packages/tui vs packages/web @80a6e743",
+        "top_findings": [
+          "slash preload missing (P0)",
+          "workspace @ missing (P1)",
+          "per-session cost missing (P1)",
+          "queue no polling (P1)",
+          "history not grouped (P2)"
+        ]
+      }
+    ],
+    "fixer": [
+      {
+        "run_id": "run_20260909_4416b3",
+        "at": "2026-09-09T22:30:00.000000+00:00",
+        "task": "Fix CI gaps.test.ts auth 401",
+        "files_modified": [
+          "packages/server/e2e/gaps.test.ts",
+          "packages/server/e2e/queue.test.ts",
+          "packages/server/e2e/server.e2e.test.ts"
+        ],
+        "root_cause": "beforeAll cleaned MIRA_TOKEN but server auto-provisions random token via ~/.mira/mira.env, fetches without Authorization -> 401, list [] -> expect fail, then server killed -> ConnectionRefused for later tests",
+        "fix": "Set deterministic MIRA_TOKEN in spawn env (test-gaps-token, test-queue-token, test-e2e-token) and add Authorization Bearer header to all fetches requiring auth (/providers, /config, /terminal, /health, /session, etc.) + WS auth via header + auth message fallback, waitForHealth uses /healthz (public), WS timeout 15s",
+        "verify": "bun test gaps.test.ts 7 pass 0 fail 20.20s, queue.test.ts 1 pass, server.e2e.test.ts 7 pass (LIVE 401 expected), turbo typecheck 6 successful",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_4416b3"
+      },
+      {
+        "run_id": "run_20260909_1ed11a",
+        "at": "2026-09-10T06:00:24.509200+00:00",
+        "task": "TUI P0 slash preload + skeleton + P1 workspace @",
+        "files_modified": [
+          "packages/tui/src/App.tsx:95-96 slashVisible fix + preload createEffect + workspace @ (MOCK_FILES, workspaceFiles, fetchWorkspaceFiles, atVisible/atFiltered, AtMentionAutocomplete, onInput/onFocus/onKeyDown)",
+          "packages/tui/src/components/CommandPalette.tsx:321-381 palette double-gate Loading fallback + 418-505 SlashAutocomplete loading prop + fallback",
+          "packages/tui/src/rpc/client.ts:679 getWorkspaceTree: () => req<{files:string[]}>('/workspace/tree').then(r=>r.files)"
+        ],
+        "root_cause": "TUI slash double-gate hid palette when allCommands empty (no preload, only onInput/'/' key), no skeleton; workspace @ missing entirely (0 hits, no rpc method, plain textarea)",
+        "fix": "App preload effect + slashVisible loading gate + commands.length watch; CommandPalette double-gate Loading fallback + SlashAutocomplete loading prop; rpc getWorkspaceTree; App workspaceFiles once-fetch + atVisible effect + onMount + onFocus + atFiltered + AtMentionAutocomplete",
+        "verify": "bun run typecheck (tui) tsc --noEmit exit 0, vite build 39 modules 333.24kB gzip 83.89kB",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_1ed11a"
+      },
+      {
+        "run_id": "run_20260909_o8ybgp",
+        "at": "2026-09-10T06:33:51.000000+00:00",
+        "task": "TUI P1 cost + queue \u2014 per-session cost/cap bar + queue polling + proxy",
+        "files_modified": [
+          "packages/tui/src/rpc/client.ts:13-23 Session costUsd/tokensIn/tokensOut",
+          "packages/tui/src/stores/session.ts:405-427 loadCost costCap+session refresh 15s visibility-aware + costCap state",
+          "packages/tui/src/components/Layout.tsx:144-156 per-session $ pill cap bar sparkline \u26a0 costCap",
+          "packages/tui/src/App.tsx:368-379 budget per-session fallback + Header costCap/tokens",
+          "packages/tui/src/components/QueueRail.tsx:41-49 3s polling visibility guard onCleanup",
+          "packages/tui/vite.config.ts:43-48 13 proxies /workspace/tree /config /providers /commands /agents /skills /mcp /dev /learning /knowledge /finding /job /guardrails"
+        ],
+        "root_cause": "TUI Session missing costUsd/tokens, store loadCost only gateway no costCap/per-session, Layout global pill only, App budget global costUSD, QueueRail no polling, vite 4 proxies vs web 15+",
+        "fix": "rpc Session add costUsd/tokensIn/tokensOut; store loadCost GET /config costCap + GET /session/:id refresh 15s visibility-aware + costCap state; Layout per-session $ pill cap bar/sparkline \u26a0 when cost>=cap; App budget per-session fallback; QueueRail 3s polling visibility+sessionId guard onCleanup; vite 13 proxies added",
+        "verify": "bun run typecheck (tui) tsc --noEmit exit 0, vite build 39 modules 335.47kB gzip 84.64kB",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_o8ybgp"
+      },
+      {
+        "run_id": "run_20260909_ce5524",
+        "at": "2026-09-10T07:25:25.000000+00:00",
+        "task": "P1 auth gaps ora-3: CORS WS vs HTTP, api_keys schema, placeholder token",
+        "files_modified": [
+          "packages/server/src/storage/schema.ts: apiKeys table added",
+          "packages/server/src/index.ts:137-155 placeholder token strict handling",
+          "packages/server/src/index.ts:186-205 WS isOriginAllowed aligned to ===1"
+        ],
+        "root_cause": "WS isOriginAllowed used !=='0' (default allow) vs middleware ==='1' strict (403 vs 101 divergence); api_keys missing from Drizzle schema (migrate had it but schema export 9 tables, fresh DB without admin call has no table via Drizzle, SELECT warns); placeholder token only warn, dev ships guessable token with auth gate active",
+        "fix": "WS isOriginAllowed now ==='1' strict with https+::1, prod gate, dev early return; schema.ts add apiKeys sqliteTable + index + export; index.ts REQUIRED_TOKEN let + placeholder: prod error+exit, non-prod error/warn+empty (treat as no auth)",
+        "verify": "turbo typecheck 6 successful (re-verified), gaps 7 pass 20.34s (re-verified), queue 1 pass, manual api_keys exists YES + WS CORS PASS + placeholder PASS, migrate SELECT succeeds",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ce5524"
+      },
+      {
+        "run_id": "run_20260909_q7x9k2",
+        "at": "2026-09-10T07:40:00.000000+00:00",
+        "task": "TUI P2 history grouping + abortPrompt",
+        "files_modified": [
+          "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
+          "packages/tui/src/components/Inspector.tsx:70-89 grouped history same as HistoryView + toast + line counts, consistent",
+          "packages/tui/src/stores/session.ts:586-589 stopStream now void rpc.abortPrompt(id).catch(()=>{}) + abort?.abort() + setState(streaming:false)",
+          "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))"
+        ],
+        "root_cause": "HistoryView flat list (198-351) + Inspector flat (70-89) no grouping/toast/line counts; SessionView per-message rewind exists but history not grouped; stores/session stopStream only abort?.abort() no rpc.abortPrompt (0 hits), web has api/client:655 abortPrompt",
+        "fix": "HistoryView + Inspector grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header + rewind button (revertSession + refetch + toast), per-file card diff -> getSnapshot -> DiffViewer before/after + line-count delta; rpc abortPrompt POST /session/:id/abort catch 404; store stopStream void rpc.abortPrompt + abort + streaming:false",
+        "verify": "bun run typecheck (tui) tsc --noEmit exit 0, vite build 39 modules 339.16kB gzip 85.83kB",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_q7x9k2"
+      },
+      {
+        "run_id": "run_20260909_ed9ad5",
+        "at": "2026-09-10T08:35:23.513735+00:00",
+        "task": "TUI P2 history grouping + abortPrompt",
+        "files_modified": [
+          "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
+          "packages/tui/src/components/Inspector.tsx:70-89 grouped history same as HistoryView + toast + line counts, consistent",
+          "packages/tui/src/stores/session.ts:586-589 stopStream now void rpc.abortPrompt(id).catch(()=>{}) + abort?.abort() + setState(streaming:false)",
+          "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))"
+        ],
+        "root_cause": "HistoryView flat list (198-351) + Inspector flat (70-89) no grouping/toast/line counts; SessionView per-message rewind exists but history not grouped; stores/session stopStream only abort?.abort() no rpc.abortPrompt (0 hits), web has api/client:655 abortPrompt",
+        "fix": "HistoryView + Inspector grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header + rewind button (revertSession + refetch + toast), per-file card diff -> getSnapshot -> DiffViewer before/after + line-count delta; rpc abortPrompt POST /session/:id/abort catch 404; store stopStream void rpc.abortPrompt + abort + streaming:false",
+        "verify": "bun run typecheck (tui) tsc --noEmit exit 0, vite build 39 modules 339.16kB gzip 85.83kB",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ed9ad5"
+      },
+      {
+        "run_id": "run_20260909_ea1b0b",
+        "at": "2026-09-10T10:35:44.629020+00:00",
+        "task": "P0-2 workspace tree project-aware + prod bug",
+        "files_modified": [
+          "packages/server/src/routes/workspace.ts:63-82 project-aware with cwd/projectId/limit/cursor/includeDirs, sanitizePath+isPathAllowed with real allowedRoots, pagination, return {files:[{path,isDir,size,mtime}], truncated, cwd}",
+          "packages/server/src/guardrails/index.ts:105 isPathAllowed per-project roots fix normalize ./ prefix, enforce logic correct for prod vs dev",
+          "packages/server/src/config/store.ts:328 getConfig(cwd) per-project cache with sync fallback, getConfigLayers already supports 6 layers"
+        ],
+        "root_cause": "workspace.ts:63 no query, cwd=process.cwd(), isPathAllowed(file, []) with [] \u2192 prod returns 0 files (fail-closed bug, guardrails:106-109 if(roots.length===0 && prod) return false); store.ts:8 single cwd cache; guardrails isPathAllowed mishandled ./ prefix (./data vs /data)",
+        "fix": "workspace.ts:63-82 accept ?cwd=&projectId=&limit&cursor&includeDirs (validate via sanitizePath, default to process.cwd(), pass allowedRoots from getConfig(cwd), pagination, return {files:[{path,isDir,size,mtime}], truncated, cwd}); guardrails/index.ts:105 fix normalize ./ prefix and enforce logic; config/store.ts:328 per-project cache Map + getConfig(cwd) sync fallback, getConfigLayers already supports 6 layers",
+        "verify": "turbo typecheck 6 successful, GET /workspace/tree?cwd=/tmp/other_test returns 3 files, prod with CORS_ORIGINS returns 277 files (not 0), limit/cursor/includeDirs pagination works, bun test config 18 pass",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ea1b0b"
+      },
+      {
+        "run_id": "run_20260909_iebhd3",
+        "at": "2026-09-10T11:08:50.872685+00:00",
+        "task": "P0-1 Add projectId/cwd to sessions + thread through prompt/tools",
+        "files_modified": [
+          "packages/server/src/storage/schema.ts:11 cwd: text(\"cwd\"), projectId: text(\"project_id\") + index sessions_project_id_idx",
+          "packages/server/src/storage/db.ts:52-210 CREATE TABLE sessions cwd/project_id + addColumn cwd/project_id + index",
+          "packages/server/src/routes/session.ts:28 createSessionSchema cwd/projectId + SessionRow cwd/projectId",
+          "packages/server/src/session/prompt.ts:300 createSession cwd/projectId + fork/subagent inherit + streamResponse buildSystemPrompt cwd + loadContext/loadMemoryBank cwd + tools.execute cwd",
+          "packages/server/src/tools/registry.ts:200 execute cwd fallback ctx.cwd ?? process.cwd()",
+          "packages/server/src/tools/glob.ts:20 glob/grep use ctx.cwd",
+          "packages/server/src/tools/bash.ts:25 workdir fallback ctx.cwd",
+          "packages/server/src/config/prompt.ts:2 buildSystemPrompt(cwd) already exists, callers now pass session.cwd"
+        ],
+        "root_cause": "sessions table lacked cwd/projectId, prompt/tools used process.cwd() globally, no per-session workspace isolation, buildSystemPrompt/loadMemoryBank/tools ignored session cwd",
+        "fix": "schema.ts add cwd/projectId + index, db.ts CREATE TABLE + addColumn + index idempotent (fixed initial CREATE INDEX failure on old DBs), session.ts SessionRow + Zod schema + route pass-through, prompt.ts createSession persist + fork/subagent inherit + streamResponse/buildSystemPrompt cwd + loadContext/loadMemoryBank cwd + tools.execute cwd, registry cwd fallback, glob/grep/bash use ctx.cwd, config/prompt already cwd-aware",
+        "verify": "turbo typecheck 6 successful, gaps 7 pass, queue 1 pass, server_e2e 7 pass LIVE fail expected, mcp isolated 11 pass, cwd functional test ALL CHECKS PASSED (schema, persist, buildSystemPrompt, loadMemoryBank, tools, route)",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_iebhd3"
+      },
+      {
+        "run_id": "run_20260909_ecb0ef",
+        "at": "2026-09-11T06:54:36.238176+00:00",
+        "task": "P2-3 CLI env-only + P3-3 VITE_MIRA_TOKEN prod bake",
+        "files_modified": [
+          "packages/cli/src/cli.ts:68-95 readMiraEnvFile() (MIRA_DIR, XDG_CONFIG_HOME/mira/mira.env, ~/.mira/mira.env) + token() now process.env.MIRA_TOKEN ?? readMiraEnvFile() ?? \"\"",
+          "packages/web/vite.config.ts:52-63 FIRST_RUN_TOKEN gated by NODE_ENV !== 'production' + define gated by NODE_ENV !== 'production' && FIRST_RUN_TOKEN (DEV ONLY)",
+          "packages/web/src/api/client.ts:409-414 getToken() VITE_MIRA_TOKEN fallback marked // DEV ONLY (vite dev injects, never in prod bundle)",
+          "packages/web/.env removed (was baking VITE_MIRA_TOKEN=01df... into prod dist)"
+        ],
+        "root_cause": "CLI token() only env (no file read) vs server/vite read mira.env; vite define baked token into prod dist via FIRST_RUN_TOKEN without NODE_ENV gate + .env file",
+        "fix": "CLI add readMiraEnvFile() with MIRA_DIR/XDG_CONFIG_HOME/homedir fallback and token() env ?? file; vite gate FIRST_RUN_TOKEN and define by NODE_ENV !== 'production' + DEV ONLY comment in client; remove .env",
+        "verify": "typecheck 6/6, CLI fallback PASS, vite prod clean (no token), server tests pass",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ecb0ef"
+      },
+      {
+        "run_id": "run_20260909_ad3821",
+        "at": "2026-09-11T08:16:50.719522+00:00",
+        "task": "P2-2 validateToken double 401 \u2014 single gated endpoint",
+        "files_modified": [
+          "packages/web/src/api/client.ts:440-449 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)",
+          "packages/tui/src/rpc/client.ts:498-506 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)"
+        ],
+        "root_cause": "validateToken tried GET /health (public when no auth, gated when auth) then GET /config on non-401 \u2014 invalid token triggered 2\u00d7401 before AuthGate showed error, wasting 1 RTT",
+        "fix": "Changed web/api/client.ts:440 and tui/rpc/client.ts:498 to single GET /config (gated, requires auth) \u2014 single 401, AuthGate shows Invalid token immediately, saves 1 RTT, minimal diff preserved design",
+        "verify": "web tsc --noEmit exit 0, tui tsc --noEmit exit 0, gaps 7 pass, manual grep 0 /health 1 /config PASS, AuthGate Invalid token PASS",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ad3821"
+      },
+      {
+        "run_id": "run_20260909_38b045",
+        "at": "2026-09-11T10:11:59.270194+00:00",
+        "task": "P3 auth gaps \u2014 api_keys hash, admin loopback gate, tokenEquals hash, isPublicUiPath normalize, ?api= validate",
+        "files_modified": [
+          "packages/server/src/index.ts: tokenEquals hash-then-compare (createHash sha256 32B constant time, P3-4)",
+          "packages/server/src/storage/schema.ts: apiKeys key_hash/key_prefix columns (P3-1)",
+          "packages/server/src/storage/db.ts: CREATE TABLE api_keys key_hash/key_prefix + addColumn idempotent (P3-1)",
+          "packages/server/src/routes/admin.ts: isAdmin loopback gate (HOST check + warn, P3-2) + ensureTable key_hash/prefix + mint stores sha256+prefix (P3-1)",
+          "packages/server/src/middleware/index.ts: isPublicUiPath normalize via URL + traversal block + normalizedPath in auth gate (P3-5)",
+          "packages/web/src/api/client.ts: getRuntimeApiUrl ?api= validate localhost/https only (P3-6)"
+        ],
+        "root_cause": "P3-1 api_keys stored raw 96-hex (DB dump leaks bearer), P3-2 isAdmin returned true when !REQUIRED_TOKEN (any local process could POST /admin/api-keys), P3-4 tokenEquals short-circuited on length (timing leak 64 vs 96), P3-5 isPublicUiPath p.startsWith('/assets/') bypass via /assets/../session (fragile, Hono does not normalize), P3-6 ?api= URL param could leak token if ever used for token (pattern invites ?token=)",
+        "fix": "P3-4: tokenEquals now createHash('sha256').update(a).digest() 32B + timingSafeEqual (no length leak); P3-1: schema add key_hash/key_prefix, db migrate CREATE TABLE + addColumn, admin ensureTable + mint stores sha256 hex + prefix 12, keep key for compat; P3-2: isAdmin now checks HOST loopback (127.0.0.1/localhost/::1) when !REQUIRED_TOKEN && API_KEY_OWNERS empty, 401 on non-loopback, warn once; P3-5: isPublicUiPath normalizes via new URL('http://x'+p).pathname + decode + .. block, auth gate uses new URL(c.req.url).pathname; P3-6: getRuntimeApiUrl validates ?api= via new URL hostname localhost/127.0.0.1/::1 or https: only, rejects http evil/file",
+        "verify": "turbo typecheck 6 successful, gaps 7 pass 22.05s, traversal GET /assets/../session 401 PASS, admin 401/200 + hash store PASS, tokenEquals constant time PASS, ?api= validate PASS, minimal diff preserved design",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_38b045"
+      },
+      {
+        "run_id": "run_20260909_52a377",
+        "at": "2026-09-11T15:33:35.462703+00:00",
+        "task": "F1 Sync Vite proxies to server route table",
+        "files_modified": [
+          "packages/web/vite.config.ts:79-99 add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + keep WS catch-all last",
+          "packages/tui/vite.config.ts:43-48 replace /workspace/tree with /workspace + add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + add WS catch-all '/' ws:true last",
+          "packages/server/src/routes/static.ts:10-20 API_ROUTE_PREFIXES add /workspaces /workspace"
+        ],
+        "root_cause": "web vite.config proxies 15 routes but missing /admin, /workspaces, /workspace, /complete, /autocomplete, /terminal, /metrics; tui vite.config same gaps + missing /workspace/symbol, /admin, /complete, /autocomplete, /terminal and no WS catch-all; static API_ROUTE_PREFIXES missing /workspaces, /workspace",
+        "fix": "web: add 7 proxies before WS catch-all; tui: replace /workspace/tree with /workspace + add 7 proxies + WS catch-all last; static: add /workspaces + /workspace to API_ROUTE_PREFIXES",
+        "verify": "turbo typecheck 6 successful, vite build web 31 modules 309.42kB, tui 39 modules 339.46kB, direct server GET /admin/api-keys 200, GET /workspace/symbol 200, GET /metrics 200, vite proxy config verified",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_52a377"
+      },
+      {
+        "run_id": "run_20260909_98abc0",
+        "at": "2026-09-11T20:15:00.000000+00:00",
+        "task": "F2 Make slack#dev opt-in, not persistent",
+        "files_modified": [
+          "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
+          "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials \u2014 skipping\"; exit 0; fi; bun --watch src/bot.ts",
+          "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
+        ],
+        "root_cause": "slack/bot.ts:60-80 isMissingCreds() parked event loop forever via setInterval when creds missing and MIRA_SLACK_STRICT!=1, holding turbo dev (5 tasks persistent --continue) until SIGINT draining 25m50s; turbo dev ran all 5 packages in parallel with no filter",
+        "fix": "Option A+B: root package.json dev now --filter=!@mira/slack (dev:all keeps slack), slack package dev adds shell guard with .env check, bot.ts now exits 0 in dev (NODE_ENV!=production) with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still exits 1",
+        "verify": "turbo typecheck 6 successful, turbo dev --filter=!@mira/slack 6 packages without slack, --filter=@mira/slack slack only, bot exits 0/1/park verified, SIGINT fast (4 tasks)",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_98abc0"
+      },
+      {
+        "run_id": "run_20260909_cf1c5c",
+        "at": "2026-09-12T01:35:47.379791+00:00",
+        "task": "F2 Make slack#dev opt-in, not persistent",
+        "files_modified": [
+          "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
+          "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials \u2014 skipping\"; exit 0; fi; bun --watch src/bot.ts",
+          "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
+        ],
+        "root_cause": "slack/bot.ts:60-80 isMissingCreds() parked event loop forever via setInterval when creds missing and MIRA_SLACK_STRICT!=1, holding turbo dev (5 tasks persistent --continue) until SIGINT draining 25m50s; turbo dev ran all 5 packages in parallel with no filter",
+        "fix": "Option A+B: root package.json dev now --filter=!@mira/slack (dev:all keeps slack), slack package dev adds shell guard with .env check, bot.ts now exits 0 in dev (NODE_ENV!=production) with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still exits 1",
+        "verify": "turbo typecheck 6 successful, turbo dev --filter=!@mira/slack 6 packages without slack, --filter=@mira/slack slack only, bot exits 0/1/park verified, SIGINT fast (4 tasks)",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_cf1c5c"
+      },
+      {
+        "run_id": "run_20260909_650858",
+        "at": "2026-09-12T04:26:16.115820+00:00",
+        "task": "F5 Align WS isOriginAllowed with HTTP CORS",
+        "files_modified": [
+          "packages/server/src/middleware/index.ts:32-101 isLocalDevOrigin now ws/wss + isVscodeOrigin + corsOrigin vscode allowlist both branches",
+          "packages/server/src/index.ts:212-250 isOriginAllowed now mirrors corsOrigin (empty list \u2192 only isLocalDevOrigin, prod allowlist normalized + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes)",
+          "packages/server/src/middleware/cors.test.ts (new) \u2014 5 tests parity: empty list only localhost, prod allowlist + gate, vscode always, isLocalDevOrigin ws/wss, parity true iff cors non-empty"
+        ],
+        "root_cause": "WS isOriginAllowed empty list returned true for any origin (no localhost check) vs HTTP corsOrigin empty list only isLocalDevOrigin; WS used string prefix checks not normalized, missed ws/wss schemes, no vscode allowlist in HTTP; prod localhost gate inconsistent",
+        "fix": "middleware isLocalDevOrigin now http/https/ws/wss + isVscodeOrigin helper, corsOrigin both branches handle vscode (return origin directly, not URL.origin null) and ws/wss; index.ts isOriginAllowed now mirrors corsOrigin: empty list \u2192 only isLocalDevOrigin, prod normalizedAllowSet + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes; added cors.test.ts 5 tests parity",
+        "verify": "turbo typecheck 6 successful, bun test cors.test.ts 5 pass 69 expect, gaps 7 pass, HTTP dev localhost 200 with CORS, evil blocked, prod evil blocked, WS vscode true, localhost true dev/gate, evil false",
+        "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_650858"
+      },
+      {
+        "run_id": "fixer_admin_security_20260916",
+        "at": "2026-09-16T15:03:16.931390+00:00",
+        "task": "Fix two security gaps in packages/server: (1) admin auth bypass via HOST=0.0.0.0, (2) raw API key leaked in admin responses",
+        "files_modified": [
+          "packages/server/src/routes/admin.ts: isAdmin strict gate now applies to 0.0.0.0 (removed host!=0.0.0.0 escape); mint returns {key_prefix,key_hash:true,owner} not {key,owner}; list SELECTs key_prefix,key_hash (no raw key column) and returns key_prefix+key_hash presence",
+          "packages/server/src/routes/admin.test.ts (new): 10 regression tests - 0.0.0.0/non-loopback 401 in open mode, loopback 200 preserved, MIRA_STRICT_AUTH=0 opt-out, mint/list/revoke responses never contain 96-hex raw key"
+        ],
+        "root_cause": "Gap1: isAdmin guard \"host !== 0.0.0.0\" skipped the strict-loopback deny when HOST=0.0.0.0, leaving admin open without auth on a public bind. Gap2: POST /admin/api-keys returned the raw 96-hex key in the response body; GET list selected the raw key column.",
+        "fix": "Gap1: removed the 0.0.0.0 escape - strict gate now denies any non-loopback bind unless MIRA_STRICT_AUTH=0 (explicit opt-out, still warned). Gap2: mint returns key_prefix (12 chars) + key_hash:true + owner; list selects only key_prefix/key_hash/owner/created_at/created_by and returns key_prefix + key_hash presence; raw key stays server-side (DB + API_KEY_OWNERS) for verification. index.ts:429 startup load untouched (internal only).",
+        "verify": "bun test src/routes/admin.test.ts 10 pass 0 fail (36 expect); full suite 482 pass 13 fail - all 13 pre-existing/environmental (doom-loop flake confirmed failing on base via git stash, e2e server-boot/port conflicts, network-dependent online tests, live vision 403 no API key); bunx tsc --noEmit zero errors in admin.ts/admin.test.ts, full error set identical to base (pre-existing in subgateway.test.ts/index.ts:390/prompt.ts/resolve-effective-model.test.ts/cors.test.ts)",
+        "deviation": "Mint endpoint no longer returns the raw key (per spec \"never the full raw key\"). Functional consequence: admin cannot retrieve a minted key via API - docs (README.md:90, packages/slack/README.md:27-30, docs/production-setup.md:49-53) show {\"key\":\"<96-hex>\"} and need updating; key is only obtainable via DB access or MIRA_API_KEYS env. DELETE /admin/api-keys/:key still requires the full key as path param (unchanged)."
+      }
+    ]
+  }
 }

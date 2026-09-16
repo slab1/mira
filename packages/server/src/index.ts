@@ -245,7 +245,9 @@ const normalizedAllowSet = new Set(
   }),
 )
 function isOriginAllowed(origin: string | null | undefined): boolean {
-  if (!origin) return true
+  // Reject null-origin (no Origin header) — parity with HTTP corsOrigin,
+  // which blocks null origins. Prevents curl/websocat bypassing the allowlist.
+  if (!origin) return false
   if (isVscodeOrigin(origin)) return true
   if (CORS_ORIGIN_LIST.length === 0) {
     // Dev default (empty list): only localhost + vscode (not any origin)
@@ -294,6 +296,23 @@ function terminalTimeoutMs(): number | null {
 function expandEnv(value: string): string {
   if (!value) return value
   return value.replace(/\{env:([^}]+)\}/g, (_, name: string) => process.env[name] ?? '')
+}
+
+// Security: never hand the full process.env to the interactive bash pty —
+// a user typing `env`/`printenv` would leak MIRA_TOKEN and any
+// *_API_KEY / *_TOKEN / *_SECRET / *_PASSWORD / *_CREDENTIAL. Strip
+// secret-shaped keys; keep PATH/HOME/TERM/SHELL/LANG/GIT_*/BUN_* so
+// git/bun still work in the terminal.
+const SECRET_ENV_RE = /(API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)/i
+function terminalEnv(): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v === undefined) continue
+    if (k === 'MIRA_TOKEN' || SECRET_ENV_RE.test(k)) continue
+    env[k] = v
+  }
+  env.TERM = 'xterm-256color'
+  return env
 }
 
 async function initOtel() {
@@ -358,7 +377,9 @@ async function main() {
   // Migrate sessions with retired models to safe fallback
   try {
     const cfg = getConfig() as any
-    const retired = new Set((cfg.routing?.retiredModels ?? []).map((s: string) => s.toLowerCase()))
+    const retired = new Set<string>(
+      (cfg.routing?.retiredModels ?? []).map((s: string) => s.toLowerCase()),
+    )
     if (retired.size > 0) {
       const rows = db.sqlite.prepare('SELECT id, model FROM sessions').all() as {
         id: string
@@ -708,7 +729,7 @@ async function main() {
       stdin: 'pipe',
       stdout: 'pipe',
       stderr: 'pipe',
-      env: { ...process.env, TERM: 'xterm-256color' } as Record<string, string>,
+      env: terminalEnv(),
     })
     const ac = new AbortController()
     ws.__proc = proc

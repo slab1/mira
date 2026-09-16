@@ -39,7 +39,9 @@
     "dev": "tsc --watch --noEmit",
     "prepublishOnly": "npm run build && npm run typecheck"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@mira/shared": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "^5.8.0",
     "bun-types": "1.4.0",

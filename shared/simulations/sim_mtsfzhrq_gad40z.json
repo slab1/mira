@@ -1,0 +1,12 @@
+{
+  "sim_id": "sim_mtsfzhrq_gad40z",
+  "file": "packages/server/src/tools/edit.ts",
+  "virtual_diff": {
+    "file": "packages/server/src/tools/edit.ts",
+    "from": "old",
+    "to": "import fs from \"fs\""
+  },
+  "risk_score": 0.9,
+  "reviewer": "agents/critic.md",
+  "createdAt": "2026-09-08T09:03:21.056Z"
+}

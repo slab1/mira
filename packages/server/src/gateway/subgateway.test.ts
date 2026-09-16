@@ -303,7 +303,7 @@ describe('Per-session cost tracking', () => {
       // Verify BusEvent published
       const events = GlobalBus.recent(10, 'server.error')
       expect(events.length).toBeGreaterThan(0)
-      expect(events[0].payload.source).toBe('cost-cap')
+      expect((events[0].payload as { source?: string }).source).toBe('cost-cap')
     } finally {
       globalThis.fetch = origFetch
     }
@@ -343,7 +343,7 @@ describe('Per-session cost tracking', () => {
       expect((err as SubgatewayError).code).toBe('COST_CAP_EXCEEDED')
       const events = GlobalBus.recent(10, 'server.error')
       expect(events.length).toBeGreaterThan(0)
-      expect(events[0].payload.source).toBe('cost-cap')
+      expect((events[0].payload as { source?: string }).source).toBe('cost-cap')
       expect(events[0].sessionID).toBe(sessionID)
     } finally {
       globalThis.fetch = origFetch
