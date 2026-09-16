@@ -31,13 +31,19 @@ export class DoomLoopDetector {
   private fileEditHistory = new Map<string, { lastHash?: string; count: number }>()
   private errorHistory: string[] = []
   private llmOutputHistory: string[] = []
-  private readonly window = Number(process.env.MIRA_DOOM_WINDOW ?? 12)
-  private readonly maxIdentical = Number(process.env.MIRA_DOOM_THRESHOLD ?? 3)
-  private readonly maxErrorIdentical = Number(process.env.MIRA_DOOM_ERROR_THRESHOLD ?? 3)
-  private readonly maxLLMIdentical = Number(process.env.MIRA_DOOM_LLM_THRESHOLD ?? 3)
-  private readonly fileEditThreshold = Number(process.env.MIRA_DOOM_FILE_EDIT_THRESHOLD ?? 2)
-  private readonly sameToolFileThreshold = Number(
-    process.env.MIRA_DOOM_SAME_TOOL_FILE_THRESHOLD ?? 4,
+  private clamp(n: unknown, def: number, min: number): number {
+    const v = Number(n)
+    return Number.isFinite(v) && v >= min ? v : def
+  }
+  private readonly window = this.clamp(process.env.MIRA_DOOM_WINDOW, 12, 3)
+  private readonly maxIdentical = this.clamp(process.env.MIRA_DOOM_THRESHOLD, 3, 2)
+  private readonly maxErrorIdentical = this.clamp(process.env.MIRA_DOOM_ERROR_THRESHOLD, 3, 2)
+  private readonly maxLLMIdentical = this.clamp(process.env.MIRA_DOOM_LLM_THRESHOLD, 3, 2)
+  private readonly fileEditThreshold = this.clamp(process.env.MIRA_DOOM_FILE_EDIT_THRESHOLD, 2, 1)
+  private readonly sameToolFileThreshold = this.clamp(
+    process.env.MIRA_DOOM_SAME_TOOL_FILE_THRESHOLD,
+    4,
+    2,
   )
   private readonly maxCycleLength = 4
 
@@ -50,8 +56,8 @@ export class DoomLoopDetector {
   private extractFilePath(tool: string, args: JsonValue): string | undefined {
     if (!args || typeof args !== 'object') return undefined
     const a = args as Record<string, JsonValue>
-    if (['read', 'edit', 'write'].includes(tool)) {
-      return String(a.path ?? a.file ?? a.filename ?? '')
+    if (['read', 'edit', 'write', 'patch'].includes(tool)) {
+      return String(a.path ?? a.file ?? a.file_path ?? a.filename ?? '')
     }
     if (tool === 'glob') {
       return String(a.pattern ?? '')
@@ -61,9 +67,12 @@ export class DoomLoopDetector {
 
   private hashResult(result: JsonValue): string {
     try {
-      const str = JSON.stringify(result)
-      // Simple hash: length + first 100 chars
-      return `${str.length}:${str.slice(0, 100)}`
+      const s = JSON.stringify(result)
+      if (typeof Bun !== 'undefined' && (Bun as any).hash)
+        return `${s.length}:${(Bun as any).hash(s)}`
+      let h = 5381
+      for (let i = 0; i < s.length; i++) h = (h * 33) ^ s.charCodeAt(i)
+      return `${s.length}:${h >>> 0}`
     } catch {
       return 'unhashable'
     }
@@ -154,6 +163,9 @@ export class DoomLoopDetector {
   }
 
   checkError(toolName: string, error: JsonValue): LoopSignal {
+    const errStr = JSON.stringify(error ?? '').toLowerCase()
+    if (errStr.includes('unknown tool') || errStr.includes('not registered'))
+      return { detected: false }
     const errFp = `${toolName}:error:${this.hashResult(error)}`
     this.errorHistory.push(errFp)
     if (this.errorHistory.length > this.window) this.errorHistory.shift()
@@ -171,6 +183,8 @@ export class DoomLoopDetector {
   }
 
   checkLLMOutput(output: string): LoopSignal {
+    const trimmed = output.trim()
+    if (!trimmed) return { detected: false }
     const fp = this.hashText(output)
     this.llmOutputHistory.push(fp)
     if (this.llmOutputHistory.length > this.window) this.llmOutputHistory.shift()
@@ -189,7 +203,16 @@ export class DoomLoopDetector {
 
   private hashText(text: string): string {
     const trimmed = text.trim().slice(0, 500)
-    return `${trimmed.length}:${trimmed}`
+    if (!trimmed) return 'empty'
+    try {
+      if (typeof Bun !== 'undefined' && (Bun as any).hash)
+        return `${trimmed.length}:${(Bun as any).hash(trimmed)}`
+      let h = 5381
+      for (let i = 0; i < trimmed.length; i++) h = (h * 33) ^ trimmed.charCodeAt(i)
+      return `${trimmed.length}:${h >>> 0}`
+    } catch {
+      return 'empty'
+    }
   }
 
   reset() {

@@ -34,7 +34,7 @@ import { buildSystemPrompt, getLoopLimits, getConfig } from '../config/index.js'
 import { appendActiveWork, ensureMemoryBank } from '../memory/memory_controller.js'
 import { DoomLoopDetector } from './doom-loop-detector.js'
 import { needsCompaction, compactMessages, estimateTokens } from './compaction.js'
-import { searchKnowledge } from '../learning/knowledge.js'
+import { searchKnowledge, sharedKnowledge } from '../learning/knowledge.js'
 import { openFindingsForContext } from '../tools/findings.js'
 import type { Todo, JsonValue, MiraConfig } from '../types/index.js'
 import type { MiraDB } from '../storage/db.js'
@@ -352,6 +352,66 @@ export class SessionPrompt {
     const delta = success ? 1 : -1
     for (const d of docs) this.deps.knowledge.bumpUtility!(d.id, delta)
     this.injectedMemories.delete(sessionID)
+  }
+
+  private persistDoomPattern(input: {
+    sessionID: string
+    tool: string
+    reason: string
+    pattern?: string[]
+    args?: Record<string, JsonValue>
+    step?: number
+    stepText?: string
+  }): void {
+    const title = `Doom loop: ${input.tool} — ${input.reason.slice(0, 80)}`
+    const body = [
+      `Pattern: ${input.reason}`,
+      `Tool: ${input.tool}`,
+      input.args ? `Args: ${JSON.stringify(input.args).slice(0, 800)}` : null,
+      input.pattern?.length ? `Sequence: ${input.pattern.join(' → ')}` : null,
+      input.step !== undefined ? `Step: ${input.step}` : null,
+      input.stepText ? `LLM output: ${input.stepText.slice(0, 500)}` : null,
+      `Session: ${input.sessionID}`,
+      `At: ${new Date().toISOString()}`,
+    ]
+      .filter(Boolean)
+      .join('\n')
+    const storeInput = {
+      tier: 'semantic' as const,
+      source: 'system' as const,
+      title,
+      content: body,
+      tags: ['doom-loop', 'anti-pattern', input.tool].filter(Boolean),
+      metadata: {
+        sessionID: input.sessionID,
+        tool: input.tool,
+        reason: input.reason,
+        pattern: input.pattern ?? [],
+        step: input.step ?? null,
+        kind: 'doom_loop',
+      },
+    }
+    const p = (this.deps.knowledge as unknown as { store?: (input: unknown) => Promise<unknown> })
+      ?.store
+      ? (this.deps.knowledge as unknown as { store: (input: unknown) => Promise<unknown> })
+          .store(storeInput as never)
+          .catch(() => {})
+      : sharedKnowledge()
+          .store(storeInput as never)
+          .catch(() => {})
+    // also publish learning signal for scheduler visibility, ignore errors
+    void p
+      .then(() => {
+        try {
+          this.deps.bus.publish({
+            type: 'learning.updated',
+            sessionID: input.sessionID,
+            payload: { kind: 'doom_loop', tool: input.tool },
+            timestamp: Date.now(),
+          } as never)
+        } catch {}
+      })
+      .catch(() => {})
   }
 
   /** Queues persist in SQLite (message_queue) — survive restarts */
@@ -911,6 +971,7 @@ export class SessionPrompt {
     } catch {}
     loop: while (step < MAX_STEPS) {
       step++
+      let stepDoomed = false
 
       // Honour an explicit cancellation (e.g. cancelJob) between steps —
       // abort the run promptly rather than waiting for the next stream call.
@@ -1120,6 +1181,15 @@ export class SessionPrompt {
           })
           await this.persistToolResult(assistantMessageID, sessionID, tc, { error: msg }, true)
           doomLoopCount++
+          stepDoomed = true
+          this.persistDoomPattern({
+            sessionID,
+            tool: tc.name,
+            reason: loopSignal.reason ?? 'repeating tool call',
+            pattern: loopSignal.pattern,
+            args: tc.args,
+            step,
+          })
           accumulatedText += `\n\n[System: ${msg}]\n`
           messages.push({ role: 'assistant', content: accumulatedText })
           messages.push({
@@ -1254,13 +1324,22 @@ export class SessionPrompt {
             })
             await this.persistToolResult(assistantMessageID, sessionID, tc, { error: msg }, true)
             doomLoopCount++
+            stepDoomed = true
+            this.persistDoomPattern({
+              sessionID,
+              tool: tc.name,
+              reason: errSignal.reason ?? 'repeating error',
+              args: tc.args,
+              step,
+            })
             accumulatedText += `\n\n[System: ${msg}]\n`
             messages.push({ role: 'assistant', content: accumulatedText })
             messages.push({
               role: 'user',
               content: `[Doom-loop guard: ${msg} — please clarify or adjust.]`,
             })
-            break
+            // break loop (not just for) — same as tool-call doom
+            break loop
           }
         }
 
@@ -1313,32 +1392,42 @@ export class SessionPrompt {
         })
       }
 
-      // Doom-loop detection for repeated LLM outputs
-      const llmSignal = this.getDoomDetector(sessionID).checkLLMOutput(stepText)
-      if (llmSignal.detected) {
-        const msg = `Doom-loop detected: ${llmSignal.reason ?? 'repeating LLM output'} — breaking loop and asking user.`
-        send('doom_loop', {
-          step,
-          reason: llmSignal.reason,
-        })
-        this.deps.bus.publish({
-          type: 'server.error',
-          sessionID,
-          payload: {
-            error: msg,
-            source: 'doom-loop',
+      // Doom-loop detection for repeated LLM outputs — skip if already doomed this step (deduplicate)
+      if (!stepDoomed) {
+        const llmSignal = this.getDoomDetector(sessionID).checkLLMOutput(stepText)
+        if (llmSignal.detected) {
+          const msg = `Doom-loop detected: ${llmSignal.reason ?? 'repeating LLM output'} — breaking loop and asking user.`
+          send('doom_loop', {
+            step,
+            reason: llmSignal.reason,
+          })
+          this.deps.bus.publish({
+            type: 'server.error',
+            sessionID,
+            payload: {
+              error: msg,
+              source: 'doom-loop',
+              tool: 'llm-output',
+            } as JsonValue,
+            timestamp: Date.now(),
+          })
+          doomLoopCount++
+          this.persistDoomPattern({
+            sessionID,
             tool: 'llm-output',
-          } as JsonValue,
-          timestamp: Date.now(),
-        })
-        doomLoopCount++
-        accumulatedText += `\n\n[System: ${msg}]\n`
-        messages.push({ role: 'assistant', content: accumulatedText })
-        messages.push({
-          role: 'user',
-          content: `[Doom-loop guard: ${msg} — please clarify or adjust.]`,
-        })
-        break
+            reason: llmSignal.reason ?? 'repeating LLM output',
+            pattern: llmSignal.pattern,
+            step,
+            stepText,
+          })
+          accumulatedText += `\n\n[System: ${msg}]\n`
+          messages.push({ role: 'assistant', content: accumulatedText })
+          messages.push({
+            role: 'user',
+            content: `[Doom-loop guard: ${msg} — please clarify or adjust.]`,
+          })
+          break
+        }
       }
 
       // ── finish-step: append tool results to context for next iteration ──
@@ -1530,6 +1619,34 @@ export class SessionPrompt {
         }
       } catch {}
     }
+    // Doom-loop anti-patterns (HCM write-back recall): surface prior loop
+    // patterns so the model avoids repeating them. Fire-and-forget safe.
+    try {
+      const doomDocs = this.deps.knowledge
+        ? await (
+            this.deps.knowledge.retrieve as (
+              o: unknown,
+            ) => Promise<Array<{ id: string; title: string; content: string; tags?: string[] }>>
+          )({
+            query: 'doom-loop anti-pattern avoid repeat',
+            limit: 2,
+            tier: 'semantic',
+            minScore: 0.05,
+          } as never)
+        : await searchKnowledge('doom-loop anti-pattern avoid repeat', 2)
+      const loops = (doomDocs ?? []).filter(
+        (d) =>
+          (d.tags ?? []).some((t) => t.toLowerCase().includes('doom')) ||
+          `${d.title} ${d.content}`.toLowerCase().includes('doom loop'),
+      )
+      if (loops.length) {
+        for (const d of loops) this.trackInjectedMemory(sessionID, d)
+        context.push({
+          role: 'system',
+          content: `Known doom-loop anti-patterns — avoid repeating:\n${loops.map((d) => `- [${d.title}]: ${d.content.slice(0, 300)}`).join('\n')}`,
+        })
+      }
+    } catch {}
     for (const m of messages) {
       const parts = m.parts ?? []
       const text = parts

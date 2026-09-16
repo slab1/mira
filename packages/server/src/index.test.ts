@@ -10,6 +10,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
 import { Hono } from 'hono'
+import { z } from 'zod'
 import { createDatabase, migrate } from './storage/db.js'
 import { SessionPrompt } from './session/prompt.js'
 import { Bus } from './bus/index.js'
@@ -25,7 +26,10 @@ import { mountSessionExtrasRoutes } from './routes/session-extras.js'
 const doomLoopGateway: Gateway = {
   async stream(_opts: StreamOptions): Promise<AsyncIterable<GatewayChunk>> {
     return (async function* () {
-      yield { type: 'tool-call', toolCall: { id: crypto.randomUUID(), name: 'bash', args: { command: 'ls' } } }
+      yield {
+        type: 'tool-call',
+        toolCall: { id: crypto.randomUUID(), name: 'bash', args: { command: 'ls' } },
+      }
       yield {
         type: 'finish',
         finishReason: 'tool-calls',
@@ -255,12 +259,15 @@ describe('doom-loop detection E2E', () => {
 
   test('non-repeating tool calls do NOT trigger doom-loop', async () => {
     // Gateway that returns a DIFFERENT command each iteration (no repeats)
+    // Yields distinct text-delta per step so checkLLMOutput never sees repeats,
+    // and registers bash tool so execution doesn't throw Unknown tool.
     let callIndex = 0
     const commands = ['echo hello', 'cat file.txt', 'grep pattern src/', 'wc -l README.md']
     const safeGateway: Gateway = {
       async stream(_opts: StreamOptions): Promise<AsyncIterable<GatewayChunk>> {
         return (async function* () {
           const cmd = commands[callIndex % commands.length]
+          yield { type: 'text-delta', text: `step ${callIndex} hello ${cmd}` }
           callIndex++
           yield {
             type: 'tool-call',
@@ -293,6 +300,19 @@ describe('doom-loop detection E2E', () => {
     const permissions = new PermissionManager({})
     const bus = new Bus()
     const tools = new ToolRegistry({ db, bus, permissions, gateway: safeGateway })
+    await tools.registerAll()
+    // Override real bash with fast mock to keep test deterministic on all platforms (Windows bash hangs)
+    tools.unregister('bash')
+    tools.register({
+      name: 'bash',
+      description: 'mock bash for test',
+      category: 'execution',
+      schema: z.object({ command: z.string() }).passthrough(),
+      execute: async (args) => ({
+        stdout: `mock ${(args as { command: string }).command}`,
+        exitCode: 0,
+      }),
+    } as never)
     const testPrompt = new SessionPrompt({
       db,
       bus,
