@@ -221,7 +221,7 @@ describe('OnlineLearner — keyless fallbacks + dedupe + LLM', () => {
     for (const i of insights) {
       expect(i.summary).not.toMatch(/stub/i)
     }
-  })
+  }, 15_000) // default search/fetch use 10-12s abort timeouts; exceed bun's 5s default
 })
 
 describe('jaccardTokens — near-dup detection via token overlap', () => {

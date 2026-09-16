@@ -10,7 +10,7 @@ const TOKEN = 'test-gaps-token'
 const AUTH = { Authorization: `Bearer ${TOKEN}` }
 let proc: ReturnType<typeof Bun.spawn> | null = null
 
-async function waitForHealth(timeoutMs = 30_000) {
+async function waitForHealth(timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
@@ -46,7 +46,7 @@ beforeAll(async () => {
     stderr: 'pipe',
   })
   await waitForHealth()
-}, 45_000) // server boot here is slow (~14s in sandbox); exceed bun's 5s default hook timeout
+}, 90_000) // server boot here is slow (~14s in sandbox); exceed bun's 5s default hook timeout
 
 afterAll(() => proc?.kill())
 

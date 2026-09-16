@@ -725,7 +725,10 @@ async function main() {
         timestamp: Date.now(),
       }),
     )
-    const proc = Bun.spawn(['bash'], {
+    // Windows: `bash` resolves to WSL bash (C:\Windows\System32\bash.exe) which is
+    // unreliable with piped stdin/stdout — use cmd.exe for a platform-appropriate PTY.
+    const shell = process.platform === 'win32' ? 'cmd.exe' : 'bash'
+    const proc = Bun.spawn([shell], {
       stdin: 'pipe',
       stdout: 'pipe',
       stderr: 'pipe',
