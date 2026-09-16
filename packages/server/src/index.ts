@@ -355,6 +355,37 @@ async function main() {
   dbRef = db
   log(`storage ready`)
 
+  // Migrate sessions with retired models to safe fallback
+  try {
+    const cfg = getConfig() as any
+    const retired = new Set((cfg.routing?.retiredModels ?? []).map((s: string) => s.toLowerCase()))
+    if (retired.size > 0) {
+      const rows = db.sqlite.prepare('SELECT id, model FROM sessions').all() as {
+        id: string
+        model: string
+      }[]
+      let migrated = 0
+      for (const r of rows) {
+        const m = r.model.toLowerCase()
+        for (const rtd of retired) {
+          if (m.includes(rtd)) {
+            db.sqlite
+              .prepare('UPDATE sessions SET model = ?, updated_at = ? WHERE id = ?')
+              .run('claude-sonnet-4', Date.now(), r.id)
+            migrated++
+            break
+          }
+        }
+      }
+      if (migrated)
+        log(
+          `model migration: updated ${migrated} session(s) with retired models to claude-sonnet-4`,
+        )
+    }
+  } catch (e) {
+    warn('model migration failed:', String(e))
+  }
+
   // Memory Bank init
   try {
     const dbPath = process.env.MIRA_DB ?? './data/mira.db'
@@ -383,11 +414,14 @@ async function main() {
   }
 
   // Cross-device resume: import any sessions from ~/.mira/exports/ not already in DB
-  try {
-    const imported = await autoImportSessions(db)
-    if (imported) log(`cross-device: imported ${imported} session(s) on startup`)
-  } catch (e) {
-    warn('cross-device import failed:', String(e))
+  // Disabled by default per user request
+  if (process.env.MIRA_AUTO_IMPORT === '1') {
+    try {
+      const imported = await autoImportSessions(db)
+      if (imported) log(`cross-device: imported ${imported} session(s) on startup`)
+    } catch (e) {
+      warn('cross-device import failed:', String(e))
+    }
   }
 
   // Load runtime-issued API keys from db

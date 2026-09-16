@@ -41,7 +41,7 @@ import type { MiraDB } from '../storage/db.js'
 import { getUserNameForOwner } from '../storage/users.js'
 import { loadSkills } from '../skills/loader.js'
 import { getAgentTemplates, isKnownAgent, isBashCommandAllowed } from '../agents/templates.js'
-import { buildRegistry, resolveModel } from '../gateway/provider.js'
+import { buildRegistry, resolveModel, resolveWithFallbacks } from '../gateway/provider.js'
 import { initLangfuse } from '../telemetry/langfuse.js'
 import { eq } from 'drizzle-orm'
 import { trace as otelTrace } from '@opentelemetry/api'
@@ -181,12 +181,12 @@ function laneCostCap(
 function tierModel(tier: string | undefined, fallbackSmall?: string): string {
   switch (tier) {
     case 'cheap':
-      return fallbackSmall ?? 'openrouter/deepseek/deepseek-v3.2-exp'
+      return fallbackSmall ?? 'claude-3.5-sonnet'
     case 'max':
-      return 'openrouter/anthropic/claude-opus-4'
+      return 'claude-opus-4'
     case 'balanced':
     default:
-      return 'openrouter/anthropic/claude-sonnet-4'
+      return 'claude-sonnet-4'
   }
 }
 function priceForModel(modelID: string): [number, number] {
@@ -204,6 +204,42 @@ function estimateCostUSD(modelID: string, inputTokens: number, outputTokens: num
   const [pin, pout] = priceForModel(modelID)
   return (inputTokens * pin + outputTokens * pout) / 1_000_000
 }
+function getRetiredModels(): Set<string> {
+  try {
+    const cfg = getConfig() as MiraConfig & { routing?: { retiredModels?: string[] } }
+    const list = cfg.routing?.retiredModels ?? []
+    const set = new Set(list.map((s) => s.toLowerCase()))
+    if (set.size === 0) {
+      // fallback defaults if config not loaded
+      return new Set([
+        'claude-3-opus-20240229',
+        'claude-3-sonnet-20240229',
+        'claude-3-haiku-20240307',
+        'gpt-4-0314',
+        'gpt-4-0613',
+      ])
+    }
+    return set
+  } catch {
+    return new Set([
+      'claude-3-opus-20240229',
+      'claude-3-sonnet-20240229',
+      'claude-3-haiku-20240307',
+      'gpt-4-0314',
+      'gpt-4-0613',
+    ])
+  }
+}
+
+function isRetired(modelID: string): boolean {
+  const m = modelID.toLowerCase()
+  const retired = getRetiredModels()
+  for (const r of retired) {
+    if (m.includes(r)) return true
+  }
+  return false
+}
+
 export function resolveEffectiveModel(input: {
   explicitModel?: string
   agent?: string | null
@@ -242,14 +278,36 @@ export function resolveEffectiveModel(input: {
     try {
       return getConfig().model
     } catch {
-      return 'openrouter/anthropic/claude-sonnet-4'
+      return 'claude-sonnet-4'
     }
   })()
   // Route the winner through the gateway so agent model selection honors
   // aliases, provider prefixes, and default-provider fallback. Falls back to
   // the raw candidate when the gateway cannot resolve (e.g. no API key
   // configured) — model resolution must never throw here.
-  return resolveModelViaGateway(candidate)
+  let resolved = resolveModelViaGateway(candidate)
+  // Guard against retired models: if the resolved model is retired, try fallback chain
+  if (isRetired(resolved)) {
+    console.warn(`[mira] model "${resolved}" is retired, attempting fallback chain`)
+    try {
+      const registry = buildRegistry(getConfig())
+      const fallbackResolved = resolveWithFallbacks(registry, candidate)
+      if (
+        fallbackResolved?.providerKey &&
+        fallbackResolved?.modelID &&
+        !isRetired(`${fallbackResolved.providerKey}/${fallbackResolved.modelID}`)
+      ) {
+        resolved = `${fallbackResolved.providerKey}/${fallbackResolved.modelID}`
+      } else {
+        const fallback = tierModel('balanced')
+        resolved = resolveModelViaGateway(fallback)
+      }
+    } catch {
+      const fallback = tierModel('balanced')
+      resolved = resolveModelViaGateway(fallback)
+    }
+  }
+  return resolved
 }
 
 /**
@@ -378,10 +436,23 @@ export class SessionPrompt {
     const effectiveModel = resolveEffectiveModel({
       explicitModel: input.model,
       agent: input.agent ?? null,
-      sessionModel: 'openrouter/anthropic/claude-sonnet-4',
+      sessionModel: 'claude-sonnet-4',
     })
+    // Emit model.retired event if explicit model was retired and fallback occurred
+    if (input.model && isRetired(input.model) && input.model !== effectiveModel) {
+      this.deps.bus.publish({
+        type: 'model.retired',
+        sessionID: id,
+        payload: {
+          originalModel: input.model,
+          fallbackModel: effectiveModel,
+          reason: 'retired',
+        },
+        timestamp: now,
+      })
+    }
     // Derive the provider from the resolved model prefix ("google/gemini-2.0-flash" → "google")
-    const provider = effectiveModel.includes('/') ? effectiveModel.split('/')[0] : 'openrouter'
+    const provider = effectiveModel.includes('/') ? effectiveModel.split('/')[0] : 'anthropic'
     const session = {
       id,
       title: input.title ?? (input.agent ? `${input.agent} session` : 'New Session'),
@@ -556,6 +627,20 @@ export class SessionPrompt {
         sessionModel: undefined,
         task: 'stream',
       }) || undefined
+    // Emit model.retired if explicit model was retired
+    if (opts.model && isRetired(opts.model) && opts.model !== effectiveModel) {
+      this.deps.bus.publish({
+        type: 'model.retired',
+        sessionID: opts.parentID,
+        payload: {
+          originalModel: opts.model,
+          fallbackModel: effectiveModel,
+          reason: 'retired',
+          context: 'subagent',
+        },
+        timestamp: Date.now(),
+      })
+    }
     // Inherit cwd/projectId from parent for workspace-aware subagents
     let parentCwd: string | undefined
     let parentProjectId: string | undefined
@@ -643,6 +728,20 @@ export class SessionPrompt {
       sessionModel: session.model,
       task: 'stream',
     })
+    // Emit model.retired if override was retired and fallback occurred
+    if (modelOverride && isRetired(modelOverride) && modelOverride !== model) {
+      this.deps.bus.publish({
+        type: 'model.retired',
+        sessionID,
+        payload: {
+          originalModel: modelOverride,
+          fallbackModel: model,
+          reason: 'retired',
+          context: 'stream',
+        },
+        timestamp: Date.now(),
+      })
+    }
     const basePrompt = await buildSystemPrompt(
       session.cwd ?? process.cwd(),
       await getUserNameForOwner(this.deps.db, session.ownerID),
