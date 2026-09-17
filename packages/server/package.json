@@ -24,7 +24,7 @@
     "@opentelemetry/sdk-node": "^0.221.0",
     "@opentelemetry/semantic-conventions": "^1.26.0",
     "ai": "^5.0.0",
-    "drizzle-orm": "^0.44.0",
+    "drizzle-orm": "^0.45.2",
     "hono": "^4.7.0",
     "js-tiktoken": "^1.0.21",
     "ws": "^8.18.0",

@@ -29,7 +29,31 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Bun audit
-        run: bun audit || bun pm audit || echo "::warning::bun audit found issues or is unavailable"
+        run: bun install --frozen-lockfile
+      - name: Bun audit (fail on high/critical)
+        # `bun audit` exits nonzero on ANY finding (including dev-only lows),
+        # so this step gates the build on high/critical only. Entries in the
+        # allowlist below are accepted risks with documented reasons; everything
+        # else fails the build. Revisit the allowlist when upstreams move.
+        run: |
+          bun audit --json > /tmp/bun-audit.json || true
+          BLOCKING=$(jq '[. as $root
+            | keys[] as $pkg
+            | $root[$pkg][] as $f
+            | select($f.severity == "high" or $f.severity == "critical")
+            | select(
+              # allowlist:
+              # - pacote/sigstore: npm toolchain, never in runtime bundle
+              # - undici: only the nested 5.29.0 (via @ai-sdk/provider-utils) is
+              #   in range; top-level 7.29.0 is clean. No upgrade path until the
+              #   AI SDK moves off undici 5 (server never uses its websockets).
+              ([$pkg, $f.title] | join(" ") | test("pacote|sigstore|undici") | not)
+            )] | length' /tmp/bun-audit.json)
+          echo "blocking high/critical findings: $BLOCKING"
+          if [ "$BLOCKING" != "0" ]; then
+            jq -r '. as $root | keys[] as $pkg | $root[$pkg][] | select(.severity == "high" or .severity == "critical") | "\(.severity): \($pkg): \(.title) (\(.url))"' /tmp/bun-audit.json
+            exit 1
+          fi
       - name: OSV scanner
         uses: google/osv-scanner-action@v1.9.2
         with:
