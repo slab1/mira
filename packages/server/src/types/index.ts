@@ -117,6 +117,7 @@ export type BusEventType =
   | 'model.retired'
   | 'server.heartbeat'
   | 'server.error'
+  | 'github.webhook'
   | 'config.updated'
 
 export interface BusEvent<T = JsonValue> {

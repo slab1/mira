@@ -144,7 +144,8 @@ export function mountMiddleware(
   })
 
   // Security: optional bearer-token gate
-  const PUBLIC_PATHS = new Set(['/healthz', '/metrics'])
+  // /webhooks/github is HMAC-signed (X-Hub-Signature-256), not bearer-authed.
+  const PUBLIC_PATHS = new Set(['/healthz', '/metrics', '/webhooks/github'])
   const isPublicUiPath = (p: string) => {
     // Normalize traversal: /assets/../session -> /session (not public) (P3-5)
     let normalized = p

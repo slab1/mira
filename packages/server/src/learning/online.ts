@@ -427,18 +427,30 @@ export async function searchArxiv(query: string, count: number): Promise<SearchR
   }
 }
 
-/** GitHub repo search — keyless (60 req/hr rate limit), used for the `github-repo` category. */
+/** GitHub repo search — keyless (60 req/hr rate limit), used for the `github-repo` category.
+ * Results are cached in-memory for 1h; when GITHUB_PAT is set it is sent as a
+ * bearer token (5000 req/hr) without ever being logged or persisted. */
+const githubSearchCache = new Map<string, { at: number; results: SearchResult[] }>()
+const GITHUB_SEARCH_CACHE_TTL_MS = 60 * 60 * 1000
+export function clearGitHubSearchCache(): void {
+  githubSearchCache.clear()
+}
 export async function searchGitHubRepos(query: string, count: number): Promise<SearchResult[]> {
+  const key = `${query}::${count}`
+  const cached = githubSearchCache.get(key)
+  if (cached && Date.now() - cached.at < GITHUB_SEARCH_CACHE_TTL_MS) return cached.results
   try {
     const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=stars&order=desc&per_page=${count}`
+    const headers: Record<string, string> = {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'Mira/0.1 (+https://mira.ai)',
+    }
+    if (process.env.GITHUB_PAT) headers.Authorization = `Bearer ${process.env.GITHUB_PAT}`
     const res = await fetch(url, {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'Mira/0.1 (+https://mira.ai)',
-      },
+      headers,
       signal: AbortSignal.timeout(10_000),
     })
-    if (!res.ok) return []
+    if (!res.ok) return cached?.results ?? [] // rate-limited/errored: serve stale cache if any
     const data = (await res.json()) as {
       items?: Array<{
         full_name?: string
@@ -447,7 +459,7 @@ export async function searchGitHubRepos(query: string, count: number): Promise<S
         stargazers_count?: number
       }>
     }
-    return (data.items ?? [])
+    const results = (data.items ?? [])
       .filter((r) => typeof r.html_url === 'string' && r.html_url)
       .map((r) => ({
         title: r.full_name ?? r.html_url ?? '',
@@ -455,8 +467,10 @@ export async function searchGitHubRepos(query: string, count: number): Promise<S
         snippet: r.description?.slice(0, 240) ?? '',
         score: typeof r.stargazers_count === 'number' ? r.stargazers_count : undefined,
       }))
+    githubSearchCache.set(key, { at: Date.now(), results })
+    return results
   } catch {
-    return []
+    return cached?.results ?? []
   }
 }
 

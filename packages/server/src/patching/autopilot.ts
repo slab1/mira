@@ -37,7 +37,34 @@ export async function createPullRequestForPatch(opts: {
   if (!Bun.which("gh")) return { created: false, reason: "gh CLI not available" }
 
   const cwd = opts.repoRoot
-  const branch = `mira/autopilot/${opts.painPointId}-${Date.now().toString(36)}`
+  // Branch-collision guard: timestamp suffixes can theoretically repeat, so
+  // verify the name is free (retry with extra entropy) instead of failing on
+  // `checkout -b` or — worse — committing onto someone else's branch.
+  let branch = `mira/autopilot/${opts.painPointId}-${Date.now().toString(36)}`
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const exists = await sh(['git', 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], {
+      cwd,
+    })
+    if (exists.code !== 0) break
+    branch = `mira/autopilot/${opts.painPointId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+    if (attempt === 2) return { created: false, reason: 'could not pick a free branch name' }
+  }
+
+  // Dedicated token auth for push: GITHUB_PAT via per-command extraHeader so the
+  // PAT never lands in .git/config or the shell history. Falls back to ambient
+  // git auth (e.g. credential manager) when unset.
+  const pat = process.env.GITHUB_PAT ?? ''
+  const pushStep = pat
+    ? [
+        'git',
+        '-c',
+        `http.extraHeader=AUTHORIZATION: basic ${Buffer.from(`x-access-token:${pat}`).toString('base64')}`,
+        'push',
+        '-u',
+        'origin',
+        branch,
+      ]
+    : ['git', 'push', '-u', 'origin', branch]
 
   // Remember current branch to restore later
   const cur = await sh(["git", "rev-parse", "--abbrev-ref", "HEAD"], { cwd })
@@ -47,10 +74,15 @@ export async function createPullRequestForPatch(opts: {
   let prResult: AutopilotResult | null = null
   try {
     for (const step of [
-      ["git", "checkout", "-b", branch],
-      ["git", "add", "--", ...opts.files],
-      ["git", "commit", "-m", `mira(autopilot): fix ${opts.painPointId}\n\n${opts.reason.slice(0, 300)}\n\nPatch: ${opts.change.slice(0, 500)}\n\n[skip ci]`],
-      ["git", "push", "-u", "origin", branch],
+      ['git', 'checkout', '-b', branch],
+      ['git', 'add', '--', ...opts.files],
+      [
+        'git',
+        'commit',
+        '-m',
+        `mira(autopilot): fix ${opts.painPointId}\n\n${opts.reason.slice(0, 300)}\n\nPatch: ${opts.change.slice(0, 500)}`,
+      ],
+      pushStep,
     ] as string[][]) {
       const r = await sh(step, { cwd })
       if (step[1] === "checkout" && step[2] === "-b" && r.code === 0) branchCreated = true
