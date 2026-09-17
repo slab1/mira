@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    - cron: "0 6 * * 1" # weekly Monday 06:00 UTC
+    - cron: '0 6 * * 1' # weekly Monday 06:00 UTC
   workflow_dispatch:
 
 permissions:
@@ -30,8 +30,12 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Bun audit
         run: bun audit || bun pm audit || echo "::warning::bun audit found issues or is unavailable"
-      - name: OSV scanner (disabled - action version issue)
-        run: echo "OSV scanner disabled - use bun audit instead"
+      - name: OSV scanner
+        uses: google/osv-scanner-action@v1.9.2
+        with:
+          scan-args: |-
+            --recursive
+            ./
         continue-on-error: true
 
   secrets:
@@ -66,4 +70,4 @@ jobs:
       - uses: github/codeql-action/autobuild@v3
       - uses: github/codeql-action/analyze@v3
         with:
-          category: "/language:${{ matrix.language }}"
+          category: '/language:${{ matrix.language }}'

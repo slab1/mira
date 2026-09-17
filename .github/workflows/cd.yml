@@ -91,16 +91,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate deploy variables
         run: |
-          if [ -z "${{ vars.DEPLOY_HOOK_URL }}" ] || [ -z "${{ vars.DEPLOY_TOKEN }}" ]; then
-            echo "::error::Required deploy variables DEPLOY_HOOK_URL and DEPLOY_TOKEN are missing or empty"
+          if [ -z "${{ vars.DEPLOY_HOOK_URL }}" ] || [ -z "${{ secrets.DEPLOY_TOKEN }}" ]; then
+            echo "::error::Required deploy variables vars.DEPLOY_HOOK_URL and secrets.DEPLOY_TOKEN are missing or empty"
             exit 1
           fi
       - name: Deploy
         run: |
           echo "Deploying ghcr.io/${{ github.repository }}:${{ github.sha }} to ${{ vars.DEPLOY_URL }}"
           # Example: trigger deploy hook / helm upgrade / fly deploy
-          if [ -n "${{ secrets.DEPLOY_HOOK_URL }}" ]; then
-            curl -fsSL -X POST "${{ secrets.DEPLOY_HOOK_URL }}" \
+          if [ -n "${{ vars.DEPLOY_HOOK_URL }}" ]; then
+            curl -fsSL -X POST "${{ vars.DEPLOY_HOOK_URL }}" \
               -H "Authorization: Bearer ${{ secrets.DEPLOY_TOKEN }}" \
               -H "Content-Type: application/json" \
               -d "{\"image\":\"ghcr.io/${{ github.repository }}:${{ github.sha }}\"}"
