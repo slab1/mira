@@ -107,12 +107,13 @@ export function mountAdminRoutes(
     const key = randomBytes(48).toString('hex')
     const keyHash = createHash('sha256').update(key).digest('hex')
     const keyPrefix = key.slice(0, 12)
+    // Option 1 safe: DB bearer column `key` stores hash-only (DB dump ≠ bearer); raw kept only for log preview
     db.sqlite
       .prepare(
         'INSERT INTO api_keys (key, key_hash, key_prefix, owner, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)',
       )
-      .run(key, keyHash, keyPrefix, owner, Date.now(), 'default')
-    API_KEY_OWNERS.set(key, owner)
+      .run(keyHash, keyHash, keyPrefix, owner, Date.now(), 'default')
+    API_KEY_OWNERS.set(keyHash, owner)
     console.log(`[admin] mint key for owner="${owner}" preview=${key.slice(0, 6)}…${key.slice(-4)}`)
     return c.json({ key_prefix: keyPrefix, key_hash: true, owner }, 201)
   })
@@ -143,15 +144,18 @@ export function mountAdminRoutes(
     return c.json({ count: rows.length, issued })
   })
 
-  // Revoke a key (admin only).
+  // Revoke a key (admin only) — hash-aware + legacy fallback (key_hash=hash OR key=raw)
   app.delete('/admin/api-keys/:key', async (c) => {
     if (!isAdmin(c)) return deny(c)
     const key = c.req.param('key')
     if (!key || key.length < 32) return c.json({ error: 'not found' }, 404)
     ensureTable()
-    const existing = db.sqlite.prepare('SELECT 1 FROM api_keys WHERE key = ?').get(key) as
-      { '1': number } | undefined
-    db.sqlite.prepare('DELETE FROM api_keys WHERE key = ?').run(key)
+    const hash = createHash('sha256').update(key).digest('hex')
+    const existing = db.sqlite
+      .prepare('SELECT 1 FROM api_keys WHERE key_hash = ? OR key = ?')
+      .get(hash, key) as { '1': number } | undefined
+    db.sqlite.prepare('DELETE FROM api_keys WHERE key_hash = ? OR key = ?').run(hash, key)
+    API_KEY_OWNERS.delete(hash)
     API_KEY_OWNERS.delete(key)
     sessionOwnerCache.clear()
     if (existing) console.log(`[admin] revoke key preview=${key.slice(0, 6)}…${key.slice(-4)}`)

@@ -245,7 +245,9 @@ export const auditEntries = sqliteTable(
 )
 
 // Runtime-issued API keys — persisted via admin routes, loaded on startup
-// P3-1: key_hash + key_prefix for DB-dump protection (keep key for backward compat)
+// P3-1 / Option 1 safe: key_hash + key_prefix for DB-dump protection; new rows store
+// hash in `key` (key=keyHash) so DB dump ≠ bearer; `key_hash` authoritative, `key` kept for back-compat fallback
+// Optional backfill: legacy rows with raw `key` + null key_hash are hashed on load (index.ts) / on next rotation
 export const apiKeys = sqliteTable(
   'api_keys',
   {

@@ -15,6 +15,29 @@ import { getUserByOwner } from '../storage/users.js'
 
 const NAME_MAX = 50
 
+const SAFE_PROFILE_KEYS = new Set(['bio', 'avatar', 'theme', 'locale'])
+const SECRET_PROFILE_RE = /(secret|token|password|credential|api[_-]?key|bearer)/i
+
+function sanitizeProfile(profile: unknown): Record<string, unknown> | null {
+  if (!profile || typeof profile !== 'object' || Array.isArray(profile)) return null
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(profile as Record<string, unknown>)) {
+    if (SECRET_PROFILE_RE.test(k)) continue
+    if (!SAFE_PROFILE_KEYS.has(k) && typeof v === 'string' && v.length > 200) continue
+    out[k] = v
+  }
+  return Object.keys(out).length ? out : null
+}
+
+function sanitizeUser(
+  user: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | null {
+  if (!user || typeof user !== 'object') return null
+  const { profile, ...rest } = user as Record<string, unknown>
+  const safeProfile = sanitizeProfile(profile)
+  return { ...rest, profile: safeProfile }
+}
+
 export function mountMeRoutes(
   app: Hono<{ Variables: { requestId: string } }>,
   deps: {
@@ -29,7 +52,8 @@ export function mountMeRoutes(
     const owner = deps.resolveOwner(deps.bearerOf(c.req.header('Authorization')))
     if (!owner) return c.json({ error: 'unauthorized' }, 401)
     const user = await getUserByOwner(db, owner)
-    return c.json(user)
+    const safe = sanitizeUser(user)
+    return c.json(safe)
   })
 
   app.patch('/me', async (c: Context) => {
@@ -57,6 +81,6 @@ export function mountMeRoutes(
       .update(db.schema.users)
       .set({ name, updatedAt: updated.updatedAt })
       .where(eq(db.schema.users.owner, owner))
-    return c.json(updated)
+    return c.json(sanitizeUser(updated))
   })
 }

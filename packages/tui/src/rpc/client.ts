@@ -388,7 +388,26 @@ function getRuntimeApiUrl(): string {
     if (stored && stored.trim()) return stored.trim().replace(/\/$/, '')
     if (typeof window !== 'undefined') {
       const q = new URLSearchParams(window.location.search).get('api')
-      if (q && q.trim()) return q.trim().replace(/\/$/, '')
+      if (q && q.trim()) {
+        const trimmed = q.trim().replace(/\/$/, '')
+        try {
+          const u = new URL(trimmed)
+          const isLocalhost =
+            u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1'
+          const isHttps = u.protocol === 'https:'
+          if (isLocalhost || isHttps) return trimmed
+          if (!runtimeApiUrlWarned) {
+            runtimeApiUrlWarned = true
+            console.warn('[mira] ?api= rejected: only localhost or https allowed', trimmed)
+          }
+        } catch {
+          if (trimmed.startsWith('https://')) return trimmed
+          if (!runtimeApiUrlWarned) {
+            runtimeApiUrlWarned = true
+            console.warn('[mira] ?api= rejected: invalid URL', trimmed)
+          }
+        }
+      }
       const w = window as { __MIRA_API_URL?: string }
       if (w.__MIRA_API_URL && w.__MIRA_API_URL.trim())
         return w.__MIRA_API_URL.trim().replace(/\/$/, '')
@@ -572,7 +591,12 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     } catch (e) {
       if (e instanceof ApiError) throw e
       const msg = String((e as Error)?.message ?? e)
-      const isConn = e instanceof TypeError || msg.includes('ECONNREFUSED') || msg.includes('Failed to fetch') || msg.includes('Connection refused') || msg.includes('fetch failed')
+      const isConn =
+        e instanceof TypeError ||
+        msg.includes('ECONNREFUSED') ||
+        msg.includes('Failed to fetch') ||
+        msg.includes('Connection refused') ||
+        msg.includes('fetch failed')
       if (!isConn) throw e
       lastErr = e
       if (bases.indexOf(base) < bases.length - 1) continue
@@ -751,7 +775,9 @@ export const rpc = {
       return files.map((f) => (typeof f === 'string' ? f : f.path))
     }),
   getPermission: (cwd?: string) =>
-    req<Record<string, JsonValue>>(cwd ? `/permission?cwd=${encodeURIComponent(cwd)}` : '/permission'),
+    req<Record<string, JsonValue>>(
+      cwd ? `/permission?cwd=${encodeURIComponent(cwd)}` : '/permission',
+    ),
   getTerminalStatus: () => req<{ enabled: boolean; sandbox: boolean; ws: string }>('/terminal'),
 
   // ── Mira Score GA (H2-2) — per-session score + trace (port from web/src/api/client.ts:736-818) ──

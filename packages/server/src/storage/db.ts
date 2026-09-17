@@ -236,7 +236,8 @@ export async function migrate(db: MiraDB) {
   try {
     sqlite.exec(`CREATE INDEX IF NOT EXISTS sessions_project_id_idx ON sessions(project_id);`)
   } catch {}
-  // P3-1: api_keys hash/prefix for DB-dump protection
+  // P3-1 / Option 1 safe: api_keys hash/prefix for DB-dump protection (hash-only storage)
+  // `key` holds hash for new rows; `key_hash` authoritative; legacy rows backfilled on load
   addColumn('api_keys', 'key_hash', 'TEXT')
   addColumn('api_keys', 'key_prefix', 'TEXT')
   // H2-1 Memory v2: temporal decay + entity graph columns

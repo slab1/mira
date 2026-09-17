@@ -162,13 +162,16 @@ if (REQUIRED_TOKEN === 'change-me-to-a-long-random-secret') {
   }
   REQUIRED_TOKEN = ''
 }
+function hashKey(s: string): string {
+  return createHash('sha256').update(s).digest('hex')
+}
 const API_KEY_OWNERS = new Map<string, string>()
 for (const pair of (process.env.MIRA_API_KEYS ?? '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)) {
   const i = pair.indexOf(':')
-  if (i > 0) API_KEY_OWNERS.set(pair.slice(0, i), pair.slice(i + 1))
+  if (i > 0) API_KEY_OWNERS.set(hashKey(pair.slice(0, i)), pair.slice(i + 1))
 }
 if (
   process.env.NODE_ENV === 'production' &&
@@ -183,7 +186,8 @@ let OWNERSHIP_ENABLED = API_KEY_OWNERS.size > 0
 function resolveOwner(token: string): string | undefined {
   if (!token) return undefined
   if (REQUIRED_TOKEN && tokenEquals(token, REQUIRED_TOKEN)) return 'default'
-  return API_KEY_OWNERS.get(token)
+  const h = hashKey(token)
+  return API_KEY_OWNERS.get(h) ?? API_KEY_OWNERS.get(token)
 }
 function bearerOf(authHeader: string | undefined): string {
   return authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : ''
@@ -194,10 +198,11 @@ function tokenEquals(a: string, b: string): boolean {
   const hb = createHash('sha256').update(b).digest()
   return timingSafeEqual(ha, hb)
 }
-const HOST = process.env.HOST ?? '127.0.0.1'
+let HOST: string = process.env.HOST ?? '127.0.0.1'
 const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '0.0.0.0', '::1'])
 if (!ALLOWED_HOSTS.has(HOST)) {
-  warn(`⚠️  HOST=${HOST} not in allowed list, defaulting to 127.0.0.1`)
+  warn(`⚠️  HOST=${HOST} not in allowed list, clamping to 127.0.0.1`)
+  HOST = '127.0.0.1'
 }
 // MIRA_WORKSPACE_ROOTS — comma-separated allowedRoots override (per-project isolation, env wins)
 const WORKSPACE_ROOTS = (process.env.MIRA_WORKSPACE_ROOTS ?? '')
@@ -446,13 +451,18 @@ async function main() {
     }
   }
 
-  // Load runtime-issued API keys from db
+  // Load runtime-issued API keys from db — hash-keyed (Option 1 safe, back-compat)
   try {
-    const rows = db.sqlite.prepare('SELECT key, owner FROM api_keys').all() as {
+    const rows = db.sqlite.prepare('SELECT key, key_hash, owner FROM api_keys').all() as {
       key: string
+      key_hash: string | null
       owner: string
     }[]
-    for (const r of rows) API_KEY_OWNERS.set(r.key, r.owner)
+    for (const r of rows) {
+      const hash = r.key_hash ?? (r.key ? createHash('sha256').update(r.key).digest('hex') : null)
+      if (hash) API_KEY_OWNERS.set(hash, r.owner)
+      else if (r.key) API_KEY_OWNERS.set(r.key, r.owner)
+    }
     if (rows.length) log(`loaded ${rows.length} issued API key(s) from db`)
     OWNERSHIP_ENABLED = API_KEY_OWNERS.size > 0
   } catch (e) {
