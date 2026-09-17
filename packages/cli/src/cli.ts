@@ -6,11 +6,12 @@ declare const Bun: {
     opts: {
       cwd?: string
       env?: Record<string, string | undefined>
-      stdout?: string
-      stderr?: string
-      stdin?: string
+      stdout?: unknown
+      stderr?: unknown
+      stdin?: unknown
+      detached?: boolean
     },
-  ): { exited: Promise<number> }
+  ): { exited: Promise<number>; pid: number; unref?: () => void }
   file(path: string): { text(): Promise<string> }
 }
 declare const process: {
@@ -119,6 +120,28 @@ function authHeaders(): Record<string, string> {
   const t = token()
   return t ? { Authorization: `Bearer ${t}` } : {}
 }
+// Cross-platform absolute-path check — String.startsWith('/') misses Windows
+// drive (`C:\…`) and UNC (`\\…`) paths.
+function isAbsPath(p: string): boolean {
+  return p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\')
+}
+// Verified-base cache: port scanning can otherwise latch onto whatever answers.
+// We probe /healthz once per process so every command talks to a real Mira server.
+let verifiedBase: string | null = null
+async function probeBase(base: string, timeoutMs = 2500): Promise<boolean> {
+  try {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), timeoutMs)
+    try {
+      const res = await fetch(`${base}/healthz`, { signal: ctrl.signal })
+      return res.ok
+    } finally {
+      clearTimeout(t)
+    }
+  } catch {
+    return false
+  }
+}
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const primary = apiUrl()
   const headers = {
@@ -130,6 +153,7 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   // build candidate list when no explicit MIRA_API_URL — scan .mira/port + 4096-4106
   const candidates: string[] = [primary]
   if (usingDefault) {
+    if (verifiedBase) return fetchWithHeaders(verifiedBase)
     const filePort = getMiraPortCached()
     if (filePort) {
       const u = `http://127.0.0.1:${filePort}`
@@ -139,27 +163,39 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
       const u = `http://127.0.0.1:${p}`
       if (!candidates.includes(u)) candidates.push(u)
     }
+    for (const base of candidates) {
+      if (await probeBase(base)) {
+        verifiedBase = base
+        return fetchWithHeaders(base)
+      }
+    }
+    throw new Error(
+      'cannot reach a Mira server (tried 4096-4106) — is it running? Start one with: mira serve',
+    )
   }
-  let lastErr: unknown = null
-  for (const base of candidates) {
+  return fetchWithHeaders(primary)
+
+  async function fetchWithHeaders(base: string): Promise<Response> {
     try {
-      const res = await fetch(`${base}${path}`, { ...init, headers })
-      return res
+      return await fetch(`${base}${path}`, { ...init, headers })
     } catch (e) {
+      // verified/explicit base went away mid-run — drop the cache so the next
+      // call re-probes instead of sticking to a dead server.
+      if (base === verifiedBase) verifiedBase = null
       const msg = String((e as Error)?.message ?? e)
-      const isConn =
+      if (
         e instanceof TypeError ||
         msg.includes('ECONNREFUSED') ||
         msg.includes('Failed to fetch') ||
         msg.includes('Connection refused') ||
         msg.includes('fetch failed') ||
         msg.includes('ECONNRESET')
-      lastErr = e
-      if (!isConn) throw e
-      continue
+      ) {
+        throw new Error(`${msg} — is the server still running? Start one with: mira serve`)
+      }
+      throw e
     }
   }
-  throw lastErr ?? new Error('fetch failed')
 }
 function printHelp(): void {
   const help = `
@@ -182,6 +218,7 @@ Usage:
   mira config get [key]                                   Get config (or filtered by key)
   mira config set <key> <value>                            Set config (dot notation, JSON value)
   mira finding list [--status open] [--limit 20]          List findings
+  mira finding resolve <id>                           Resolve a finding
   mira workspace list                                     List workspaces (recent)
   mira workspace add <path>                               Add workspace (validates path)
   mira workspace remove <id|path>                         Remove workspace
@@ -190,6 +227,8 @@ Usage:
   mira project init [--template ts] [--path <dir>]        Init mira.json in project
   mira manager                                            Active jobs + recent sessions
   mira health                                             Liveness (/healthz)
+  mira login --token <token>                              Persist bearer token to ~/.mira/mira.env
+  mira logout                                             Remove persisted token
   mira complete --prefix "..." [--suffix "..."] [--file path]  Ghost-text completion
   mira --help | -h                                         Help
   mira --version | -v                                      Version
@@ -255,17 +294,42 @@ async function cmdServe(opts: Record<string, string | boolean>): Promise<void> {
   const port = String(opts.port ?? opts.p ?? process.env.PORT ?? '4096')
   const host = String(opts.host ?? process.env.HOST ?? '127.0.0.1')
   const daemon = Boolean(opts.daemon || opts.d)
-  if (daemon) {
-    console.log(
-      `[mira] daemon mode not yet implemented — running foreground on ${host}:${port} (use pm2/bun --watch for now)`,
-    )
-  }
   // Delegate to server's main — set env so server picks correct host/port
   process.env.PORT = port
   process.env.HOST = host
   // Spawn server entry as child (avoids import side-effects) — cross-machine safe binary
-  const serverDir = new URL('../..', import.meta.resolve('@mira/server')).pathname
+  // NOTE: URL.pathname keeps a leading slash on Windows (/C:/…), which is not a
+  // valid cwd — fileURLToPath is required here (fixes ENOENT uv_spawn on win32).
+  const { fileURLToPath } = require('node:url') as typeof import('node:url')
+  const { dirname: _dirname } = require('node:path') as typeof import('node:path')
+  const serverEntry = fileURLToPath(import.meta.resolve('@mira/server'))
+  const serverDir = _dirname(_dirname(serverEntry))
   const { resolveBunBinary } = await import('@mira/shared')
+  if (daemon) {
+    const { join } = (await import('node:path')) as typeof import('node:path')
+    const { mkdirSync } = (await import('node:fs')) as typeof import('node:fs')
+    const { homedir } = (await import('node:os')) as typeof import('node:os')
+    const logDir = join(homedir(), '.mira')
+    try {
+      mkdirSync(logDir, { recursive: true })
+    } catch {}
+    const logFile = Bun.file(join(logDir, 'server.log'))
+    const proc = Bun.spawn([resolveBunBinary(), 'run', 'src/index.ts'], {
+      cwd: serverDir,
+      env: { ...process.env, PORT: port, HOST: host },
+      stdout: logFile,
+      stderr: logFile,
+      stdin: 'ignore',
+      detached: true,
+    })
+    try {
+      proc.unref?.()
+    } catch {}
+    console.log(
+      `[mira] daemon started (pid ${proc.pid}) on ${host}:${port} — logs ${join(logDir, 'server.log')}`,
+    )
+    return
+  }
   const proc = Bun.spawn([resolveBunBinary(), 'run', 'src/index.ts'], {
     cwd: serverDir,
     env: { ...process.env, PORT: port, HOST: host },
@@ -349,6 +413,13 @@ async function cmdSessionPrompt(opts: Record<string, string | boolean>): Promise
           if (d) process.stdout.write(String(d))
         } else if (event === 'error') {
           if (j.error) console.error(`\n[error] ${String(j.error)}`)
+        } else if (event === 'doom_loop' || event === 'doom-loop') {
+          // Surfaced (was silently dropped): tells the user WHY the loop stopped.
+          const reason = String(j.reason ?? j.error ?? 'repeated identical steps')
+          const tool = String(j.tool ?? '')
+          console.error(
+            `\n[doom-loop stopped]${tool ? ` tool=${tool}` : ''} ${reason}`.trimEnd(),
+          )
         } else if (event === 'finish') {
           // already streamed via text_delta, no duplicate
         } else if (
@@ -575,6 +646,72 @@ async function cmdFindingList(opts: Record<string, string | boolean>): Promise<v
   console.log(JSON.stringify(await res.json(), null, 2))
 }
 
+async function cmdFindingResolve(opts: Record<string, string | boolean>): Promise<void> {
+  // Note: main() maps the subcommand name itself into positional[0], so the id
+  // lives at positional[1] — never trust opts['0'] here.
+  const positional = Bun.argv.slice(3).filter((a) => !a.startsWith('-'))
+  const raw = String(opts.id ?? positional[1] ?? '').trim()
+  const id = raw === 'resolve' ? '' : raw
+  if (!id) {
+    console.error('finding resolve requires <id> — e.g. mira finding resolve <id>')
+    process.exit(1)
+  }
+  const res = await apiFetch(`/finding/${encodeURIComponent(id)}/resolve`, { method: 'POST' })
+  if (!res.ok) {
+    console.error(`finding resolve failed: ${res.status} ${await res.text()}`)
+    process.exit(1)
+  }
+  console.log(JSON.stringify(await res.json(), null, 2))
+}
+
+async function cmdLogin(opts: Record<string, string | boolean>): Promise<void> {
+  const tokenValue = String(opts.token ?? opts.t ?? process.env.MIRA_TOKEN ?? '').trim()
+  if (!tokenValue) {
+    console.error('login requires a token: mira login --token <token> (or MIRA_TOKEN=<token> mira login)')
+    process.exit(1)
+  }
+  const { join } = (await import('node:path')) as typeof import('node:path')
+  const { mkdirSync, writeFileSync, existsSync, readFileSync } =
+    (await import('node:fs')) as typeof import('node:fs')
+  const { homedir } = (await import('node:os')) as typeof import('node:os')
+  const fp = join(homedir(), '.mira', 'mira.env')
+  try {
+    mkdirSync(join(homedir(), '.mira'), { recursive: true })
+  } catch {}
+  // Preserve other keys already in mira.env; replace MIRA_TOKEN.
+  let lines: string[] = []
+  if (existsSync(fp)) {
+    try {
+      lines = readFileSync(fp, 'utf-8')
+        .split('\n')
+        .filter((l) => !l.match(/^\s*MIRA_TOKEN\s*=/))
+    } catch {}
+  }
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop()
+  lines.push(`MIRA_TOKEN=${tokenValue}`)
+  writeFileSync(fp, lines.join('\n') + '\n')
+  console.log(`Saved MIRA_TOKEN to ${fp}`)
+}
+
+async function cmdLogout(): Promise<void> {
+  const { join } = (await import('node:path')) as typeof import('node:path')
+  const { existsSync, readFileSync, writeFileSync } =
+    (await import('node:fs')) as typeof import('node:fs')
+  const { homedir } = (await import('node:os')) as typeof import('node:os')
+  const fp = join(homedir(), '.mira', 'mira.env')
+  if (!existsSync(fp)) {
+    console.log('Not logged in (no ~/.mira/mira.env)')
+    return
+  }
+  try {
+    const kept = readFileSync(fp, 'utf-8')
+      .split('\n')
+      .filter((l) => !l.match(/^\s*MIRA_TOKEN\s*=/))
+    writeFileSync(fp, kept.join('\n') + (kept.length ? '\n' : ''))
+  } catch {}
+  console.log('Logged out (MIRA_TOKEN removed)')
+}
+
 async function cmdAgentPreview(opts: Record<string, string | boolean>): Promise<void> {
   const name = String(opts.name ?? opts[0] ?? '')
   if (!name) {
@@ -680,16 +817,16 @@ async function cmdWorkspaceAdd(opts: Record<string, string | boolean>): Promise<
     try {
       const { readFileSync, existsSync, mkdirSync, writeFileSync } =
         require('node:fs') as typeof import('node:fs')
-      const { resolve } = require('node:path') as typeof import('node:path')
-      const absPath = rawPath.startsWith('/') ? rawPath : resolve(process.cwd(), rawPath)
+      const { resolve, dirname } = require('node:path') as typeof import('node:path')
+      const absPath = isAbsPath(rawPath) ? rawPath : resolve(process.cwd(), rawPath)
       if (!existsSync(absPath)) {
         console.error(`path not found: ${absPath}`)
         process.exit(1)
       }
       const home = process.env.HOME ?? ''
       const fp = home ? `${home}/.mira/workspaces.json` : `${process.cwd()}/.mira/workspaces.json`
-      const dir = fp.slice(0, fp.lastIndexOf('/'))
-      if (dir) mkdirSync(dir, { recursive: true })
+      const dir = dirname(fp)
+      if (dir && dir !== '.') mkdirSync(dir, { recursive: true })
       let existing: Array<{ id: string; path: string; name: string; addedAt: number }> = []
       if (existsSync(fp)) {
         try {
@@ -912,8 +1049,8 @@ async function cmdProjectInit(opts: Record<string, string | boolean>): Promise<v
   }
   const { existsSync, mkdirSync, writeFileSync, readFileSync } =
     require('node:fs') as typeof import('node:fs')
-  const { resolve } = require('node:path') as typeof import('node:path')
-  const absPath = targetPath.startsWith('/') ? targetPath : resolve(process.cwd(), targetPath)
+  const { resolve, dirname } = require('node:path') as typeof import('node:path')
+  const absPath = isAbsPath(targetPath) ? targetPath : resolve(process.cwd(), targetPath)
   try {
     mkdirSync(absPath, { recursive: true })
   } catch {}
@@ -957,8 +1094,8 @@ async function cmdProjectInit(opts: Record<string, string | boolean>): Promise<v
   try {
     const home = process.env.HOME ?? ''
     const fp = home ? `${home}/.mira/workspaces.json` : `${process.cwd()}/.mira/workspaces.json`
-    const dir = fp.slice(0, fp.lastIndexOf('/'))
-    if (dir) mkdirSync(dir, { recursive: true })
+    const dir = dirname(fp)
+    if (dir && dir !== '.') mkdirSync(dir, { recursive: true })
     let existing: Array<{ id: string; path: string; name: string; addedAt: number }> = []
     if (existsSync(fp)) {
       try {
@@ -1081,6 +1218,7 @@ async function main(): Promise<void> {
     case 'finding':
     case 'findings':
       if (sub === 'list' || sub === null) await cmdFindingList(opts)
+      else if (sub === 'resolve') await cmdFindingResolve(opts)
       else {
         console.error(`unknown finding subcommand: ${sub}`)
         process.exit(1)
@@ -1118,6 +1256,12 @@ async function main(): Promise<void> {
       return
     case 'manager':
       await cmdManager()
+      return
+    case 'login':
+      await cmdLogin(opts)
+      return
+    case 'logout':
+      await cmdLogout()
       return
     case 'health':
       await cmdHealth()

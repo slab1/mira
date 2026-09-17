@@ -36,6 +36,7 @@
   "scripts": {
     "build": "tsc --noEmit && bun build src/cli.ts --outdir dist --target bun --format esm",
     "typecheck": "tsc --noEmit",
+    "test": "bun test",
     "dev": "tsc --watch --noEmit",
     "prepublishOnly": "npm run build && npm run typecheck"
   },
