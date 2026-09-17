@@ -6,8 +6,12 @@ import { toast } from './Toast'
 import { EvalBadge } from './EvalBadge'
 
 // ── Shared helpers ──────────────────────────────────────────────────
+// Live-only model catalog: no hardcoded fallback. Providers are the source
+// of truth (GET /providers → models). Current config model is added as a
+// transient entry if absent so the selector never loses the active value.
+// This keeps the header selector grounded in what the server actually offers.
 
-type KnownModel = {
+type LiveModel = {
   id: string
   provider: string
   label: string
@@ -15,81 +19,6 @@ type KnownModel = {
   pricing: string
   capabilities: string[]
 }
-
-const KNOWN_MODELS: KnownModel[] = [
-  {
-    id: 'openrouter/anthropic/claude-sonnet-4',
-    provider: 'OpenRouter',
-    label: 'Claude Sonnet 4',
-    context: '200k',
-    pricing: '$3/$15',
-    capabilities: ['coding', 'reasoning', 'vision'],
-  },
-  {
-    id: 'openrouter/anthropic/claude-opus-4',
-    provider: 'OpenRouter',
-    label: 'Claude Opus 4',
-    context: '200k',
-    pricing: '$15/$75',
-    capabilities: ['coding', 'reasoning', 'vision'],
-  },
-  {
-    id: 'openrouter/deepseek/deepseek-chat',
-    provider: 'OpenRouter',
-    label: 'DeepSeek Chat',
-    context: '128k',
-    pricing: '$0.27/$1.10',
-    capabilities: ['coding', 'reasoning'],
-  },
-  {
-    id: 'openrouter/openai/gpt-4o',
-    provider: 'OpenRouter',
-    label: 'GPT-4o',
-    context: '128k',
-    pricing: '$2.50/$10',
-    capabilities: ['coding', 'vision'],
-  },
-  {
-    id: 'openai/gpt-4o',
-    provider: 'OpenAI',
-    label: 'GPT-4o',
-    context: '128k',
-    pricing: '$2.50/$10',
-    capabilities: ['coding', 'vision', 'reasoning'],
-  },
-  {
-    id: 'openai/gpt-4o-mini',
-    provider: 'OpenAI',
-    label: 'GPT-4o Mini',
-    context: '128k',
-    pricing: '$0.15/$0.60',
-    capabilities: ['speed', 'vision'],
-  },
-  {
-    id: 'anthropic/claude-sonnet-4',
-    provider: 'Anthropic',
-    label: 'Claude Sonnet 4',
-    context: '200k',
-    pricing: '$3/$15',
-    capabilities: ['coding', 'reasoning', 'vision'],
-  },
-  {
-    id: 'google/gemini-2.0-flash',
-    provider: 'Google',
-    label: 'Gemini 2.0 Flash',
-    context: '1M',
-    pricing: '$0.10/$0.40',
-    capabilities: ['speed', 'vision'],
-  },
-  {
-    id: 'deepseek/deepseek-chat',
-    provider: 'DeepSeek',
-    label: 'DeepSeek Chat',
-    context: '128k',
-    pricing: '$0.27/$1.10',
-    capabilities: ['coding', 'reasoning'],
-  },
-]
 
 function providerDisplayName(raw: string): string {
   const m: Record<string, string> = {
@@ -160,13 +89,7 @@ export function HeaderModelSelector(props: { settings: SettingsStore; id?: strin
 
   const allModels = createMemo(() => {
     const seen = new Set<string>()
-    const out: KnownModel[] = []
-    for (const m of KNOWN_MODELS) {
-      if (!seen.has(m.id)) {
-        seen.add(m.id)
-        out.push(m)
-      }
-    }
+    const out: LiveModel[] = []
     for (const p of providers()) {
       const models = p.models ?? []
       for (const m of models) {
@@ -181,6 +104,22 @@ export function HeaderModelSelector(props: { settings: SettingsStore; id?: strin
           context: inferContext(mid),
           pricing: '—',
           capabilities: inferCapabilities(mid),
+        })
+      }
+    }
+    // Include provider itself as a hint when it exposes zero models yet (configured but not refreshed)
+    if (out.length === 0) {
+      for (const p of providers()) {
+        const id = (p.id || '').trim()
+        if (!id || seen.has(id)) continue
+        seen.add(id)
+        out.push({
+          id,
+          provider: providerDisplayName(id),
+          label: id,
+          context: '—',
+          pricing: '—',
+          capabilities: [],
         })
       }
     }
@@ -211,13 +150,13 @@ export function HeaderModelSelector(props: { settings: SettingsStore; id?: strin
   })
 
   const grouped = createMemo(() => {
-    const map = new Map<string, KnownModel[]>()
+    const map = new Map<string, LiveModel[]>()
     for (const m of filtered()) {
       const g = m.provider
       if (!map.has(g)) map.set(g, [])
       map.get(g)!.push(m)
     }
-    const order = ['OpenRouter', 'Anthropic', 'OpenAI', 'Google', 'DeepSeek', 'NVIDIA']
+    const order = ['OpenRouter', 'Anthropic', 'OpenAI', 'Google', 'DeepSeek', 'NVIDIA', 'Custom']
     const entries = [...map.entries()]
     entries.sort((a, b) => {
       const ai = order.indexOf(a[0])

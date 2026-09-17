@@ -65,8 +65,18 @@ function AuthGate(props: { onReady: () => void }) {
 
   async function connect(e?: Event): Promise<void> {
     e?.preventDefault()
-    const trimmed = value().trim()
-    const urlTrimmed = apiUrl().trim().replace(/\/$/, '')
+    let trimmed = value().trim()
+    // Auto-strip pasted "MIRA_TOKEN=..." line
+    if (/^MIRA_TOKEN\s*=/i.test(trimmed))
+      trimmed = trimmed.replace(/^MIRA_TOKEN\s*=\s*/i, '').trim()
+    // Strip surrounding quotes if pasted with quotes
+    trimmed = trimmed.replace(/^["'](.+)["']$/, '$1').trim()
+    let urlTrimmed = apiUrl().trim().replace(/\/$/, '')
+    // Auto-strip accidental /healthz or /health suffix pasted from browser
+    urlTrimmed = urlTrimmed
+      .replace(/\/healthz\/?$/i, '')
+      .replace(/\/health\/?$/i, '')
+      .replace(/\/$/, '')
     setError('')
     setChecking(true)
     // Persist API URL override so next req() uses it (fixes ephemeral trycloudflare without rebuild)
@@ -148,8 +158,8 @@ function AuthGate(props: { onReady: () => void }) {
           <div
             style={{ 'font-size': 'var(--fs-sm)', color: 'var(--fg-muted)', 'line-height': '1.55' }}
           >
-            Paste the MIRA_TOKEN from that server's ~/.mira/mira.env (auto-created on first boot)
-            for the Server URL below. Leave empty only if that server runs without auth.
+            Server URL = mira server address; Access token = MIRA_TOKEN from ~/.mira/mira.env
+            (0o600) — not .env. Leave empty only if that server runs without auth.
           </div>
         </div>
 
@@ -263,11 +273,24 @@ export default function App() {
   const [miraScore, setMiraScore] = createSignal<{ score: number; costUSD: number } | null>(null)
   // Activity panel — collapsible right rail (agentic UX: separate from chat thread)
   const [activityCollapsed, setActivityCollapsed] = createSignal(false)
+  // Resizable layout — Linear/Vercel style: sidebar 280→360, inspector 280→480, split 55/45 drag
+  const [sidebarWidth, setSidebarWidth] = createSignal(280)
+  const [inspectorWidth, setInspectorWidth] = createSignal(360)
+  const [splitPct, setSplitPct] = createSignal(55)
+  const sidebarW = sidebarWidth
+  const inspectorW = inspectorWidth
+  const splitP = splitPct
   onMount(() => {
     try {
       const stored = localStorage.getItem('mira.activityCollapsed')
       if (stored === 'true') setActivityCollapsed(true)
       else if (window.innerWidth < 1100) setActivityCollapsed(true)
+      const sw = Number(localStorage.getItem('mira.sidebarWidth'))
+      if (Number.isFinite(sw) && sw >= 240 && sw <= 360) setSidebarWidth(sw)
+      const iw = Number(localStorage.getItem('mira.inspectorWidth'))
+      if (Number.isFinite(iw) && iw >= 280 && iw <= 480) setInspectorWidth(iw)
+      const sp = Number(localStorage.getItem('mira.splitPct'))
+      if (Number.isFinite(sp) && sp >= 35 && sp <= 65) setSplitPct(sp)
     } catch {}
   })
   createEffect(() => {
@@ -275,6 +298,51 @@ export default function App() {
       localStorage.setItem('mira.activityCollapsed', String(activityCollapsed()))
     } catch {}
   })
+  createEffect(() => {
+    try {
+      localStorage.setItem('mira.sidebarWidth', String(sidebarW()))
+    } catch {}
+  })
+  createEffect(() => {
+    try {
+      localStorage.setItem('mira.inspectorWidth', String(inspectorW()))
+    } catch {}
+  })
+  createEffect(() => {
+    try {
+      localStorage.setItem('mira.splitPct', String(splitP()))
+    } catch {}
+  })
+  function makeDrag(
+    get: () => number,
+    set: (n: number) => void,
+    min: number,
+    max: number,
+    axis: 'x',
+  ) {
+    let startX = 0
+    let startW = 0
+    const onMove = (e: PointerEvent) => {
+      const dx = e.clientX - startX
+      const next = axis === 'x' ? startW + dx : startW - dx
+      set(Math.max(min, Math.min(max, Math.round(next))))
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    return (e: PointerEvent) => {
+      startX = e.clientX
+      startW = get()
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    }
+  }
 
   onMount(() => {
     // Load budget cap from config.costCap (wired to gateway) with localStorage fallback
@@ -532,7 +600,15 @@ export default function App() {
           color: 'var(--fg)',
         }}
       >
-        <SessionList store={store} open={sidebarOpen()} />
+        <SessionList store={store} open={sidebarOpen()} width={sidebarW()} />
+        {/* Desktop resize handle — Linear-style sidebar 280→360 */}
+        <button
+          type="button"
+          class="mira-resize-handle"
+          aria-label="Resize sidebar"
+          aria-orientation="vertical"
+          onPointerDown={makeDrag(() => sidebarW(), setSidebarWidth, 240, 360, 'x')}
+        />
         {/* Mobile drawer scrim — closes the session sidebar when tapped */}
         <Show when={sidebarOpen()}>
           <div class="mira-scrim" aria-hidden="true" onClick={() => setSidebarOpen(false)} />
@@ -1106,7 +1182,7 @@ export default function App() {
               <Show
                 when={viewMode() === 'split'}
                 fallback={
-                  /* graph: canvas fills mira-main, chat collapses to bottom composer bar */
+                  /* graph: canvas fills mira-main, composer keeps full parity (multiline + same wiring) */
                   <div
                     class="mira-main mira-main-graph"
                     style={{ flex: '1', display: 'flex', overflow: 'hidden', 'min-height': '0' }}
@@ -1138,46 +1214,60 @@ export default function App() {
                         }}
                       />
                     </div>
-                    {/* collapsed chat composer bar */}
-                    <div
-                      class="mira-composer-bar"
-                      style={{ display: 'flex', gap: '8px', 'align-items': 'center' }}
+                    {/* parity composer — multiline textarea, same slash/queue wiring as chat */}
+                    <form
+                      class="mira-graph-composer"
+                      onSubmit={(e) => {
+                        e.preventDefault()
+                        const v = store.input().trim()
+                        if (!v) return
+                        if (v === '/memory' || v === '/graph') {
+                          store.setInput('')
+                          return
+                        }
+                        setViewMode('chat')
+                        store.sendPrompt(v)
+                      }}
                     >
-                      <input
+                      <textarea
                         class="input"
-                        placeholder="Message Mira… (graph view — press G to return to chat)"
+                        rows={1}
+                        placeholder="Message Mira… (graph view — press G to return to chat · Shift+Enter newline)"
                         value={store.input()}
-                        onInput={(e) => store.setInput(e.currentTarget.value)}
+                        onInput={(e) => {
+                          store.setInput(e.currentTarget.value)
+                          e.currentTarget.style.height = 'auto'
+                          e.currentTarget.style.height =
+                            Math.min(e.currentTarget.scrollHeight, 120) + 'px'
+                        }}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
+                          if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
                             e.preventDefault()
                             const v = store.input().trim()
+                            if (!v) return
                             if (v === '/memory' || v === '/graph') {
-                              setViewMode('graph')
                               store.setInput('')
                               return
                             }
-                            if (v) {
-                              setViewMode('chat')
-                              store.sendPrompt(v)
-                            }
+                            setViewMode('chat')
+                            store.sendPrompt(v)
                           }
                           if (e.key === 'Escape') setViewMode('chat')
                         }}
                         aria-label="Message Mira (graph view)"
-                        style={{ flex: '1' }}
+                        style={{
+                          flex: '1',
+                          resize: 'none',
+                          'min-height': '36px',
+                          'max-height': '120px',
+                          overflow: 'auto',
+                        }}
                       />
                       <button
-                        type="button"
+                        type="submit"
                         class="btn btn-solid"
                         disabled={!store.input().trim()}
                         aria-label="Send message"
-                        onClick={() => {
-                          const v = store.input().trim()
-                          if (!v) return
-                          setViewMode('chat')
-                          store.sendPrompt(v)
-                        }}
                         style={{
                           padding: '7px 14px',
                           'font-size': 'var(--fs-sm)',
@@ -1204,23 +1294,68 @@ export default function App() {
                       >
                         ← chat
                       </button>
-                    </div>
+                    </form>
                   </div>
                 }
               >
-                {/* split: 55% chat + 45% canvas */}
+                {/* split: resizable chat↔canvas via splitPct + inspector width */}
                 <div
                   class="mira-main mira-main-split"
                   style={{ flex: '1', display: 'flex', overflow: 'hidden', 'min-height': '0' }}
                 >
-                  <div class="mira-chat-pane">
+                  <div
+                    class="mira-chat-pane"
+                    style={{
+                      flex: `0 0 ${splitP()}%`,
+                      'min-width': '0',
+                      display: 'flex',
+                      'flex-direction': 'column',
+                      overflow: 'hidden',
+                      'border-right': '1px solid var(--border)',
+                    }}
+                  >
                     <ChatView
                       store={store}
                       settings={settings}
                       onPaletteOpen={() => setPaletteOpen(true)}
                     />
                   </div>
-                  <div class="mira-canvas-pane">
+                  <button
+                    type="button"
+                    class="mira-resize-handle"
+                    aria-label="Resize chat and canvas"
+                    onPointerDown={(e: PointerEvent) => {
+                      let sx = e.clientX
+                      let sw = splitP()
+                      const onMove = (ev: PointerEvent) => {
+                        const dx = ev.clientX - sx
+                        // 10px ≈ 1% — tuned so drag feels 1:1 with layout
+                        const next = Math.max(35, Math.min(65, Math.round(sw + dx / 8)))
+                        setSplitPct(next)
+                      }
+                      const onUp = () => {
+                        window.removeEventListener('pointermove', onMove)
+                        window.removeEventListener('pointerup', onUp)
+                        document.body.style.cursor = ''
+                        document.body.style.userSelect = ''
+                      }
+                      document.body.style.cursor = 'col-resize'
+                      document.body.style.userSelect = 'none'
+                      window.addEventListener('pointermove', onMove)
+                      window.addEventListener('pointerup', onUp)
+                      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+                    }}
+                  />
+                  <div
+                    class="mira-canvas-pane"
+                    style={{
+                      flex: '1',
+                      'min-width': '0',
+                      display: 'flex',
+                      'flex-direction': 'column',
+                      overflow: 'hidden',
+                    }}
+                  >
                     <MemoryGraph
                       onOpenInChat={(node) => {
                         if (node.id === 'empty') {
@@ -1237,10 +1372,19 @@ export default function App() {
                       }}
                     />
                   </div>
+                  <Show when={!activityCollapsed()}>
+                    <button
+                      type="button"
+                      class="mira-resize-handle"
+                      aria-label="Resize activity panel"
+                      onPointerDown={makeDrag(() => inspectorW(), setInspectorWidth, 280, 480, 'x')}
+                    />
+                  </Show>
                   <ActivityPanel
                     store={store}
                     collapsed={activityCollapsed()}
                     onToggle={() => setActivityCollapsed(!activityCollapsed())}
+                    width={inspectorW()}
                   />
                 </div>
               </Show>
@@ -1257,6 +1401,7 @@ export default function App() {
                   display: 'flex',
                   'flex-direction': 'column',
                   overflow: 'hidden',
+                  'min-width': '0',
                 }}
               >
                 <ChatView
@@ -1265,10 +1410,19 @@ export default function App() {
                   onPaletteOpen={() => setPaletteOpen(true)}
                 />
               </div>
+              <Show when={!activityCollapsed()}>
+                <button
+                  type="button"
+                  class="mira-resize-handle"
+                  aria-label="Resize activity panel"
+                  onPointerDown={makeDrag(() => inspectorW(), setInspectorWidth, 280, 480, 'x')}
+                />
+              </Show>
               <ActivityPanel
                 store={store}
                 collapsed={activityCollapsed()}
                 onToggle={() => setActivityCollapsed(!activityCollapsed())}
+                width={inspectorW()}
               />
             </div>
           </Show>

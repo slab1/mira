@@ -89,10 +89,20 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
+  /* Layout sizing — single knob for sidebar/inspector; App.tsx drives via --sidebar-w / --inspector-w */
+  --sidebar-w: 280px;
+  --sidebar-min: 240px;
+  --sidebar-max: 360px;
+  --inspector-w: 360px;
+  --inspector-min: 280px;
+  --inspector-max: 480px;
+  --header-h: 46px;
+  --composer-max: 160px;
+
   /* Activity panel + agentic UX tokens */
   --activity-bg: var(--bg-app);
   --activity-border: var(--border);
-  --activity-width: 360px;
+  --activity-width: var(--inspector-w);
   --activity-collapsed: 44px;
   --step-pending: var(--fg-faint);
   --step-running: var(--warn);
@@ -2068,6 +2078,96 @@ input:focus-visible,
   gap: 8px;
 }
 
+/* ── Resize handles ─────────────────────────────────────────────────── */
+.mira-resize-handle {
+  width: 6px;
+  flex: none;
+  cursor: col-resize;
+  background: transparent;
+  border: none;
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  touch-action: none;
+}
+.mira-resize-handle::after {
+  content: '';
+  width: 1px;
+  height: 100%;
+  background: var(--border);
+  transition:
+    background var(--dur-fast) var(--ease),
+    width var(--dur-fast) var(--ease);
+}
+.mira-resize-handle:hover::after,
+.mira-resize-handle:active::after,
+.mira-resize-handle:focus-visible::after {
+  width: 2px;
+  background: var(--accent-border);
+}
+.mira-resize-handle:focus-visible {
+  outline: none;
+}
+
+/* Header groups — Vercel-inspired hierarchy: title · status · metrics · controls */
+.mira-header-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.mira-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.mira-header-actions::-webkit-scrollbar {
+  display: none;
+}
+
+/* Banner stack above composer — doom-loop, jobs, budget, queued */
+.mira-banner-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+/* Silent SSE empty-state — when streamText is empty but streaming true */
+.mira-silent-sse {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  color: var(--fg-muted);
+  font-size: var(--fs-sm);
+  animation: fade-up var(--dur-med) var(--ease) both;
+}
+
+/* Inspector height cap helper (mobile) */
+.mira-inspector-mobile-cap {
+  max-height: 40vh;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Graph composer parity — ensure composer always visible at bottom on mobile */
+.mira-graph-composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-app);
+}
+
 /* ── 5. Motion ─────────────────────────────────────────────────────────── */
 @keyframes slide-in {
   from {
@@ -2214,6 +2314,9 @@ html {
 }
 
 @media (max-width: 767px) {
+  .mira-resize-handle {
+    display: none !important;
+  }
   .mira-menu-btn {
     display: inline-flex !important;
   }

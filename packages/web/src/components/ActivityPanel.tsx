@@ -83,7 +83,9 @@ function EntryDetail(props: { entry: ActivityEntry }) {
     <div class="activity-entry-detail">
       {/* Level 1: summary */}
       <Show when={summary()}>
-        <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)', 'line-height': '1.5' }}>
+        <div
+          style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)', 'line-height': '1.5' }}
+        >
           {summary()}
         </div>
       </Show>
@@ -146,21 +148,65 @@ function EntryDetail(props: { entry: ActivityEntry }) {
       </Show>
 
       <div class="activity-entry-actions">
-        <Show when={level() === 1 && (props.entry.input !== undefined || props.entry.output !== undefined)}>
-          <button type="button" class="btn btn-ghost" onClick={() => setLevel(2)} style={{ padding: '3px 8px', 'font-size': 'var(--fs-xs)', border: '1px solid var(--border)', 'border-radius': 'var(--r-full)' }}>
+        <Show
+          when={
+            level() === 1 && (props.entry.input !== undefined || props.entry.output !== undefined)
+          }
+        >
+          <button
+            type="button"
+            class="btn btn-ghost"
+            onClick={() => setLevel(2)}
+            style={{
+              padding: '3px 8px',
+              'font-size': 'var(--fs-xs)',
+              border: '1px solid var(--border)',
+              'border-radius': 'var(--r-full)',
+            }}
+          >
             Show details
           </button>
         </Show>
         <Show when={level() === 2}>
-          <button type="button" class="btn btn-ghost" onClick={() => setLevel(3)} style={{ padding: '3px 8px', 'font-size': 'var(--fs-xs)', border: '1px solid var(--border)', 'border-radius': 'var(--r-full)' }}>
+          <button
+            type="button"
+            class="btn btn-ghost"
+            onClick={() => setLevel(3)}
+            style={{
+              padding: '3px 8px',
+              'font-size': 'var(--fs-xs)',
+              border: '1px solid var(--border)',
+              'border-radius': 'var(--r-full)',
+            }}
+          >
             Show raw
           </button>
-          <button type="button" class="btn btn-ghost" onClick={() => setLevel(1)} style={{ padding: '3px 8px', 'font-size': 'var(--fs-xs)', border: '1px solid var(--border)', 'border-radius': 'var(--r-full)' }}>
+          <button
+            type="button"
+            class="btn btn-ghost"
+            onClick={() => setLevel(1)}
+            style={{
+              padding: '3px 8px',
+              'font-size': 'var(--fs-xs)',
+              border: '1px solid var(--border)',
+              'border-radius': 'var(--r-full)',
+            }}
+          >
             Collapse
           </button>
         </Show>
         <Show when={level() === 3}>
-          <button type="button" class="btn btn-ghost" onClick={() => setLevel(2)} style={{ padding: '3px 8px', 'font-size': 'var(--fs-xs)', border: '1px solid var(--border)', 'border-radius': 'var(--r-full)' }}>
+          <button
+            type="button"
+            class="btn btn-ghost"
+            onClick={() => setLevel(2)}
+            style={{
+              padding: '3px 8px',
+              'font-size': 'var(--fs-xs)',
+              border: '1px solid var(--border)',
+              'border-radius': 'var(--r-full)',
+            }}
+          >
             Hide raw
           </button>
         </Show>
@@ -185,12 +231,30 @@ function ActivityEntryRow(props: { entry: ActivityEntry; isLast: boolean }) {
           <div class="activity-entry-connector" />
         </Show>
       </div>
-      <div class={`activity-entry-card ${props.entry.status === 'running' ? 'activity-entry-card-running' : ''} ${props.entry.status === 'error' ? 'activity-entry-card-error' : ''}`}>
-        <button type="button" class="activity-entry-head" onClick={() => setOpen(!open())} aria-expanded={open() ? 'true' : 'false'}>
-          <span style={{ 'font-size': '11px', color: 'var(--fg-subtle)', flex: 'none' }}>{toolIcon(props.entry.tool)}</span>
+      <div
+        class={`activity-entry-card ${props.entry.status === 'running' ? 'activity-entry-card-running' : ''} ${props.entry.status === 'error' ? 'activity-entry-card-error' : ''}`}
+      >
+        <button
+          type="button"
+          class="activity-entry-head"
+          onClick={() => setOpen(!open())}
+          aria-expanded={open() ? 'true' : 'false'}
+        >
+          <span style={{ 'font-size': '11px', color: 'var(--fg-subtle)', flex: 'none' }}>
+            {toolIcon(props.entry.tool)}
+          </span>
           <span class="activity-entry-tool">{props.entry.tool || props.entry.type}</span>
           <Show when={props.entry.type === 'reasoning'}>
-            <span class="pill" style={{ 'font-size': 'var(--fs-2xs)', padding: '1px 6px', background: 'var(--accent-soft)', color: 'var(--accent)', border: '1px solid var(--accent-border)' }}>
+            <span
+              class="pill"
+              style={{
+                'font-size': 'var(--fs-2xs)',
+                padding: '1px 6px',
+                background: 'var(--accent-soft)',
+                color: 'var(--accent)',
+                border: '1px solid var(--accent-border)',
+              }}
+            >
               reasoning
             </span>
           </Show>
@@ -198,7 +262,10 @@ function ActivityEntryRow(props: { entry: ActivityEntry; isLast: boolean }) {
             <span class="activity-entry-time">{formatElapsed(props.entry.elapsedMs!)}</span>
           </Show>
           <Show when={props.entry.status === 'running'}>
-            <span class="dot dot-pulse" style={{ background: 'var(--warn)', width: '6px', height: '6px', flex: 'none' }} />
+            <span
+              class="dot dot-pulse"
+              style={{ background: 'var(--warn)', width: '6px', height: '6px', flex: 'none' }}
+            />
           </Show>
           <span class={`activity-entry-chevron ${open() ? 'open' : ''}`}>▶</span>
         </button>
@@ -216,7 +283,8 @@ function StepGroup(props: { todo: Todo; entries: ActivityEntry[]; index: number;
   const [expanded, setExpanded] = createSignal(props.todo.status === 'in_progress')
   const done = () => props.todo.status === 'completed'
   const running = () => props.todo.status === 'in_progress'
-  const dotClass = () => (done() ? 'activity-step-dot-done' : running() ? 'activity-step-dot-running' : '')
+  const dotClass = () =>
+    done() ? 'activity-step-dot-done' : running() ? 'activity-step-dot-running' : ''
 
   return (
     <div class="activity-step-group">
@@ -225,25 +293,70 @@ function StepGroup(props: { todo: Todo; entries: ActivityEntry[]; index: number;
         class="activity-step-header"
         onClick={() => setExpanded(!expanded())}
         aria-expanded={expanded() ? 'true' : 'false'}
-        style={{ width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px 0', 'text-align': 'left', 'font-family': 'inherit' }}
+        style={{
+          width: '100%',
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          padding: '4px 0',
+          'text-align': 'left',
+          'font-family': 'inherit',
+        }}
       >
         <span class={`activity-step-dot ${dotClass()}`} aria-hidden="true">
           {done() ? '✓' : running() ? '◷' : '○'}
         </span>
-        <span style={{ flex: '1', 'min-width': '0', 'font-size': 'var(--fs-sm)', 'font-weight': running() || done() ? '600' : '500', color: done() ? 'var(--fg-subtle)' : 'var(--fg)', 'text-decoration': done() ? 'line-through' : 'none', 'line-height': '1.4' }}>
+        <span
+          style={{
+            flex: '1',
+            'min-width': '0',
+            'font-size': 'var(--fs-sm)',
+            'font-weight': running() || done() ? '600' : '500',
+            color: done() ? 'var(--fg-subtle)' : 'var(--fg)',
+            'text-decoration': done() ? 'line-through' : 'none',
+            'line-height': '1.4',
+          }}
+        >
           {props.todo.content}
         </span>
-        <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'font-family': 'var(--font-mono)', flex: 'none' }}>
+        <span
+          style={{
+            'font-size': 'var(--fs-2xs)',
+            color: 'var(--fg-faint)',
+            'font-family': 'var(--font-mono)',
+            flex: 'none',
+          }}
+        >
           {props.index + 1}/{props.total}
         </span>
-        <span class={`activity-entry-chevron ${expanded() ? 'open' : ''}`} style={{ 'font-size': '9px', color: 'var(--fg-faint)' }}>
+        <span
+          class={`activity-entry-chevron ${expanded() ? 'open' : ''}`}
+          style={{ 'font-size': '9px', color: 'var(--fg-faint)' }}
+        >
           ▶
         </span>
       </button>
       <Show when={expanded()}>
-        <Show when={props.entries.length > 0} fallback={<div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-faint)', padding: '4px 0 4px 26px' }}>No tool calls yet</div>}>
+        <Show
+          when={props.entries.length > 0}
+          fallback={
+            <div
+              style={{
+                'font-size': 'var(--fs-xs)',
+                color: 'var(--fg-faint)',
+                padding: '4px 0 4px 26px',
+              }}
+            >
+              No tool calls yet
+            </div>
+          }
+        >
           <div style={{ 'padding-left': '4px' }}>
-            <For each={props.entries}>{(entry, i) => <ActivityEntryRow entry={entry} isLast={i() === props.entries.length - 1} />}</For>
+            <For each={props.entries}>
+              {(entry, i) => (
+                <ActivityEntryRow entry={entry} isLast={i() === props.entries.length - 1} />
+              )}
+            </For>
           </div>
         </Show>
       </Show>
@@ -253,7 +366,12 @@ function StepGroup(props: { todo: Todo; entries: ActivityEntry[]; index: number;
 
 // ── Main panel ────────────────────────────────────────────────────────
 
-export function ActivityPanel(props: { store: AppStore; collapsed: boolean; onToggle: () => void }) {
+export function ActivityPanel(props: {
+  store: AppStore
+  collapsed: boolean
+  onToggle: () => void
+  width?: number
+}) {
   const [filter, setFilter] = createSignal<FilterType>('all')
 
   // Derive live entries from store's liveStreamEvents (SSE events during streaming)
@@ -293,7 +411,7 @@ export function ActivityPanel(props: { store: AppStore; collapsed: boolean; onTo
         const tcId = String(p.toolCallID ?? '')
         const running = runningTools.get(tcId)
         if (running) {
-          running.status = (p.isError || p.error) ? 'error' : 'done'
+          running.status = p.isError || p.error ? 'error' : 'done'
           running.output = p.result ?? p.error
         }
       } else if (ev.type === 'step_finish') {
@@ -359,13 +477,15 @@ export function ActivityPanel(props: { store: AppStore; collapsed: boolean; onTo
     let tokensOut = 0
     for (const ev of events) {
       if (ev.type === 'step_start') {
-        step = (ev.payload as Record<string, unknown>).step as number ?? step + 1
+        step = ((ev.payload as Record<string, unknown>).step as number) ?? step + 1
         model = String((ev.payload as Record<string, unknown>).model ?? '')
       } else if (ev.type === 'tool_call') {
         lastTool = String((ev.payload as Record<string, unknown>).name ?? '')
       } else if (ev.type === 'step_finish') {
-        const usage = (ev.payload as Record<string, unknown>).usage as Record<string, unknown> | undefined
-        if (usage) tokensOut = Number(usage.completionTokens ?? usage.outputTokens ?? 0) || tokensOut
+        const usage = (ev.payload as Record<string, unknown>).usage as
+          Record<string, unknown> | undefined
+        if (usage)
+          tokensOut = Number(usage.completionTokens ?? usage.outputTokens ?? 0) || tokensOut
       }
     }
     return { step, model, lastTool, tokensOut }
@@ -384,7 +504,8 @@ export function ActivityPanel(props: { store: AppStore; collapsed: boolean; onTo
     const all = derivedEntries()
     if (f === 'all') return all
     if (f === 'reasoning') return all.filter((e) => e.type === 'reasoning')
-    if (f === 'tool_call') return all.filter((e) => e.type === 'tool_call' || e.type === 'tool_result')
+    if (f === 'tool_call')
+      return all.filter((e) => e.type === 'tool_call' || e.type === 'tool_result')
     if (f === 'approval') return all.filter((e) => e.raw.denied !== undefined)
     return all
   })
@@ -396,7 +517,10 @@ export function ActivityPanel(props: { store: AppStore; collapsed: boolean; onTo
     const entries = filteredEntries()
     if (t.length === 0) return null
     // Distribute entries across todos by order
-    const groups: Array<{ todo: Todo; entries: ActivityEntry[] }> = t.map((todo) => ({ todo, entries: [] }))
+    const groups: Array<{ todo: Todo; entries: ActivityEntry[] }> = t.map((todo) => ({
+      todo,
+      entries: [],
+    }))
     entries.forEach((e, idx) => {
       const gi = Math.min(idx, groups.length - 1)
       // Prefer in_progress group for latest entries
@@ -426,6 +550,7 @@ export function ActivityPanel(props: { store: AppStore; collapsed: boolean; onTo
       class={`activity-panel ${props.collapsed ? 'activity-panel-collapsed' : ''} ${!props.collapsed ? 'activity-panel-open' : ''}`}
       aria-label="Activity"
       aria-expanded={props.collapsed ? 'false' : 'true'}
+      style={props.collapsed ? {} : props.width ? { width: `${props.width}px` } : {}}
     >
       <Show
         when={!props.collapsed}
@@ -437,17 +562,49 @@ export function ActivityPanel(props: { store: AppStore; collapsed: boolean; onTo
             title="Expand activity"
             aria-label="Expand activity panel"
             aria-expanded="false"
-            style={{ flex: '1', display: 'flex', 'flex-direction': 'column', 'align-items': 'center', gap: '10px', padding: '12px 0', 'border-radius': '0' }}
+            style={{
+              flex: '1',
+              display: 'flex',
+              'flex-direction': 'column',
+              'align-items': 'center',
+              gap: '10px',
+              padding: '12px 0',
+              'border-radius': '0',
+            }}
           >
             <span style={{ 'font-size': '13px', color: 'var(--fg-muted)' }}>»</span>
-            <span style={{ 'writing-mode': 'vertical-rl', transform: 'rotate(180deg)', 'font-size': 'var(--fs-2xs)', 'letter-spacing': '0.08em', color: 'var(--fg-subtle)' }}>Activity</span>
+            <span
+              style={{
+                'writing-mode': 'vertical-rl',
+                transform: 'rotate(180deg)',
+                'font-size': 'var(--fs-2xs)',
+                'letter-spacing': '0.08em',
+                color: 'var(--fg-subtle)',
+              }}
+            >
+              Activity
+            </span>
             <Show when={derivedEntries().length > 0}>
-              <span class="pill" style={{ 'writing-mode': 'horizontal-tb', transform: 'none', 'font-size': 'var(--fs-2xs)', padding: '1px 5px', background: 'var(--accent-soft)', color: 'var(--accent)', border: '1px solid var(--accent-border)' }}>
+              <span
+                class="pill"
+                style={{
+                  'writing-mode': 'horizontal-tb',
+                  transform: 'none',
+                  'font-size': 'var(--fs-2xs)',
+                  padding: '1px 5px',
+                  background: 'var(--accent-soft)',
+                  color: 'var(--accent)',
+                  border: '1px solid var(--accent-border)',
+                }}
+              >
                 {derivedEntries().length}
               </span>
             </Show>
             <Show when={isStreaming()}>
-              <span class="dot dot-pulse" style={{ background: 'var(--warn)', width: '8px', height: '8px' }} />
+              <span
+                class="dot dot-pulse"
+                style={{ background: 'var(--warn)', width: '8px', height: '8px' }}
+              />
             </Show>
           </button>
         }
@@ -457,12 +614,32 @@ export function ActivityPanel(props: { store: AppStore; collapsed: boolean; onTo
           <span class="activity-panel-title">Activity</span>
           <div style={{ display: 'flex', gap: '4px', 'align-items': 'center' }}>
             <Show when={isStreaming()}>
-              <span class="pill pill-warn" style={{ 'font-size': 'var(--fs-2xs)', padding: '1px 6px' }}>
-                <span class="dot dot-pulse" style={{ background: 'var(--warn)', width: '6px', height: '6px' }} />
+              <span
+                class="pill pill-warn"
+                style={{ 'font-size': 'var(--fs-2xs)', padding: '1px 6px' }}
+              >
+                <span
+                  class="dot dot-pulse"
+                  style={{ background: 'var(--warn)', width: '6px', height: '6px' }}
+                />
                 live
               </span>
             </Show>
-            <button type="button" class="btn btn-ghost" onClick={props.onToggle} title="Collapse activity" aria-label="Collapse activity panel" style={{ width: '28px', height: '28px', padding: '0', 'border-radius': 'var(--r-sm)', flex: 'none', 'min-height': '28px' }}>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              onClick={props.onToggle}
+              title="Collapse activity"
+              aria-label="Collapse activity panel"
+              style={{
+                width: '28px',
+                height: '28px',
+                padding: '0',
+                'border-radius': 'var(--r-sm)',
+                flex: 'none',
+                'min-height': '28px',
+              }}
+            >
               «
             </button>
           </div>
@@ -472,13 +649,34 @@ export function ActivityPanel(props: { store: AppStore; collapsed: boolean; onTo
         <Show when={progress()}>
           {(p) => (
             <div class="activity-progress">
-              <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-subtle)', 'font-family': 'var(--font-mono)', flex: 'none' }}>
+              <span
+                style={{
+                  'font-size': 'var(--fs-2xs)',
+                  color: 'var(--fg-subtle)',
+                  'font-family': 'var(--font-mono)',
+                  flex: 'none',
+                }}
+              >
                 {p().done}/{p().total}
               </span>
-              <div class="activity-progress-bar" role="progressbar" aria-valuenow={p().pct} aria-valuemin={0} aria-valuemax={100} aria-label="Task progress">
-                <div class={`activity-progress-fill ${isStreaming() ? 'activity-progress-fill-running' : ''}`} style={{ width: `${p().pct}%` }} />
+              <div
+                class="activity-progress-bar"
+                role="progressbar"
+                aria-valuenow={p().pct}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label="Task progress"
+              >
+                <div
+                  class={`activity-progress-fill ${isStreaming() ? 'activity-progress-fill-running' : ''}`}
+                  style={{ width: `${p().pct}%` }}
+                />
               </div>
-              <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', flex: 'none' }}>{p().pct}%</span>
+              <span
+                style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', flex: 'none' }}
+              >
+                {p().pct}%
+              </span>
             </div>
           )}
         </Show>
@@ -487,7 +685,13 @@ export function ActivityPanel(props: { store: AppStore; collapsed: boolean; onTo
         <div class="activity-filter-row" role="tablist" aria-label="Activity filters">
           <For each={FILTERS}>
             {(f) => (
-              <button type="button" role="tab" aria-selected={filter() === f.id ? 'true' : 'false'} class={`activity-filter-btn ${filter() === f.id ? 'active' : ''}`} onClick={() => setFilter(f.id)}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={filter() === f.id ? 'true' : 'false'}
+                class={`activity-filter-btn ${filter() === f.id ? 'active' : ''}`}
+                onClick={() => setFilter(f.id)}
+              >
                 {f.label}
               </button>
             )}
@@ -502,25 +706,75 @@ export function ActivityPanel(props: { store: AppStore; collapsed: boolean; onTo
               <div class="activity-empty">
                 <div class="activity-empty-icon">◈</div>
                 <div>No activity yet</div>
-                <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-faint)', 'margin-top': '4px' }}>Tool calls and reasoning will appear here as the agent works.</div>
+                <div
+                  style={{
+                    'font-size': 'var(--fs-xs)',
+                    color: 'var(--fg-faint)',
+                    'margin-top': '4px',
+                  }}
+                >
+                  Tool calls and reasoning will appear here as the agent works.
+                </div>
               </div>
             }
           >
             <Show
               when={grouped()}
               fallback={
-                <div style={{ padding: '8px 12px', display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
-                  <For each={filteredEntries()}>{(entry, i) => <ActivityEntryRow entry={entry} isLast={i() === filteredEntries().length - 1} />}</For>
+                <div
+                  style={{
+                    padding: '8px 12px',
+                    display: 'flex',
+                    'flex-direction': 'column',
+                    gap: '2px',
+                  }}
+                >
+                  <For each={filteredEntries()}>
+                    {(entry, i) => (
+                      <ActivityEntryRow
+                        entry={entry}
+                        isLast={i() === filteredEntries().length - 1}
+                      />
+                    )}
+                  </For>
                 </div>
               }
             >
               {(groups) => (
                 <div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
-                  <For each={groups()}>{(g, idx) => <StepGroup todo={g.todo} entries={g.entries} index={idx()} total={groups().length} />}</For>
+                  <For each={groups()}>
+                    {(g, idx) => (
+                      <StepGroup
+                        todo={g.todo}
+                        entries={g.entries}
+                        index={idx()}
+                        total={groups().length}
+                      />
+                    )}
+                  </For>
                   {/* Ungrouped entries (more entries than todos) */}
-                  <Show when={filteredEntries().length > 0 && grouped()!.every((g) => g.entries.length === 0)}>
-                    <div style={{ padding: '8px 12px', display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
-                      <For each={filteredEntries()}>{(entry, i) => <ActivityEntryRow entry={entry} isLast={i() === filteredEntries().length - 1} />}</For>
+                  <Show
+                    when={
+                      filteredEntries().length > 0 &&
+                      grouped()!.every((g) => g.entries.length === 0)
+                    }
+                  >
+                    <div
+                      style={{
+                        padding: '8px 12px',
+                        display: 'flex',
+                        'flex-direction': 'column',
+                        gap: '2px',
+                      }}
+                    >
+                      <For each={filteredEntries()}>
+                        {(entry, i) => (
+                          <ActivityEntryRow
+                            entry={entry}
+                            isLast={i() === filteredEntries().length - 1}
+                          />
+                        )}
+                      </For>
                     </div>
                   </Show>
                 </div>
@@ -538,14 +792,31 @@ export function ActivityPanel(props: { store: AppStore; collapsed: boolean; onTo
                   <span class="streaming-dot" />
                   <span class="streaming-dot" />
                 </div>
-                <div style={{ display: 'flex', 'flex-direction': 'column', gap: '1px', 'min-width': '0' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    'flex-direction': 'column',
+                    gap: '1px',
+                    'min-width': '0',
+                  }}
+                >
                   <span style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>
                     {currentStep().lastTool ? `Using ${currentStep().lastTool}` : 'Thinking…'}
                   </span>
                   <Show when={currentStep().model || currentStep().step > 0}>
-                    <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'font-family': 'var(--font-mono)' }}>
+                    <span
+                      style={{
+                        'font-size': 'var(--fs-2xs)',
+                        color: 'var(--fg-faint)',
+                        'font-family': 'var(--font-mono)',
+                      }}
+                    >
                       {currentStep().model && <span>{currentStep().model}</span>}
-                      {currentStep().step > 0 && <span>{currentStep().model ? ' · ' : ''}step {currentStep().step}</span>}
+                      {currentStep().step > 0 && (
+                        <span>
+                          {currentStep().model ? ' · ' : ''}step {currentStep().step}
+                        </span>
+                      )}
                       {currentStep().tokensOut > 0 && <span> · {currentStep().tokensOut} tok</span>}
                     </span>
                   </Show>

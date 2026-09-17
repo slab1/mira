@@ -364,10 +364,35 @@ export function ChatView(props: {
     setFilePills((prev) => prev.filter((_, i) => i !== index))
   }
 
+  // Inline HITL selections (mirrors QuestionPrompt but anchored above composer so mobile keeps it visible)
+  const [inlineSel, setInlineSel] = createSignal<Record<string, string[]>>({})
+  const toggleInline = (header: string, label: string, multiple: boolean) => {
+    setInlineSel((prev) => {
+      const cur = prev[header] ?? []
+      if (multiple)
+        return {
+          ...prev,
+          [header]: cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label],
+        }
+      return { ...prev, [header]: [label] }
+    })
+  }
+  const submitInline = () => {
+    const q = s().pendingQuestion
+    if (!q) return
+    const answers = q.questions.map((qq) => ({
+      header: qq.header,
+      selections: inlineSel()[qq.header] ?? [],
+    }))
+    props.store.answerQuestion(q.questionID, answers)
+    setInlineSel({})
+  }
+
   // Model selector
   const [selectedModel, setSelectedModel] = createSignal('')
   const currentCwd = createMemo(() => {
-    const sess = s().sessions.find((sess) => sess.id === s().currentId) as { cwd?: string | null } | undefined
+    const sess = s().sessions.find((sess) => sess.id === s().currentId) as
+      { cwd?: string | null } | undefined
     if (sess?.cwd) return sess.cwd
     try {
       const v = localStorage.getItem('mira.selectedWorkspace')
@@ -1044,6 +1069,157 @@ export function ChatView(props: {
               ⏳ {s().queued.length} message{s().queued.length === 1 ? '' : 's'} queued — will run
               after the current turn
             </div>
+          </Show>
+          {/* silent SSE — streaming with no delta yet (event:error store path keeps ErrorCard wired) */}
+          <Show
+            when={
+              s().streaming &&
+              !s().streamText &&
+              !s().error &&
+              !s().messages[s().messages.length - 1]?.content
+            }
+          >
+            <div class="mira-silent-sse" role="status" aria-live="polite">
+              <span
+                class="dot dot-pulse"
+                style={{ background: 'var(--accent)', width: '8px', height: '8px', flex: 'none' }}
+              />
+              <span>Agent is thinking — waiting for the first token…</span>
+              <span
+                style={{
+                  'margin-left': 'auto',
+                  'font-size': 'var(--fs-2xs)',
+                  color: 'var(--fg-faint)',
+                  'font-family': 'var(--font-mono)',
+                }}
+              >
+                SSE stream open
+              </span>
+            </div>
+          </Show>
+          {/* inline HITL — same wiring as floating QuestionPrompt, but anchored above composer so mobile keeps it visible */}
+          <Show when={s().pendingQuestion}>
+            {(q) => (
+              <div
+                class="approval-gate"
+                role="dialog"
+                aria-label="Mira needs your input"
+                style={{ 'margin-bottom': '8px' }}
+              >
+                <div class="approval-gate-title">
+                  ▣ Mira needs your input · {q().questionID.slice(0, 8)}
+                </div>
+                <For each={q().questions}>
+                  {(qq) => (
+                    <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: '8px',
+                          'align-items': 'baseline',
+                          'flex-wrap': 'wrap',
+                        }}
+                      >
+                        <span
+                          class="pill pill-accent"
+                          style={{ 'font-size': 'var(--fs-2xs)', padding: '1px 7px' }}
+                        >
+                          {qq.header}
+                        </span>
+                        <span style={{ 'font-size': 'var(--fs-sm)', 'font-weight': '600' }}>
+                          {qq.question}
+                        </span>
+                        <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)' }}>
+                          {qq.multiple ? 'select all that apply' : 'select one'}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
+                        <For each={qq.options}>
+                          {(opt) => {
+                            const selected = () =>
+                              (inlineSel()[qq.header] ?? []).includes(opt.label)
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => toggleInline(qq.header, opt.label, !!qq.multiple)}
+                                aria-pressed={selected() ? 'true' : 'false'}
+                                style={{
+                                  display: 'flex',
+                                  gap: '10px',
+                                  'align-items': 'flex-start',
+                                  'text-align': 'left',
+                                  padding: '9px 12px',
+                                  'border-radius': 'var(--r-md)',
+                                  border: selected()
+                                    ? '1px solid var(--accent-border)'
+                                    : '1px solid var(--border-strong)',
+                                  background: selected() ? 'var(--accent-soft)' : 'var(--bg-app)',
+                                  color: 'var(--fg)',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  style={{
+                                    width: '15px',
+                                    height: '15px',
+                                    'border-radius': qq.multiple ? '4px' : '50%',
+                                    border: selected()
+                                      ? '1px solid var(--accent)'
+                                      : '1px solid var(--border-strong)',
+                                    background: selected() ? 'var(--accent)' : 'transparent',
+                                    display: 'grid',
+                                    'place-items': 'center',
+                                    color: 'var(--on-accent)',
+                                    'font-size': '9px',
+                                    flex: 'none',
+                                    'margin-top': '2px',
+                                  }}
+                                >
+                                  {selected() ? '✓' : ''}
+                                </span>
+                                <span style={{ flex: '1' }}>
+                                  <span
+                                    style={{
+                                      display: 'block',
+                                      'font-size': 'var(--fs-sm)',
+                                      'font-weight': '600',
+                                    }}
+                                  >
+                                    {opt.label}
+                                  </span>
+                                  <Show when={opt.description}>
+                                    <span
+                                      style={{
+                                        display: 'block',
+                                        'font-size': 'var(--fs-xs)',
+                                        color: 'var(--fg-subtle)',
+                                        'margin-top': '2px',
+                                      }}
+                                    >
+                                      {opt.description}
+                                    </span>
+                                  </Show>
+                                </span>
+                              </button>
+                            )
+                          }}
+                        </For>
+                      </div>
+                    </div>
+                  )}
+                </For>
+                <button
+                  type="button"
+                  class="btn btn-solid"
+                  onClick={submitInline}
+                  disabled={Object.values(inlineSel()).every((a) => a.length === 0)}
+                  style={{ padding: '9px', 'font-size': 'var(--fs-sm)', 'margin-top': '4px' }}
+                >
+                  Reply →
+                </button>
+              </div>
+            )}
           </Show>
           <Show when={s().error}>
             <div style={{ 'margin-bottom': '8px' }}>

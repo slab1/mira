@@ -166,7 +166,7 @@ function SessionExportMenu(props: { sessionId: string; title: string }) {
   )
 }
 
-export function SessionList(props: { store: AppStore; open?: boolean }) {
+export function SessionList(props: { store: AppStore; open?: boolean; width?: number }) {
   const s = () => props.store.state
   const [confirmDelete, setConfirmDelete] = createSignal<{ id: string; title: string } | null>(null)
   const [search, setSearch] = createSignal('')
@@ -358,7 +358,7 @@ export function SessionList(props: { store: AppStore; open?: boolean }) {
     <aside
       class={`mira-sidebar${props.open ? ' mira-sidebar-open' : ''}`}
       style={{
-        width: '280px',
+        width: props.width ? `${props.width}px` : '280px',
         'flex-shrink': '0',
         display: 'flex',
         'flex-direction': 'column',

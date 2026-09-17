@@ -34,6 +34,9 @@ function miraEnvToken(): string {
   const override = process.env.MIRA_DIR?.trim()
   const cands = [
     ...(override ? [join(override, 'mira.env')] : []),
+    ...(process.env.XDG_CONFIG_HOME?.trim()
+      ? [join(process.env.XDG_CONFIG_HOME.trim(), 'mira', 'mira.env')]
+      : []),
     join(homedir(), '.mira', 'mira.env'),
   ]
   for (const p of cands) {
@@ -51,9 +54,7 @@ function miraEnvToken(): string {
 // Explicit env wins; otherwise adopt the server-provisioned token.
 // DEV ONLY — never bake token into prod bundle (NODE_ENV=production skips file read + define).
 const FIRST_RUN_TOKEN =
-  process.env.NODE_ENV !== 'production'
-    ? process.env.VITE_MIRA_TOKEN?.trim() || miraEnvToken()
-    : ''
+  process.env.NODE_ENV !== 'production' ? process.env.VITE_MIRA_TOKEN?.trim() || miraEnvToken() : ''
 
 // Dev-server API target: MIRA_DEV_API (full URL) or MIRA_DEV_PORT (port only).
 // vite.config runs in Node, so plain process.env is available.
@@ -110,7 +111,8 @@ export default defineConfig({
           // Gracefully ignore writeAfterFIN during bun --watch restart (HMR reconnect)
           proxy.on('error', (err: Error & { code?: string }) => {
             const msg = String(err?.message ?? err)
-            if (msg.includes('writeAfterFIN') || (err as { code?: string })?.code === 'ECONNRESET') return
+            if (msg.includes('writeAfterFIN') || (err as { code?: string })?.code === 'ECONNRESET')
+              return
           })
         },
       },

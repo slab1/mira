@@ -301,16 +301,12 @@ function ModelSelector(props: {
     }
   })
 
-  // Build merged model list: known + provider models (dedupe by id)
+  // Live-only model list: providers are the source of truth.
+  // Keeping KNOWN_MODELS as non-authoritative reference would re-introduce stale fallback;
+  // we render only what GET /providers and config.model actually expose.
   const allModels = createMemo(() => {
     const seen = new Set<string>()
     const out: KnownModel[] = []
-    for (const m of KNOWN_MODELS) {
-      if (!seen.has(m.id)) {
-        seen.add(m.id)
-        out.push(m)
-      }
-    }
     for (const p of props.providers) {
       const models = p.models ?? []
       for (const m of models) {
@@ -327,10 +323,22 @@ function ModelSelector(props: {
           capabilities: inferCapabilities(mid),
         })
       }
-      // also include provider id as prefix hint if no models but provider exists
-      // (don't add synthetic entries)
     }
-    // If current value is not in list, add it as a transient entry so it appears selected
+    if (out.length === 0) {
+      for (const p of props.providers) {
+        const id = (p.id || '').trim()
+        if (!id || seen.has(id)) continue
+        seen.add(id)
+        out.push({
+          id,
+          provider: providerDisplayName(id),
+          label: id,
+          context: '—',
+          pricing: '—',
+          capabilities: [],
+        })
+      }
+    }
     const cur = props.value.trim()
     if (cur && !seen.has(cur)) {
       const provider = providerDisplayName(cur.split('/')[0] ?? 'Custom')

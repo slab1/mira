@@ -99,10 +99,23 @@ function miraEnvFile(): string {
 function readMiraEnvFile(): Record<string, string> {
   const out: Record<string, string> = {}
   try {
-    for (const line of readFileSync(miraEnvFile(), 'utf-8').split('\n')) {
-      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/)
-      const k = m?.[1]
-      if (k) out[k] = (m?.[2] ?? '').replace(/^(['"])(.*)\1$/, '$2').trim()
+    const cands = [
+      process.env.MIRA_DIR?.trim() ? join(process.env.MIRA_DIR.trim(), 'mira.env') : null,
+      process.env.XDG_CONFIG_HOME?.trim()
+        ? join(process.env.XDG_CONFIG_HOME.trim(), 'mira', 'mira.env')
+        : null,
+      join(homedir(), '.mira', 'mira.env'),
+    ].filter(Boolean) as string[]
+    for (const p of cands) {
+      try {
+        if (!existsSync(p)) continue
+        for (const line of readFileSync(p, 'utf-8').split('\n')) {
+          const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/)
+          const k = m?.[1]
+          if (k && !(k in out)) out[k] = (m?.[2] ?? '').replace(/^(['"])(.*)\1$/, '$2').trim()
+        }
+        if (Object.keys(out).length) break
+      } catch {}
     }
   } catch {}
   return out
@@ -115,12 +128,25 @@ function provisionFirstRunToken(): void {
     if (existsSync(file)) {
       // Adopt existing file for direct runs (serve-local.sh sources it too).
       const vars = readMiraEnvFile()
+      const envTokenBefore = process.env.MIRA_TOKEN
       if (!process.env.MIRA_TOKEN && vars.MIRA_TOKEN) process.env.MIRA_TOKEN = vars.MIRA_TOKEN
       if (!process.env.MIRA_API_KEYS && vars.MIRA_API_KEYS)
         process.env.MIRA_API_KEYS = vars.MIRA_API_KEYS
+      if (envTokenBefore && vars.MIRA_TOKEN && envTokenBefore !== vars.MIRA_TOKEN) {
+        warn(
+          '[mira] MIRA_TOKEN in .env differs from $MIRA_ENV (~/.mira/mira.env) — using $MIRA_ENV',
+        )
+        process.env.MIRA_TOKEN = vars.MIRA_TOKEN
+      } else if (envTokenBefore && !vars.MIRA_TOKEN) {
+        warn('MIRA_TOKEN from .env — prefer ~/.mira/mira.env')
+      }
       return
     }
-    if (process.env.MIRA_TOKEN || process.env.MIRA_API_KEYS) return
+    if (process.env.MIRA_TOKEN || process.env.MIRA_API_KEYS) {
+      if (process.env.MIRA_TOKEN && !readMiraEnvFile().MIRA_TOKEN)
+        warn('MIRA_TOKEN from .env — prefer ~/.mira/mira.env')
+      return
+    }
     const token = randomBytes(32).toString('hex') // 64-hex, like scripts/gen-mira-token.sh
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(

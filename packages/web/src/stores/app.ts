@@ -182,7 +182,12 @@ export function createAppStore() {
       }
       case 'job.updated': {
         if (e.sessionID !== state.currentId) break
-        const p = e.payload as { jobID?: string; status?: string; childSessionID?: string; preview?: string } | null
+        const p = e.payload as {
+          jobID?: string
+          status?: string
+          childSessionID?: string
+          preview?: string
+        } | null
         if (p?.jobID) {
           const existing = state.liveJobs[p.jobID] ?? {}
           const patch: Partial<Job> = { ...existing, id: p.jobID }
@@ -283,7 +288,10 @@ export function createAppStore() {
     }
   }
 
-  async function createSession(title?: string, opts: { agent?: string; cwd?: string; projectId?: string } = {}) {
+  async function createSession(
+    title?: string,
+    opts: { agent?: string; cwd?: string; projectId?: string } = {},
+  ) {
     if (creating) return null
     creating = true
     setState('error', null)
@@ -490,8 +498,63 @@ export function createAppStore() {
           // Push live streaming events for the activity panel
           setState('liveStreamEvents', (prev) => [
             ...prev,
-            { type: event.type, payload: event.payload as Record<string, unknown>, timestamp: Date.now() },
+            {
+              type: event.type,
+              payload: event.payload as Record<string, unknown>,
+              timestamp: Date.now(),
+            },
           ])
+          if (event.type === 'error') {
+            const raw = event.payload as unknown
+            let msg: string
+            if (typeof raw === 'string') msg = raw
+            else if (raw && typeof raw === 'object') {
+              const p = raw as Record<string, unknown>
+              const cand = (p.error ?? p.message) as unknown
+              if (typeof cand === 'string' && cand) msg = cand
+              else {
+                try {
+                  msg = JSON.stringify(raw)
+                } catch {
+                  msg = String(raw)
+                }
+              }
+            } else msg = String(raw ?? 'Unknown error')
+            if (!msg) msg = 'Unknown error'
+            setState('error', msg)
+            const banner = `⚠️ ${msg}`
+            setState('messages', (msgs) =>
+              msgs.map((mm) => {
+                if (mm.id !== asstId) return mm
+                const cur = mm.content || ''
+                if (cur.includes(banner)) return mm
+                return { ...mm, content: cur ? `${cur}\n\n${banner}` : banner }
+              }),
+            )
+          } else if (event.type === 'doom_loop') {
+            const p = event.payload as Record<string, unknown> | null
+            if (!state.doomLoop) {
+              setState('doomLoop', {
+                tool: (p?.tool as string) ?? 'unknown',
+                reason: (p?.reason as string) ?? 'repeating tool call',
+                pattern: p?.pattern as string[] | undefined,
+                sessionID: state.currentId ?? undefined,
+                messageID: typeof p?.messageID === 'string' ? (p?.messageID as string) : undefined,
+              })
+            }
+            // Optional banner so SSE doom_loop is visible even before bus event
+            const reason = (p?.reason as string) ?? 'repeating tool call'
+            const tool = (p?.tool as string) ?? 'unknown'
+            const banner = `⚠️ Doom-loop detected: ${reason} — tool "${tool}"`
+            setState('messages', (msgs) =>
+              msgs.map((mm) => {
+                if (mm.id !== asstId) return mm
+                const cur = mm.content || ''
+                if (cur.includes(banner)) return mm
+                return { ...mm, content: cur ? `${cur}\n\n${banner}` : banner }
+              }),
+            )
+          }
         },
       })
     } catch (e) {

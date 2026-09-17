@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sketch A — Linear</title>
+<style>
+  :root{--bg:#0a0a0b;--surface:#15151a;--border:#232329;--fg:#f4f4f5;--accent:#8b5cf6;--radius:10px}
+  body{margin:0;font:13px system-ui;background:var(--bg);color:var(--fg)}
+  header{height:44px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 14px}
+  .pill{border:1px solid var(--border);border-radius:999px;padding:2px 8px;font-size:11px}
+  .layout{display:flex;height:calc(100vh - 44px)}
+  .sidebar{width:280px;border-right:1px solid var(--border);background:var(--bg);padding:12px}
+  .canvas{flex:1;display:flex}
+  .chat{flex:0 0 55%;border-right:1px solid var(--border);display:flex;flex-direction:column}
+  .graph{flex:1;background:radial-gradient(var(--border) 1px,transparent 1px);background-size:24px 24px}
+  .composer{margin:12px;border:1px solid #34343c;border-radius:14px;background:var(--surface);padding:10px}
+  .note{color:#a1a1aa;font-size:12px;padding:8px}
+</style>
+</head>
+<body>
+<header><span>◈ Mira · Linear sketch</span><span class="pill">⌘ P command-first</span></header>
+<div class="layout">
+  <aside class="sidebar"><div class="pill">Session list · dense, status dots, search</div><div class="note">Pinned first, status=streaming/queued, 240-360 drag</div></aside>
+  <div class="canvas">
+    <section class="chat"><div style="flex:1;padding:20px"><div class="pill">Messages 68ch centered</div></div><div class="composer">Composer · multiline textarea, slash / + @, model pill inside</div></section>
+    <section class="graph"><div class="note">Graph 45% · tier columns, detail card 360, toolbar legend</div></section>
+  </div>
+</div>
+<p style="padding:12px;color:#888">Variant A: Linear — command palette first, dense sidebar, keyboard hints, 55/45 split drag handle 6px, activity as right rail 360 with collapse.</p>
+</body>
+</html>

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sketch C — Stripe</title>
+<style>
+  :root{--bg:#fafafa;--card:#fff;--border:#e6e8eb;--fg:#1a1a1e;--accent:#635bff}
+  body{margin:0;font:13px system-ui;background:var(--bg);color:var(--fg)}
+  .modal{width:860px;max-width:92%;margin:40px auto;background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;display:flex;min-height:420px}
+  .nav{width:168px;background:#f3f3f5;border-right:1px solid var(--border);padding:12px;display:flex;flex-direction:column;gap:4px}
+  .tab{padding:8px 10px;border-radius:10px;border:1px solid transparent}
+  .tab.active{background:var(--card);border-color:var(--border);font-weight:600}
+  .content{flex:1;padding:20px}
+</style>
+</head>
+<body>
+<div class="modal">
+  <nav class="nav"><div class="tab active">⚙ General</div><div class="tab">🔑 Providers</div><div class="tab">🛡 Permissions</div><div class="tab">🔌 Connectors</div><div class="tab">🤖 Agents</div></nav>
+  <section class="content"><h3>Stripe sketch · Settings</h3><p style="color:#666">Left nav 168px, grouped fields, masked keys, Test/Refresh, Custom model input, confirm dialogs. Same pattern reused for Permissions matrix and MCP marketplace.</p><div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--bg)">Provider row · maskedKey · <span style="border:1px solid var(--border);border-radius:999px;padding:2px 8px">Test</span> Refresh</div></section>
+</div>
+<p style="padding:12px;color:#888">Variant C: Stripe — tabbed settings, field grouping, permission table, connector health.</p>
+</body>
+</html>
