@@ -15,18 +15,6 @@ export const DEFAULT_CONFIG: MiraConfig = {
     tavily: { type: 'remote' as const, url: 'https://mcp.tavily.com/mcp', enabled: false },
   },
   provider: {
-    openrouter: {
-      npm: '@ai-sdk/openai-compatible',
-      name: 'OpenRouter',
-      options: {
-        baseURL: 'https://openrouter.ai/api/v1',
-        apiKey: '{env:OPENROUTER_API_KEY}',
-        headers: {},
-        timeout: 120_000,
-        kind: 'openrouter',
-      },
-      models: {},
-    },
     anthropic: {
       npm: '@ai-sdk/anthropic',
       name: 'Anthropic Direct',
@@ -93,11 +81,11 @@ export const DEFAULT_CONFIG: MiraConfig = {
   routing: {
     aliases: {},
     fallbacks: [],
-    defaultProvider: 'openrouter',
+    defaultProvider: 'anthropic',
   },
   subgateways: {
     default: {
-      provider: 'openrouter',
+      provider: 'anthropic',
       model: SHARED_DEFAULT.model,
       fallback: [],
       rateLimit: { rps: 10, burst: 20 },
@@ -107,8 +95,8 @@ export const DEFAULT_CONFIG: MiraConfig = {
       enabled: true,
     },
     cheap: {
-      provider: 'openrouter',
-      model: SHARED_DEFAULT.smallModel ?? 'openrouter/deepseek/deepseek-v3.2-exp',
+      provider: 'anthropic',
+      model: SHARED_DEFAULT.smallModel ?? 'claude-3.5-sonnet',
       fallback: [],
       rateLimit: { rps: 20, burst: 40 },
       retry: { maxAttempts: 3, baseMs: 300, maxMs: 5_000 },
@@ -137,8 +125,8 @@ export const DEFAULT_CONFIG: MiraConfig = {
       enabled: true,
     },
     compaction: {
-      provider: 'openrouter',
-      model: SHARED_DEFAULT.smallModel ?? 'openrouter/deepseek/deepseek-v3.2-exp',
+      provider: 'anthropic',
+      model: SHARED_DEFAULT.smallModel ?? 'claude-3.5-sonnet',
       fallback: [],
       rateLimit: { rps: 10, burst: 20 },
       retry: { maxAttempts: 2, baseMs: 300, maxMs: 5_000 },
@@ -147,8 +135,8 @@ export const DEFAULT_CONFIG: MiraConfig = {
       enabled: true,
     },
     'agent:ask': {
-      provider: 'openrouter',
-      model: 'openrouter/deepseek/deepseek-v3.2-exp',
+      provider: 'anthropic',
+      model: 'claude-3.5-sonnet',
       fallback: [],
       rateLimit: { rps: 20, burst: 40 },
       retry: { maxAttempts: 3, baseMs: 300, maxMs: 5_000 },
@@ -163,5 +151,5 @@ export const DEFAULT_LOOP_LIMITS: LoopLimits = {
   maxSteps: 32,
   contextLimit: 128_000,
   compactionThreshold: 0.8,
-  smallModel: 'openrouter/deepseek/deepseek-v3.2-exp',
+  smallModel: 'claude-3.5-sonnet',
 }

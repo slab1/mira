@@ -13,8 +13,8 @@ export const sessions = sqliteTable(
   {
     id: text('id').primaryKey(),
     title: text('title').notNull().default('New Session'),
-    model: text('model').notNull().default('openrouter/anthropic/claude-sonnet-4'),
-    provider: text('provider').notNull().default('openrouter'),
+    model: text('model').notNull().default('claude-sonnet-4'),
+    provider: text('provider').notNull().default('anthropic'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
     parentID: text('parent_id'),

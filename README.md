@@ -147,6 +147,8 @@ Single-token mode (`MIRA_TOKEN` only) maps everything to an implicit `"default"`
 | `GET/DELETE /session/:id`                                         | bearer                       | detail / delete (404 if foreign)               |
 | `POST /session/:id/prompt`                                        | bearer                       | SSE stream; body `{prompt, model?, maxSteps?}` |
 | `GET /session/:id/message` · `/todo` · `/export`                  | bearer                       | history, todos, transcript                     |
+| `GET /session/:id/export`                                         | bearer                       | export session with snapshots (JSON/MD)        |
+| `POST /session/import`                                            | bearer                       | import session with snapshots                  |
 | `GET/POST/DELETE /session/:id/queue`                              | bearer                       | message queue while streaming                  |
 | `GET /session/:id/snapshots` · `POST …/revert`                    | bearer                       | file undo/rewind                               |
 | `GET /session/:id/jobs` · `GET /job/:id` · `POST /job/:id/cancel` | bearer                       | background subagent job board                  |

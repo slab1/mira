@@ -65,8 +65,8 @@ export async function migrate(db: MiraDB) {
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL DEFAULT 'New Session',
-      model TEXT NOT NULL DEFAULT 'openrouter/anthropic/claude-sonnet-4',
-      provider TEXT NOT NULL DEFAULT 'openrouter',
+      model TEXT NOT NULL DEFAULT 'claude-sonnet-4',
+      provider TEXT NOT NULL DEFAULT 'anthropic',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       parent_id TEXT,

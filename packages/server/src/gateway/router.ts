@@ -40,6 +40,9 @@ export class GatewayRouter {
     // 1. summarize → compaction
     if (ctx.task === 'summarize') return 'compaction'
 
+    // 1b. complete → cheap (autocomplete)
+    if (ctx.task === 'complete') return 'cheap'
+
     // 2. vision → vision
     if (ctx.task === 'vision') return 'vision'
     if (ctx.messages?.some((m) => typeof m.content === 'string' && m.content.includes('image_url')))

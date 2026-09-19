@@ -59,7 +59,7 @@ const FIRST_RUN_TOKEN =
 // Dev-server API target: MIRA_DEV_API (full URL) or MIRA_DEV_PORT (port only).
 // vite.config runs in Node, so plain process.env is available.
 const API_TARGET =
-  process.env.MIRA_DEV_API ?? `http://127.0.0.1:${process.env.MIRA_DEV_PORT ?? miraPortFallback()}`
+  process.env.MIRA_DEV_API ?? `http://localhost:${process.env.MIRA_DEV_PORT ?? miraPortFallback()}`
 
 export default defineConfig({
   plugins: [solid()],

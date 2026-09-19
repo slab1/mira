@@ -28,12 +28,12 @@ function miraPortFallback(): string {
 
 // Dev-server API target: MIRA_DEV_API (full URL) or MIRA_DEV_PORT (port only).
 const API_TARGET =
-  process.env.MIRA_DEV_API ?? `http://127.0.0.1:${process.env.MIRA_DEV_PORT ?? miraPortFallback()}`
+  process.env.MIRA_DEV_API ?? `http://localhost:${process.env.MIRA_DEV_PORT ?? miraPortFallback()}`
 
 export default defineConfig({
   plugins: [solid()],
   server: {
-    port: Number(process.env.MIRA_TUI_PORT ?? 3001),
+    port: Number(process.env.MIRA_TUI_PORT ?? 3002),
     host: true,
     strictPort: true,
     cors: true,

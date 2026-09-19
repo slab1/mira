@@ -15,8 +15,8 @@ const BUILTIN_AGENT_KEYS: Record<string, true> = Object.fromEntries(
 const completeSchema = z.object({
   prefix: z.string().max(4000).optional(),
   suffix: z.string().max(4000).optional(),
-  prompt: z.string().max(4000).optional(),
-  file: z.string().max(500).optional(),
+  context: z.string().max(4000).optional(),
+  filePath: z.string().max(500).optional(),
   model: z.string().min(1).optional(),
   maxTokens: z.number().int().positive().max(512).optional(),
 })
