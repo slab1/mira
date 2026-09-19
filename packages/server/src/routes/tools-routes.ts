@@ -180,13 +180,13 @@ export function mountToolsRoutes(
         },
         400,
       )
-    const { prefix = '', suffix = '', prompt, file, model, maxTokens = 64 } = parsed.data
+    const { prefix = '', suffix = '', context, filePath, model, maxTokens = 64 } = parsed.data
     const effectivePrompt =
-      prompt ??
+      context ??
       (prefix || suffix
-        ? `Complete the code. File: ${file ?? 'unknown'}\nPrefix:\n${prefix.slice(-2000)}\nSuffix:\n${suffix.slice(0, 1000)}\nProvide only the completion (no explanation, no markdown).`
+        ? `Complete the code. File: ${filePath ?? 'unknown'}\nPrefix:\n${prefix.slice(-2000)}\nSuffix:\n${suffix.slice(0, 1000)}\nProvide only the completion (no explanation, no markdown).`
         : '')
-    if (!effectivePrompt.trim()) return c.json({ error: 'prefix/suffix or prompt required' }, 400)
+    if (!effectivePrompt.trim()) return c.json({ error: 'prefix/suffix or context required' }, 400)
     const cfg = getConfig() as MiraConfig & { smallModel?: string }
     const m = model ?? process.env.MIRA_AUTOCOMPLETE_MODEL ?? cfg.smallModel ?? cfg.model
     try {
@@ -208,13 +208,13 @@ export function mountToolsRoutes(
         },
         400,
       )
-    const { prefix = '', suffix = '', prompt, file, model, maxTokens = 64 } = parsed.data
+    const { prefix = '', suffix = '', context, filePath, model, maxTokens = 64 } = parsed.data
     const effectivePrompt =
-      prompt ??
+      context ??
       (prefix || suffix
-        ? `Complete the code. File: ${file ?? 'unknown'}\nPrefix:\n${prefix.slice(-2000)}\nSuffix:\n${suffix.slice(0, 1000)}\nProvide only the completion (no explanation, no markdown).`
+        ? `Complete the code. File: ${filePath ?? 'unknown'}\nPrefix:\n${prefix.slice(-2000)}\nSuffix:\n${suffix.slice(0, 1000)}\nProvide only the completion (no explanation, no markdown).`
         : '')
-    if (!effectivePrompt.trim()) return c.json({ error: 'prefix/suffix or prompt required' }, 400)
+    if (!effectivePrompt.trim()) return c.json({ error: 'prefix/suffix or context required' }, 400)
     const cfg = getConfig() as MiraConfig & { smallModel?: string }
     const m = model ?? process.env.MIRA_AUTOCOMPLETE_MODEL ?? cfg.smallModel ?? cfg.model
     try {
