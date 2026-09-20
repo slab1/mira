@@ -2,10 +2,15 @@ import { defineConfig } from 'vite'
 import solid from 'vite-plugin-solid'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { resolve, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { resolve, join, dirname } from 'node:path'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const REPO_ROOT = resolve(__dirname, '../..')
 
 function miraPortFallback(): string {
   const cands = [
+    join(REPO_ROOT, '.mira/port'),
     '.mira/port',
     '../.mira/port',
     '../../.mira/port',
@@ -72,46 +77,62 @@ export default defineConfig({
   server: {
     port: Number(process.env.MIRA_WEB_PORT ?? 3000),
     host: true,
-    strictPort: true,
-    hmr: { host: process.env.MIRA_HMR_HOST ?? 'localhost', port: 24678 },
+    strictPort: false,
+    hmr: {
+      host: process.env.MIRA_HMR_HOST ?? 'localhost',
+      port: Number(process.env.MIRA_WEB_HMR_PORT ?? 24678),
+    },
     cors: true,
     // Allow Cloudflare tunnel hosts — Vite ServerOptions allows boolean true (Vite 6+)
     allowedHosts: true,
     proxy: {
-      // Proxy API + WebSocket to Mira server (IPv4 — server binds 127.0.0.1)
-      '/session': API_TARGET,
-      '/tools': API_TARGET,
-      '/permission': API_TARGET,
-      '/health': API_TARGET,
-      '/skills': API_TARGET,
-      '/mcp': API_TARGET,
-      '/dev': API_TARGET,
-      '/learning': API_TARGET,
-      '/knowledge': API_TARGET,
-      '/finding': API_TARGET,
-      '/job': API_TARGET,
-      '/guardrails': API_TARGET,
-      '/config': API_TARGET,
-      '/provider': API_TARGET,
-      '/providers': API_TARGET,
-      '/commands': API_TARGET,
-      '/agents': API_TARGET,
-      '/admin': API_TARGET,
-      '/workspaces': API_TARGET,
-      '/workspace': API_TARGET,
-      '/complete': API_TARGET,
-      '/autocomplete': API_TARGET,
-      '/terminal': API_TARGET,
-      '/metrics': API_TARGET,
+      // Proxy API + WebSocket to Mira server (IPv4 — server binds 127.0.0.1).
+      // changeOrigin: true forwards the Origin/Authorization headers so the
+      // server's auth gate sees the bearer token the browser sent.
+      '/session': { target: API_TARGET, changeOrigin: true },
+      '/tools': { target: API_TARGET, changeOrigin: true },
+      '/permission': { target: API_TARGET, changeOrigin: true },
+      '/health': { target: API_TARGET, changeOrigin: true },
+      '/skills': { target: API_TARGET, changeOrigin: true },
+      '/mcp': { target: API_TARGET, changeOrigin: true },
+      '/dev': { target: API_TARGET, changeOrigin: true },
+      '/learning': { target: API_TARGET, changeOrigin: true },
+      '/knowledge': { target: API_TARGET, changeOrigin: true },
+      '/finding': { target: API_TARGET, changeOrigin: true },
+      '/job': { target: API_TARGET, changeOrigin: true },
+      '/guardrails': { target: API_TARGET, changeOrigin: true },
+      '/config': { target: API_TARGET, changeOrigin: true },
+      '/provider': { target: API_TARGET, changeOrigin: true },
+      '/providers': { target: API_TARGET, changeOrigin: true },
+      '/commands': { target: API_TARGET, changeOrigin: true },
+      '/agents': { target: API_TARGET, changeOrigin: true },
+      '/admin': { target: API_TARGET, changeOrigin: true },
+      '/workspaces': { target: API_TARGET, changeOrigin: true },
+      '/workspace': { target: API_TARGET, changeOrigin: true },
+      '/complete': { target: API_TARGET, changeOrigin: true },
+      '/autocomplete': { target: API_TARGET, changeOrigin: true },
+      '/terminal': { target: API_TARGET, changeOrigin: true },
+      '/metrics': { target: API_TARGET, changeOrigin: true },
       // WebSocket (GlobalBus) — catch-all must be last; HMR WS isolated on 24678 so it never hits this proxy
       '/': {
         target: API_TARGET,
         ws: true,
+        changeOrigin: true,
         configure: (proxy) => {
           // Gracefully ignore writeAfterFIN during bun --watch restart (HMR reconnect)
+          // and ECONNREFUSED while the server is (re)starting or has rotated ports —
+          // Vite retries the proxy on the next request; logging the AggregateError
+          // on every request is pure noise. Fix the target by restarting web after
+          // the server is up (it reads .mira/port at startup) or via MIRA_DEV_PORT.
           proxy.on('error', (err: Error & { code?: string }) => {
             const msg = String(err?.message ?? err)
-            if (msg.includes('writeAfterFIN') || (err as { code?: string })?.code === 'ECONNRESET')
+            const code = (err as { code?: string })?.code
+            if (
+              msg.includes('writeAfterFIN') ||
+              code === 'ECONNRESET' ||
+              code === 'ECONNREFUSED' ||
+              msg.includes('ECONNREFUSED')
+            )
               return
           })
         },

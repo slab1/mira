@@ -33,6 +33,9 @@ type ViewMode = 'chat' | 'split' | 'graph'
  *  accepts it. Dev servers without auth let any (even empty) token pass.
  *
  *  Token persistence (precedence: localStorage mira_token > VITE_MIRA_TOKEN > empty):
+ *  - Submitting empty (or any 401) sets the mira_token_cleared flag, which
+ *    suppresses the baked VITE_MIRA_TOKEN fallback — otherwise a stale baked
+ *    token retries forever and the gate sticks on "Invalid token".
  *  - Server: ~/.mira/mira.env (respects $MIRA_DIR)  →  MIRA_TOKEN=... (64-hex,
  *    auto-created on first boot in dev; existing file adopted, never overwritten;
  *    production without auth refuses to start; opt out MIRA_NO_AUTOPROVISION=1)

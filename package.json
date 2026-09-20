@@ -7,7 +7,7 @@
   ],
   "scripts": {
     "prepare": "husky",
-  "dev": "npx turbo@2.11.2 dev --continue --filter=!@mira/slack",
+    "dev": "turbo dev --continue --filter=!@mira/slack",
     "dev:all": "turbo dev --continue",
     "build": "turbo build",
     "test": "turbo test",
