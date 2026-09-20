@@ -54,13 +54,13 @@ jobs:
             jq -r '. as $root | keys[] as $pkg | $root[$pkg][] | select(.severity == "high" or .severity == "critical") | "\(.severity): \($pkg): \(.title) (\(.url))"' /tmp/bun-audit.json
             exit 1
           fi
-      - name: OSV scanner
-        uses: google/osv-scanner-action@v2.6.0
-        with:
-          scan-args: |-
-            --recursive
-            ./
-        continue-on-error: true
+      # NOTE: google/osv-scanner-action removed 2026-09-20 — the upstream
+      # repo no longer ships a root action.yml at any tag (v1.9.2 and v2.6.0
+      # both fail job setup with "Top level 'runs:' section is required"),
+      # which fails the whole job before continue-on-error can apply.
+      # `bun audit` with the high/critical jq gate above remains the
+      # enforcing dependency-vuln check. Re-add OSV coverage with a working
+      # action (or `osv-scanner` binary via bunx) if desired.
 
   secrets:
     name: secrets scan
