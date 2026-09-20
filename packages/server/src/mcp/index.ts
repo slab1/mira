@@ -94,6 +94,15 @@ export class MCPManager {
           ),
         ])
       } catch (e) {
+        const msg = String((e as Error)?.message ?? e)
+        // Missing API key (e.g. {env:TAVILY_API_KEY} unresolvable) is a config
+        // state, not a transient failure — park as disabled without the 5x
+        // reconnect storm. Set the env var (or enabled:false) and re-add.
+        if (msg.includes('missing required env')) {
+          console.warn(`[mcp] ${sanitizeForLog(name)} skipped:`, sanitizeForLog(msg))
+          this.servers.set(name, { name, config: cfg, tools: [], status: 'disabled', error: msg })
+          continue
+        }
         console.warn(`[mcp] ${sanitizeForLog(name)} failed:`, sanitizeForLog((e as Error).message))
         this.servers.set(name, { name, config: cfg, tools: [], status: 'error', error: String(e) })
         this.scheduleReconnect(name, cfg)
@@ -197,6 +206,22 @@ export class MCPManager {
   // same mcp__<name>__<tool> surface.
   private async connectRemote(name: string, cfg: MCPServerConfig): Promise<void> {
     if (!cfg.url) throw new Error(`No url for remote MCP server ${name}`)
+
+    // Fail fast when the config references env vars that aren't set (e.g.
+    // "Bearer {env:TAVILY_API_KEY}" with no TAVILY_API_KEY). Without this the
+    // server answers 401/405 and connectAll burns 5 reconnect attempts noisily.
+    const missing: string[] = []
+    for (const raw of [cfg.url, ...Object.values(cfg.headers ?? {})]) {
+      for (const m of String(raw).matchAll(/\{env:([^}]+)\}/g)) {
+        const v = m[1]?.trim()
+        if (v && !process.env[v]) missing.push(v)
+      }
+    }
+    if (missing.length) {
+      throw new Error(
+        `MCP server ${name} missing required env ${[...new Set(missing)].join(', ')} — skipping (set it to enable)`,
+      )
+    }
 
     const headers: Record<string, string> = {}
     for (const [k, v] of Object.entries(cfg.headers ?? {})) {
@@ -445,6 +470,12 @@ export class MCPManager {
         this.reconnectAttempts.delete(name)
       } catch (e) {
         const err = e instanceof Error ? e.message : String(e)
+        // Missing env on retry → park as disabled, stop the storm.
+        if (err.includes('missing required env')) {
+          console.warn(`[mcp] ${sanitizeForLog(name)} skipped:`, sanitizeForLog(err))
+          this.servers.set(name, { name, config: cfg, tools: [], status: 'disabled', error: err })
+          return
+        }
         console.warn(`[mcp] ${sanitizeForLog(name)} reconnect failed:`, sanitizeForLog(err))
         this.servers.set(name, { name, config: cfg, tools: [], status: 'error', error: err })
         this.deps.bus.publish({

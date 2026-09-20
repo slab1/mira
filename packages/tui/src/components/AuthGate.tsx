@@ -42,8 +42,18 @@ export default function AuthGate(props: { onReady: () => void }) {
 
   async function connect(e?: Event): Promise<void> {
     e?.preventDefault()
-    const trimmed = value().trim()
-    const urlTrimmed = apiUrl().trim().replace(/\/$/, '')
+    let trimmed = value().trim()
+    // Auto-strip pasted "MIRA_TOKEN=..." line (parity with web AuthGate)
+    if (/^MIRA_TOKEN\s*=/i.test(trimmed))
+      trimmed = trimmed.replace(/^MIRA_TOKEN\s*=\s*/i, '').trim()
+    // Strip surrounding quotes if pasted with quotes
+    trimmed = trimmed.replace(/^["'](.+)["']$/, '$1').trim()
+    let urlTrimmed = apiUrl().trim().replace(/\/$/, '')
+    // Auto-strip accidental /healthz or /health suffix pasted from browser
+    urlTrimmed = urlTrimmed
+      .replace(/\/healthz\/?$/i, '')
+      .replace(/\/health\/?$/i, '')
+      .replace(/\/$/, '')
     setError('')
     setChecking(true)
     setApiUrl(urlTrimmed)

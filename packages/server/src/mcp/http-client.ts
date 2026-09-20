@@ -146,15 +146,17 @@ export class McpHttpClient {
       }
     }
     // Streamable failed after retries — fall back to legacy (2024-11-05)
-    // If this is a non-legacy server, the legacy GET will 404 and we'll surface the original streamable error
+    // If this is a non-legacy server, the legacy GET will 404/405 and we'll surface the original streamable error
     try {
       const legacy = new McpHttpClient(name, opts, 'legacy-sse')
       await legacy.handshakeLegacy(opts.signal)
       return legacy
     } catch (legacyErr) {
-      // Prefer the original streamable error if legacy also fails (more informative for non-legacy servers)
+      // Prefer the original streamable error if legacy also fails (more informative for non-legacy servers).
+      // 405 on the legacy GET means "streamable-only server" — the POST failure is the real diagnostic.
       const msg = String(legacyErr)
-      if (msg.includes('404') || msg.includes('Not Found')) throw lastErr as Error
+      if (msg.includes('404') || msg.includes('405') || msg.includes('Not Found'))
+        throw lastErr as Error
       throw legacyErr
     }
   }

@@ -248,6 +248,20 @@ if (process.env.NODE_ENV === 'production' && HOST === '0.0.0.0' && CORS_ORIGIN_L
   )
   if (process.env.MIRA_STRICT_CORS !== '0') process.exit(1)
 }
+// Admin on a public bind (HOST=0.0.0.0 / LAN IP): browsers only reach admin
+// with the master MIRA_TOKEN bearer + a matching CORS_ORIGINS entry. Log the
+// exact recipe so "Invalid token / cannot reach" on remote admin is actionable.
+if (HOST !== '127.0.0.1' && HOST !== 'localhost' && HOST !== '::1') {
+  if (!REQUIRED_TOKEN && API_KEY_OWNERS.size === 0) {
+    warn(
+      `[mira] HOST=${HOST} with no MIRA_TOKEN/MIRA_API_KEYS — admin endpoints will 401 on this bind (open admin is loopback-only). Set MIRA_TOKEN to enable remote admin.`,
+    )
+  } else {
+    log(
+      `[mira] public bind HOST=${HOST} — remote admin needs Authorization: Bearer <MIRA_TOKEN> + CORS_ORIGINS including the browser origin (current: ${CORS_ORIGIN_LIST.join(', ') || '(empty — localhost origins only)'})`,
+    )
+  }
+}
 const isVscodeOrigin = (origin: string): boolean =>
   origin.startsWith('vscode-webview://') ||
   origin.startsWith('vscode-file://') ||

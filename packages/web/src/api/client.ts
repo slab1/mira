@@ -432,6 +432,11 @@ function baseUrlCandidates(): string[] {
 //  existing file adopted, never overwritten; production without auth refuses to start).
 //  Opt out: MIRA_NO_AUTOPROVISION=1. req() clears on 401 via clearTokenOn401.
 const TOKEN_KEY = 'mira_token'
+// Set when the user submits an empty token OR a 401 clears the credential.
+// While set, the baked VITE_MIRA_TOKEN fallback is ignored — without this a
+// stale baked token (server rotated ~/.mira/mira.env) retries forever and the
+// gate can never escape "Invalid token".
+const TOKEN_CLEARED_KEY = 'mira_token_cleared'
 
 export class ApiError extends Error {
   status: number
@@ -448,8 +453,14 @@ export function getToken(): string {
   try {
     const stored = localStorage.getItem(TOKEN_KEY)
     if (stored) return stored
-    // DEV ONLY — VITE_MIRA_TOKEN is injected by vite.config.ts in dev only (never in prod bundle)
-    return (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
+    // Explicitly cleared (empty submit or 401) — don't resurrect the baked fallback.
+    // BUT: if VITE_MIRA_TOKEN is explicitly set (dev env), it takes precedence
+    // over the cleared flag — the user configured a token, so clear the flag.
+    const envToken = (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
+    try {
+      if (localStorage.getItem(TOKEN_CLEARED_KEY) === '1' && !envToken) return ''
+    } catch {}
+    return envToken
   } catch {
     return ''
   }
@@ -457,8 +468,17 @@ export function getToken(): string {
 
 export function setToken(token: string): void {
   try {
-    if (token) localStorage.setItem(TOKEN_KEY, token)
-    else localStorage.removeItem(TOKEN_KEY)
+    if (token) {
+      localStorage.setItem(TOKEN_KEY, token)
+      try {
+        localStorage.removeItem(TOKEN_CLEARED_KEY)
+      } catch {}
+    } else {
+      localStorage.removeItem(TOKEN_KEY)
+      try {
+        localStorage.setItem(TOKEN_CLEARED_KEY, '1')
+      } catch {}
+    }
     // notify same-tab listeners (storage event only fires cross-tab)
     try {
       window.dispatchEvent(new CustomEvent('mira:token-change', { detail: { token } }))
@@ -469,6 +489,12 @@ export function setToken(token: string): void {
 export function clearTokenOn401(): void {
   try {
     localStorage.removeItem(TOKEN_KEY)
+    // Mark cleared so a stale baked VITE_MIRA_TOKEN isn't silently retried —
+    // the user must paste the current token (fixes the "Invalid token" loop
+    // after server token rotation).
+    try {
+      localStorage.setItem(TOKEN_CLEARED_KEY, '1')
+    } catch {}
   } catch {}
   try {
     window.dispatchEvent(new CustomEvent('mira:auth-invalid'))
@@ -476,12 +502,36 @@ export function clearTokenOn401(): void {
 }
 
 export async function validateToken(): Promise<boolean> {
+  // Liveness first: /healthz needs no auth. If the server is down, the URL is
+  // wrong, the tunnel expired, or the browser blocks the call (CORS), fail
+  // LOUD — returning false here is what mislabels every outage as
+  // "Invalid token". (Message keeps the 'Failed to fetch' marker so the
+  // AuthGate's unreachable branch renders "Cannot reach server…".)
+  try {
+    await req('/healthz')
+  } catch (e) {
+    if (e instanceof ApiError) {
+      // Server answered (even with an error status) → reachable; fall through
+    } else {
+      throw new Error(
+        `Failed to fetch: server unreachable — check API URL / tunnel (${(e as Error)?.message ?? e})`,
+      )
+    }
+  }
   try {
     await req<MiraConfig>('/config')
     return true
   } catch (e) {
+    // 401 = wrong/expired token — the ONLY case that means "Invalid token"
     if (e instanceof ApiError && e.status === 401) return false
-    return false
+    // 403 = server reachable + token accepted, but this browser origin (or cwd)
+    // is refused — most commonly CORS_ORIGINS missing the LAN/tunnel origin on
+    // HOST=0.0.0.0 binds. Never call this "Invalid token".
+    if (e instanceof ApiError && e.status === 403)
+      throw new Error(
+        `Server refused this origin (403 ${e.body || 'forbidden'}) — add this page's origin to CORS_ORIGINS on the server and restart`,
+      )
+    throw e
   }
 }
 
@@ -1052,7 +1102,12 @@ export const api = {
               delta_?: string
             }
             const text =
-              j.textDelta ?? j.text ?? j.content ?? j.delta ?? j.delta_ ?? (typeof j === 'string' ? j : '')
+              j.textDelta ??
+              j.text ??
+              j.content ??
+              j.delta ??
+              j.delta_ ??
+              (typeof j === 'string' ? j : '')
             if (text) opts.onChunk(String(text))
             else if (!eventType) opts.onChunk(data)
           } catch {
