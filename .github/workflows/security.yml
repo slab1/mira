@@ -55,7 +55,7 @@ jobs:
             exit 1
           fi
       - name: OSV scanner
-        uses: google/osv-scanner-action@v1.9.2
+        uses: google/osv-scanner-action@v2.6.0
         with:
           scan-args: |-
             --recursive
