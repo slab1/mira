@@ -5,7 +5,7 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "bun --watch src/index.ts",
+    "dev": "bun ./scripts/dev-watch.ts",
     "build": "tsc --noEmit && bun build src/index.ts --outdir dist --target bun --external playwright --external hono --external zod --external drizzle-orm --external ai --external \"@ai-sdk/*\" --external \"@opentelemetry/*\" --external ws --external js-tiktoken --external \"@hono/*\"",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
