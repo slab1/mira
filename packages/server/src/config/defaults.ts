@@ -115,7 +115,7 @@ export const DEFAULT_CONFIG: MiraConfig = {
       enabled: true,
     },
     local: {
-      provider: 'openrouter',
+      provider: 'anthropic',
       model: SHARED_DEFAULT.model,
       fallback: [],
       rateLimit: { rps: 10, burst: 20 },

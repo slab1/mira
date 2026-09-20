@@ -79,11 +79,6 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: bun install
-      - name: Debug workspace layout (auth-guard)
-        run: |
-          echo "=== root node_modules ===" && ls node_modules | head -20
-          echo "=== server node_modules ===" && ls -la packages/server/node_modules 2>&1 | head -20
-          echo "=== bun --version ===" && bun --version
       - name: Verify auth hygiene (MIRA_TOKEN placeholder + gen script + no real secrets)
         run: |
           test -x scripts/gen-mira-token.sh || (echo "missing scripts/gen-mira-token.sh (chmod +x)" && exit 1)
@@ -95,8 +90,11 @@ jobs:
             grep -R --include="*.ts" -E "[0-9a-f]{64,96}" packages/server/src/config packages/server/src/routes 2>/dev/null | head
             exit 1
           fi
-          # Server must refuse to start with STRICT_AUTH and no token (fail-closed)
-          MIRA_STRICT_AUTH=1 MIRA_TOKEN="" NODE_ENV=production timeout 15 bun --cwd packages/server run src/index.ts 2>&1 | grep -q "refusing to start without auth" || (echo "STRICT_AUTH fail-closed check failed" && exit 1)
+          # Server must refuse to start with STRICT_AUTH and no token (fail-closed).
+          # Capture output so a failure shows the actual server error in the log.
+          MIRA_STRICT_AUTH=1 MIRA_TOKEN="" NODE_ENV=production timeout 15 bun run --cwd packages/server src/index.ts > /tmp/auth-out.txt 2>&1 || true
+          cat /tmp/auth-out.txt
+          grep -q "refusing to start without auth" /tmp/auth-out.txt || (echo "STRICT_AUTH fail-closed check failed" && exit 1)
           echo "auth guard passed"
 
   typecheck:
@@ -136,13 +134,6 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: bun install
-      - name: Debug workspace layout
-        run: |
-          echo "=== root node_modules ===" && ls node_modules | head -20
-          echo "=== server node_modules ===" && ls -la packages/server/node_modules 2>&1 | head -20
-          echo "=== shared node_modules ===" && ls -la packages/shared/node_modules 2>&1 | head -20
-          echo "=== bun --version ===" && bun --version
-          echo "=== bunfig.toml ===" && cat bunfig.toml
       - name: Turborepo remote cache
         uses: actions/cache@v4
         with:

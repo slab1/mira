@@ -11,12 +11,12 @@ import { getAgentTemplates } from '../agents/templates.js'
 import type { Gateway, GatewayChunk } from '../gateway/index.js'
 
 // No fetch stubs in this file — gateway resolution is pure (no I/O).
-// OPENROUTER_API_KEY is toggled per test to exercise the resolve vs fallback
+// ANTHROPIC_API_KEY is toggled per test to exercise the resolve vs fallback
 // paths; the original value is always restored.
-const savedKey = process.env.OPENROUTER_API_KEY
+const savedKey = process.env.ANTHROPIC_API_KEY
 afterEach(() => {
-  if (savedKey === undefined) delete process.env.OPENROUTER_API_KEY
-  else process.env.OPENROUTER_API_KEY = savedKey
+  if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY
+  else process.env.ANTHROPIC_API_KEY = savedKey
 })
 
 const stubGateway: Gateway = {
@@ -36,35 +36,35 @@ const stubGateway: Gateway = {
 
 describe('agent model via gateway (P0-1 exp-1)', () => {
   test('ask agent resolves to its cheap template model (precedence over session default)', () => {
-    process.env.OPENROUTER_API_KEY = 'test-key'
+    delete process.env.ANTHROPIC_API_KEY
     const askModel = getAgentTemplates().ask.model
     expect(askModel).toBeDefined()
     expect(
       resolveEffectiveModel({
         agent: 'ask',
-        sessionModel: 'openrouter/anthropic/claude-sonnet-4',
+        sessionModel: 'claude-sonnet-4',
       }),
     ).toBe(askModel!)
   })
 
   test('explicit model wins over agent model', () => {
-    process.env.OPENROUTER_API_KEY = 'test-key'
-    expect(resolveEffectiveModel({ explicitModel: 'openrouter/openai/gpt-4o', agent: 'ask' })).toBe(
-      'openrouter/openai/gpt-4o',
+    process.env.ANTHROPIC_API_KEY = 'test-key'
+    expect(resolveEffectiveModel({ explicitModel: 'openai/gpt-4o', agent: 'ask' })).toBe(
+      'openai/gpt-4o',
     )
   })
 
   test('selection flows through gateway resolveModel (default-provider normalization)', () => {
-    process.env.OPENROUTER_API_KEY = 'test-key'
+    process.env.ANTHROPIC_API_KEY = 'test-key'
     // An unprefixed model gains the default provider via the gateway path —
     // raw string passthrough would return it unchanged.
     expect(resolveEffectiveModel({ explicitModel: 'deepseek-chat' })).toBe(
-      'openrouter/deepseek-chat',
+      'anthropic/deepseek-chat',
     )
   })
 
   test('falls back to raw candidate when gateway cannot resolve (no API key)', () => {
-    delete process.env.OPENROUTER_API_KEY
+    delete process.env.ANTHROPIC_API_KEY
     expect(resolveEffectiveModel({ explicitModel: 'deepseek-chat' })).toBe('deepseek-chat')
     // Precedence still holds on the fallback path
     const askModel = getAgentTemplates().ask.model!
