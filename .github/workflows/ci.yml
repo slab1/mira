@@ -79,6 +79,11 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: bun install
+      - name: Debug workspace layout (auth-guard)
+        run: |
+          echo "=== root node_modules ===" && ls node_modules | head -20
+          echo "=== server node_modules ===" && ls -la packages/server/node_modules 2>&1 | head -20
+          echo "=== bun --version ===" && bun --version
       - name: Verify auth hygiene (MIRA_TOKEN placeholder + gen script + no real secrets)
         run: |
           test -x scripts/gen-mira-token.sh || (echo "missing scripts/gen-mira-token.sh (chmod +x)" && exit 1)
@@ -131,6 +136,13 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: bun install
+      - name: Debug workspace layout
+        run: |
+          echo "=== root node_modules ===" && ls node_modules | head -20
+          echo "=== server node_modules ===" && ls -la packages/server/node_modules 2>&1 | head -20
+          echo "=== shared node_modules ===" && ls -la packages/shared/node_modules 2>&1 | head -20
+          echo "=== bun --version ===" && bun --version
+          echo "=== bunfig.toml ===" && cat bunfig.toml
       - name: Turborepo remote cache
         uses: actions/cache@v4
         with:
