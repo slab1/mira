@@ -11,6 +11,7 @@ const REPO_ROOT = resolve(__dirname, '../..')
 function miraPortFallback(): string {
   const cands = [
     join(REPO_ROOT, '.mira/port'),
+    join(REPO_ROOT, 'packages/server/.mira/port'),
     '.mira/port',
     '../.mira/port',
     '../../.mira/port',
