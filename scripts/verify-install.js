@@ -73,7 +73,6 @@ function workspaceDirs() {
   return dirs;
 }
 
-const requireFromRoot = createRequire(path.join(ROOT, 'package.json'));
 let failures = [];
 let checked = 0;
 
@@ -84,6 +83,10 @@ for (const dir of workspaceDirs()) {
   } catch {
     continue;
   }
+  // Resolve from the DEPENDENT's directory: workspace deps live in
+  // packages/<name>/node_modules (symlinks), hoisted ones in root.
+  // Resolving everything from root yields false "not installed" hits.
+  const requireFromDir = createRequire(path.join(dir, 'package.json'));
   const deps = {
     ...(pkg.dependencies || {}),
     ...(pkg.devDependencies || {}),
@@ -93,9 +96,9 @@ for (const dir of workspaceDirs()) {
     checked++;
     let pjPath;
     try {
-      pjPath = requireFromRoot.resolve(`${name}/package.json`);
+      pjPath = requireFromDir.resolve(`${name}/package.json`);
     } catch {
-      failures.push(`${name}: cannot resolve package.json (not installed?)`);
+      failures.push(`${name} (wanted by ${path.relative(ROOT, dir) || '.'}): cannot resolve package.json (not installed?)`);
       continue;
     }
     const pkgDir = path.dirname(pjPath);
