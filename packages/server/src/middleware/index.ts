@@ -161,6 +161,11 @@ export function mountMiddleware(
     return (
       normalized === "/" ||
       normalized.startsWith("/assets/") ||
+      // Production web build is served under Vite `base: '/mira/'` — its
+      // <script>/<link> tags cannot carry bearer tokens, so the whole
+      // subtree must be public (2026-09-21: assets 401'd → black screen).
+      normalized === "/mira" ||
+      normalized.startsWith("/mira/") ||
       normalized === "/favicon.ico" ||
       normalized === "/robots.txt" ||
       normalized === "/vite.svg"
