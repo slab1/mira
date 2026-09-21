@@ -58,7 +58,7 @@ export function mountStaticRoutes(
     `${import.meta.dir}/../../../../web/dist`,
     `${import.meta.dir}/../dist`,
   ]
-  async function findDistFile(rel: string): ReturnType<typeof Bun.file> | null {
+  async function findDistFile(rel: string): Promise<ReturnType<typeof Bun.file> | null> {
     const clean = rel.replace(/^\/+/, '')
     for (const root of distRoots) {
       try {
