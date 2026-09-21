@@ -61,18 +61,33 @@ function resolveCwd(c: Context): { cwd?: string; error?: string; status?: number
 
 export function mountConfigRoutes(
   app: Hono<{ Variables: { requestId: string } }>,
-  opts?: { bus?: { publish: (e: any) => void } },
+  opts?: { bus?: { publish: (e: any) => void }; gateway?: { stats: () => unknown; registry?: { healthSnapshot?: () => unknown; health?: () => unknown; statsAll?: () => unknown; providersHealth?: () => unknown } } },
 ) {
+  function gatewaySnapshot(): Record<string, unknown> | null {
+    try {
+      const g: unknown = opts?.gateway as unknown
+      const reg = (g as { registry?: { healthSnapshot?: () => unknown; health?: () => unknown; statsAll?: () => unknown; providersHealth?: () => unknown } })?.registry
+      if (reg?.healthSnapshot) return reg.healthSnapshot() as Record<string, unknown>
+      if (reg?.health) return { lanes: reg.health(), providers: reg.providersHealth?.() ?? {}, stats: reg.statsAll?.() ?? {} } as Record<string, unknown>
+    } catch {}
+    return null
+  }
   // Flat MiraConfig (redacted) — matches the web Settings store and TUI client contract
   app.get('/config', async (c: Context) => {
     const resolved = resolveCwd(c)
     if (resolved.error) return c.json({ error: resolved.error }, (resolved.status as 400 | 403) ?? 400)
     const cwd = resolved.cwd
-    if (cwd) {
-      const { merged } = await getConfigLayers(cwd)
-      return c.json(redactConfig(merged as MiraConfig))
+    const base = cwd ? (await getConfigLayers(cwd)).merged as MiraConfig : (getConfig() as MiraConfig)
+    const redacted = redactConfig(base as MiraConfig)
+    // Extend GET /config to return health + lane stats when ?health=1 or ?include=health
+    const includeHealth = c.req.query('health') === '1' || c.req.query('include') === 'health'
+    if (includeHealth) {
+      const snap = gatewaySnapshot()
+      if (snap) return c.json({ ...redacted, _health: snap, _laneStats: (snap as { stats?: unknown }).stats, _providersHealth: (snap as { providers?: unknown }).providers } as unknown as Record<string, unknown>)
     }
-    return c.json(redactConfig(getConfig() as MiraConfig))
+    // Also support ?health alias that returns full health snapshot alongside config
+    // For TraceViewer and ops, GET /config?health=1 gives lane + provider health without extra roundtrip
+    return c.json(redacted)
   })
   // Debug: full layer breakdown (moved off /config so clients get a plain MiraConfig)
   app.get('/config/layers', async (c: Context) => {
@@ -165,6 +180,10 @@ export function mountConfigRoutes(
     try {
       const cfg = getConfig() as MiraConfig
       const providers = (cfg as MiraConfig).provider ?? {}
+      const snap = gatewaySnapshot()
+      const provHealth = (snap?.providers ?? {}) as Record<string, { state?: string; status?: string; latencyMs?: number; failureCount?: number; cooldownUntil?: number | null; successCount?: number }>
+      const laneStats = (snap?.stats ?? {}) as Record<string, unknown>
+      const lanes = (snap?.lanes ?? {}) as Record<string, unknown>
       const list = Object.entries(providers).map(([id, p]) => {
         try {
           const prov = p as MiraConfig['provider'][string]
@@ -185,6 +204,7 @@ export function mountConfigRoutes(
                 ? (m as { name: string }).name
                 : mid,
           }))
+          const health = (provHealth as Record<string, unknown>)[id.toLowerCase()] ?? (provHealth as Record<string, unknown>)[id]
           return {
             id,
             name: (prov as { name?: string }).name ?? id,
@@ -196,6 +216,10 @@ export function mountConfigRoutes(
             rawBaseURL: rawBase,
             modelCount: modelEntries.length,
             models: modelEntries,
+            // Per-provider health (circuit state, latency, failureCount, cooldownUntil) for lane-aware routing UI
+            health: health ?? null,
+            laneStats: laneStats[id] ?? null,
+            lane: (lanes as Record<string, unknown>)[id] ?? null,
           }
         } catch (e) {
           console.error(`[providers] error for ${id}:`, e)

@@ -671,7 +671,7 @@ async function main() {
   })
 
   mountMcpRoutes(app, mcp)
-  mountConfigRoutes(app, { bus })
+  mountConfigRoutes(app, { bus, gateway })
   mountToolsRoutes(app, { tools, permissions, guardrails, gateway })
   mountLearningRoutes(app, learning)
   mountWorkspaceRoutes(app)

@@ -40,7 +40,7 @@ describe('loadConfig', () => {
     expect(config.model).toBe('custom-model-xyz')
     // Should still have provider defaults
     expect(config.provider).toBeDefined()
-    expect(config.provider.openrouter).toBeDefined()
+    expect(config.provider.anthropic).toBeDefined()
   })
 
   test('deep-merges permission section', async () => {

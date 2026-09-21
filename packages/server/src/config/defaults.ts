@@ -75,19 +75,41 @@ export const DEFAULT_CONFIG: MiraConfig = {
         timeout: 120_000,
         kind: 'nvidia',
       },
-      models: {},
+      models: {
+        'deepseek-ai/deepseek-v4-flash': {
+          name: 'DeepSeek V4 Flash (cheap/fast)',
+          limit: { context: 128000, output: 8192 },
+        },
+        'deepseek-ai/deepseek-v4-pro': {
+          name: 'DeepSeek V4 Pro (reasoning)',
+          limit: { context: 128000, output: 8192 },
+        },
+        'meta/llama-3.3-70b-instruct': {
+          name: 'Llama 3.3 70B (fallback)',
+          limit: { context: 128000, output: 4096 },
+        },
+      },
     },
   },
   routing: {
     aliases: {},
-    fallbacks: [],
-    defaultProvider: 'anthropic',
+    // Nvidia is primary — auto-pick keeps costs low; anthropic/openai/google stay as fallbacks
+    fallbacks: [
+      'anthropic/claude-sonnet-4',
+      'openai/gpt-4o',
+      'google/gemini-2.0-flash',
+    ],
+    defaultProvider: 'nvidia',
   },
   subgateways: {
     default: {
-      provider: 'anthropic',
-      model: SHARED_DEFAULT.model,
-      fallback: [],
+      provider: 'nvidia',
+      model: 'nvidia/deepseek-ai/deepseek-v4-flash',
+      fallback: [
+        'nvidia/deepseek-ai/deepseek-v4-pro',
+        'nvidia/meta/llama-3.3-70b-instruct',
+        'anthropic/claude-sonnet-4',
+      ],
       rateLimit: { rps: 10, burst: 20 },
       retry: { maxAttempts: 3, baseMs: 500, maxMs: 10_000 },
       timeout: 120_000,
@@ -95,9 +117,12 @@ export const DEFAULT_CONFIG: MiraConfig = {
       enabled: true,
     },
     cheap: {
-      provider: 'anthropic',
-      model: SHARED_DEFAULT.smallModel ?? 'claude-3.5-sonnet',
-      fallback: [],
+      provider: 'nvidia',
+      model: 'nvidia/deepseek-ai/deepseek-v4-flash',
+      fallback: [
+        'nvidia/meta/llama-3.3-70b-instruct',
+        'anthropic/claude-3.5-sonnet',
+      ],
       rateLimit: { rps: 20, burst: 40 },
       retry: { maxAttempts: 3, baseMs: 300, maxMs: 5_000 },
       timeout: 60_000,
@@ -107,7 +132,7 @@ export const DEFAULT_CONFIG: MiraConfig = {
     vision: {
       provider: 'openai',
       model: 'openai/gpt-4o',
-      fallback: [],
+      fallback: ['google/gemini-2.0-flash', 'anthropic/claude-sonnet-4'],
       rateLimit: { rps: 5, burst: 10 },
       retry: { maxAttempts: 3, baseMs: 500, maxMs: 10_000 },
       timeout: 120_000,
@@ -115,9 +140,9 @@ export const DEFAULT_CONFIG: MiraConfig = {
       enabled: true,
     },
     local: {
-      provider: 'openrouter',
-      model: SHARED_DEFAULT.model,
-      fallback: [],
+      provider: 'nvidia',
+      model: 'nvidia/deepseek-ai/deepseek-v4-flash',
+      fallback: ['nvidia/meta/llama-3.3-70b-instruct', 'anthropic/claude-sonnet-4'],
       rateLimit: { rps: 10, burst: 20 },
       retry: { maxAttempts: 2, baseMs: 500, maxMs: 5_000 },
       timeout: 30_000,
@@ -125,9 +150,9 @@ export const DEFAULT_CONFIG: MiraConfig = {
       enabled: true,
     },
     compaction: {
-      provider: 'anthropic',
-      model: SHARED_DEFAULT.smallModel ?? 'claude-3.5-sonnet',
-      fallback: [],
+      provider: 'nvidia',
+      model: 'nvidia/deepseek-ai/deepseek-v4-flash',
+      fallback: ['nvidia/meta/llama-3.3-70b-instruct'],
       rateLimit: { rps: 10, burst: 20 },
       retry: { maxAttempts: 2, baseMs: 300, maxMs: 5_000 },
       timeout: 45_000,
@@ -135,9 +160,9 @@ export const DEFAULT_CONFIG: MiraConfig = {
       enabled: true,
     },
     'agent:ask': {
-      provider: 'anthropic',
-      model: 'claude-3.5-sonnet',
-      fallback: [],
+      provider: 'nvidia',
+      model: 'nvidia/deepseek-ai/deepseek-v4-flash',
+      fallback: ['nvidia/meta/llama-3.3-70b-instruct', 'anthropic/claude-3.5-sonnet'],
       rateLimit: { rps: 20, burst: 40 },
       retry: { maxAttempts: 3, baseMs: 300, maxMs: 5_000 },
       timeout: 60_000,

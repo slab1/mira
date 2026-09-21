@@ -49,16 +49,30 @@ export function mountStaticRoutes(
 ) {
   const { tools } = deps
 
+  // Candidate web-dist roots: source layout (src/routes/* → packages/web/dist)
+  // plus build layout (dist/routes/* → packages/web/dist). static.ts moved
+  // from src/ to src/routes/ without updating these (2026-09-21: dist was
+  // never found, so / always fell through to the landing page).
+  const distRoots = [
+    `${import.meta.dir}/../../../web/dist`,
+    `${import.meta.dir}/../../../../web/dist`,
+    `${import.meta.dir}/../dist`,
+  ]
+  async function findDistFile(rel: string): Promise<ReturnType<typeof Bun.file> | null> {
+    const clean = rel.replace(/^\/+/, '')
+    for (const root of distRoots) {
+      try {
+        const f = Bun.file(`${root}/${clean}`)
+        if (await f.exists()) return f
+      } catch {}
+    }
+    return null
+  }
+
   // Landing page — friendly index when opened in a browser
   app.get('/', async (c: Context) => {
-    try {
-      const indexFile = Bun.file(`${import.meta.dir}/../../web/dist/index.html`)
-      if (await indexFile.exists()) return c.html(await indexFile.text())
-    } catch {}
-    try {
-      const altIndex = Bun.file(`${import.meta.dir}/../dist/index.html`)
-      if (await altIndex.exists()) return c.html(await altIndex.text())
-    } catch {}
+    const indexFile = await findDistFile('index.html')
+    if (indexFile) return c.html(await indexFile.text())
     return c.html(`<!doctype html>
 <html><head><meta charset="utf-8"><title>Mira</title>
 <style>
@@ -87,27 +101,25 @@ export function mountStaticRoutes(
   })
 
   // Static for web build (when `vite build` has run) — serves /assets/*, etc.
+  // The built app uses Vite `base: '/mira/'`, so asset URLs arrive as
+  // /mira/assets/* — strip the base prefix before looking up dist files.
   app.get('/*', async (c: Context, next: () => Promise<void>) => {
     const path = c.req.path
     if (isApiRoute(path)) return await next()
     try {
-      const candidates = [
-        `${import.meta.dir}/../../web/dist${path}`,
-        `${import.meta.dir}/../dist${path}`,
-      ]
-      for (const fp of candidates) {
-        const f = Bun.file(fp)
-        if (await f.exists()) {
-          const ext = fp.split('.').pop() ?? ''
-          const ct = CONTENT_TYPES[ext] ?? 'text/plain'
-          return new Response(f.stream() as BodyInit, {
-            headers: { 'Content-Type': ct, 'Cache-Control': 'max-age=3600' },
-          })
-        }
+      const lookup =
+        path === '/mira' || path.startsWith('/mira/') ? path.slice('/mira'.length) || '/' : path
+      const f = await findDistFile(lookup)
+      if (f) {
+        const ext = lookup.split('.').pop() ?? ''
+        const ct = CONTENT_TYPES[ext] ?? 'text/plain'
+        return new Response(f.stream() as BodyInit, {
+          headers: { 'Content-Type': ct, 'Cache-Control': 'max-age=3600' },
+        })
       }
       // SPA fallback: serve index.html for unknown routes when web build exists
-      const index = Bun.file(`${import.meta.dir}/../../web/dist/index.html`)
-      if (await index.exists()) {
+      const index = await findDistFile('index.html')
+      if (index) {
         if (!path.includes('.')) return c.html(await index.text())
       }
     } catch {}

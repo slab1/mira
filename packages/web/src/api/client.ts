@@ -838,6 +838,53 @@ export const api = {
     }),
 
   listProviders: () => req<ProviderEntry[] | Record<string, ProviderConfig>>('/providers'),
+  /** Lane + provider health: GET /gateway/health (canonical) + aliases /provider/health, /providers/health */
+  getGatewayHealth: () =>
+    req<{
+      ok: boolean
+      gateway: { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number; byModel: Record<string, unknown> }
+      costCap?: { perTask?: number; perSession?: number }
+      lanes: Record<
+        string,
+        {
+          lane: string
+          circuit: 'closed' | 'open' | 'half-open'
+          state: 'closed' | 'open' | 'half-open'
+          failureCount: number
+          successCount: number
+          latencyMs: number
+          cooldownUntil: number | null
+          rateLimit: { rps: number; burst: number; available: number }
+          stats: { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number; byModel: Record<string, unknown> }
+          costCap?: { perTask?: number; perSession?: number }
+        }
+      >
+      providers: Record<
+        string,
+        {
+          providerKey: string
+          state: 'CLOSED' | 'OPEN' | 'HALF_OPEN'
+          status: 'healthy' | 'degraded' | 'down'
+          latencyMs: number
+          failureCount: number
+          successCount: number
+          consecutiveFailures: number
+          cooldownUntil: number | null
+        }
+      >
+      laneStats: Record<string, { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number }>
+      timestamp: number
+    }>('/gateway/health'),
+  getProviderHealth: () =>
+    req<{
+      ok: boolean
+      gateway: { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number; byModel: Record<string, unknown> }
+      costCap?: { perTask?: number; perSession?: number }
+      lanes: Record<string, { lane: string; circuit: 'closed' | 'open' | 'half-open'; state: string; failureCount: number; latencyMs: number; cooldownUntil: number | null; stats: { avgLatencyMs: number; costUSD: number } }>
+      providers: Record<string, { providerKey: string; state: string; status: string; latencyMs: number; failureCount: number; consecutiveFailures: number; cooldownUntil: number | null }>
+      laneStats: Record<string, unknown>
+      timestamp: number
+    }>('/provider/health'),
   testProvider: (id: string) =>
     req<{ ok: boolean; latencyMs?: number; error?: string }>(
       `/providers/${encodeURIComponent(id)}/test`,

@@ -39,7 +39,7 @@ beforeAll(async () => {
       CORS_ORIGINS: 'https://slab1.github.io,https://mira.example.com',
       MIRA_TERMINAL_ENABLED: '1',
       MIRA_TERMINAL_SANDBOX: '0',
-      OPENROUTER_API_KEY: 'sk-test-gaps',
+      ANTHROPIC_API_KEY: 'sk-test-gaps',
       MIRA_TOKEN: TOKEN,
     },
     stdout: 'pipe',
@@ -60,12 +60,12 @@ describe('gaps: providers expandEnv', () => {
       const data = (await res.json()) as unknown
       lastData = data
       list = Array.isArray(data) ? (data as Array<{ id: string; hasKey: boolean }>) : []
-      if (list.find((p) => p.id === 'openrouter')) break
+      if (list.find((p) => p.id === 'anthropic')) break
       await Bun.sleep(500)
     }
-    if (!list.find((p) => p.id === 'openrouter')) {
+    if (!list.find((p) => p.id === 'anthropic')) {
       console.error(
-        'GET /providers did not return openrouter after retries:',
+        'GET /providers did not return anthropic after retries:',
         JSON.stringify(lastData).slice(0, 2000),
       )
       console.error('list:', JSON.stringify(list).slice(0, 2000))
@@ -75,20 +75,20 @@ describe('gaps: providers expandEnv', () => {
         const cfg = (await cfgRes.json()) as any
         console.error('config provider keys:', Object.keys(cfg.provider ?? {}))
         console.error(
-          'config provider openrouter:',
-          JSON.stringify(cfg.provider?.openrouter ?? null).slice(0, 500),
+          'config provider anthropic:',
+          JSON.stringify(cfg.provider?.anthropic ?? null).slice(0, 500),
         )
       } catch (e) {
         console.error('failed to fetch /config:', e)
       }
     }
-    const or = list.find((p) => p.id === 'openrouter')
+    const or = list.find((p) => p.id === 'anthropic')
     expect(or).toBeDefined()
-    expect(or!.hasKey).toBe(true) // OPENROUTER_API_KEY=sk-test-gaps → expanded true
+    expect(or!.hasKey).toBe(true) // ANTHROPIC_API_KEY=sk-test-gaps → expanded true
   })
 
   test('POST /providers/:id/test expands and checks', async () => {
-    const r = await fetch(`${BASE}/providers/openrouter/test`, { method: 'POST', headers: AUTH })
+    const r = await fetch(`${BASE}/providers/anthropic/test`, { method: 'POST', headers: AUTH })
     const j = await r.json()
     expect(j.ok).toBe(true)
     expect(j.expanded).toBe(true)

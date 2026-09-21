@@ -114,11 +114,37 @@ export default defineConfig({
       '/autocomplete': { target: API_TARGET, changeOrigin: true },
       '/terminal': { target: API_TARGET, changeOrigin: true },
       '/metrics': { target: API_TARGET, changeOrigin: true },
-      // WebSocket (GlobalBus) — catch-all must be last; HMR WS isolated on 24678 so it never hits this proxy
+      // WebSocket (GlobalBus) — catch-all must be last; HMR WS isolated on 24678 so it never hits this proxy.
+      // bypass() keeps Vite's own dev requests local: without it the '/'
+      // catch-all hijacks /src/*, /@vite/*, /node_modules/* etc. and forwards
+      // them to the API server (which 404/401s them) → black screen.
+      // Verified against vite 6.4.3 bundled code: bypass returning a string
+      // rewrites req.url and calls next() (Vite serves it); nullish continues
+      // to the proxy (API + WS upgrades, which arrive with res undefined).
       '/': {
         target: API_TARGET,
         ws: true,
         changeOrigin: true,
+        bypass: (req, res) => {
+          const upgrade = (req.headers?.upgrade || '').toLowerCase()
+          if (!res || upgrade) return null
+          const url = req.url || ''
+          if (
+            url === '/' ||
+            url.startsWith('/?') ||
+            url === '/index.html' ||
+            url === '/mira' ||
+            url === '/mira/' ||
+            url === '/mira/index.html' ||
+            url.startsWith('/src/') ||
+            url.startsWith('/@vite/') ||
+            url.startsWith('/@id/') ||
+            url.startsWith('/@fs/') ||
+            url.startsWith('/node_modules/')
+          )
+            return url
+          return null
+        },
         configure: (proxy) => {
           // Gracefully ignore writeAfterFIN during bun --watch restart (HMR reconnect)
           // and ECONNREFUSED while the server is (re)starting or has rotated ports —

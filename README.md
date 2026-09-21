@@ -83,6 +83,32 @@ mira complete --prefix "function add(a,b) {" --file src/math.ts
 
 Without keys the gateway serves a stub stream — the whole pipeline (tools, permissions, SSE, persistence) still runs.
 
+### Machine setup & sync (multi-machine workflow)
+```bash
+# 1. Pin the toolchain — ALL machines must use bun 1.3.14 (.tool-versions).
+#    bun 1.4.x has workspace-hoisting + drizzle-orm regressions; CI enforces 1.3.14.
+bun --version  # expect 1.3.14
+
+# 2. Install ONLY via the guarded wrapper (never concurrent installs):
+scripts/install.sh
+#    - refuses when disk < 2G free, serializes via flock,
+#      then verifies integrity (scripts/verify-install.js)
+
+# 3. Sync between machines with plain git — node_modules is untracked
+#    (CI fails the build if it ever gets committed again):
+git pull origin main   # then scripts/install.sh if package.json/bun.lock changed
+```
+
+Rules learned the hard way (2026-09-20):
+- NEVER `git add -f node_modules` — committed symlinks dangle on the other
+  OS and in CI, and `bun install` will not overwrite them.
+- NEVER run two `bun install` at once, and never kill one mid-extraction —
+  both leave half-written packages that later installs skip as "done".
+- If you see `Cannot find package X` / `File not found .../node_modules/X`
+  right after install: free disk space, then re-run `scripts/install.sh`.
+- Keep 2G+ free: `npm cache clean --force`, `rm -rf ~/.cache/pip`,
+  stale `/tmp` artifacts, `.turbo`, inactive `node_modules` (regenerable).
+
 Slack bot (no tunnel, Socket Mode):
 
 ```bash
@@ -136,6 +162,24 @@ Health checks:
 Set `MIRA_API_KEYS=key-alice:alice,key-bob:bob` to issue per-user credentials. Sessions are stamped with an owner; every session route (prompt, messages, export, todos, snapshots, jobs) and WebSocket event stream is owner-scoped — foreign resources return 404. Child sessions spawned by the `task` tool inherit the parent's owner.
 
 Single-token mode (`MIRA_TOKEN` only) maps everything to an implicit `"default"` owner and behaves exactly as before.
+
+### Troubleshooting
+
+**`OpenCode's free tier can only be used from within OpenCode`** (seen in Mira
+chat, server log, OpenCode itself, or other tools — usually on one machine only):
+an `OPENCODE_API_KEY` (Zen free-tier key) exported in that machine's environment
+poisons every tool that reads env. The key bypasses OpenCode's in-app OAuth flow,
+so even OpenCode itself rejects it. Fix on the affected machine:
+```powershell
+# PowerShell: find the culprit
+Get-ChildItem Env: | Where-Object { $_.Name -like '*OPENCODE*' }
+# Remove OPENCODE_API_KEY from System Environment Variables / $PROFILE / .env files,
+# restart the shell, then re-login in-app:  opencode auth login
+# In Mira: do NOT add an `opencode` provider block backed by a Zen free-tier key —
+# use direct anthropic/openai/google keys instead (mira.json is per-machine, gitignored).
+```
+Verified clean on a healthy machine: OpenCode auth is OAuth (`google`, no env key),
+`mira.json` providers contain no `opencode` entry, and the server log shows no such error.
 
 ### API surface
 

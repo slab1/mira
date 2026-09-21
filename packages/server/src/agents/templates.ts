@@ -226,7 +226,7 @@ export const AGENT_TEMPLATES = {
       'Kilo Ask mode — read-only. Delegate codebase Q&A, explanations, and orientation. Use when you need answers, not changes. Cheapest to run — route to a cheap model.',
     tools: ['read', 'glob', 'grep', 'lsp', 'websearch', 'webfetch', 'memory_search'],
     permissions: 'readonly',
-    model: 'openrouter/deepseek/deepseek-v3.2-exp',
+    model: 'claude-3.5-sonnet',
   },
   plan: {
     system:

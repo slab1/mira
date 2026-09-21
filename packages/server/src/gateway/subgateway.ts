@@ -341,7 +341,26 @@ export class Subgateway implements Gateway {
   }
 
   private resolveModelID(requestedModel: string): string {
-    if (!requestedModel) return this.subConfig.model ?? requestedModel
+    // 'auto' or empty → health-aware nvidia auto-pick; lane's model is already nvidia flash by default
+    if (!requestedModel || requestedModel === 'auto') {
+      const laneModel = this.subConfig.model
+      if (laneModel) {
+        // Check health of the lane's provider — if down, prefer first healthy fallback
+        try {
+          const providerKey = laneModel.split('/')[0]
+          const health = this.registry.getHealth(providerKey)
+          if (health && health.status === 'down') {
+            for (const fb of this.subConfig.fallback ?? []) {
+              try {
+                const fbHealth = this.registry.getHealth(fb.split('/')[0])
+                if (!fbHealth || fbHealth.status !== 'down') return fb
+              } catch {}
+            }
+          }
+        } catch {}
+      }
+      return laneModel ?? requestedModel
+    }
     // Lane model is fallback only when no explicit model requested
     // For dedicated lanes (compaction/vision/cheap), lane model takes precedence only if requested is empty
     return requestedModel || this.subConfig.model!
@@ -392,6 +411,24 @@ export class Subgateway implements Gateway {
     const baseMs = this.subConfig.retry?.baseMs ?? 500
     const maxMs = this.subConfig.retry?.maxMs ?? 10_000
     const timeout = this.subConfig.timeout ?? candidates[0]?.timeout ?? 120_000
+
+    // Trace fallback chain for observability — even before any failure so TraceViewer can render it
+    if (candidates.length > 1) {
+      GlobalBus.publish({
+        type: 'gateway.fallback',
+        sessionID: opts.sessionID,
+        payload: {
+          lane: this.lane,
+          requestedModel: opts.model,
+          resolvedModel: model,
+          chain: candidates.map((c) => `${c.providerKey}/${c.modelID}`),
+          primary: `${candidates[0].providerKey}/${candidates[0].modelID}`,
+          fallbackCount: candidates.length - 1,
+          stage: 'configured',
+        },
+        timestamp: Date.now(),
+      })
+    }
 
     let lastError: ProviderError | Error | null = null
     for (const cand of candidates) {
@@ -453,6 +490,22 @@ export class Subgateway implements Gateway {
               const cap = this.subConfig.costCap ?? readGlobalCostCap(this.globalConfig)
               if (cap?.perTask !== undefined) {
                 const cur = this.statsCollector.snapshot().costUSD
+                // Emit cost.warning at 80% and server.error when exceeded — both per-lane visible
+                if (cur >= cap.perTask * 0.8 && cur <= cap.perTask) {
+                  GlobalBus.publish({
+                    type: 'cost.warning',
+                    sessionID: opts.sessionID,
+                    payload: {
+                      lane: this.lane,
+                      cap: cap.perTask,
+                      current: cur,
+                      pct: Math.round((cur / cap.perTask) * 100),
+                      source: 'cost-cap',
+                      warning: `Lane "${this.lane}" at ${Math.round((cur / cap.perTask) * 100)}% of per-task cap $${cap.perTask.toFixed(4)}`,
+                    },
+                    timestamp: Date.now(),
+                  })
+                }
                 if (cur > cap.perTask) {
                   GlobalBus.publish({
                     type: 'server.error',
@@ -463,6 +516,57 @@ export class Subgateway implements Gateway {
                       lane: this.lane,
                       cap: cap.perTask,
                       current: cur,
+                    },
+                    timestamp: Date.now(),
+                  })
+                  // Also emit cost.warning on exceed for unified consumers
+                  GlobalBus.publish({
+                    type: 'cost.warning',
+                    sessionID: opts.sessionID,
+                    payload: {
+                      lane: this.lane,
+                      cap: cap.perTask,
+                      current: cur,
+                      pct: 100,
+                      source: 'cost-cap',
+                      error: `Cost cap exceeded on lane "${this.lane}"`,
+                    },
+                    timestamp: Date.now(),
+                  })
+                }
+                // Per-session cap warning emitted via checkCostCap below — also surface here for stream-tracked costs
+                if (cap?.perSession !== undefined && opts.sessionID) {
+                  const sess = getSessionCost(opts.sessionID)
+                  if (sess.costUSD >= cap.perSession * 0.8 && sess.costUSD <= cap.perSession) {
+                    GlobalBus.publish({
+                      type: 'cost.warning',
+                      sessionID: opts.sessionID,
+                      payload: {
+                        lane: this.lane,
+                        cap: cap.perSession,
+                        current: sess.costUSD,
+                        pct: Math.round((sess.costUSD / cap.perSession) * 100),
+                        source: 'cost-cap',
+                        scope: 'perSession',
+                      },
+                      timestamp: Date.now(),
+                    })
+                  }
+                }
+              } else if (cap?.perSession !== undefined && opts.sessionID) {
+                // perSession-only cap: emit warning based on session cost
+                const sess = getSessionCost(opts.sessionID)
+                if (sess.costUSD >= cap.perSession * 0.8 && sess.costUSD <= cap.perSession) {
+                  GlobalBus.publish({
+                    type: 'cost.warning',
+                    sessionID: opts.sessionID,
+                    payload: {
+                      lane: this.lane,
+                      cap: cap.perSession,
+                      current: sess.costUSD,
+                      pct: Math.round((sess.costUSD / cap.perSession) * 100),
+                      source: 'cost-cap',
+                      scope: 'perSession',
                     },
                     timestamp: Date.now(),
                   })
@@ -570,7 +674,46 @@ export class Subgateway implements Gateway {
           lastError instanceof ProviderError &&
           (lastError.code === 'RATE_LIMITED' || lastError.code === 'UNAUTHORIZED')
         ) {
+          // Fallback chain: primary failed with rotatable error — emit trace for viewer
+          if (candidates.length > 1) {
+            const failedCand = cand
+            const nextCand = candidates[candidates.indexOf(cand) + 1]
+            if (nextCand) {
+              GlobalBus.publish({
+                type: 'gateway.fallback',
+                sessionID: opts.sessionID,
+                payload: {
+                  lane: this.lane,
+                  requestedModel: opts.model,
+                  resolvedModel: model,
+                  from: `${failedCand.providerKey}/${failedCand.modelID}`,
+                  to: `${nextCand.providerKey}/${nextCand.modelID}`,
+                  reason: lastError.message,
+                  code: lastError.code,
+                  chain: candidates.map((c) => `${c.providerKey}/${c.modelID}`),
+                },
+                timestamp: Date.now(),
+              })
+            }
+          }
           continue
+        }
+        // Non-rotatable fallback: still emit if we had multiple candidates and are about to fail
+        if (candidates.length > 1) {
+          GlobalBus.publish({
+            type: 'gateway.fallback',
+            sessionID: opts.sessionID,
+            payload: {
+              lane: this.lane,
+              requestedModel: opts.model,
+              resolvedModel: model,
+              from: `${cand.providerKey}/${cand.modelID}`,
+              chain: candidates.map((c) => `${c.providerKey}/${c.modelID}`),
+              reason: lastError.message,
+              terminal: true,
+            },
+            timestamp: Date.now(),
+          })
         }
         break
       }
@@ -838,7 +981,12 @@ export class Subgateway implements Gateway {
   health(): {
     lane: string
     circuit: CircuitState
+    state: CircuitState
     failureCount: number
+    successCount: number
+    latencyMs: number
+    cooldownUntil: number | null
+    rateLimit: { rps: number; burst: number; available: number }
     stats: GatewayStats
     costCap?: { perTask?: number; perSession?: number }
   } {
@@ -846,11 +994,23 @@ export class Subgateway implements Gateway {
     const circuit: CircuitState =
       state === 'CLOSED' ? 'closed' : state === 'OPEN' ? 'open' : 'half-open'
     const cap = this.subConfig.costCap ?? readGlobalCostCap(this.globalConfig)
+    const stats = this.stats()
+    const cooldownUntil =
+      circuit === 'open' ? Date.now() + this.breaker.getTimeUntilReset() : null
     return {
       lane: this.lane,
       circuit,
+      state: circuit,
       failureCount: this.breaker.getFailureCount(),
-      stats: this.stats(),
+      successCount: this.breaker.getSuccessCount(),
+      latencyMs: stats.avgLatencyMs,
+      cooldownUntil,
+      rateLimit: {
+        rps: this.rateLimiter.config.rps,
+        burst: this.rateLimiter.config.burst,
+        available: Math.floor(this.rateLimiter.available),
+      },
+      stats,
       costCap: cap,
     }
   }
