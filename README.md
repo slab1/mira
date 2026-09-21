@@ -163,6 +163,24 @@ Set `MIRA_API_KEYS=key-alice:alice,key-bob:bob` to issue per-user credentials. S
 
 Single-token mode (`MIRA_TOKEN` only) maps everything to an implicit `"default"` owner and behaves exactly as before.
 
+### Troubleshooting
+
+**`OpenCode's free tier can only be used from within OpenCode`** (seen in Mira
+chat, server log, OpenCode itself, or other tools — usually on one machine only):
+an `OPENCODE_API_KEY` (Zen free-tier key) exported in that machine's environment
+poisons every tool that reads env. The key bypasses OpenCode's in-app OAuth flow,
+so even OpenCode itself rejects it. Fix on the affected machine:
+```powershell
+# PowerShell: find the culprit
+Get-ChildItem Env: | Where-Object { $_.Name -like '*OPENCODE*' }
+# Remove OPENCODE_API_KEY from System Environment Variables / $PROFILE / .env files,
+# restart the shell, then re-login in-app:  opencode auth login
+# In Mira: do NOT add an `opencode` provider block backed by a Zen free-tier key —
+# use direct anthropic/openai/google keys instead (mira.json is per-machine, gitignored).
+```
+Verified clean on a healthy machine: OpenCode auth is OAuth (`google`, no env key),
+`mira.json` providers contain no `opencode` entry, and the server log shows no such error.
+
 ### API surface
 
 | Route                                                             | Auth                         | Description                                    |
