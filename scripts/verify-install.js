@@ -18,9 +18,28 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
-const { createRequire } = require('node:module');
 
 const ROOT = path.resolve(__dirname, '..');
+
+/**
+ * Resolve <name>/package.json by walking up node_modules dirs manually.
+ * Deliberately NOT require.resolve(): that honors `exports` maps, and many
+ * packages omit "./package.json" from exports — yielding false
+ * "not installed" hits for packages that resolve fine at runtime.
+ * A plain file-existence walk tests exactly what matters: files on disk.
+ */
+function resolvePackageJson(name, fromDir) {
+  let dir = fromDir;
+  while (true) {
+    const cand = path.join(dir, 'node_modules', name, 'package.json');
+    try {
+      if (fs.statSync(cand).isFile()) return cand;
+    } catch {}
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
 
 function entryTargets(pkg) {
   const out = new Set();
@@ -40,7 +59,10 @@ function entryTargets(pkg) {
     if (typeof dot === 'string') add(dot);
     else if (Array.isArray(dot)) dot.forEach(add);
     else if (dot && typeof dot === 'object') {
-      for (const k of ['import', 'require', 'default', 'node', 'bun', 'types']) add(dot[k]);
+      // Runtime conditions only: `types` is type-only, `node`/`bun` are
+      // platform overrides — flagging them over-reports packages that
+      // work fine via import/require/default.
+      for (const k of ['import', 'require', 'default']) add(dot[k]);
     }
   }
   return [...out].map((t) => t.split('?')[0].split('#')[0]).filter((t) => t && !t.includes('*'));
@@ -85,8 +107,6 @@ for (const dir of workspaceDirs()) {
   }
   // Resolve from the DEPENDENT's directory: workspace deps live in
   // packages/<name>/node_modules (symlinks), hoisted ones in root.
-  // Resolving everything from root yields false "not installed" hits.
-  const requireFromDir = createRequire(path.join(dir, 'package.json'));
   const deps = {
     ...(pkg.dependencies || {}),
     ...(pkg.devDependencies || {}),
@@ -94,10 +114,8 @@ for (const dir of workspaceDirs()) {
   for (const name of Object.keys(deps)) {
     if (name.startsWith('@mira/')) continue; // workspace self-link, checked via dir existence
     checked++;
-    let pjPath;
-    try {
-      pjPath = requireFromDir.resolve(`${name}/package.json`);
-    } catch {
+    const pjPath = resolvePackageJson(name, dir);
+    if (!pjPath) {
       failures.push(`${name} (wanted by ${path.relative(ROOT, dir) || '.'}): cannot resolve package.json (not installed?)`);
       continue;
     }
