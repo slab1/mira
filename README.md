@@ -83,6 +83,32 @@ mira complete --prefix "function add(a,b) {" --file src/math.ts
 
 Without keys the gateway serves a stub stream — the whole pipeline (tools, permissions, SSE, persistence) still runs.
 
+### Machine setup & sync (multi-machine workflow)
+```bash
+# 1. Pin the toolchain — ALL machines must use bun 1.3.14 (.tool-versions).
+#    bun 1.4.x has workspace-hoisting + drizzle-orm regressions; CI enforces 1.3.14.
+bun --version  # expect 1.3.14
+
+# 2. Install ONLY via the guarded wrapper (never concurrent installs):
+scripts/install.sh
+#    - refuses when disk < 2G free, serializes via flock,
+#      then verifies integrity (scripts/verify-install.js)
+
+# 3. Sync between machines with plain git — node_modules is untracked
+#    (CI fails the build if it ever gets committed again):
+git pull origin main   # then scripts/install.sh if package.json/bun.lock changed
+```
+
+Rules learned the hard way (2026-09-20):
+- NEVER `git add -f node_modules` — committed symlinks dangle on the other
+  OS and in CI, and `bun install` will not overwrite them.
+- NEVER run two `bun install` at once, and never kill one mid-extraction —
+  both leave half-written packages that later installs skip as "done".
+- If you see `Cannot find package X` / `File not found .../node_modules/X`
+  right after install: free disk space, then re-run `scripts/install.sh`.
+- Keep 2G+ free: `npm cache clean --force`, `rm -rf ~/.cache/pip`,
+  stale `/tmp` artifacts, `.turbo`, inactive `node_modules` (regenerable).
+
 Slack bot (no tunnel, Socket Mode):
 
 ```bash

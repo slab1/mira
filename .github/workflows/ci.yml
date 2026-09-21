@@ -66,6 +66,26 @@ jobs:
               - 'package.json'
               - 'bunfig.toml'
 
+  repo-hygiene:
+    name: repo-hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if node_modules is tracked in git
+        # 2026-09-20: 92 tracked node_modules symlinks broke cross-machine
+        # sync (Windows↔Android) and CI with dangling links that
+        # `bun install` will not overwrite. node_modules must NEVER be
+        # committed (not even with -f) — .gitignore already covers it.
+        run: |
+          TRACKED=$(git ls-files | grep -E '(^|/)node_modules/' || true)
+          if [ -n "$TRACKED" ]; then
+            echo "::error::node_modules files are tracked in git:"
+            echo "$TRACKED" | head -20
+            echo "Remove with: git ls-files | grep node_modules | xargs git rm --cached"
+            exit 1
+          fi
+          echo "repo hygiene ok — no tracked node_modules"
+
   auth-guard:
     name: auth-guard
     runs-on: ubuntu-latest
@@ -79,6 +99,8 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: bun install
+      - name: Verify install integrity
+        run: node scripts/verify-install.js
       - name: Verify auth hygiene (MIRA_TOKEN placeholder + gen script + no real secrets)
         run: |
           test -x scripts/gen-mira-token.sh || (echo "missing scripts/gen-mira-token.sh (chmod +x)" && exit 1)
@@ -110,6 +132,8 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: bun install
+      - name: Verify install integrity
+        run: node scripts/verify-install.js
       - name: Typecheck
         # NOTE: --continue is a CLI flag (turbo.json must NOT get a `continue`
         # key — reverted in c49d8d2a). Tri-state mode for typecheck is
@@ -134,6 +158,8 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: bun install
+      - name: Verify install integrity
+        run: node scripts/verify-install.js
       - name: Turborepo remote cache
         uses: actions/cache@v4
         with:
@@ -199,6 +225,8 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: bun install
+      - name: Verify install integrity
+        run: node scripts/verify-install.js
       - name: Turborepo cache
         uses: actions/cache@v4
         with:
@@ -248,6 +276,8 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: bun install
+      - name: Verify install integrity
+        run: node scripts/verify-install.js
       - name: Turborepo cache
         uses: actions/cache@v4
         with:
