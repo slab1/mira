@@ -58,8 +58,42 @@ export function mountHealthRoutes(
       memory: process.memoryUsage(),
     }),
   )
-  app.get('/dev/health', (c) =>
-    c.json({
+  // Helpers: extract lane/provider health if gateway is a routing gateway (has registry)
+  function gatewayHealthSnapshot(): {
+    lanes?: Record<string, unknown>
+    providers?: Record<string, unknown>
+    stats?: Record<string, unknown>
+    costCap?: unknown
+  } | null {
+    try {
+      const gwAny = deps.gateway as unknown as {
+        registry?: {
+          healthSnapshot?: () => {
+            lanes: Record<string, unknown>
+            providers: Record<string, unknown>
+            stats: Record<string, unknown>
+            costCap?: unknown
+          }
+          health?: () => Record<string, unknown>
+          providersHealth?: () => Record<string, unknown>
+          statsAll?: () => Record<string, unknown>
+        }
+      }
+      if (gwAny.registry?.healthSnapshot) return gwAny.registry.healthSnapshot()
+      if (gwAny.registry?.health) {
+        return {
+          lanes: gwAny.registry.health(),
+          providers: (gwAny.registry.providersHealth?.() ?? {}) as Record<string, unknown>,
+          stats: (gwAny.registry.statsAll?.() ?? {}) as Record<string, unknown>,
+        }
+      }
+    } catch {}
+    return null
+  }
+
+  app.get('/dev/health', (c) => {
+    const snap = gatewayHealthSnapshot()
+    return c.json({
       ok: true,
       version: '0.1.0',
       sha: GIT_SHA,
@@ -71,9 +105,52 @@ export function mountHealthRoutes(
       busHistory: deps.bus.recent(5).length,
       learning: deps.learning.scheduler.status(),
       gateway: deps.gateway.stats(),
+      // Lane-aware gateway health (per-lane circuit, latency, failureCount, cooldownUntil, rateLimit, costCap)
+      ...(snap
+        ? {
+            lanes: snap.lanes,
+            providersHealth: snap.providers,
+            laneStats: snap.stats,
+            costCap: snap.costCap ?? (deps.config as unknown as { costCap?: unknown }).costCap,
+          }
+        : {}),
       uptime: process.uptime(),
-    }),
-  )
+    })
+  })
+
+  // Production standout: health per lane + per provider (circuit, latency, failureCount, cooldown, rateLimit)
+  function gatewayHealthResponse() {
+    const snap = gatewayHealthSnapshot()
+    const stats = deps.gateway.stats()
+    const costCap = (deps.config as unknown as { costCap?: unknown }).costCap
+    if (!snap) {
+      return {
+        ok: true,
+        gateway: stats,
+        costCap,
+        lanes: {} as Record<string, unknown>,
+        providers: {} as Record<string, unknown>,
+        timestamp: Date.now(),
+      }
+    }
+    return {
+      ok: true,
+      gateway: stats,
+      costCap: snap.costCap ?? costCap,
+      lanes: snap.lanes,
+      providers: snap.providers,
+      laneStats: snap.stats,
+      timestamp: Date.now(),
+    }
+  }
+
+  // Canonical: GET /gateway/health  — lane + provider health with circuit/rateLimit/costCap
+  app.get('/gateway/health', (c) => c.json(gatewayHealthResponse()))
+  // Aliases required by spec: GET /provider/health and GET /providers/health
+  app.get('/provider/health', (c) => c.json(gatewayHealthResponse()))
+  app.get('/providers/health', (c) => c.json(gatewayHealthResponse()))
+  // Back-compat singular alias for /provider/health when plural is expected
+  app.get('/provider', (c) => c.json(gatewayHealthResponse()))
   app.get('/dev/cost', (c) => {
     const stats = deps.gateway.stats()
     const costCap = (deps.config as any).costCap

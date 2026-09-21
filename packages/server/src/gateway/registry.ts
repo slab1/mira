@@ -67,11 +67,13 @@ export class SubgatewayRegistry {
       (config as MiraConfig & { subgateways?: Record<string, SubgatewayConfig> }).subgateways ?? {}
     if (subgateways[lane]) return subgateways[lane]
 
-    // Lane-specific defaults
+    // Lane-specific defaults — prefer env-backed providers (anthropic/nvidia) over opencode/openrouter free tier.
+    // OpenRouter is kept as-model reference when user has OPENROUTER_API_KEY, but lanes themselves
+    // default to anthropic so gateway works without any free-tier key.
     switch (lane) {
       case 'default':
         return {
-          provider: 'openrouter',
+          provider: 'anthropic',
           model: config.model,
           fallback:
             (config as MiraConfig & { routing?: { fallbacks?: string[] } }).routing?.fallbacks ??
@@ -83,8 +85,8 @@ export class SubgatewayRegistry {
         }
       case 'cheap':
         return {
-          provider: 'openrouter',
-          model: config.smallModel ?? 'openrouter/deepseek/deepseek-v3.2-exp',
+          provider: 'anthropic',
+          model: config.smallModel ?? 'claude-3.5-sonnet',
           fallback: [],
           rateLimit: { rps: 20, burst: 40 },
           retry: { maxAttempts: 3, baseMs: 300, maxMs: 5_000 },
@@ -93,9 +95,9 @@ export class SubgatewayRegistry {
         }
       case 'compaction':
         return {
-          provider: 'openrouter',
+          provider: 'anthropic',
           model:
-            config.smallModel ?? config.loop?.smallModel ?? 'openrouter/deepseek/deepseek-v3.2-exp',
+            config.smallModel ?? config.loop?.smallModel ?? 'claude-3.5-sonnet',
           fallback: [],
           rateLimit: { rps: 10, burst: 20 },
           retry: { maxAttempts: 2, baseMs: 300, maxMs: 5_000 },
@@ -114,7 +116,7 @@ export class SubgatewayRegistry {
         }
       case 'local':
         return {
-          provider: 'openrouter',
+          provider: 'anthropic',
           model: config.model,
           fallback: [],
           rateLimit: { rps: 10, burst: 20 },
@@ -125,11 +127,11 @@ export class SubgatewayRegistry {
       default:
         if (lane.startsWith('agent:')) {
           const agentName = lane.slice(6)
-          // ask is cheap, others default
+          // ask is cheap, others default — both prefer anthropic over opencode free tier
           if (agentName === 'ask') {
             return {
-              provider: 'openrouter',
-              model: 'openrouter/deepseek/deepseek-v3.2-exp',
+              provider: 'anthropic',
+              model: 'claude-3.5-sonnet',
               fallback: [],
               rateLimit: { rps: 20, burst: 40 },
               retry: { maxAttempts: 3 },
@@ -142,7 +144,7 @@ export class SubgatewayRegistry {
             .agents?.[agentName]
           if (agentDef?.model) {
             return {
-              provider: agentDef.model.split('/')[0] ?? 'openrouter',
+              provider: agentDef.model.split('/')[0] ?? 'anthropic',
               model: agentDef.model,
               fallback: [],
               rateLimit: { rps: 10, burst: 20 },
@@ -151,7 +153,7 @@ export class SubgatewayRegistry {
             }
           }
           return {
-            provider: 'openrouter',
+            provider: 'anthropic',
             model: config.model,
             fallback: [],
             rateLimit: { rps: 10, burst: 20 },
@@ -160,7 +162,7 @@ export class SubgatewayRegistry {
           }
         }
         return {
-          provider: 'openrouter',
+          provider: 'anthropic',
           model: config.model,
           fallback: [],
           rateLimit: { rps: 10, burst: 20 },
@@ -197,16 +199,41 @@ export class SubgatewayRegistry {
 
   health(): Record<
     string,
-    { lane: string; circuit: string; failureCount: number; stats: GatewayStats }
+    ReturnType<Subgateway['health']>
   > {
-    const out: Record<
-      string,
-      { lane: string; circuit: string; failureCount: number; stats: GatewayStats }
-    > = {}
+    const out: Record<string, ReturnType<Subgateway['health']>> = {}
     for (const [lane, gw] of this.gateways) {
       out[lane] = gw.health()
     }
     return out
+  }
+
+  /** Provider health — circuit-breaker + rate-limiter per provider (from ProviderRegistry) */
+  providersHealth(): Record<string, import('../providers/types.js').ProviderHealth> {
+    const map = this.baseRegistry.getAllHealth()
+    const out: Record<string, import('../providers/types.js').ProviderHealth> = {}
+    for (const [k, v] of map) out[k] = v
+    return out
+  }
+
+  /** Lane stats aggregated (for /dev/health + /gateway/health) */
+  laneStats(): Record<string, GatewayStats> {
+    return this.statsAll()
+  }
+
+  /** Full health snapshot: lanes + providers — for GET /gateway/health and GET /provider/health */
+  healthSnapshot(): {
+    lanes: Record<string, ReturnType<Subgateway['health']>>
+    providers: Record<string, import('../providers/types.js').ProviderHealth>
+    stats: Record<string, GatewayStats>
+    costCap?: { perTask?: number; perSession?: number }
+  } {
+    const lanes = this.health()
+    const providers = this.providersHealth()
+    const stats = this.statsAll()
+    const cap = (this.globalConfig as MiraConfig & { costCap?: { perTask?: number; perSession?: number } })
+      .costCap
+    return { lanes, providers, stats, costCap: cap }
   }
 
   /** For testing: clear all */

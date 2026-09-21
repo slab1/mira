@@ -115,6 +115,7 @@ export type BusEventType =
   | 'question.reply'
   | 'cost.warning'
   | 'model.retired'
+  | 'gateway.fallback'
   | 'server.heartbeat'
   | 'server.error'
   | 'github.webhook'

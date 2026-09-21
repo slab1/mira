@@ -1,10 +1,11 @@
 {
-  "model": "openrouter/anthropic/claude-sonnet-4",
+  "_comment": "Nvidia is primary (auto-pick): deepseek-v4-flash for default/cheap/compaction, deepseek-v4-pro for reasoning, llama-3.3-70b fallback. Subagents MUST use gateway lanes local/compaction (not opencode/deepseek free tier). Health at GET /gateway/health, cost caps per lane.",
+  "model": "nvidia/deepseek-ai/deepseek-v4-flash",
   "loop": {
     "maxSteps": 32,
     "contextLimit": 128000,
     "compactionThreshold": 0.8,
-    "smallModel": "openrouter/deepseek/deepseek-v3.2-exp"
+    "smallModel": "nvidia/deepseek-ai/deepseek-v4-flash"
   },
   "provider": {
     "openrouter": {
@@ -95,8 +96,13 @@
   },
   "routing": {
     "aliases": {},
-    "fallbacks": [],
-    "defaultProvider": "openrouter"
+    "fallbacks": [
+      "nvidia/deepseek-ai/deepseek-v4-pro",
+      "nvidia/meta/llama-3.3-70b-instruct",
+      "anthropic/claude-sonnet-4",
+      "openai/gpt-4o"
+    ],
+    "defaultProvider": "nvidia"
   },
   "features": {
     "injectTodosIntoLoadContext": true,

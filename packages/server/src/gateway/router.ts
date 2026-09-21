@@ -26,6 +26,64 @@ export interface RouteContext {
   cheapTier?: boolean
 }
 
+/** Nvidia auto-pick catalog — cheapest/fastest → reasoning → fallback */
+export const NVIDIA_AUTO_MODELS = {
+  flash: 'nvidia/deepseek-ai/deepseek-v4-flash',
+  pro: 'nvidia/deepseek-ai/deepseek-v4-pro',
+  llama: 'nvidia/meta/llama-3.3-70b-instruct',
+  // Vision stays on openai, anthropic as generic fallback
+  vision: 'openai/gpt-4o',
+  anthropicFallback: 'anthropic/claude-sonnet-4',
+} as const
+
+/**
+ * Health-aware auto-pick for nvidia primary.
+ * Picks cheapest/fastest healthy nvidia model that satisfies capability.
+ * - default/cheap/compaction/local/agent:ask → flash
+ * - reasoning (lane or task hint) → pro
+ * - if nvidia provider is down/degraded with high failureCount, fall back to llama then anthropic
+ */
+export function pickNvidiaAutoModel(
+  lane: string,
+  task: string | undefined,
+  registry: { providersHealth?: () => Record<string, { status: string; state: string; failureCount: number; latencyMs: number }> },
+  capability: 'reasoning' | 'default' = 'default',
+): string {
+  // Vision lane never auto-picks nvidia
+  if (lane === 'vision' || task === 'vision') return NVIDIA_AUTO_MODELS.vision
+
+  let health: { status: string; state: string; failureCount: number; latencyMs: number } | undefined
+  try {
+    health = registry.providersHealth?.()?.['nvidia'] ?? registry.providersHealth?.()?.['Nvidia']
+  } catch {}
+  const degraded = health && (health.status === 'down' || health.state === 'OPEN' || health.failureCount >= 5)
+
+  // Reasoning capability → pro (higher quality, still nvidia)
+  if (capability === 'reasoning' || lane.includes('reasoning')) {
+    if (!degraded) return NVIDIA_AUTO_MODELS.pro
+    // nvidia degraded → try llama as cheaper fallback before leaving nvidia
+    return NVIDIA_AUTO_MODELS.llama
+  }
+
+  // Default: cheapest/fastest — flash; if degraded, ladder flash → llama → anthropic
+  if (!degraded) return NVIDIA_AUTO_MODELS.flash
+  // If flash provider degraded, try llama (same provider but may have same circuit — still try)
+  // For healthiest pick, compare failureCount/latency across providers: nvidia vs anthropic
+  let anthHealth: { failureCount: number; latencyMs: number } | undefined
+  try {
+    anthHealth = (
+      registry.providersHealth?.() as Record<string, { failureCount: number; latencyMs: number }>
+    )?.['anthropic']
+  } catch {}
+  // If anthropic is healthier (lower latency/failures), use it; otherwise stay on llama
+  if (anthHealth && health) {
+    if (anthHealth.failureCount < health.failureCount && anthHealth.latencyMs < health.latencyMs) {
+      return NVIDIA_AUTO_MODELS.anthropicFallback
+    }
+  }
+  return NVIDIA_AUTO_MODELS.llama
+}
+
 export class GatewayRouter {
   constructor(
     private registry: SubgatewayRegistry,
@@ -114,6 +172,18 @@ export class GatewayRouter {
     return 'default'
   }
 
+  /** Resolve model — auto picks nvidia healthiest when model is empty or 'auto' */
+  resolveModel(ctx: RouteContext): string {
+    const model = ctx.model?.trim() ?? ''
+    if (!model || model === 'auto') {
+      const lane = this.resolve(ctx)
+      // Detect reasoning intent from task/agent (future: capability param)
+      const capability = ctx.task === 'vision' ? 'default' : 'default'
+      return pickNvidiaAutoModel(lane, ctx.task, this.registry as unknown as { providersHealth: () => Record<string, { status: string; state: string; failureCount: number; latencyMs: number }> }, capability)
+    }
+    return ctx.model!
+  }
+
   /** Resolve and get Subgateway instance */
   getGateway(ctx: RouteContext): Gateway {
     const lane = this.resolve(ctx)
@@ -149,13 +219,17 @@ export function createRoutingGateway(
         if (typeof c === 'string' && c.includes('image_url')) return true
         return false
       })
+      // Auto-pick nvidia healthiest when model is empty or 'auto'
+      const effectiveModel = !opts.model || opts.model === 'auto'
+        ? router.resolveModel({ model: opts.model, messages: opts.messages as GatewayMessage[], task: isVision ? 'vision' : 'stream' })
+        : opts.model
       const lane = router.resolve({
-        model: opts.model,
+        model: effectiveModel,
         messages: opts.messages as GatewayMessage[],
         task: isVision ? 'vision' : 'stream',
       })
       const gw = registry.getOrDefault(lane)
-      return gw.stream(opts)
+      return gw.stream({ ...opts, model: effectiveModel })
     },
     async complete(opts: {
       model: string
@@ -166,12 +240,15 @@ export function createRoutingGateway(
       const isVision =
         Array.isArray(opts.prompt) &&
         opts.prompt.some((p) => (p as { type?: string }).type === 'image_url')
+      const effectiveModel = !opts.model || opts.model === 'auto'
+        ? router.resolveModel({ model: opts.model, task: isVision ? 'vision' : 'complete' })
+        : opts.model
       const lane = router.resolve({
-        model: opts.model,
+        model: effectiveModel,
         task: isVision ? 'vision' : 'complete',
       })
       const gw = registry.getOrDefault(lane)
-      return gw.complete(opts)
+      return gw.complete({ ...opts, model: effectiveModel })
     },
     async summarize(messages: GatewayMessage[], smallModel?: string): Promise<string> {
       // summarize always goes to compaction lane
