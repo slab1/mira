@@ -8,6 +8,8 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "skipLibCheck": true,
+    "preserveSymlinks": true,
+    "types": ["bun-types"],
   "baseUrl": ".",
   "paths": {
     "@/*": [

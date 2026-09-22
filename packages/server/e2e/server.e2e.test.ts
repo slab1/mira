@@ -40,6 +40,9 @@ beforeAll(async () => {
       PORT: String(PORT),
       MIRA_DB: safeTempFile('mira-e2e-test.db'),
       MIRA_TOKEN: TOKEN,
+      // Isolate from ~/.mira/mira.env — otherwise provisionFirstRunToken
+      // overwrites MIRA_TOKEN with the host file and every Bearer 401s.
+      MIRA_NO_AUTOPROVISION: '1',
     },
     stdout: 'pipe',
     stderr: 'pipe',

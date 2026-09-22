@@ -8,6 +8,8 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "preserveSymlinks": true,
+    "types": ["bun-types"],
     "allowImportingTsExtensions": true
   },
   "include": ["src/**/*", "../shared/src/**/*"]

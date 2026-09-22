@@ -22,6 +22,8 @@ beforeAll(async () => {
       PORT: String(PORT),
       MIRA_DB: safeTempFile('mira-e2e-queue.db'),
       MIRA_TOKEN: TOKEN,
+      // Isolate from ~/.mira/mira.env so TOKEN is the actual required bearer.
+      MIRA_NO_AUTOPROVISION: '1',
     },
     stdout: 'pipe',
     stderr: 'pipe',

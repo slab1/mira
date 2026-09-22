@@ -1,9 +1,10 @@
 [install]
 # Updated to allow normal install/update flows in this repo.
 frozenLockfile = false
-# proot/aarch64 EPERM fix: "copy" backend avoids symlink/hardlink failures in
-# the Bun store (matches existing resilience recipe from fedd1138).
-backend = "copy"
+# proot/aarch64 EPERM fix: default "hardlink"/"copy" backends fail on this host
+# (PermissionDenied copying cache -> node_modules). "symlink" is the proven
+# clean-slate backend (see reference/bun-store-clean-slate-reinstall.md).
+backend = "symlink"
 exact = false
 
 [install.cache]

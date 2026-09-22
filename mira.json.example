@@ -77,6 +77,22 @@
         "kind": "nvidia"
       },
       "models": {}
+    },
+    "colibri": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Colibri Local (MoE streamed from disk)",
+      "comment": "Pure C, zero deps — run frontier MoE locally: https://github.com/JustVugg/colibri — needs COLI_MODEL=... ./coli serve --port 8000",
+      "options": {
+        "baseURL": "http://127.0.0.1:8000/v1",
+        "apiKey": "{env:COLI_API_KEY}",
+        "timeout": 180000,
+        "kind": "colibri"
+      },
+      "models": {
+        "qwen3.6": { "name": "Qwen3.6 35B-A3B (20GB, recommended)", "limit": { "context": 32768, "output": 4096 } },
+        "olmoe": { "name": "OLMoE 7B (8GB, fastest)", "limit": { "context": 4096, "output": 2048 } },
+        "glm-5.2": { "name": "GLM-5.2 744B MoE (372GB)", "limit": { "context": 131072, "output": 8192 } }
+      }
     }
   },
   "mcp": {

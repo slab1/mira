@@ -135,6 +135,7 @@ export class ToolRegistry {
       () => import('./lsp.js'),
       () => import('./memory.js'),
       () => import('./session.js'),
+      () => import('./brio.js'),
       () => import('./other.js'),
     ]
     for (const load of modules) {
