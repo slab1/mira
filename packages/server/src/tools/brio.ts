@@ -110,7 +110,7 @@ export const brioTool = {
     'Score a closed set of options without generating (colibri Brio mode). Give state + options/questions/schema, get probabilities + entropy per choice (entropy 0..1: <0.4 confident, 0.4-0.8 unsure, >0.8 abstain). completion_tokens=0. Much cheaper than generation for triage, review, routing, JSON filling. Needs colibri server (COLI_MODEL=... ./coli serve --port 8000) or set provider.colibri.baseURL.',
   category: 'other',
   schema: brioSchema,
-  async execute(input: BrioInput): Promise<JsonValue> {
+  async execute(input: BrioInput, _ctx?: { sessionID?: string; messageID?: string }): Promise<JsonValue> {
     const { base, apiKey } = colibriBaseURL()
     const model = colibriModel(input.model)
     const body: Record<string, JsonValue> = {
