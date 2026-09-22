@@ -40,8 +40,35 @@ export function mountHealthRoutes(
       uptime: process.uptime(),
     }),
   )
-  app.get('/health', (c) =>
-    c.json({
+  // Non-blocking colibri probe for /health (800ms cap, never fails health)
+  async function colibriStatus(): Promise<{ ok: boolean; baseURL: string; latencyMs?: number; error?: string }> {
+    try {
+      const raw =
+        (deps.config as unknown as { provider?: Record<string, { options?: { baseURL?: string } }> }).provider
+          ?.colibri?.options?.baseURL ?? 'http://127.0.0.1:8000/v1'
+      const base = String(raw).replace(/\/$/, '').replace(/\/v1$/, '')
+      const url = `${base}/v1/models`
+      const t0 = Date.now()
+      const ctl = new AbortController()
+      const to = setTimeout(() => ctl.abort(), 800)
+      try {
+        const r = await fetch(url, { signal: ctl.signal })
+        clearTimeout(to)
+        return { ok: r.ok, baseURL: `${base}/v1`, latencyMs: Date.now() - t0, ...(r.ok ? {} : { error: `${r.status}` }) }
+      } catch (e) {
+        clearTimeout(to)
+        const msg = e instanceof Error ? e.message : String(e)
+        const isAbort = msg.includes('abort')
+        return { ok: false, baseURL: `${base}/v1`, error: isAbort ? 'timeout' : 'unreachable' }
+      }
+    } catch {
+      return { ok: false, baseURL: 'http://127.0.0.1:8000/v1', error: 'unreachable' }
+    }
+  }
+
+  app.get('/health', async (c) => {
+    const colibri = await colibriStatus()
+    return c.json({
       ok: true,
       version: '0.1.0',
       sha: GIT_SHA,
@@ -49,6 +76,7 @@ export function mountHealthRoutes(
       tools: deps.tools.count(),
       mcp: deps.mcp.count(),
       providers: Object.keys(deps.config.provider).length,
+      colibri,
       terminal: { enabled: deps.TERMINAL_ENABLED, sandbox: deps.TERMINAL_SANDBOX },
       ws: {
         auth: !!(deps.REQUIRED_TOKEN || deps.API_KEY_OWNERS.size),
@@ -56,8 +84,8 @@ export function mountHealthRoutes(
       },
       uptime: process.uptime(),
       memory: process.memoryUsage(),
-    }),
-  )
+    })
+  })
   // Helpers: extract lane/provider health if gateway is a routing gateway (has registry)
   function gatewayHealthSnapshot(): {
     lanes?: Record<string, unknown>

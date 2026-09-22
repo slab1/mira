@@ -31,6 +31,7 @@ export NVIDIA_API_KEY="${NVIDIA_API_KEY:-}"
 export OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
 export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+export COLI_API_KEY="${COLI_API_KEY:-local}"
 
 effective_port() {
   # Prefer .mira/port written by server rotation (repo root or cwd)
@@ -66,6 +67,13 @@ case "${1:-start}" in
         if [ -z "$try_port" ]; then continue; fi
         if curl -sf "http://127.0.0.1:$try_port/healthz" >/dev/null 2>&1; then
           echo "[mira] ✓ running on http://127.0.0.1:$try_port (pid $(cat "$PID_FILE"), log $LOG_FILE)"
+          # colibri auto-detect (non-blocking, 1s cap, log only — GET /health also probes)
+          COLI_BASE="${COLI_BASE_URL:-http://127.0.0.1:8000/v1}"
+          if curl -sf --max-time 1 "${COLI_BASE%/v1}/v1/models" >/dev/null 2>&1 || curl -sf --max-time 1 "${COLI_BASE}/models" >/dev/null 2>&1 || curl -sf --max-time 1 "http://127.0.0.1:8000/v1/models" >/dev/null 2>&1; then
+            echo "[mira] colibri: ready on ${COLI_BASE} (health: colibri.ok)"
+          else
+            echo "[mira] colibri: not running — COLI_MODEL=/data/olmoe ./colibri/c/coli serve --port 8000 (docs/colibri.md)"
+          fi
           # persist effective port for callers that read $PORT env later
           if [ -f "$REPO_DIR/.mira/port" ]; then true; else mkdir -p "$REPO_DIR/.mira" && echo "$try_port" > "$REPO_DIR/.mira/port" 2>/dev/null || true; fi
           exit 0
