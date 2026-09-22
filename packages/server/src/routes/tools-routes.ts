@@ -167,6 +167,26 @@ export function mountToolsRoutes(
     })
   })
 
+  // Brio — closed-set scoring via colibri (POST /tools/brio or POST /v1/brio, keeps nvidia primary)
+  // Web calls POST /tools/brio with {state, question, options} / {state, questions[]} / {state, schema, task}
+  // Returns {ok:true, baseURL, model, result:{answer,entropy,choices,usage}} or {ok:false, hint}
+  // Also aliased to POST /v1/brio for direct colibri-compatible path via Mira.
+  const brioHandler = async (c: Context) => {
+    const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
+    if (!body || typeof body !== 'object') return c.json({ ok: false, error: 'body required', hint: 'POST {state, question, options} or {state, questions[]} or {state, schema, task}' }, 400)
+    try {
+      const { brioTool } = await import('../tools/brio.js')
+      const out = (await brioTool.execute(body as never, { sessionID: 'brio', messageID: 'brio' } as never)) as Record<string, unknown>
+      // out.ok false still returns 200 so web can show hint without 4xx error flash
+      return c.json(out, 200)
+    } catch (e) {
+      return c.json({ ok: false, error: String(e), hint: 'Is colibri running? `COLI_MODEL=/data/olmoe ./colibri/c/coli serve --port 8000`' }, 500)
+    }
+  }
+  app.post('/tools/brio', brioHandler)
+  app.post('/v1/brio', brioHandler)
+  // GET /health already probes colibri via /v1/models — keep GET /health colibri probe alive
+
   // Autocomplete — ghost-text via gateway
   app.post('/complete', async (c: Context) => {
     if (process.env.MIRA_AUTOCOMPLETE === '0')

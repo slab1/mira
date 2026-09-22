@@ -16,6 +16,7 @@ import { SessionJobs } from './components/SessionJobs'
 import { ToastViewport, toast } from './components/Toast'
 import { ConnectModal } from './components/ConnectModal'
 import { HeaderModelSelector, HeaderAgentSelector } from './components/HeaderSelectors'
+import BrioPage from './pages/Brio'
 import {
   api,
   getToken,
@@ -271,6 +272,15 @@ export default function App() {
     return 'chat' as ViewMode
   })()
   const [viewMode, setViewMode] = createSignal<ViewMode>(initialView)
+  // Brio page — separate top-level page beside chat/split/graph. URL ?view=brio deep-links.
+  const initialPage = (() => {
+    try {
+      const v = new URLSearchParams(window.location.search).get('view')
+      if (v === 'brio') return 'brio' as const
+    } catch {}
+    return 'chat' as const
+  })()
+  const [page, setPage] = createSignal<'chat' | 'brio'>(initialPage)
   // H2-2 Mira Score GA — trace viewer drawer
   const [traceOpen, setTraceOpen] = createSignal(false)
   const [miraScore, setMiraScore] = createSignal<{ score: number; costUSD: number } | null>(null)
@@ -432,10 +442,24 @@ export default function App() {
     // deep-link ?view=graph keeps URL in sync when viewMode changes
     createEffect(() => {
       const v = viewMode()
+      if (page() === 'brio') return
       try {
         const url = new URL(window.location.href)
         if (v === 'chat') url.searchParams.delete('view')
         else url.searchParams.set('view', v)
+        window.history.replaceState(null, '', url.toString())
+      } catch {}
+    })
+    createEffect(() => {
+      const p = page()
+      try {
+        const url = new URL(window.location.href)
+        if (p === 'brio') url.searchParams.set('view', 'brio')
+        else if (url.searchParams.get('view') === 'brio') {
+          const v = viewMode()
+          if (v === 'chat') url.searchParams.delete('view')
+          else url.searchParams.set('view', v)
+        }
         window.history.replaceState(null, '', url.toString())
       } catch {}
     })
@@ -510,6 +534,19 @@ export default function App() {
   const cycleViewMode = () => {
     setViewMode((v) => (v === 'chat' ? 'split' : v === 'split' ? 'graph' : 'chat'))
   }
+
+  // /brio slash → open Brio page
+  createEffect(() => {
+    const inp = store.input()
+    const trimmed = inp.trim()
+    if (trimmed === '/brio') {
+      setPage('brio')
+      const handle = setTimeout(() => {
+        if (store.input().trim() === trimmed) store.setInput('')
+      }, 400)
+      onCleanup(() => clearTimeout(handle))
+    }
+  })
 
   // H2-2: fetch Mira Score for current session (for header pill)
   createEffect(() => {
@@ -764,6 +801,25 @@ export default function App() {
                 }}
               >
                 ◈ Memory
+              </button>
+              <button
+                type="button"
+                class="btn btn-ghost"
+                onClick={() => setPage(page() === 'brio' ? 'chat' : 'brio')}
+                title="Brio — closed-set scoring via colibri (nvidia primary, local opportunistic)"
+                aria-label="Toggle Brio page"
+                aria-pressed={page() === 'brio' ? 'true' : 'false'}
+                style={{
+                  padding: '5px 9px',
+                  'font-size': 'var(--fs-xs)',
+                  border: '1px solid var(--border)',
+                  'border-radius': 'var(--r-md)',
+                  background: page() === 'brio' ? 'var(--accent-soft)' : 'transparent',
+                  color: page() === 'brio' ? 'var(--accent)' : 'var(--fg-subtle)',
+                  'border-color': page() === 'brio' ? 'var(--accent-border)' : 'var(--border)',
+                }}
+              >
+                ⟡ Brio
               </button>
               <button
                 type="button"
@@ -1180,6 +1236,10 @@ export default function App() {
           </Show>
 
           <Show
+            when={page() === 'brio'}
+            fallback={
+              <>
+          <Show
             when={viewMode() === 'chat'}
             fallback={
               <Show
@@ -1429,10 +1489,15 @@ export default function App() {
               />
             </div>
           </Show>
-          <QuestionPrompt store={store} />
-        </div>
-        {/* Activity scrim on narrow screens */}
-        <Show when={!activityCollapsed()}>
+           <QuestionPrompt store={store} />
+              </>
+            }
+          >
+            <BrioPage />
+          </Show>
+         </div>
+         {/* Activity scrim on narrow screens — hidden on Brio page */}
+         <Show when={!activityCollapsed() && page() !== 'brio'}>
           <div
             class="activity-scrim"
             aria-hidden="true"

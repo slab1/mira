@@ -663,7 +663,14 @@ function invalidateToolCache(): void {
 
 // ── REST ─────────────────────────────────────────────────────────────
 export const api = {
-  health: () => req<{ ok: boolean; version: string; tools: number }>('/health'),
+  health: () =>
+    req<{
+      ok: boolean
+      version: string
+      tools: number
+      providers?: number
+      colibri?: { ok: boolean; baseURL: string; latencyMs?: number; error?: string }
+    }>('/health'),
 
   listSessions: () => req<Session[]>('/session'),
   createSession: (body: Partial<Session> = {}) =>
