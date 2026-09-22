@@ -1,0 +1,20 @@
+# Local colibri sidecar — Mira keeps nvidia primary, colibri opportunistic
+services:
+  colibri:
+    image: ghcr.io/slab1/colibri:slim
+    container_name: colibri
+    restart: unless-stopped
+    volumes:
+      - ./models/olmoe:/model:ro  # host: ./models/olmoe (7GB) or /nvme/qwen3.6 — not baked
+    ports:
+      - "8000:8000"
+    command: ["serve", "--host", "0.0.0.0", "--port", "8000", "--model-id", "olmoe"]
+    environment:
+      - COLI_MODEL=/model
+      - COLI_API_KEY=local
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
