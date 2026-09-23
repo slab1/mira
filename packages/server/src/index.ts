@@ -55,6 +55,9 @@ import { mountToolsRoutes } from './routes/tools-routes.js'
 import { mountWorkspaceRoutes } from './routes/workspace.js'
 import { mountSymbolRoutes } from './routes/symbol.js'
 import { mountStaticRoutes } from './routes/static.js'
+import { mountEvolutionRoutes } from './routes/evolution.js'
+import { ImprovementLedger } from './evolution/ledger.js'
+import { EvolutionObserver } from './evolution/observer.js'
 import { mountMiddleware } from './middleware/index.js'
 import { boundSend, WS_CLOSE_TOO_SLOW } from './ws-backpressure.js'
 import { autoImportSessions, exportAllSessions } from './session/cross-device.js'
@@ -676,6 +679,14 @@ async function main() {
   mountLearningRoutes(app, learning)
   mountWorkspaceRoutes(app)
   mountSymbolRoutes(app)
+  // Phase 1 Evolution Core — read-only, no auto-promote, no canary/shadow (MIRA_WEAKNESSES_AND_OBSTACLES.md:23)
+  try {
+    const evolutionLedger = new ImprovementLedger(db as unknown as import('./storage/db.js').MiraDB, bus)
+    const evolutionObserver = new EvolutionObserver({ bus, registry: registry as unknown as { hasKey: (k: string) => boolean } })
+    try { evolutionObserver.watchBus() } catch {}
+    mountEvolutionRoutes(app, { db: db as unknown as import('./storage/db.js').MiraDB, bus, ledger: evolutionLedger, observer: evolutionObserver })
+    log(`evolution ready — observer watching Bus, ledger=evolution_ledger, routes /evolution/* (Phase 1 read-only)`)
+  } catch (e) { warn('evolution init failed:', String(e)) }
 
   // Terminal — HTTP status + browser client hint
   app.get('/terminal', (c) => {
