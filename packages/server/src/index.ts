@@ -61,6 +61,8 @@ import { EvolutionObserver } from './evolution/observer.js'
 import { mountShadowRoutes } from './routes/shadow.js'
 import { ShadowMira } from './shadow/shadow.js'
 import { mountEngineRoutes } from './routes/engines.js'
+import { CanaryManager } from './canary/canary.js'
+import { mountCanaryRoutes } from './routes/canary.js'
 import { EngineRegistry } from './engines/registry.js'
 import { AgentEngine } from './engines/agent.js'
 import { MemoryEngine } from './engines/memory.js'
@@ -748,6 +750,15 @@ async function main() {
       mountShadowRoutes(app, { shadow: shadowMira })
       ;(globalThis as unknown as Record<string, unknown>).__miraShadow = shadowMira
       log(`shadow ready — isolated shadow env (shadow.db or :memory:), Bus isolated, telemetry ingesting`)
+
+      // Phase 5 Canary — 5% traffic via SubgatewayRegistry lane canary vs default per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_EVOLUTION_SPEC.md Phase 5 + MIRA_SYSTEM_DOCUMENTATION.md:10 Reversibility
+      try {
+        const canaryLedger = new ImprovementLedger(db as unknown as import('./storage/db.js').MiraDB, bus)
+        const canaryManager = new CanaryManager({ registry: engineRegistry, bus, ledger: canaryLedger, metrics, gatewayRegistry: registry as unknown as never, shadow: shadowMira })
+        mountCanaryRoutes(app, { manager: canaryManager })
+        ;(globalThis as unknown as Record<string, unknown>).__miraCanary = canaryManager
+        log(`canary ready — 5% traffic lane canary vs default, monitor 1m, gates +20%/-0.5pp, promote/rollback via EngineRegistry+ledger`)
+      } catch (e) { warn('canary init failed:', String(e)) }
     } catch (e) { warn('shadow init failed:', String(e)) }
   } catch (e) { warn('engine registry init failed:', String(e)) }
 
