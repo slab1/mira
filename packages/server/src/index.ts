@@ -55,6 +55,26 @@ import { mountToolsRoutes } from './routes/tools-routes.js'
 import { mountWorkspaceRoutes } from './routes/workspace.js'
 import { mountSymbolRoutes } from './routes/symbol.js'
 import { mountStaticRoutes } from './routes/static.js'
+import { mountEvolutionRoutes } from './routes/evolution.js'
+import { ImprovementLedger } from './evolution/ledger.js'
+import { EvolutionObserver } from './evolution/observer.js'
+import { mountShadowRoutes } from './routes/shadow.js'
+import { ShadowMira } from './shadow/shadow.js'
+import { mountEngineRoutes } from './routes/engines.js'
+import { CanaryManager } from './canary/canary.js'
+import { mountCanaryRoutes } from './routes/canary.js'
+import { EngineRegistry } from './engines/registry.js'
+import { AgentEngine } from './engines/agent.js'
+import { MemoryEngine } from './engines/memory.js'
+import { RetrievalEngine } from './engines/retrieval.js'
+import { PlanningEngine } from './engines/planning.js'
+import { EvaluationEngine } from './engines/evaluation.js'
+import { LearningEngine } from './engines/learning.js'
+import { ToolEngine } from './engines/tool.js'
+import { SecurityEngine } from './engines/security.js'
+import { ModelEngine } from './engines/model.js'
+import { mountMemoryEvolutionRoutes } from './routes/memory-evolution.js'
+import { EvolutionMemory } from './memory-evolution/evolution-memory.js'
 import { mountMiddleware } from './middleware/index.js'
 import { boundSend, WS_CLOSE_TOO_SLOW } from './ws-backpressure.js'
 import { autoImportSessions, exportAllSessions } from './session/cross-device.js'
@@ -676,6 +696,81 @@ async function main() {
   mountLearningRoutes(app, learning)
   mountWorkspaceRoutes(app)
   mountSymbolRoutes(app)
+  // Phase 1 Evolution Core — read-only, no auto-promote, no canary/shadow (MIRA_WEAKNESSES_AND_OBSTACLES.md:23)
+  try {
+    const evolutionLedger = new ImprovementLedger(db as unknown as import('./storage/db.js').MiraDB, bus)
+    const evolutionObserver = new EvolutionObserver({ bus, registry: registry as unknown as { hasKey: (k: string) => boolean } })
+    try { evolutionObserver.watchBus() } catch {}
+    mountEvolutionRoutes(app, { db: db as unknown as import('./storage/db.js').MiraDB, bus, ledger: evolutionLedger, observer: evolutionObserver })
+    log(`evolution ready — observer watching Bus, ledger=evolution_ledger, routes /evolution/* (Phase 1 read-only)`)
+  } catch (e) { warn('evolution init failed:', String(e)) }
+
+  // Phase 3 Engine Registry — 9 modular engines per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_ENGINE_REGISTRY.md
+  try {
+    const engineRegistry = new EngineRegistry()
+    // keep nvidia primary + colibri opportunistic — ModelEngine probes but never requires colibri
+    const hasKeyCheck = (k: string): boolean => {
+      try {
+        const cfg = (getConfig() as unknown as { provider?: Record<string, { options?: { apiKey?: string | string[] } }> }).provider?.[k]
+        if (!cfg?.options?.apiKey) return false
+        const vals = Array.isArray(cfg.options.apiKey) ? cfg.options.apiKey : [cfg.options.apiKey]
+        return vals.some((v) => {
+          const expanded = String(v).replace(/\{env:([^}]+)\}/g, (_: string, name: string) => process.env[name] ?? '')
+          return !!expanded.trim()
+        })
+      } catch { return false }
+    }
+    engineRegistry.register(new AgentEngine())
+    engineRegistry.register(new MemoryEngine())
+    engineRegistry.register(new RetrievalEngine())
+    engineRegistry.register(new PlanningEngine())
+    engineRegistry.register(new EvaluationEngine())
+    engineRegistry.register(new LearningEngine({ schedulerStatus: () => { try { return learning.scheduler.status() } catch { return null } } }))
+    engineRegistry.register(new ToolEngine({ count: () => { try { return tools.count() } catch { return 0 } }, hasKey: hasKeyCheck }))
+    engineRegistry.register(new SecurityEngine())
+    engineRegistry.register(
+      new ModelEngine({
+        providerKeys: () => {
+          try { return Object.keys((getConfig() as unknown as { provider?: Record<string, unknown> }).provider ?? {}) } catch { return Object.keys(config.provider) }
+        },
+        hasKey: hasKeyCheck,
+        healthSnapshot: () => {
+          try { return (registry as unknown as { healthSnapshot: () => { lanes: Record<string, unknown>; providers: Record<string, unknown> } }).healthSnapshot() } catch { return { lanes: {}, providers: {} } }
+        },
+        primary: 'nvidia',
+        fallback: 'colibri',
+      }),
+    )
+    mountEngineRoutes(app, { registry: engineRegistry })
+    // expose for tests/routes that may import it dynamically (optional)
+    ;(globalThis as unknown as Record<string, unknown>).__miraEngineRegistry = engineRegistry
+    log(`engines ready — 9 registered`)
+
+    // Phase 4 Shadow Mira — isolated Candidate vs Production per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_EVOLUTION_SPEC.md Phase 4 + MIRA_SYSTEM_DOCUMENTATION.md:11
+    try {
+      const shadowMira = new ShadowMira({ registry: engineRegistry, bus, metrics, gatewayRegistry: registry as unknown as { healthSnapshot: () => unknown } })
+      mountShadowRoutes(app, { shadow: shadowMira })
+      ;(globalThis as unknown as Record<string, unknown>).__miraShadow = shadowMira
+      log(`shadow ready — isolated shadow env (shadow.db or :memory:), Bus isolated, telemetry ingesting`)
+
+      // Phase 5 Canary — 5% traffic via SubgatewayRegistry lane canary vs default per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_EVOLUTION_SPEC.md Phase 5 + MIRA_SYSTEM_DOCUMENTATION.md:10 Reversibility
+      try {
+        const canaryLedger = new ImprovementLedger(db as unknown as import('./storage/db.js').MiraDB, bus)
+        const canaryManager = new CanaryManager({ registry: engineRegistry, bus, ledger: canaryLedger, metrics, gatewayRegistry: registry as unknown as never, shadow: shadowMira })
+        mountCanaryRoutes(app, { manager: canaryManager })
+        ;(globalThis as unknown as Record<string, unknown>).__miraCanary = canaryManager
+        log(`canary ready — 5% traffic lane canary vs default, monitor 1m, gates +20%/-0.5pp, promote/rollback via EngineRegistry+ledger`)
+      } catch (e) { warn('canary init failed:', String(e)) }
+    } catch (e) { warn('shadow init failed:', String(e)) }
+  } catch (e) { warn('engine registry init failed:', String(e)) }
+
+  // Phase 6 Memory Evolution — per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_SYSTEM_DOCUMENTATION.md:6 + MIRA_EVOLUTION_SPEC.md Phase 6 (Failure Memory)
+  try {
+    const evolutionMemory = new EvolutionMemory(db as unknown as import('./storage/db.js').MiraDB, bus)
+    mountMemoryEvolutionRoutes(app, { db: db as unknown as import('./storage/db.js').MiraDB, bus, memory: evolutionMemory })
+    ;(globalThis as unknown as Record<string, unknown>).__miraEvolutionMemory = evolutionMemory
+    log(`memory-evolution ready — failure memory active`)
+  } catch (e) { warn('memory-evolution init failed:', String(e)) }
 
   // Terminal — HTTP status + browser client hint
   app.get('/terminal', (c) => {

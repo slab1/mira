@@ -402,7 +402,7 @@ describe('auto-generate mira.json from example', () => {
     expect(config.model).toBeDefined()
     // Verify the generated file has the example content
     const written = JSON.parse(readFileSync(miraPath, 'utf-8'))
-    expect(written.model).toBe('openrouter/anthropic/claude-sonnet-4')
+    expect(written.model).toBe('nvidia/deepseek-ai/deepseek-v4-flash')
   })
 
   test('does not overwrite existing mira.json', async () => {

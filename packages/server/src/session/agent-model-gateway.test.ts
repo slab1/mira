@@ -11,12 +11,15 @@ import { getAgentTemplates } from '../agents/templates.js'
 import type { Gateway, GatewayChunk } from '../gateway/index.js'
 
 // No fetch stubs in this file — gateway resolution is pure (no I/O).
-// ANTHROPIC_API_KEY is toggled per test to exercise the resolve vs fallback
-// paths; the original value is always restored.
-const savedKey = process.env.ANTHROPIC_API_KEY
+// NVIDIA_API_KEY (default provider) and ANTHROPIC_API_KEY are toggled per test
+// to exercise the resolve vs fallback paths; originals are always restored.
+const savedNvidiaKey = process.env.NVIDIA_API_KEY
+const savedAnthropicKey = process.env.ANTHROPIC_API_KEY
 afterEach(() => {
-  if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY
-  else process.env.ANTHROPIC_API_KEY = savedKey
+  if (savedNvidiaKey === undefined) delete process.env.NVIDIA_API_KEY
+  else process.env.NVIDIA_API_KEY = savedNvidiaKey
+  if (savedAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY
+  else process.env.ANTHROPIC_API_KEY = savedAnthropicKey
 })
 
 const stubGateway: Gateway = {
@@ -55,15 +58,17 @@ describe('agent model via gateway (P0-1 exp-1)', () => {
   })
 
   test('selection flows through gateway resolveModel (default-provider normalization)', () => {
-    process.env.ANTHROPIC_API_KEY = 'test-key'
-    // An unprefixed model gains the default provider via the gateway path —
-    // raw string passthrough would return it unchanged.
+    process.env.NVIDIA_API_KEY = 'test-key'
+    delete process.env.ANTHROPIC_API_KEY
+    // Default provider is nvidia — an unprefixed model gains that prefix via
+    // the gateway path; raw string passthrough would return it unchanged.
     expect(resolveEffectiveModel({ explicitModel: 'deepseek-chat' })).toBe(
-      'anthropic/deepseek-chat',
+      'nvidia/deepseek-chat',
     )
   })
 
   test('falls back to raw candidate when gateway cannot resolve (no API key)', () => {
+    delete process.env.NVIDIA_API_KEY
     delete process.env.ANTHROPIC_API_KEY
     expect(resolveEffectiveModel({ explicitModel: 'deepseek-chat' })).toBe('deepseek-chat')
     // Precedence still holds on the fallback path

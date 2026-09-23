@@ -1,5 +1,18 @@
-import { describe, it, expect } from 'bun:test'
+import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import { resolveEffectiveModel } from './prompt.js'
+
+// Pin ANTHROPIC_API_KEY so the first routing.fallbacks entry
+// (anthropic/claude-sonnet-4) resolves deterministically. Without it, only
+// GOOGLE_API_KEY may be present in the shell → fallback lands on
+// google/gemini-2.0-flash instead. Restore the original env after the suite.
+const savedAnthropicKey = process.env.ANTHROPIC_API_KEY
+beforeAll(() => {
+  process.env.ANTHROPIC_API_KEY = 'test-key'
+})
+afterAll(() => {
+  if (savedAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY
+  else process.env.ANTHROPIC_API_KEY = savedAnthropicKey
+})
 
 describe('resolveEffectiveModel retired guard', () => {
   it('falls back when model is retired', () => {

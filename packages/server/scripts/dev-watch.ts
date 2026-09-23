@@ -9,8 +9,32 @@
  *
  * Usage: bun ./scripts/dev-watch.ts [--port=4098] [...server args]
  */
-import { watch, readdirSync, statSync, existsSync } from 'node:fs'
+import { watch, readdirSync, statSync, existsSync, readFileSync } from 'node:fs'
 import { join, resolve, relative } from 'node:path'
+import { homedir } from 'node:os'
+
+// Mirror serve-local.sh: source ~/.mira/mira.env into process.env before spawning server
+function loadMiraEnv() {
+  const cands = [
+    process.env.MIRA_DIR?.trim() ? join(process.env.MIRA_DIR.trim(), 'mira.env') : null,
+    process.env.XDG_CONFIG_HOME?.trim() ? join(process.env.XDG_CONFIG_HOME.trim(), 'mira', 'mira.env') : null,
+    join(homedir(), '.mira', 'mira.env'),
+  ].filter(Boolean) as string[]
+  for (const p of cands) {
+    try {
+      if (!existsSync(p)) continue
+      for (const line of readFileSync(p, 'utf-8').split('\n')) {
+        const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/)
+        if (!m) continue
+        const k = m[1]
+        const v = m[2].replace(/^(['"])(.*)\1$/, '$2').trim()
+        if (!(k in process.env) && v) process.env[k] = v
+      }
+      break
+    } catch {}
+  }
+}
+loadMiraEnv()
 
 const SERVER_DIR = resolve(import.meta.dir, '..')
 const ROOTS = [join(SERVER_DIR, 'src'), resolve(SERVER_DIR, '../shared/src')].filter((d) =>

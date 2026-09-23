@@ -41,6 +41,8 @@ beforeAll(async () => {
       MIRA_TERMINAL_SANDBOX: '0',
       ANTHROPIC_API_KEY: 'sk-test-gaps',
       MIRA_TOKEN: TOKEN,
+      // Isolate from ~/.mira/mira.env so TOKEN is the actual required bearer.
+      MIRA_NO_AUTOPROVISION: '1',
     },
     stdout: 'pipe',
     stderr: 'pipe',
