@@ -58,6 +58,8 @@ import { mountStaticRoutes } from './routes/static.js'
 import { mountEvolutionRoutes } from './routes/evolution.js'
 import { ImprovementLedger } from './evolution/ledger.js'
 import { EvolutionObserver } from './evolution/observer.js'
+import { mountShadowRoutes } from './routes/shadow.js'
+import { ShadowMira } from './shadow/shadow.js'
 import { mountEngineRoutes } from './routes/engines.js'
 import { EngineRegistry } from './engines/registry.js'
 import { AgentEngine } from './engines/agent.js'
@@ -739,6 +741,14 @@ async function main() {
     // expose for tests/routes that may import it dynamically (optional)
     ;(globalThis as unknown as Record<string, unknown>).__miraEngineRegistry = engineRegistry
     log(`engines ready — 9 registered`)
+
+    // Phase 4 Shadow Mira — isolated Candidate vs Production per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_EVOLUTION_SPEC.md Phase 4 + MIRA_SYSTEM_DOCUMENTATION.md:11
+    try {
+      const shadowMira = new ShadowMira({ registry: engineRegistry, bus, metrics, gatewayRegistry: registry as unknown as { healthSnapshot: () => unknown } })
+      mountShadowRoutes(app, { shadow: shadowMira })
+      ;(globalThis as unknown as Record<string, unknown>).__miraShadow = shadowMira
+      log(`shadow ready — isolated shadow env (shadow.db or :memory:), Bus isolated, telemetry ingesting`)
+    } catch (e) { warn('shadow init failed:', String(e)) }
   } catch (e) { warn('engine registry init failed:', String(e)) }
 
   // Terminal — HTTP status + browser client hint
