@@ -28,7 +28,7 @@ import type { JsonValue } from "../types/index.js"
 import type { Bus } from "../bus/index.js"
 import type { ImprovementProposal } from "./proposal.js"
 
-export type LedgerVerdict = "verified" | "rejected" | "accepted" | "pending"
+export type LedgerVerdict = "verified" | "rejected" | "accepted" | "pending" | "pending_approval" | "budget_blocked" | "security_blocked" | "rolledback"
 
 export interface LedgerEntry {
   id: string // proposal.id

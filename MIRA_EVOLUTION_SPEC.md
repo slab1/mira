@@ -42,6 +42,22 @@ Policy: Every patch must pass `runEval("pr")` before promotion (fail-closed, `MI
 
 * **Implemented:** `agent-eval` (golden datasets), `brio.test.ts` mock, `typecheck` (6 tsconfigs `preserveSymlinks`) + `test` (523 pass) + `build` must all green before promotion. `MIRA_SELF_HEALING.md` verifies via `diagnose` tool.
 
+## Phase 2 — Safety — Implemented
+
+Per `MIRA_WEAKNESSES_AND_OBSTACLES.md:23` Phase 2 + §13 cost / §18 autonomy — safety gates before Verifier. Keeps nvidia primary + colibri opportunistic, `MIRA_NO_AUTOPROVISION` respected, no local hardware.
+
+* **Implemented:**
+  * `packages/server/src/evolution/risk.ts` — `RiskEngine.assess(proposal)` `{level:'low'|'medium'|'high', score:number, reasons:string[]}` on changedFiles, patch size, permission scope, P0 vs P1, cost
+  * `packages/server/src/evolution/autonomy.ts` — `AutonomyLevels` 0-5 + `selectLevel(risk, proposal): 0..5` + `requiresApproval(level, risk): boolean` (high-risk → human per §18)
+  * `packages/server/src/evolution/approval.ts` — `ApprovalGate.requestApproval(proposal, level): {approved, approver?, pending?}` mock human, emits `evolution.approval` BusEvent; `POST /evolution/approve/:id`
+  * `packages/server/src/evolution/resources.ts` — `ResourceLimits.checkBudget(proposal, cost): {allowed, reason?}` per-task/per-agent/per-mission/daily (§13), emits `evolution.budget`
+  * `packages/server/src/evolution/security.ts` — `SecurityValidator.validate(patch): {passed, findings}` no secrets/permission escalation/static checks (§8), emits `evolution.security`
+  * `packages/server/src/evolution/rollback.ts` — `RollbackManager.createRollbackPoint(ledgerId): {version, snapshotIds}` + `rollback(ledgerId): void` file revert + DB + config (§6), emits `evolution.rollback`
+  * `packages/server/src/routes/evolution.ts` — `POST /evolution/observe` now runs Risk→Autonomy→Approval→Resources→Security before Verifier; adds `POST /evolution/approve/:id` + `POST /evolution/rollback/:id` + `GET /evolution/risk/:id`; `GET /evolution/health` phase:"Phase 2 Safety"
+* **Tests:** `packages/server/src/evolution/phase2.test.ts` 12 new (risk 3 + autonomy 2 + approval 1 + resources 2 + security 1 + rollback 1 + routes 3) — total ≥20 with `evolution.test.ts` Phase 1 (8)
+* **Health:** `GET /evolution/health` phase:"Phase 2 Safety", primary:"nvidia" fallback:"colibri"
+* **Target (remaining):** Phase 4 Shadow / Phase 5 Canary promotion gate still Target; mock human → real UI in Phase 6.
+
 ## Canary — Target
 
 * **Target:** Canary deploy to `local` lane (`colibri/olmoe` 0-cost) before `default` (`nvidia`). Currently `local`/`compaction` keep `nvidia` primary, `colibri` fallback — canary would flip primary for canary sessions only.
