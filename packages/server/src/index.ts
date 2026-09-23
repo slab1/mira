@@ -73,6 +73,8 @@ import { LearningEngine } from './engines/learning.js'
 import { ToolEngine } from './engines/tool.js'
 import { SecurityEngine } from './engines/security.js'
 import { ModelEngine } from './engines/model.js'
+import { mountMemoryEvolutionRoutes } from './routes/memory-evolution.js'
+import { EvolutionMemory } from './memory-evolution/evolution-memory.js'
 import { mountMiddleware } from './middleware/index.js'
 import { boundSend, WS_CLOSE_TOO_SLOW } from './ws-backpressure.js'
 import { autoImportSessions, exportAllSessions } from './session/cross-device.js'
@@ -761,6 +763,14 @@ async function main() {
       } catch (e) { warn('canary init failed:', String(e)) }
     } catch (e) { warn('shadow init failed:', String(e)) }
   } catch (e) { warn('engine registry init failed:', String(e)) }
+
+  // Phase 6 Memory Evolution — per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_SYSTEM_DOCUMENTATION.md:6 + MIRA_EVOLUTION_SPEC.md Phase 6 (Failure Memory)
+  try {
+    const evolutionMemory = new EvolutionMemory(db as unknown as import('./storage/db.js').MiraDB, bus)
+    mountMemoryEvolutionRoutes(app, { db: db as unknown as import('./storage/db.js').MiraDB, bus, memory: evolutionMemory })
+    ;(globalThis as unknown as Record<string, unknown>).__miraEvolutionMemory = evolutionMemory
+    log(`memory-evolution ready — failure memory active`)
+  } catch (e) { warn('memory-evolution init failed:', String(e)) }
 
   // Terminal — HTTP status + browser client hint
   app.get('/terminal', (c) => {
