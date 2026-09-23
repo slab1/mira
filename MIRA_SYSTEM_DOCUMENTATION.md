@@ -1,64 +1,290 @@
 # Mira System Documentation
 
-> **Status: Implemented** — verified in `slab1/mira:main` at `c34759a8` (523 pass / 0 fail, `:4096` healthy).  
-> **Policy:** Planned capabilities must not be represented as already implemented. Each section marks `Implemented` / `Target` / `Policy`.
+**Status:** Architecture and product baseline
+**Review Date:** 2026-09-23
 
-## Overall Architecture
+## 1. Purpose
 
-```
-[Clients] TUI (SolidJS) | Web (SolidJS/Vite + PWA + Brio) | VS Code | Slack | CLI
-         ↕ REST / SSE / WebSocket (+ MIRA_TOKEN / MIRA_API_KEYS)
-[Server :4096 — Bun, Hono, SQLite]
-  SessionPrompt.loop → context = system + skills + memory + history
-  → Gateway (SubgatewayRegistry + ProviderRegistry) → Tools (22) → Guardrails → Bus
-  → Evaluation → Learning → Evolution → Memory
-```
+Mira is an AI engineering agent platform designed to help users understand, build, modify, test, operate, and improve software systems.
 
-**Implemented:** Monorepo `server` (Bun 1.3.14, Hono, SQLite `data/mira.db`), `web` (SolidJS, Vite, PWA, `Brio` page), `cli` (`mira-cli-ts`), `shared` (Zod config), `tui`, `slack`. Port file `.mira/port`, `serve-local.sh` / `scripts/dev-watch.ts` (now sources `~/.mira/mira.env`), `docker-compose.yml` + `docker-compose.override.yml` (colibri sidecar).
+Mira combines:
 
-## Core Mira Loop — Implemented
+* AI agents
+* Persistent memory
+* Tool execution
+* Code intelligence
+* Planning
+* Research
+* Evaluation
+* Safe code modification
+* Diagnostics
+* Recovery
+* Controlled system evolution
+
+The long-term product thesis is:
+
+> Mira should not merely use AI to perform engineering work. Mira should use engineering feedback to improve how Mira performs engineering work.
+
+## 2. System Lifecycle
+
+The intended lifecycle is:
 
 ```text
-Memory → Intelligence → Agents → Tools → Execution → Evaluation → Learning → Evolution → Memory
+Observe
+  ↓
+Learn / Research
+  ↓
+Diagnose
+  ↓
+Plan
+  ↓
+Experiment
+  ↓
+Patch
+  ↓
+Verify
+  ↓
+Canary
+  ↓
+Promote / Roll Back
+  ↓
+Remember
 ```
 
-* **Memory — Implemented:** `shared/memory_controller.py` HCM L1 Working/L2 Episodic/L3 Semantic/L4 Procedural; `~/.config/opencode/memory/aether/` + `memory/` injection per turn; snapshots `.coli_usage` for colibri.
-* **Intelligence — Implemented:** `gateway/` `ProviderRegistry` (longest-prefix, `hasKey` via `expandEnv`), `SubgatewayRegistry` lanes `default/cheap/vision/local/compaction/agent:*`, `router.ts` + `subgateway.ts` (circuit, rate limit, retry, health).
-* **Agents — Implemented:** `agents/templates.ts` `code/ask/plan` + per-agent LLM, `AgentRouter`, `orchestrator` DAG, `inspectable subagents` via `ToolRegistry` `subagentRunner`.
-* **Tools — Implemented:** 22 tools (`bash, read, write, edit, glob, grep, webfetch, websearch, todowrite, task, orchestrate, browser (Playwright), findings, question, lsp, memory, session, brio, ...`) + `MCP` (firecrawl, context7, filesystem, etc.) + `mcp_marketplace` + `mcp__*` dynamic.
-* **Execution — Implemented:** `ToolRegistry` with `needsPermission`, `GuardrailsManager` (enforce/audit), `PermissionManager`, `read-before-edit` guard, `snapshotFile` before mutation + `undo` to message.
-* **Evaluation — Implemented:** `shared/eval/` 3-tier gating CI (`test`/`typecheck`/`build` + `eval (PR fast)`), `agent-eval` golden datasets, `brio.test.ts` mock `:18080`.
-* **Learning — Implemented (target extended):** `shared/learning/` scheduler (online every 60m, improvement every 24h), `knowledge=12`, `Pain-point detection → verified patches → autopilot PRs` (implemented), `online` research via firecrawl/tavily (target: active research loop).
-* **Evolution — Target:** `MIRA_EVOLUTION_SPEC.md` — observe→research→diagnose→propose→experiment→patch→verify→canary→promote/rollback→remember (implemented as `opencode_improvement/logic_evolve.py` shadow, not yet promoted without `runEval("pr")` gate — see Policy).
+## 3. Current Architecture
 
-## System Model — Implemented
+The current system broadly follows:
 
-* **Storage:** SQLite (`sessions`, `messages`, `snapshots`, `audit_entries`), `Bus` (EventEmitter + WS), `metrics` (httpRequestsTotal, durations, gateway cost).
-* **Gateway:** `ProviderRegistry` + `KeyRing` (`expandEnvArray` for `MIRA_API_KEYS="k1,k2"`), `hasKey`/`isHealthy`/`circuit breaker`. Providers: `nvidia` (primary, `deepseek-v4-flash`), `anthropic`, `openai`, `google`, `deepseek`, `colibri` (`http://127.0.0.1:8000/v1`, `qwen3.6`/`olmoe`/`glm-5.2`, fallback only, `brio` tool). `local`/`compaction` keep `nvidia` primary, `colibri` opportunistic (180s timeout).
-* **Security:** `MIRA_TOKEN` 64-hex (`~/.mira/mira.env`), `MIRA_API_KEYS` multi-tenant `hashKey` + `timingSafeEqual`, `HOST=127.0.0.1` loopback, `CORS_ORIGINS`, `MIRA_NO_AUTOPROVISION=1` for E2E isolation (isolates `MIRA_TOKEN` from host file).
-* **CI:** `CI` (`test`/`typecheck`/`build`/`repo-hygiene`/`auth-guard` + `docker`/`deploy` + `Security` `CodeQL`/`secrets scan`), `bunfig.toml` `symlink` backend + `preserveSymlinks` in 6 tsconfigs (proot aarch64).
+```text
+Clients
+   ↓
+API / SSE / WebSocket
+   ↓
+Agent Runtime / Sessions
+   ↓
+Gateway / Model Routing
+   ↓
+Tool Registry
+   ↓
+Permissions / Guardrails
+   ↓
+Filesystem / Shell / Diagnostics / LSP / MCP / Subagents
+   ↓
+SQLite / Knowledge / Events
+```
 
-## Interfaces — Implemented
+## 4. Existing Capabilities
 
-* `GET /healthz` (no auth) + `GET /health` (auth, now includes `colibri:{ok,baseURL,latencyMs|error}` 800ms probe) + `GET /gateway/health` (lanes/providers) + `GET /metrics` (Prometheus) + `GET /providers` + `GET /tools` (22) + `POST /tools/brio` / `POST /v1/brio`.
-* `POST /session`/`/prompt` (SSE `step_start`/`tool_result`/`finish`/`error`), `WS /` (BusEvent), `WS /terminal` (pty), `GET /terminal`.
+Repository review identified existing foundations including:
 
-## Configuration — Implemented
+* Model gateway
+* Agent sessions
+* Memory and knowledge systems
+* Tool registry
+* Permissions and guardrails
+* MCP integration
+* LSP/code intelligence
+* Child sessions and orchestration
+* Diagnostics
+* Evaluation
+* Durable queue/state
+* File snapshots
+* Revert functionality
+* Online research
+* Runtime/tunnel watchdog
+* Web research providers
+* Research persistence
 
-* `mira.json` + `mira.json.example` (provider `nvidia` + `colibri`, `routing.fallbacks`, `subgateways`, `loop`, `tools.terminal`, `features`), `opencode.jsonc` (`model: opencode/deepseek-v4-flash-free`, same `provider:colibri` added), `~/.mira/mira.env` (`MIRA_TOKEN`, `MIRA_API_KEYS`, `NVIDIA_API_KEY`, `COLI_API_KEY`).
+These capabilities form the foundation for the next architecture layer.
 
-## Tests — Implemented
+## 5. Target Architecture
 
-* `523 pass / 0 fail / 2 skip` (276s full), `16` E2E isolated (`server.e2e` 8 + `gaps` 5 + `queue` 1 + `brio` 2 + `gateway` 16), `MIRA_NO_AUTOPROVISION=1` isolates host token.
+The target architecture should progressively separate responsibilities:
 
-## Security Boundaries — Policy
+```text
+packages/
+├── core/
+│   ├── agent-runtime/
+│   ├── task-engine/
+│   └── orchestration/
+│
+├── memory/
+│   ├── project-memory/
+│   ├── team-memory/
+│   ├── organizational-memory/
+│   └── retrieval/
+│
+├── intelligence/
+│   ├── code-intelligence/
+│   ├── planning/
+│   └── learning/
+│
+├── agents/
+│   ├── architect/
+│   ├── developer/
+│   ├── reviewer/
+│   ├── tester/
+│   ├── security/
+│   └── devops/
+│
+├── tools/
+│   ├── mcp/
+│   ├── lsp/
+│   └── integrations/
+│
+├── governance/
+│   ├── permissions/
+│   ├── guardrails/
+│   └── audit/
+│
+└── observability/
+    ├── tracing/
+    ├── evaluations/
+    └── analytics/
+```
 
-* `Policy:` No silent model precision/router change (colibri `DIRECT=1` etc. opt-in, `brio` `mean` vs `sum` explicit), `read-before-edit` guard, `MIRA_READ_GUARD=1`, `OWNERSHIP_ENABLED` owner-scoped sessions, WS fail-closed.
+This is a target architecture and should be introduced incrementally rather than through a large rewrite.
 
-## Operational Procedures — Implemented
+## 6. Memory Model
 
-* `scripts/serve-local.sh` (`start`/`stop`/`status`, sources `mira.env`, `colibri: ready/not running` hint, `setsid nohup`), `scripts/dev-watch.ts` (watches `src` + `shared/src`, now loads `mira.env` before spawn), `docker-compose.yml` + `docker-compose.override.yml` (`colibri: ghcr.io/slab1/colibri:slim`, `:8000`), `slab1/colibri` fork GHCR `docker` workflow (block scalar fix `3619cf5`).
+Mira should maintain multiple memory layers.
 
-## Known Limitations — Target
+### Session Memory
 
-* `colibri` needs 7–372GB model + fast NVMe, not required locally (fallback to `nvidia`); `turbo dev` needs `hardlink` vs `symlink` for `vite` (`picomatch` peer) on this host — keep `symlink` for CI, `hardlink` for local dev or manual link.
+Short-lived context required for the active task.
+
+### Project Memory
+
+Architecture, conventions, dependencies, decisions, important files and project-specific knowledge.
+
+### Team Memory
+
+Shared engineering practices and decisions.
+
+### Organizational Memory
+
+Long-term knowledge across projects.
+
+### Procedural Memory
+
+Reusable engineering procedures and workflows.
+
+### Failure Memory
+
+Records of failed approaches, rejected patches, regressions, causes and recovery strategies.
+
+Failure memory is particularly important for self-improvement.
+
+## 7. Agent Model
+
+Every major agent should have an explicit identity and operating contract.
+
+```ts
+interface AgentDefinition {
+  id: string
+  purpose: string
+  instructions: string
+  model: string
+  tools: string[]
+  permissions: string[]
+  budget?: {
+    tokens?: number
+    timeMs?: number
+    cost?: number
+  }
+  verification: string[]
+  escalationPolicy: string
+}
+```
+
+## 8. Tool Security
+
+Tools must operate under explicit permissions.
+
+Rules:
+
+* Fail closed.
+* Validate paths.
+* Validate commands.
+* Restrict filesystem access.
+* Audit sensitive operations.
+* Snapshot mutations.
+* Isolate experiments.
+* Do not expose secrets.
+* Treat external web content as untrusted.
+* Require human approval for high-risk actions.
+
+## 9. Evaluation
+
+Mira should evaluate engineering changes using multiple dimensions:
+
+* Correctness
+* Regression safety
+* Security
+* Performance
+* Latency
+* Cost
+* Reliability
+* Maintainability
+* User/task success
+
+No single metric should determine whether an autonomous change is promoted.
+
+## 10. Reversibility
+
+Every autonomous mutation should have a recovery path.
+
+Existing snapshots/revert functionality provides an important foundation.
+
+The intended flow is:
+
+```text
+Mutation
+  ↓
+Snapshot
+  ↓
+Experiment
+  ↓
+Verification
+  ↓
+Accept
+     OR
+Rollback
+```
+
+## 11. Shadow Mira
+
+A future Shadow Mira environment should allow experimental versions of Mira to operate against representative workloads without affecting production.
+
+```text
+Production Mira
+      ↓
+Telemetry
+      ↓
+Shadow Mira
+      ↓
+Candidate Engine
+      ↓
+Benchmarks
+      ↓
+Shadow Evaluation
+      ↓
+Canary
+      ↓
+Production
+```
+
+## 12. Definition of Done
+
+A major Mira subsystem is not complete until it has:
+
+* Implementation
+* Public interface
+* Tests
+* Security boundaries
+* Observability
+* Error handling
+* Documentation
+* Migration strategy
+* Rollback strategy
+* Operational guidance
