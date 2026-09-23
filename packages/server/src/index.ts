@@ -58,6 +58,17 @@ import { mountStaticRoutes } from './routes/static.js'
 import { mountEvolutionRoutes } from './routes/evolution.js'
 import { ImprovementLedger } from './evolution/ledger.js'
 import { EvolutionObserver } from './evolution/observer.js'
+import { mountEngineRoutes } from './routes/engines.js'
+import { EngineRegistry } from './engines/registry.js'
+import { AgentEngine } from './engines/agent.js'
+import { MemoryEngine } from './engines/memory.js'
+import { RetrievalEngine } from './engines/retrieval.js'
+import { PlanningEngine } from './engines/planning.js'
+import { EvaluationEngine } from './engines/evaluation.js'
+import { LearningEngine } from './engines/learning.js'
+import { ToolEngine } from './engines/tool.js'
+import { SecurityEngine } from './engines/security.js'
+import { ModelEngine } from './engines/model.js'
 import { mountMiddleware } from './middleware/index.js'
 import { boundSend, WS_CLOSE_TOO_SLOW } from './ws-backpressure.js'
 import { autoImportSessions, exportAllSessions } from './session/cross-device.js'
@@ -687,6 +698,48 @@ async function main() {
     mountEvolutionRoutes(app, { db: db as unknown as import('./storage/db.js').MiraDB, bus, ledger: evolutionLedger, observer: evolutionObserver })
     log(`evolution ready — observer watching Bus, ledger=evolution_ledger, routes /evolution/* (Phase 1 read-only)`)
   } catch (e) { warn('evolution init failed:', String(e)) }
+
+  // Phase 3 Engine Registry — 9 modular engines per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_ENGINE_REGISTRY.md
+  try {
+    const engineRegistry = new EngineRegistry()
+    // keep nvidia primary + colibri opportunistic — ModelEngine probes but never requires colibri
+    const hasKeyCheck = (k: string): boolean => {
+      try {
+        const cfg = (getConfig() as unknown as { provider?: Record<string, { options?: { apiKey?: string | string[] } }> }).provider?.[k]
+        if (!cfg?.options?.apiKey) return false
+        const vals = Array.isArray(cfg.options.apiKey) ? cfg.options.apiKey : [cfg.options.apiKey]
+        return vals.some((v) => {
+          const expanded = String(v).replace(/\{env:([^}]+)\}/g, (_: string, name: string) => process.env[name] ?? '')
+          return !!expanded.trim()
+        })
+      } catch { return false }
+    }
+    engineRegistry.register(new AgentEngine())
+    engineRegistry.register(new MemoryEngine())
+    engineRegistry.register(new RetrievalEngine())
+    engineRegistry.register(new PlanningEngine())
+    engineRegistry.register(new EvaluationEngine())
+    engineRegistry.register(new LearningEngine({ schedulerStatus: () => { try { return learning.scheduler.status() } catch { return null } } }))
+    engineRegistry.register(new ToolEngine({ count: () => { try { return tools.count() } catch { return 0 } }, hasKey: hasKeyCheck }))
+    engineRegistry.register(new SecurityEngine())
+    engineRegistry.register(
+      new ModelEngine({
+        providerKeys: () => {
+          try { return Object.keys((getConfig() as unknown as { provider?: Record<string, unknown> }).provider ?? {}) } catch { return Object.keys(config.provider) }
+        },
+        hasKey: hasKeyCheck,
+        healthSnapshot: () => {
+          try { return (registry as unknown as { healthSnapshot: () => { lanes: Record<string, unknown>; providers: Record<string, unknown> } }).healthSnapshot() } catch { return { lanes: {}, providers: {} } }
+        },
+        primary: 'nvidia',
+        fallback: 'colibri',
+      }),
+    )
+    mountEngineRoutes(app, { registry: engineRegistry })
+    // expose for tests/routes that may import it dynamically (optional)
+    ;(globalThis as unknown as Record<string, unknown>).__miraEngineRegistry = engineRegistry
+    log(`engines ready — 9 registered`)
+  } catch (e) { warn('engine registry init failed:', String(e)) }
 
   // Terminal — HTTP status + browser client hint
   app.get('/terminal', (c) => {
