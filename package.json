@@ -24,5 +24,12 @@
     "prettier": "^3.4.0",
     "turbo": "^2.11.2",
     "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "esbuild": "^0.28.2",
+    "escape-string-regexp": "^5.0.0",
+    "find-up": "^8.0.0",
+    "locate-path": "^8.0.0",
+    "supports-color": "^11.0.0"
   }
 }
