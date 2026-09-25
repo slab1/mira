@@ -1,18 +1,21 @@
 # Online Learning Module — Improvement Roadmap
 
-> Status: **documented plan**, branch `docs/online-learning-roadmap`  
+> Status: **implemented plan, gaps tracked below** — branch `docs/online-learning-roadmap` (merged `1821c26b`)
 > Related modules: `packages/server/src/learning/{online,scheduler,knowledge,usage,improvement}.ts`
+> Refreshed **2026-09-25** against code — the 2026-09-05 ❌ rows below were closed by `feat/online-learning-p1` (merged); remaining ✅/🚧 rows are the live backlog.
 
-## Current state (verified by live execution)
+## Current state (verified against code, 2026-09-25)
 
-| Behavior                                           | Status                                                                     |
-| -------------------------------------------------- | -------------------------------------------------------------------------- |
-| Module loads and runs on schedule                  | ✅ Works — scheduler starts on boot, `POST /learning/trigger` works        |
-| Default search without API keys                    | ❌ Returns nothing (honest, no fabricated results), but effectively silent |
-| Native fetch pipeline (HTML → markdown → insights) | ✅ Works — verified end-to-end with a real web page                        |
-| LLM extraction                                     | ⚠️ Implemented (`extractWithLLM`) but **never called**                     |
-| Cross-run deduplication                            | ❌ Only same-run URL dedup — same page can be re-learned every cycle       |
-| Feedback loop (did the insight help?)              | ❌ No utility tracking at all                                              |
+| Behavior                                           | Status                                                                                                              |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Module loads and runs on schedule                  | ✅ Scheduler hourly + `POST /learning/trigger` (`scheduler.ts:186` dynamic topics)                                  |
+| Default search without API keys                    | ✅ Keyless tiers: HN Algolia (`online.ts:386`), arXiv (`:408`), GitHub search (`:440`, cached) — DDG tier-4 still ❌ |
+| Native fetch pipeline (HTML → markdown → insights) | ✅ Verified end-to-end; heading-aware chunking `chunkDocByHeading` (`online.ts:201`)                               |
+| LLM extraction                                     | ✅ Called — `extractWithLLM(chunkedDocs, deps.gateway)` (`online.ts:207`, heuristic fallback tested)                |
+| Cross-run deduplication                            | ✅ Deterministic store IDs dedupe across cycles (`knowledge.ts:317`) + Jaccard near-dup (`online.ts:647`)           |
+| Feedback loop (did the insight help?)              | ✅ `adjustUtility()` called by SessionPrompt (`knowledge.ts:329`), retrieval bonus + 1%/day decay (`:415-421`)      |
+| Failure-driven topics                              | ✅ `buildDynamicTopicsFromAnalysis()` (`online.ts:672`) from `failurePatterns`                                      |
+| Status surfacing / ops hygiene                     | 🚧 No `topPerforming/worstPerforming` on `/learning/status`; no domain cooldown; no zero-result streak finding     |
 
 ## Goal
 
@@ -22,9 +25,9 @@ Turn the online learner from a passive keyword scraper into a **calibrating lear
 
 ## Roadmap — 5 phases, ordered by ROI
 
-### Phase 1 — Better acquisition (minimum viable)
+### Phase 1 — Better acquisition (minimum viable) — ✅ 5/6 (DDG tier-4 remaining)
 
-**Problem:** Today, without a paid Firecrawl/Tavily key, the learner finds nothing. The default topics list is static, so it always asks the same questions.
+**Problem (resolved):** keyless tiers HN/arXiv/GitHub + hourly topic rotation now exist; only DuckDuckGo last-resort remains.
 
 | Change                                                                                                                    | File / Location                                                                                      | Effort |
 | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------ |
@@ -37,9 +40,9 @@ Turn the online learner from a passive keyword scraper into a **calibrating lear
 
 **Acceptance:** `learnOnce()` with no keys returns non-empty insights on a machine with network access.
 
-### Phase 2 — Extraction quality
+### Phase 2 — Extraction quality — 🚧 3/5 (verifiers + code-fence candidates remaining)
 
-**Problem:** Today only the first ~4 KB of a page is extracted via regexes. The existing `extractWithLLM` path is wired but never invoked.
+**Problem (mostly resolved):** heading chunking (`chunkDocByHeading`, `online.ts:201`) + auto LLM extraction (`:207`) are wired; per-insight `verifiers` count and code-fenced pattern candidates are not yet.
 
 | Change                                                                                                | Location                                                                     | Effort  |
 | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------- |
@@ -50,9 +53,9 @@ Turn the online learner from a passive keyword scraper into a **calibrating lear
 
 **Acceptance:** insights for long technical pages pull out mid-document substance; `verifiers ≥ 2` when two sources agree (measurable in `/learning/insights` output).
 
-### Phase 3 — Persistent dedupe & lifecycle
+### Phase 3 — Persistent dedupe & lifecycle — 🚧 2/4 (hitCount/lastSeen + tombstone sweep remaining)
 
-**Problem:** URLs are deduped only _inside_ one run. The same "LangGraph overview" page can be learned weekly as something new.
+**Problem (mostly resolved):** cross-cycle dedup via deterministic store IDs (`knowledge.ts:317`) and Jaccard near-dup on patterns (`online.ts:647`, chosen over simhash); content-hash `hitCount`/`lastSeen` counters and the 60-day expiry sweep are not yet.
 
 | Change                                                                                                                               | Location                                              | Effort |
 | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- | ------ |
@@ -62,9 +65,9 @@ Turn the online learner from a passive keyword scraper into a **calibrating lear
 
 **Acceptance:** re-running the same topic twice in a row returns identical `insights[]` and does not grow the stored count.
 
-### Phase 4 — Utility feedback loop (the actual "learning")
+### Phase 4 — Utility feedback loop (the actual "learning") — ✅ 3/4 (`/learning/status` surfacing remaining)
 
-**Problem:** Insights get injected into session context (`loadContext` → "Relevant memory" block) but nothing tracks whether they helped.
+**Problem (mostly resolved):** `adjustUtility()` is called by SessionPrompt each turn (`knowledge.ts:329`) and retrieval ranks `utility * relevance` with decay (`:415-421`); `topPerforming`/`worstPerforming` are not yet surfaced on `/learning/status`.
 
 ```
                 ┌──────────────┐
@@ -92,7 +95,7 @@ Turn the online learner from a passive keyword scraper into a **calibrating lear
 
 **Acceptance:** utility ranking changes which insights get injected within the first week, measured via `SELECT COUNT(*) FROM insights WHERE utility <> 0`.
 
-### Phase 5 — Ops hygiene
+### Phase 5 — Ops hygiene — 🚧 1/4 (domain cooldown, zero-result streak finding, cycle telemetry remaining; failure-driven topics done via `buildDynamicTopicsFromAnalysis`, `online.ts:672`)
 
 | Change                                                                                                                 | Location                                            | Effort |
 | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ------ |
@@ -109,13 +112,14 @@ Turn the online learner from a passive keyword scraper into a **calibrating lear
 
 ## Test plan
 
-- `learning/online.test.ts`: mock searchFn + fetchFn, assert insights shape + dedupe path
-- `learning/utility.test.ts`: simulate multiple sessions per insight, assert ordering flips by success correlation
-- `learning/scheduler.cycle.test.ts`: simulated 3-cycle streak of emptiness → finding raised
-- E2E: `e2e/learning.e2e.test.ts` against live (local) network with HN API
+- ✅ `learning/online.test.ts`: mock searchFn + fetchFn, insights shape + dedupe + keyless fallback + LLM extraction (`online.test.ts:33,127`)
+- ✅ `learning/knowledge.test.ts`: store/merge/retrieval incl. utility bonus
+- ❌ `learning/utility.test.ts`: simulate multiple sessions per insight, assert ordering flips by success correlation — **to write with Phase 4 surfacing**
+- ❌ `learning/scheduler.cycle.test.ts`: 3-cycle streak of emptiness → finding raised — **to write with Phase 5 streak alert**
+- ❌ E2E: `e2e/learning.e2e.test.ts` against live (local) network with HN API
 
 ## References
 
 - `packages/server/src/learning/online.ts` (current implementation)
 - `packages/server/src/learning/knowledge.ts` ("mocked vector" cosine — see also pgvector path)
-- `docs/KILO_COVERAGE.md` §H2 for learning parity claims
+- `MIRA_ONLINE_LEARNING.md` (research/skill-synthesis policy + 10-item maintenance table)
