@@ -23,3 +23,7 @@ Follow plan-first workflow: Explore → Plan → Implement → Verify.
 <!-- Mira Improvement (2026-09-09): Pattern: 08804v1] Cognitive Dissonance Artificial Intelligence (CD-AI): The Mind at War with Itself.
 Source: https://arxiv.org/abs/2507.08804v1 — Cognitive Dissonance Artificial Intelligence (CD-AI): The Mind at War with Itself. Harnessing Discomfort to Sharpen Critical Thinking
 Excerpt: [2507.08804 -->
+
+
+<!-- Mira Improvement (2026-09-25): Pattern: t receives a prompt, decides what to do next (for example, call a tool, ask a clarifying question, or return a final answer), executes that action, observes the result, and repeats.
+Source: https://www.speakeasy.com/blog/ai-agent-framework-comparison — LangChain vs LangGraph vs CrewAI vs Py -->

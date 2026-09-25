@@ -12,6 +12,8 @@
     "build": "turbo build",
     "test": "turbo test",
     "typecheck": "turbo typecheck",
+    "deps:install": "scripts/install.sh",
+    "deps:check": "node scripts/verify-install.js",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

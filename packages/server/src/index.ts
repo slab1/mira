@@ -621,10 +621,10 @@ async function main() {
     getBunServer: () => bunServer,
   })
 
-  // Mount static routes (landing page + SPA)
-  mountStaticRoutes(app, { tools })
-
   // Mount route modules
+  // (static/SPA fallback mounted LAST below — see mountStaticRoutes call
+  // before Bun.serve. Registering it early made GET /* swallow every API
+  // route mounted after it that wasn't in API_ROUTE_PREFIXES.)
   mountHealthRoutes(app, {
     GIT_SHA,
     STARTED_AT,
@@ -952,6 +952,11 @@ async function main() {
       } catch {}
     })
   }
+
+  // Mount static routes (landing page + SPA) — MUST be the last mount so
+  // GET /* never shadows API routes registered above (fix: /evolution,
+  // /engines, /shadow, /canary, /memory, /gateway, /me, /webhooks, /v1).
+  mountStaticRoutes(app, { tools })
 
   // ── Bun.serve with port rotation (4096 → 4106 if in use) ─────────
   let server: ReturnType<typeof Bun.serve> | null = null
