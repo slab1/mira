@@ -2528,3 +2528,39 @@ html {
     display: none !important;
   }
 }
+
+/* ── TopNav (Phase 1 IA) — horizontal workspaces, keyboard, responsive ── */
+[data-slot='top-nav'] {
+  -webkit-overflow-scrolling: touch;
+}
+[data-slot='top-nav']::-webkit-scrollbar {
+  display: none;
+}
+@media (max-width: 720px) {
+  [data-slot='top-nav'] {
+    padding: 4px var(--sp-2) !important;
+    gap: 0 !important;
+  }
+  [data-slot='top-nav'] [role='tablist'] button {
+    padding: 6px 8px !important;
+    font-size: var(--fs-2xs) !important;
+    min-height: 36px !important;
+  }
+  /* Collapse brand to M only on mobile to save width */
+  [data-slot='top-nav'] .logo-tile + span + span {
+    display: none;
+  }
+}
+@media (max-width: 640px) {
+  /* Main column header stacks nicely with TopNav — keep tap targets >=36px */
+  [data-slot='header'] {
+    padding: 0 var(--sp-2) !important;
+  }
+}
+
+/* ── Evolution dashboard — grid already responsive; tighten at mobile ── */
+@media (max-width: 640px) {
+  [data-slot='evolution-page'] .card {
+    padding: 12px !important;
+  }
+}

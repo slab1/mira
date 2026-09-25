@@ -1,4 +1,4 @@
-import { createSignal, onMount, Show, onCleanup, createResource, For, createEffect } from 'solid-js'
+import { createSignal, onMount, Show, onCleanup, createResource, For, createEffect, Switch, Match } from 'solid-js'
 import './index.css'
 import { createAppStore } from './stores/app'
 import { createSettingsStore } from './stores/settings'
@@ -17,6 +17,51 @@ import { ToastViewport, toast } from './components/Toast'
 import { ConnectModal } from './components/ConnectModal'
 import { HeaderModelSelector, HeaderAgentSelector } from './components/HeaderSelectors'
 import BrioPage from './pages/Brio'
+import EvolutionPage from './pages/Evolution'
+import { TopNav, type WorkspaceId, type WorkSubTab } from './components/TopNav'
+
+// ── Workspace stubs (incremental per MIRA_UI_IMPLEMENTATION_ROADMAP.md) ──
+function StubCard(props: { icon: string; title: string; desc: string; items: string[]; cta?: string }) {
+  return (
+    <div style={{ flex: '1', display: 'flex', 'flex-direction': 'column', overflow: 'auto', background: 'var(--bg-canvas)', padding: '18px 14px 28px' }}>
+      <div style={{ 'max-width': '860px', margin: '0 auto', width: '100%', display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
+        <div class="card" style={{ padding: '14px 16px', display: 'flex', 'align-items': 'center', gap: '10px', background: 'var(--bg-surface)' }}>
+          <div style={{ width: '28px', height: '28px', 'border-radius': '8px', background: 'var(--grad-brand)', display: 'grid', 'place-items': 'center', color: 'var(--on-accent)', 'font-weight': '800', 'font-size': '14px' }} aria-hidden="true">
+            {props.icon}
+          </div>
+          <div>
+            <div style={{ 'font-size': 'var(--fs-lg)', 'font-weight': '700', 'letter-spacing': '-0.02em' }}>{props.title}</div>
+            <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>{props.desc}</div>
+          </div>
+          <span class="pill" style={{ 'margin-left': 'auto', 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-2xs)' }}>
+            Target → Implemented incrementally
+          </span>
+        </div>
+        <div class="card" style={{ padding: '16px', display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
+          <div style={{ 'font-size': 'var(--fs-xs)', 'font-weight': '700', 'letter-spacing': '0.04em', 'text-transform': 'uppercase', color: 'var(--fg-muted)' }}>Coming in this workspace</div>
+          <ul style={{ margin: '0', padding: '0 0 0 18px', display: 'flex', 'flex-direction': 'column', gap: '6px', 'font-size': 'var(--fs-sm)', color: 'var(--fg-muted)', 'line-height': '1.6' }}>
+            <For each={props.items}>{(it) => <li>{it}</li>}</For>
+          </ul>
+          <Show when={props.cta}>
+            <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-faint)', 'font-family': 'var(--font-mono)', 'margin-top': '4px' }}>{props.cta}</div>
+          </Show>
+        </div>
+      </div>
+    </div>
+  )
+}
+function MissionsStub() {
+  return <StubCard icon="⬢" title="Missions" desc="Autonomous execution cockpit — parent/child agents, states, pause/cancel" items={['Mission overview', 'Parent/child agents & Current operation', 'Agent states · Tool activity · Files changed', 'Token usage & Cost · Pause/cancel · Transcript']} cta="Phase 2 — backs GET /missions/:id + Bus job.created/updated" />
+}
+function IntelligenceStub() {
+  return <StubCard icon="◎" title="Intelligence" desc="Memory & research — why Mira knows or chooses this" items={['Source · Evidence · Confidence · Timestamp · Scope', 'Explainability · Forget · Correct · Promote', 'Project / Team / Org / Procedural / Failure memory', 'Research persistence & retrieval']} cta="Phase 4 — backs GET /memory + provenance + GET /knowledge/graph" />
+}
+function ChangesStub() {
+  return <StubCard icon="⟡" title="Changes" desc="Every autonomous mutation traceable — timeline / diff / rewind" items={['Change timeline · Diff viewer · Snapshot viewer', 'Rewind · Rollback · Compare versions', 'Reversibility: Mutation → Snapshot → Experiment → Verify → Accept/Rollback']} cta="Phase 5 — backs GET /changes + POST /session/:id/revert" />
+}
+function SystemStub() {
+  return <StubCard icon="⬣" title="System" desc="Health, engines, lanes & config — nvidia primary · colibri opportunistic" items={['System Health (9 engines) · Gateway lanes & cost', 'Provider health · Model routing · Guardrails enforce', 'Diagnostics · Evaluation · Tracing']} cta="Phase 6/7 — backs GET /health · GET /gateway/health · GET /engines/health" />
+}
 import {
   api,
   getToken,
@@ -273,14 +318,48 @@ export default function App() {
   })()
   const [viewMode, setViewMode] = createSignal<ViewMode>(initialView)
   // Brio page — separate top-level page beside chat/split/graph. URL ?view=brio deep-links.
-  const initialPage = (() => {
+  const initialPageValue = (() => {
     try {
       const v = new URLSearchParams(window.location.search).get('view')
       if (v === 'brio') return 'brio' as const
     } catch {}
     return 'chat' as const
   })()
-  const [page, setPage] = createSignal<'chat' | 'brio'>(initialPage)
+  const [page, setPage] = createSignal<'chat' | 'brio'>(initialPageValue)
+
+  // ── Phase 1 IA: 5 workspaces — ?view=evolution deep-link per task
+  const parseWorkspace = (): { ws: WorkspaceId; sub?: WorkSubTab } => {
+    try {
+      const sp = new URLSearchParams(window.location.search)
+      const raw = (sp.get('view') ?? sp.get('workspace') ?? '').toLowerCase().trim()
+      if (raw === 'evolution' || raw === '/evolution' || raw === 'evol') return { ws: 'evolution' }
+      if (raw === 'missions' || raw === '/missions') return { ws: 'missions' }
+      if (raw === 'intelligence' || raw === 'memory' || raw === 'research' || raw === '/intelligence') return { ws: 'intelligence' }
+      if (raw === 'changes' || raw === 'change' || raw === '/changes') return { ws: 'changes' }
+      if (raw === 'system' || raw === 'health' || raw === 'engines' || raw === '/system') return { ws: 'system' }
+      if (raw === 'work' || raw === '/work') return { ws: 'work', sub: 'chat' }
+      if (raw === 'brio' || raw === '/work/brio') return { ws: 'work', sub: 'brio' }
+      if (raw === 'chat' || raw === 'graph' || raw === 'split' || raw === '/work/chat') return { ws: 'work', sub: 'chat' as WorkSubTab }
+      // hash fallback #/evolution
+      const hash = window.location.hash.toLowerCase()
+      if (hash.includes('evolution')) return { ws: 'evolution' }
+      if (hash.includes('missions')) return { ws: 'missions' }
+      if (hash.includes('intelligence')) return { ws: 'intelligence' }
+      if (hash.includes('changes')) return { ws: 'changes' }
+      if (hash.includes('system')) return { ws: 'system' }
+    } catch {}
+    // Fallback: legacy ?view=brio → work/brio else work/chat
+    return initialPageValue === 'brio' ? { ws: 'work', sub: 'brio' as const } : { ws: 'work', sub: 'chat' as const }
+  }
+  const parsed = parseWorkspace()
+  const [workspace, setWorkspace] = createSignal<WorkspaceId>(parsed.ws)
+  const [workTab, setWorkTab] = createSignal<WorkSubTab>(parsed.sub ?? (initialPageValue === 'brio' ? 'brio' : 'chat'))
+  // keep legacy page in sync with workTab when workspace is work
+  createEffect(() => {
+    const ws = workspace()
+    const wt = workTab()
+    if (ws === 'work') setPage(wt === 'brio' ? 'brio' : 'chat')
+  })
   // H2-2 Mira Score GA — trace viewer drawer
   const [traceOpen, setTraceOpen] = createSignal(false)
   const [miraScore, setMiraScore] = createSignal<{ score: number; costUSD: number } | null>(null)
@@ -439,29 +518,37 @@ export default function App() {
       window.removeEventListener('keydown', onKey)
     })
 
-    // deep-link ?view=graph keeps URL in sync when viewMode changes
+    // ── Workspace + deep-link sync (?view=evolution etc) — Phase 1 IA
     createEffect(() => {
-      const v = viewMode()
-      if (page() === 'brio') return
+      const ws = workspace()
+      const wt = workTab()
+      const vm = viewMode()
       try {
         const url = new URL(window.location.href)
-        if (v === 'chat') url.searchParams.delete('view')
-        else url.searchParams.set('view', v)
-        window.history.replaceState(null, '', url.toString())
-      } catch {}
-    })
-    createEffect(() => {
-      const p = page()
-      try {
-        const url = new URL(window.location.href)
-        if (p === 'brio') url.searchParams.set('view', 'brio')
-        else if (url.searchParams.get('view') === 'brio') {
-          const v = viewMode()
-          if (v === 'chat') url.searchParams.delete('view')
-          else url.searchParams.set('view', v)
+        if (ws === 'evolution') url.searchParams.set('view', 'evolution')
+        else if (ws === 'missions') url.searchParams.set('view', 'missions')
+        else if (ws === 'intelligence') url.searchParams.set('view', 'intelligence')
+        else if (ws === 'changes') url.searchParams.set('view', 'changes')
+        else if (ws === 'system') url.searchParams.set('view', 'system')
+        else if (ws === 'work') {
+          if (wt === 'brio') url.searchParams.set('view', 'brio')
+          else if (vm !== 'chat') url.searchParams.set('view', vm)
+          else url.searchParams.delete('view')
         }
         window.history.replaceState(null, '', url.toString())
       } catch {}
+    })
+    // Keep legacy viewMode/page sync for Work only (avoid clobbering workspace)
+    createEffect(() => {
+      const v = viewMode()
+      if (workspace() !== 'work' || workTab() === 'brio') return
+      // viewMode only matters inside Work/chat — already handled above
+      void v
+    })
+    createEffect(() => {
+      const p = page()
+      if (workspace() !== 'work') return
+      void p
     })
   })
 
@@ -1235,267 +1322,298 @@ export default function App() {
             </div>
           </Show>
 
-          <Show
-            when={page() === 'brio'}
-            fallback={
-              <>
-          <Show
-            when={viewMode() === 'chat'}
-            fallback={
+          {/* Phase 1 IA: primary workspaces — responsive, aria, keyboard, tokens */}
+          <TopNav
+            workspace={workspace()}
+            onChange={setWorkspace}
+            workTab={workTab()}
+            onWorkTab={(t) => {
+              setWorkspace('work')
+              setWorkTab(t)
+            }}
+          />
+
+          {/* Workspace routing — Evolution is Phase 8 dashboard; others stubbed per roadmap incrementally */}
+          <Switch fallback={<div style={{ flex: '1', display: 'grid', 'place-items': 'center', padding: '24px', color: 'var(--fg-muted)' }}>Unknown workspace</div>}>
+            <Match when={workspace() === 'evolution'}>
+              <EvolutionPage />
+            </Match>
+            <Match when={workspace() === 'missions'}>
+              <MissionsStub />
+            </Match>
+            <Match when={workspace() === 'intelligence'}>
+              <IntelligenceStub />
+            </Match>
+            <Match when={workspace() === 'changes'}>
+              <ChangesStub />
+            </Match>
+            <Match when={workspace() === 'system'}>
+              <SystemStub />
+            </Match>
+            <Match when={workspace() === 'work'}>
               <Show
-                when={viewMode() === 'split'}
+                when={workTab() === 'brio'}
                 fallback={
-                  /* graph: canvas fills mira-main, composer keeps full parity (multiline + same wiring) */
-                  <div
-                    class="mira-main mira-main-graph"
-                    style={{ flex: '1', display: 'flex', overflow: 'hidden', 'min-height': '0' }}
+                  <>
+                    <Show
+                      when={viewMode() === 'chat'}
+                    fallback={
+                      <Show
+                        when={viewMode() === 'split'}
+                        fallback={
+                          /* graph: canvas fills mira-main, composer keeps full parity (multiline + same wiring) */
+                          <div
+                            class="mira-main mira-main-graph"
+                            style={{ flex: '1', display: 'flex', overflow: 'hidden', 'min-height': '0' }}
+                          >
+                            <div
+                              class="mira-canvas-pane"
+                              style={{ flex: '1', display: 'flex', 'min-height': '0' }}
+                            >
+                              <MemoryGraph
+                                onOpenInChat={(node) => {
+                                  if (node.id === 'empty') {
+                                    setViewMode('chat')
+                                    queueMicrotask(() => {
+                                      const el = document.querySelector<HTMLTextAreaElement>(
+                                        '[aria-label="Message Mira"]',
+                                      )
+                                      el?.focus()
+                                    })
+                                    return
+                                  }
+                                  setViewMode('split')
+                                  store.setInput(`Tell me about: ${node.label}`)
+                                  queueMicrotask(() => {
+                                    const el = document.querySelector<HTMLTextAreaElement>(
+                                      '[aria-label="Message Mira"]',
+                                    )
+                                    el?.focus()
+                                  })
+                                }}
+                              />
+                            </div>
+                            {/* parity composer — multiline textarea, same slash/queue wiring as chat */}
+                            <form
+                              class="mira-graph-composer"
+                              onSubmit={(e) => {
+                                e.preventDefault()
+                                const v = store.input().trim()
+                                if (!v) return
+                                if (v === '/memory' || v === '/graph') {
+                                  store.setInput('')
+                                  return
+                                }
+                                setViewMode('chat')
+                                store.sendPrompt(v)
+                              }}
+                            >
+                              <textarea
+                                class="input"
+                                rows={1}
+                                placeholder="Message Mira… (graph view — press G to return to chat · Shift+Enter newline)"
+                                value={store.input()}
+                                onInput={(e) => {
+                                  store.setInput(e.currentTarget.value)
+                                  e.currentTarget.style.height = 'auto'
+                                  e.currentTarget.style.height =
+                                    Math.min(e.currentTarget.scrollHeight, 120) + 'px'
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+                                    e.preventDefault()
+                                    const v = store.input().trim()
+                                    if (!v) return
+                                    if (v === '/memory' || v === '/graph') {
+                                      store.setInput('')
+                                      return
+                                    }
+                                    setViewMode('chat')
+                                    store.sendPrompt(v)
+                                  }
+                                  if (e.key === 'Escape') setViewMode('chat')
+                                }}
+                                aria-label="Message Mira (graph view)"
+                                style={{
+                                  flex: '1',
+                                  resize: 'none',
+                                  'min-height': '36px',
+                                  'max-height': '120px',
+                                  overflow: 'auto',
+                                }}
+                              />
+                              <button
+                                type="submit"
+                                class="btn btn-solid"
+                                disabled={!store.input().trim()}
+                                aria-label="Send message"
+                                style={{
+                                  padding: '7px 14px',
+                                  'font-size': 'var(--fs-sm)',
+                                  flex: 'none',
+                                  'min-height': '36px',
+                                }}
+                              >
+                                Send ↵
+                              </button>
+                              <button
+                                type="button"
+                                class="btn btn-ghost"
+                                onClick={() => setViewMode('chat')}
+                                title="Back to chat (G)"
+                                aria-label="Back to chat"
+                                style={{
+                                  padding: '7px 10px',
+                                  'font-size': 'var(--fs-xs)',
+                                  border: '1px solid var(--border)',
+                                  'border-radius': 'var(--r-md)',
+                                  flex: 'none',
+                                  'min-height': '36px',
+                                }}
+                              >
+                                ← chat
+                              </button>
+                            </form>
+                          </div>
+                        }
+                      >
+                        {/* split: resizable chat↔canvas via splitPct + inspector width */}
+                        <div
+                          class="mira-main mira-main-split"
+                          style={{ flex: '1', display: 'flex', overflow: 'hidden', 'min-height': '0' }}
+                        >
+                          <div
+                            class="mira-chat-pane"
+                            style={{
+                              flex: `0 0 ${splitP()}%`,
+                              'min-width': '0',
+                              display: 'flex',
+                              'flex-direction': 'column',
+                              overflow: 'hidden',
+                              'border-right': '1px solid var(--border)',
+                            }}
+                          >
+                            <ChatView
+                              store={store}
+                              settings={settings}
+                              onPaletteOpen={() => setPaletteOpen(true)}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            class="mira-resize-handle"
+                            aria-label="Resize chat and canvas"
+                            onPointerDown={(e: PointerEvent) => {
+                              let sx = e.clientX
+                              let sw = splitP()
+                              const onMove = (ev: PointerEvent) => {
+                                const dx = ev.clientX - sx
+                                // 10px ≈ 1% — tuned so drag feels 1:1 with layout
+                                const next = Math.max(35, Math.min(65, Math.round(sw + dx / 8)))
+                                setSplitPct(next)
+                              }
+                              const onUp = () => {
+                                window.removeEventListener('pointermove', onMove)
+                                window.removeEventListener('pointerup', onUp)
+                                document.body.style.cursor = ''
+                                document.body.style.userSelect = ''
+                              }
+                              document.body.style.cursor = 'col-resize'
+                              document.body.style.userSelect = 'none'
+                              window.addEventListener('pointermove', onMove)
+                              window.addEventListener('pointerup', onUp)
+                              ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+                            }}
+                          />
+                          <div
+                            class="mira-canvas-pane"
+                            style={{
+                              flex: '1',
+                              'min-width': '0',
+                              display: 'flex',
+                              'flex-direction': 'column',
+                              overflow: 'hidden',
+                            }}
+                          >
+                            <MemoryGraph
+                              onOpenInChat={(node) => {
+                                if (node.id === 'empty') {
+                                  setViewMode('chat')
+                                  return
+                                }
+                                store.setInput(`Tell me about: ${node.label}`)
+                                queueMicrotask(() => {
+                                  const el = document.querySelector<HTMLTextAreaElement>(
+                                    '[aria-label="Message Mira"]',
+                                  )
+                                  el?.focus()
+                                })
+                              }}
+                            />
+                          </div>
+                          <Show when={!activityCollapsed()}>
+                            <button
+                              type="button"
+                              class="mira-resize-handle"
+                              aria-label="Resize activity panel"
+                              onPointerDown={makeDrag(() => inspectorW(), setInspectorWidth, 280, 480, 'x')}
+                            />
+                          </Show>
+                          <ActivityPanel
+                            store={store}
+                            collapsed={activityCollapsed()}
+                            onToggle={() => setActivityCollapsed(!activityCollapsed())}
+                            width={inspectorW()}
+                          />
+                        </div>
+                      </Show>
+                    }
                   >
                     <div
-                      class="mira-canvas-pane"
-                      style={{ flex: '1', display: 'flex', 'min-height': '0' }}
+                      class="mira-main mira-main-chat"
+                      style={{ flex: '1', display: 'flex', overflow: 'hidden', 'min-height': '0' }}
                     >
-                      <MemoryGraph
-                        onOpenInChat={(node) => {
-                          if (node.id === 'empty') {
-                            setViewMode('chat')
-                            queueMicrotask(() => {
-                              const el = document.querySelector<HTMLTextAreaElement>(
-                                '[aria-label="Message Mira"]',
-                              )
-                              el?.focus()
-                            })
-                            return
-                          }
-                          setViewMode('split')
-                          store.setInput(`Tell me about: ${node.label}`)
-                          queueMicrotask(() => {
-                            const el = document.querySelector<HTMLTextAreaElement>(
-                              '[aria-label="Message Mira"]',
-                            )
-                            el?.focus()
-                          })
-                        }}
-                      />
-                    </div>
-                    {/* parity composer — multiline textarea, same slash/queue wiring as chat */}
-                    <form
-                      class="mira-graph-composer"
-                      onSubmit={(e) => {
-                        e.preventDefault()
-                        const v = store.input().trim()
-                        if (!v) return
-                        if (v === '/memory' || v === '/graph') {
-                          store.setInput('')
-                          return
-                        }
-                        setViewMode('chat')
-                        store.sendPrompt(v)
-                      }}
-                    >
-                      <textarea
-                        class="input"
-                        rows={1}
-                        placeholder="Message Mira… (graph view — press G to return to chat · Shift+Enter newline)"
-                        value={store.input()}
-                        onInput={(e) => {
-                          store.setInput(e.currentTarget.value)
-                          e.currentTarget.style.height = 'auto'
-                          e.currentTarget.style.height =
-                            Math.min(e.currentTarget.scrollHeight, 120) + 'px'
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
-                            e.preventDefault()
-                            const v = store.input().trim()
-                            if (!v) return
-                            if (v === '/memory' || v === '/graph') {
-                              store.setInput('')
-                              return
-                            }
-                            setViewMode('chat')
-                            store.sendPrompt(v)
-                          }
-                          if (e.key === 'Escape') setViewMode('chat')
-                        }}
-                        aria-label="Message Mira (graph view)"
+                      <div
+                        class="mira-chat-pane"
                         style={{
                           flex: '1',
-                          resize: 'none',
-                          'min-height': '36px',
-                          'max-height': '120px',
-                          overflow: 'auto',
+                          display: 'flex',
+                          'flex-direction': 'column',
+                          overflow: 'hidden',
+                          'min-width': '0',
                         }}
+                      >
+                        <ChatView
+                          store={store}
+                          settings={settings}
+                          onPaletteOpen={() => setPaletteOpen(true)}
+                        />
+                      </div>
+                      <Show when={!activityCollapsed()}>
+                        <button
+                          type="button"
+                          class="mira-resize-handle"
+                          aria-label="Resize activity panel"
+                          onPointerDown={makeDrag(() => inspectorW(), setInspectorWidth, 280, 480, 'x')}
+                        />
+                      </Show>
+                      <ActivityPanel
+                        store={store}
+                        collapsed={activityCollapsed()}
+                        onToggle={() => setActivityCollapsed(!activityCollapsed())}
+                        width={inspectorW()}
                       />
-                      <button
-                        type="submit"
-                        class="btn btn-solid"
-                        disabled={!store.input().trim()}
-                        aria-label="Send message"
-                        style={{
-                          padding: '7px 14px',
-                          'font-size': 'var(--fs-sm)',
-                          flex: 'none',
-                          'min-height': '36px',
-                        }}
-                      >
-                        Send ↵
-                      </button>
-                      <button
-                        type="button"
-                        class="btn btn-ghost"
-                        onClick={() => setViewMode('chat')}
-                        title="Back to chat (G)"
-                        aria-label="Back to chat"
-                        style={{
-                          padding: '7px 10px',
-                          'font-size': 'var(--fs-xs)',
-                          border: '1px solid var(--border)',
-                          'border-radius': 'var(--r-md)',
-                          flex: 'none',
-                          'min-height': '36px',
-                        }}
-                      >
-                        ← chat
-                      </button>
-                    </form>
-                  </div>
+                    </div>
+                  </Show>
+                    <QuestionPrompt store={store} />
+                  </>
                 }
               >
-                {/* split: resizable chat↔canvas via splitPct + inspector width */}
-                <div
-                  class="mira-main mira-main-split"
-                  style={{ flex: '1', display: 'flex', overflow: 'hidden', 'min-height': '0' }}
-                >
-                  <div
-                    class="mira-chat-pane"
-                    style={{
-                      flex: `0 0 ${splitP()}%`,
-                      'min-width': '0',
-                      display: 'flex',
-                      'flex-direction': 'column',
-                      overflow: 'hidden',
-                      'border-right': '1px solid var(--border)',
-                    }}
-                  >
-                    <ChatView
-                      store={store}
-                      settings={settings}
-                      onPaletteOpen={() => setPaletteOpen(true)}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    class="mira-resize-handle"
-                    aria-label="Resize chat and canvas"
-                    onPointerDown={(e: PointerEvent) => {
-                      let sx = e.clientX
-                      let sw = splitP()
-                      const onMove = (ev: PointerEvent) => {
-                        const dx = ev.clientX - sx
-                        // 10px ≈ 1% — tuned so drag feels 1:1 with layout
-                        const next = Math.max(35, Math.min(65, Math.round(sw + dx / 8)))
-                        setSplitPct(next)
-                      }
-                      const onUp = () => {
-                        window.removeEventListener('pointermove', onMove)
-                        window.removeEventListener('pointerup', onUp)
-                        document.body.style.cursor = ''
-                        document.body.style.userSelect = ''
-                      }
-                      document.body.style.cursor = 'col-resize'
-                      document.body.style.userSelect = 'none'
-                      window.addEventListener('pointermove', onMove)
-                      window.addEventListener('pointerup', onUp)
-                      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-                    }}
-                  />
-                  <div
-                    class="mira-canvas-pane"
-                    style={{
-                      flex: '1',
-                      'min-width': '0',
-                      display: 'flex',
-                      'flex-direction': 'column',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <MemoryGraph
-                      onOpenInChat={(node) => {
-                        if (node.id === 'empty') {
-                          setViewMode('chat')
-                          return
-                        }
-                        store.setInput(`Tell me about: ${node.label}`)
-                        queueMicrotask(() => {
-                          const el = document.querySelector<HTMLTextAreaElement>(
-                            '[aria-label="Message Mira"]',
-                          )
-                          el?.focus()
-                        })
-                      }}
-                    />
-                  </div>
-                  <Show when={!activityCollapsed()}>
-                    <button
-                      type="button"
-                      class="mira-resize-handle"
-                      aria-label="Resize activity panel"
-                      onPointerDown={makeDrag(() => inspectorW(), setInspectorWidth, 280, 480, 'x')}
-                    />
-                  </Show>
-                  <ActivityPanel
-                    store={store}
-                    collapsed={activityCollapsed()}
-                    onToggle={() => setActivityCollapsed(!activityCollapsed())}
-                    width={inspectorW()}
-                  />
-                </div>
+                <BrioPage />
               </Show>
-            }
-          >
-            <div
-              class="mira-main mira-main-chat"
-              style={{ flex: '1', display: 'flex', overflow: 'hidden', 'min-height': '0' }}
-            >
-              <div
-                class="mira-chat-pane"
-                style={{
-                  flex: '1',
-                  display: 'flex',
-                  'flex-direction': 'column',
-                  overflow: 'hidden',
-                  'min-width': '0',
-                }}
-              >
-                <ChatView
-                  store={store}
-                  settings={settings}
-                  onPaletteOpen={() => setPaletteOpen(true)}
-                />
-              </div>
-              <Show when={!activityCollapsed()}>
-                <button
-                  type="button"
-                  class="mira-resize-handle"
-                  aria-label="Resize activity panel"
-                  onPointerDown={makeDrag(() => inspectorW(), setInspectorWidth, 280, 480, 'x')}
-                />
-              </Show>
-              <ActivityPanel
-                store={store}
-                collapsed={activityCollapsed()}
-                onToggle={() => setActivityCollapsed(!activityCollapsed())}
-                width={inspectorW()}
-              />
-            </div>
-          </Show>
-           <QuestionPrompt store={store} />
-              </>
-            }
-          >
-            <BrioPage />
-          </Show>
-         </div>
+            </Match>
+          </Switch>
+</div>
          {/* Activity scrim on narrow screens — hidden on Brio page */}
          <Show when={!activityCollapsed() && page() !== 'brio'}>
           <div
