@@ -25,6 +25,7 @@ import type { MemoryEntry } from './knowledge.js'
 import type { Insight, InsightCategory } from './online.js'
 import { DEFAULT_TOPICS } from './online.js'
 import { buildDynamicTopicsFromAnalysis } from './online.js'
+import { writeFinding } from '../tools/findings.js'
 import type { Bus } from '../bus/index.js'
 import type { OnlineLearner } from './online.js'
 import type { UsageLearner } from './usage.js'
@@ -33,6 +34,9 @@ import type { KnowledgeBase } from './knowledge.js'
 import type { MiraDB } from '../storage/db.js'
 import type { JsonValue } from '../types/index.js'
 import type { PatchingEngine } from '../patching/index.js'
+
+/** Phase 5 ops hygiene: consecutive zero-insight cycles before one HIGH finding. */
+const ZERO_RESULT_STREAK_THRESHOLD = 3
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -60,8 +64,17 @@ export interface SchedulerDeps {
   db?: MiraDB
   /** optional 9-pain-point patching engine — wired when available, runs every patchingIntervalMs */
   patching?: PatchingEngine
-  /** optional gateway for token-cost/latency signals (feeds patching latency detector) */
-  gateway?: { stats: () => { avgLatencyMs: number; requests: number } }
+  /** optional gateway for token-cost/latency signals (feeds patching latency detector
+   *  + per-cycle telemetry: duration, requests, token/cost counts when available) */
+  gateway?: {
+    stats: () => {
+      avgLatencyMs: number
+      requests: number
+      inputTokens?: number
+      outputTokens?: number
+      costUSD?: number
+    }
+  }
 }
 
 export type JobKind = 'online' | 'usage' | 'improvement' | 'patching' | 'all'
@@ -180,11 +193,14 @@ export class LearningScheduler {
       return null as JsonValue
     }
     this.running.add('online')
+    const startedAt = Date.now()
+    let insightCount = 0
     try {
       console.log('[learning:scheduler] → online search')
       // Dynamic topics: default rotation + failure-driven queries the learner needs now
       const topics = await this.buildDynamicTopics()
       const insights = await this.deps.online.learnOnce(topics)
+      insightCount = insights.length
       // Store each insight into knowledge base
       for (const ins of insights) {
         await this.deps.knowledge.storeInsight(ins).catch(() => {})
@@ -192,6 +208,8 @@ export class LearningScheduler {
       this.lastRun.online = Date.now()
       this.lastResult['online'] = toJsonValue({ count: insights.length, at: this.lastRun.online })
       this.publish('online', toJsonValue({ count: insights.length }))
+      // Phase 5 ops hygiene: 3 consecutive empty cycles → one HIGH finding
+      await this.trackZeroResultStreak(insights.length)
 
       // Phase-4 follow-through: fresh insights should feed Mira's self-improvement
       // (gap/patch synthesis) — but throttled so hourly online doesn't spam the LLM.
@@ -206,6 +224,8 @@ export class LearningScheduler {
       }
       return toJsonValue(insights)
     } finally {
+      // Phase 5 telemetry: duration + insight count (+ gateway token/cost stats)
+      this.recordCycleTelemetry('online', startedAt, insightCount)
       this.running.delete('online')
     }
   }
@@ -231,6 +251,83 @@ export class LearningScheduler {
     if (now - this.lastImprovementAt < minGapMs) return false
     this.lastImprovementAt = now
     return true
+  }
+
+  // ── Phase 5 ops hygiene ─────────────────────────────────────────────
+
+  /** Zero-result streak state — 3 consecutive empty online cycles raise one
+   *  HIGH (schema `major`) finding through the shared findings store; any
+   *  non-empty cycle resets the streak. Fires once per streak only. */
+  private zeroResultStreak = 0
+  private zeroResultFindingFired = false
+  private async trackZeroResultStreak(insightCount: number): Promise<void> {
+    if (insightCount > 0) {
+      if (this.zeroResultStreak > 0) {
+        console.log(
+          `[learning:scheduler] zero-result streak reset after ${this.zeroResultStreak} empty cycle(s)`,
+        )
+      }
+      this.zeroResultStreak = 0
+      this.zeroResultFindingFired = false
+      return
+    }
+    this.zeroResultStreak++
+    if (this.zeroResultStreak < ZERO_RESULT_STREAK_THRESHOLD) return
+    if (this.zeroResultFindingFired) return // fire once per streak
+    this.zeroResultFindingFired = true
+    const title = `Online learning zero-result streak: ${this.zeroResultStreak} consecutive cycles returned no insights`
+    console.log(`[learning:scheduler] ${title} — raising finding`)
+    try {
+      await writeFinding(this.deps.db, {
+        title,
+        // Schema enum is info/minor/major/critical — `major` is the HIGH tier
+        severity: 'major',
+        evidence:
+          'LearningScheduler tracked 3+ consecutive online cycles with 0 insights. Check search-tier reachability (network/keys), topic rotation, or extraction thresholds.',
+        source: 'agent',
+      })
+    } catch (e) {
+      console.warn('[learning:scheduler] zero-result finding write failed:', String(e))
+    }
+    this.deps.bus?.publish({
+      type: 'learning.updated',
+      payload: {
+        kind: 'learning.online.zeroResultStreak',
+        streak: this.zeroResultStreak,
+        severity: 'major',
+      } as JsonValue,
+      timestamp: Date.now(),
+    })
+  }
+
+  /** Per-cycle telemetry — duration + item count (+ gateway token/cost stats
+   *  when wired). Follows the failure-stats pattern: `lastResult` + bus + log. */
+  private recordCycleTelemetry(
+    cycle: 'online' | 'usage' | 'improvement',
+    startedAt: number,
+    count: number,
+  ): JsonValue {
+    const durationMs = Date.now() - startedAt
+    const payload: Record<string, JsonValue> = { cycle, durationMs, count, at: Date.now() }
+    try {
+      const s = this.deps.gateway?.stats?.()
+      if (s) {
+        if (typeof s.requests === 'number') payload.requests = s.requests
+        if (typeof s.inputTokens === 'number') payload.inputTokens = s.inputTokens
+        if (typeof s.outputTokens === 'number') payload.outputTokens = s.outputTokens
+        if (typeof s.costUSD === 'number') payload.costUSD = s.costUSD
+      }
+    } catch {}
+    const json = toJsonValue(payload)
+    this.lastResult[`${cycle}Telemetry`] = json
+    this.publish(cycle, json)
+    console.log(
+      `[learning:scheduler] ${cycle} telemetry: ${durationMs}ms, ${count} items` +
+        (payload.inputTokens !== undefined
+          ? `, ${String(payload.inputTokens)} in / ${String(payload.outputTokens)} out tokens`
+          : ''),
+    )
+    return json
   }
 
   /** Promote high-utility knowledge entries to .mira/skills/<slug>.md (loaded by the skills loader). */
@@ -316,6 +413,7 @@ export class LearningScheduler {
   private async runUsage(): Promise<JsonValue> {
     if (this.running.has('usage')) return null as JsonValue
     this.running.add('usage')
+    const startedAt = Date.now()
     try {
       console.log('[learning:scheduler] → usage analysis')
       const analysis = await this.deps.usage.analyze()
@@ -329,6 +427,8 @@ export class LearningScheduler {
         at: this.lastRun.usage,
       } as JsonValue
       this.publish('usage', this.lastResult['usage'])
+      // Phase 5 telemetry: duration + session count (+ gateway token stats)
+      this.recordCycleTelemetry('usage', startedAt, analysis.window.sessions)
       return toJsonValue(analysis)
     } finally {
       this.running.delete('usage')
@@ -341,8 +441,12 @@ export class LearningScheduler {
       return null as JsonValue
     }
     this.running.add('improvement')
+    const startedAt = Date.now()
     try {
       console.log('[learning:scheduler] → improvement cycle')
+      // Phase 3 lifecycle: tombstone knowledge entries unseen for >60 days
+      const swept = this.deps.knowledge.sweepExpired()
+      if (swept > 0) console.log(`[learning:scheduler] expiry sweep tombstoned ${swept} entries`)
       // Gather inputs: recent online insights from knowledge + current usage analysis
       const recentInsights = await this.collectRecentInsights()
       const analysis = await this.deps.usage.analyze().catch(() => null)
@@ -350,6 +454,8 @@ export class LearningScheduler {
       this.lastRun.improvement = Date.now()
       this.lastResult['improvement'] = toJsonValue({ ...result, at: this.lastRun.improvement })
       this.publish('improvement', toJsonValue(result))
+      // Phase 5 telemetry: duration + input-insight count (+ gateway token stats)
+      this.recordCycleTelemetry('improvement', startedAt, recentInsights.length)
       // Also trigger patching when improvement succeeds and engine is wired (9 pain points)
       if (this.deps.patching) {
         try {

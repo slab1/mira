@@ -115,13 +115,17 @@ export function mountLearningRoutes(
   app: Hono<{ Variables: { requestId: string } }>,
   system: LearningSystem,
 ): void {
-  app.get('/learning/status', (c) =>
-    c.json({
+  app.get('/learning/status', (c) => {
+    const { top, bottom } = rankByUtility(system.knowledge)
+    return c.json({
       scheduler: system.scheduler.status(),
       knowledge: { size: system.knowledge.size(), tiers: ['episodic', 'semantic', 'procedural'] },
       usage: system.usage.getStats(),
-    }),
-  )
+      // Phase 4 surfacing: utility feedback made visible (top 3 / bottom 3)
+      topPerforming: top,
+      worstPerforming: bottom,
+    })
+  })
 
   app.post('/learning/trigger', async (c) => {
     const body = await c.req.json().catch(() => ({}))
@@ -527,6 +531,24 @@ export function mountLearningRoutes(
 
     return c.json({ model, successRate, sessions, lastEvalAt })
   })
+}
+
+/** Phase 4 surfacing — top/bottom 3 knowledge entries by utility for
+ *  `/learning/status` (worst first in `bottom`). Tombstoned entries are
+ *  already excluded by `knowledge.list()`. */
+function rankByUtility(kb: KnowledgeBase): {
+  top: Array<{ id: string; title: string; utility: number; source: string; tags: string[] }>
+  bottom: Array<{ id: string; title: string; utility: number; source: string; tags: string[] }>
+} {
+  const scored = kb.list({ limit: 200 }).map((e) => ({
+    id: e.id,
+    title: e.title,
+    utility: typeof e.metadata.utility === 'number' ? e.metadata.utility : 0,
+    source: e.source,
+    tags: e.tags,
+  }))
+  const sorted = [...scored].sort((a, b) => b.utility - a.utility)
+  return { top: sorted.slice(0, 3), bottom: sorted.slice(-3).reverse() }
 }
 
 function badgeColor(score: number): string {

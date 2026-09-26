@@ -10,6 +10,9 @@
  *   2. Tavily   (TAVILY_API_KEY)     — fallback search
  *   3. Native fetch + HTML→text     — always available
  *
+ * Keyless search tiers (when no keys are set): GitHub (repos) → arXiv (papers)
+ * → HN Algolia → DuckDuckGo HTML (tier-4 last resort, category-agnostic).
+ *
  * Inspiration: Project Aether RCSI logic_evolve.py — online pillar is now
  * first-class instead of implicit.
  *
@@ -176,10 +179,16 @@ export class OnlineLearner {
     }
     this.log(`online: ${deduped.length} unique URLs → fetching...`)
 
-    // 2. Fetch (respect the >200-char noise floor)
+    // 2. Fetch (respect the >200-char noise floor) with per-domain politeness:
+    // any domain that errors once gets a 2h cooldown and is skipped afterwards.
     const docs: Array<FetchedDoc & { category: InsightCategory; snippet: string; title: string }> =
       []
     for (const r of deduped) {
+      const domain = domainOf(r.url)
+      if (isCoolingDown(domain)) {
+        this.log(`domain cooldown active — skip ${r.url}`)
+        continue
+      }
       try {
         const doc = await this.config.fetchFn(r.url)
         if (doc && doc.markdown.length > 200) {
@@ -189,9 +198,14 @@ export class OnlineLearner {
             snippet: r.snippet,
             title: r.title ?? doc.title ?? r.url,
           })
+        } else if (!doc) {
+          // `null` = fetch error (non-2xx / transport failure) → cooldown domain
+          this.log(`fetch error ${r.url} → ${DOMAIN_COOLDOWN_MS / 3_600_000}h domain cooldown`)
+          markFetchError(domain)
         }
       } catch (err) {
         this.log(`fetch failed ${r.url}: ${String(err)}`)
+        markFetchError(domain)
       }
     }
     this.log(`online: fetched ${docs.length}/${deduped.length} docs`)
@@ -474,6 +488,128 @@ export async function searchGitHubRepos(query: string, count: number): Promise<S
   }
 }
 
+/** DuckDuckGo HTML endpoint — keyless, category-agnostic tier-4 last resort.
+ *  Only reached when Firecrawl/Tavily and the keyless tiers (GitHub/arXiv/HN)
+ *  all returned nothing for the query. Results are cached in-memory for a
+ *  brief 15m like `githubSearchCache`. */
+const ddgSearchCache = new Map<string, { at: number; results: SearchResult[] }>()
+const DDG_SEARCH_CACHE_TTL_MS = 15 * 60 * 1000
+export function clearDuckDuckGoSearchCache(): void {
+  ddgSearchCache.clear()
+}
+export async function searchDuckDuckGo(query: string, count: number): Promise<SearchResult[]> {
+  const key = `${query}::${count}`
+  const cached = ddgSearchCache.get(key)
+  if (cached && Date.now() - cached.at < DDG_SEARCH_CACHE_TTL_MS) return cached.results
+  try {
+    const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+      headers: { 'User-Agent': 'Mira/0.1 (+https://mira.ai)' },
+      signal: AbortSignal.timeout(6_000), // short timeout — this is the last resort tier
+    })
+    if (!res.ok) return cached?.results ?? []
+    const results = parseDuckDuckGoHtml(await res.text(), count)
+    ddgSearchCache.set(key, { at: Date.now(), results })
+    return results
+  } catch {
+    return cached?.results ?? []
+  }
+}
+
+/** Parse `html.duckduckgo.com` result anchors → title/url/snippet triples. */
+function parseDuckDuckGoHtml(html: string, count: number): SearchResult[] {
+  const out: SearchResult[] = []
+  const anchorRe = /<a\b([^>]*)>([\s\S]*?)<\/a>/g
+  let m: RegExpExecArray | null
+  while (out.length < count && (m = anchorRe.exec(html)) !== null) {
+    const attrs = m[1] ?? ''
+    if (!/class="[^"]*result__a/.test(attrs)) continue
+    const href = /href="([^"]+)"/.exec(attrs)?.[1]
+    if (!href) continue
+    const url = resolveDuckDuckGoHref(href)
+    if (!url) continue
+    const title = stripHtmlTags(m[2] ?? '')
+    if (!title) continue
+    // The `result__snippet` anchor sits right after its title anchor in the
+    // same result block — first match past this anchor is its snippet.
+    const rest = html.slice(anchorRe.lastIndex)
+    const snip =
+      /<(?:a|span)\b[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/(?:a|span)>/.exec(rest)
+    out.push({ title, url, snippet: snip ? stripHtmlTags(snip[1]).slice(0, 280) : '' })
+  }
+  return out
+}
+
+/** Resolve DDG redirect links (`//duckduckgo.com/l/?uddg=<enc>`) → target URL.
+ *  Returns null for internal DDG navigation links (no `uddg` target). */
+function resolveDuckDuckGoHref(href: string): string | null {
+  try {
+    const abs = href.startsWith('//') ? `https:${href}` : href
+    const u = new URL(abs, 'https://duckduckgo.com/')
+    const target = u.searchParams.get('uddg')
+    if (target) return target
+    if (/(^|\.)duckduckgo\.com$/i.test(u.hostname)) return null // internal link
+    return u.toString()
+  } catch {
+    return null
+  }
+}
+
+function stripHtmlTags(s: string): string {
+  return s
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;|&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// ── Per-domain politeness cooldown (Phase 5 ops hygiene) ─────────────────────
+// Any domain with ≥1 fetch error in a run is skipped for 2h. In-memory only —
+// a restart clears the map (deliberate: no persistence of transient failures).
+
+/** Cooldown duration after a single fetch error (2h). */
+export const DOMAIN_COOLDOWN_MS = 2 * 60 * 60 * 1000
+const domainCooldowns = new Map<string, number>()
+
+/** Test/shutdown helper — clears all active domain cooldowns. */
+export function clearDomainCooldowns(): void {
+  domainCooldowns.clear()
+}
+
+/** Domains currently in cooldown (expired entries are pruned as a side effect). */
+export function activeDomainCooldowns(now = Date.now()): string[] {
+  for (const [d, exp] of [...domainCooldowns]) if (exp <= now) domainCooldowns.delete(d)
+  return [...domainCooldowns.keys()]
+}
+
+function domainOf(url: string): string | null {
+  try {
+    return new URL(url).hostname.toLowerCase()
+  } catch {
+    return null
+  }
+}
+
+function isCoolingDown(domain: string | null, now = Date.now()): boolean {
+  if (!domain) return false
+  const exp = domainCooldowns.get(domain)
+  if (exp === undefined) return false
+  if (exp <= now) {
+    domainCooldowns.delete(domain)
+    return false
+  }
+  return true
+}
+
+function markFetchError(domain: string | null): void {
+  if (!domain) return
+  domainCooldowns.set(domain, Date.now() + DOMAIN_COOLDOWN_MS)
+}
+
 /**
  * Chunk a fetched doc by markdown headings — keep each `## -h2` (and friends)
  * section as a separate doc so extraction weights substantive content over
@@ -585,6 +721,10 @@ function createDefaultSearchFn(): OnlineLearnerConfig['searchFn'] {
     // HN Algolia: free + keyless + very high signal for dev topics
     const hn = await searchHN(query, count)
     if (hn.length) return hn
+    // Tier-4 (last resort): DuckDuckGo HTML — keyless, category-agnostic general
+    // web search. Only reached when every upper tier returned nothing.
+    const ddg = await searchDuckDuckGo(query, count)
+    if (ddg.length) return ddg
     // Return [] rather than fabricate results
     return []
   }
@@ -755,11 +895,34 @@ function summarizeHeuristic(markdown: string, title?: string): string {
 
 function extractPattern(markdown: string, category: InsightCategory): string {
   const text = markdown.slice(0, 3000)
-  // Look for imperative / pattern-like lines
+  // Candidate 1: imperative / pattern-like lines
   const line = text
     .split('\n')
     .find((l) => /^(use|prefer|avoid|implement|add|enable|ensure|configure)\b/i.test(l.trim()))
-  if (line) return line.trim().slice(0, 280)
+  // Candidate 2: first line of the first code-fenced snippet (Phase 2 — fenced
+  // recipes often carry the exact pattern when no prose line starts with a verb)
+  const fence = firstCodeFenceLine(text)
+  // Dedupe candidates (the fence line may repeat the imperative line verbatim)
+  const seen = new Set<string>()
+  for (const candidate of [line?.trim(), fence]) {
+    if (!candidate) continue
+    const key = candidate.replace(/\s+/g, ' ').toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    return candidate.slice(0, 280)
+  }
   // Fallback: first 200 chars of summary
   return summarizeHeuristic(markdown).slice(0, 200)
+}
+
+/** First non-empty line inside the first ``` code fence — a pattern candidate
+ *  for `extractPattern()` alongside imperative prose lines. */
+function firstCodeFenceLine(text: string): string | undefined {
+  const fence = /```[^\n]*\n([\s\S]*?)(?:```|$)/.exec(text)
+  const body = fence?.[1] ?? ''
+  const first = body
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.length > 0)
+  return first ? first.slice(0, 280) : undefined
 }
