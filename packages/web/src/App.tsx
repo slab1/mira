@@ -18,6 +18,7 @@ import { ConnectModal } from './components/ConnectModal'
 import { HeaderModelSelector, HeaderAgentSelector } from './components/HeaderSelectors'
 import BrioPage from './pages/Brio'
 import EvolutionPage from './pages/Evolution'
+import MissionsPage from './pages/Missions'
 import { TopNav, type WorkspaceId, type WorkSubTab } from './components/TopNav'
 
 // ── Workspace stubs (incremental per MIRA_UI_IMPLEMENTATION_ROADMAP.md) ──
@@ -49,9 +50,6 @@ function StubCard(props: { icon: string; title: string; desc: string; items: str
       </div>
     </div>
   )
-}
-function MissionsStub() {
-  return <StubCard icon="⬢" title="Missions" desc="Autonomous execution cockpit — parent/child agents, states, pause/cancel" items={['Mission overview', 'Parent/child agents & Current operation', 'Agent states · Tool activity · Files changed', 'Token usage & Cost · Pause/cancel · Transcript']} cta="Phase 2 — backs GET /missions/:id + Bus job.created/updated" />
 }
 function IntelligenceStub() {
   return <StubCard icon="◎" title="Intelligence" desc="Memory & research — why Mira knows or chooses this" items={['Source · Evidence · Confidence · Timestamp · Scope', 'Explainability · Forget · Correct · Promote', 'Project / Team / Org / Procedural / Failure memory', 'Research persistence & retrieval']} cta="Phase 4 — backs GET /memory + provenance + GET /knowledge/graph" />
@@ -1339,7 +1337,14 @@ export default function App() {
               <EvolutionPage />
             </Match>
             <Match when={workspace() === 'missions'}>
-              <MissionsStub />
+              <MissionsPage
+                store={store}
+                onOpenInChat={(sessionId) => {
+                  if (sessionId) void store.selectSession(sessionId)
+                  setWorkTab('chat')
+                  setWorkspace('work')
+                }}
+              />
             </Match>
             <Match when={workspace() === 'intelligence'}>
               <IntelligenceStub />

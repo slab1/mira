@@ -34,6 +34,19 @@ export type Session = {
   tokensOut?: number | null
   cwd?: string | null
   projectId?: string | null
+  /**
+   * Parent session for subagent spawns (DB column `parent_id`, storage/db.ts).
+   * `GET /session` returns the Drizzle property name `parentID`; exported /
+   * imported envelopes may serialize the column name `parent_id` instead.
+   * Always read via sessionParentId() — never field access directly.
+   */
+  parentID?: string | null
+  parent_id?: string | null
+}
+
+/** Parent session id, tolerant of the two wire shapes (`parentID` / `parent_id`). */
+export function sessionParentId(s: Session): string | null {
+  return s.parentID ?? s.parent_id ?? null
 }
 
 export type Message = {
@@ -62,6 +75,9 @@ export type JsonValue =
   string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
 
 export type Part = {
+  /** Client/SSE spellings are snake_case; persisted rows from
+   *  `GET /session/:id/message` use `tool-call` / `tool-result`. Normalize
+   *  with normalizeMessages() in pages/Missions.tsx before rendering. */
   type: 'text' | 'tool_call' | 'tool_result' | 'reasoning'
   text?: string
   tool?: string
@@ -72,6 +88,12 @@ export type Part = {
   reason?: string
   matchedPattern?: string
   lane?: string
+  // ── Wire aliases persisted by the server (parts table) ──────────────
+  args?: JsonValue
+  result?: JsonValue
+  isError?: boolean
+  toolCallID?: string
+  createdAt?: number
 }
 
 export type Todo = {
@@ -105,6 +127,20 @@ export type Snapshot = {
   path: string
   existedBefore: boolean
   createdAt: number
+}
+
+/** GET /session/:id/cost — live gateway spend + persisted totals (routes/session.ts). */
+export type SessionCost = {
+  sessionID: string
+  tokensIn: number
+  tokensOut: number
+  costUSD: number
+  requests: number
+  persisted?: {
+    tokensIn: number
+    tokensOut: number
+    costUSD: number
+  }
 }
 
 export type Finding = {
@@ -722,6 +758,10 @@ export const api = {
     ),
 
   listSnapshots: (id: string) => req<Snapshot[]>(`/session/${id}/snapshots`),
+
+  /** GET /session/:id/cost — tokens/cost for one session (live + persisted totals) */
+  getSessionCost: (id: string) =>
+    req<SessionCost>(`/session/${encodeURIComponent(id)}/cost`),
 
   getSnapshot: (id: string, snapshotId: string) =>
     req<{

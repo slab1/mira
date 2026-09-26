@@ -2564,3 +2564,56 @@ html {
     padding: 12px !important;
   }
 }
+
+/* ── Mission Control (Phase 2) — master/detail cockpit ── */
+.mc-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: var(--sp-3);
+  align-items: start;
+}
+/* Mission list sticks while the detail column scrolls; bounded so the
+   tree never outgrows the viewport (scrolls inside its own region). */
+.mc-list {
+  position: sticky;
+  top: var(--sp-2);
+  max-height: calc(100vh - var(--header-h) - var(--sp-6));
+  min-width: 0;
+}
+.mc-list-rows {
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 2px;
+  /* Reserve scroll space so rows don't shift when the scrollbar appears */
+  scrollbar-gutter: stable;
+}
+/* Tablist: quiet horizontal scroller; keyboard nav is handled in-page. */
+.mc-tabs {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.mc-tabs::-webkit-scrollbar {
+  height: 4px;
+}
+.mc-tabs::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--r-full);
+}
+/* Focus visibility for tab buttons (they carry inline state styles). */
+.mc-tabs [role='tab']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+@media (max-width: 900px) {
+  /* Stack: mission tree becomes a full-width block above the detail pane */
+  .mc-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mc-list {
+    position: static;
+    max-height: none;
+  }
+  .mc-list-rows {
+    max-height: 46vh;
+  }
+}
