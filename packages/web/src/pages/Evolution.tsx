@@ -1,5 +1,5 @@
 import { createSignal, onMount, Show, For, createMemo } from 'solid-js'
-import { api, getToken } from '../api/client'
+import { api, getToken, type PatchProposal, type ProposalState } from '../api/client'
 import { toast } from '../components/Toast'
 
 type EngineHealth = { id: string; status: string; healthy: boolean }
@@ -52,6 +52,63 @@ async function getJson<T>(path: string): Promise<T> {
   return (await res.json()) as T
 }
 
+// ── Proposals (GET /evolution/proposals) ─────────────────────────────
+
+/** Pipeline order for the filter pills — mirrors server ProposalState. */
+const PROPOSAL_STATE_ORDER: readonly ProposalState[] = [
+  'PROPOSED',
+  'BENCHMARK_PENDING', 'BENCHMARK_PASSED', 'BENCHMARK_FAILED',
+  'SECURITY_PENDING', 'SECURITY_PASSED', 'SECURITY_FAILED',
+  'CANARY_PENDING', 'CANARY_PASSED', 'CANARY_FAILED',
+  'PROMOTED', 'ROLLED_BACK', 'REJECTED',
+]
+
+/**
+ * Advance is only meaningful while a proposal is still moving through the
+ * pipeline (PROPOSED → benchmark → security → canary). Terminal states
+ * (PROMOTED / REJECTED / ROLLED_BACK) and *_FAILED gates cannot advance.
+ * Maps the spec's PROPOSED/BENCHMARKED/SECURITY_APPROVED/CANARY_PASSED onto
+ * the committed server union (…_PENDING / …_PASSED).
+ */
+const ADVANCEABLE_STATES: readonly ProposalState[] = [
+  'PROPOSED',
+  'BENCHMARK_PENDING', 'BENCHMARK_PASSED',
+  'SECURITY_PENDING', 'SECURITY_PASSED',
+  'CANARY_PENDING', 'CANARY_PASSED',
+]
+const canAdvance = (state: string | undefined) =>
+  ADVANCEABLE_STATES.includes((state ?? '') as ProposalState)
+
+/** State pill — color is decorative; the pill always carries the state text. */
+function statePillClass(state: string | undefined): string {
+  const s = state ?? ''
+  if (s === 'PROMOTED' || s.endsWith('_PASSED')) return 'pill-ok'
+  if (s === 'ROLLED_BACK' || s.endsWith('_FAILED')) return 'pill-danger'
+  if (s.endsWith('_PENDING')) return 'pill-warn'
+  if (s === 'PROPOSED') return 'pill-accent'
+  return '' // REJECTED / unknown → neutral pill
+}
+
+/** Severity pill — high=danger, medium=warn, low=ok. */
+function severityPillClass(severity: string | undefined): string {
+  const s = (severity ?? '').toLowerCase()
+  if (s === 'high' || s === 'critical') return 'pill-danger'
+  if (s === 'medium' || s === 'mid') return 'pill-warn'
+  if (s === 'low') return 'pill-ok'
+  return ''
+}
+
+/** epoch ms (or s) → local timestamp; malformed values degrade to a dash. */
+function fmtProposalTime(ts: number | undefined): string {
+  if (!ts || !Number.isFinite(ts)) return '—'
+  const ms = ts < 1e12 ? ts * 1000 : ts
+  try {
+    return new Date(ms).toLocaleString()
+  } catch {
+    return String(ts)
+  }
+}
+
 function Dot(props: { healthy: boolean | null; label?: string }) {
   const color = () => (props.healthy === true ? 'var(--ok)' : props.healthy === false ? 'var(--danger)' : 'var(--fg-faint)')
   return (
@@ -86,6 +143,11 @@ export default function EvolutionPage() {
   const [selectedId, setSelectedId] = createSignal<string>('104')
   const [evidenceOpen, setEvidenceOpen] = createSignal(false)
   const [diffOpen, setDiffOpen] = createSignal(false)
+  // ── Proposals (governance pipeline) ──────────────────────────────
+  const [proposals, setProposals] = createSignal<PatchProposal[]>([])
+  const [proposalsLoading, setProposalsLoading] = createSignal(true)
+  const [proposalsUnavailable, setProposalsUnavailable] = createSignal(false)
+  const [stateFilter, setStateFilter] = createSignal('')
 
   const summary = createMemo<HealthSummary>(() => {
     const healthy = engines().filter((e) => e.healthy).length
@@ -114,6 +176,48 @@ export default function EvolutionPage() {
     const byId = ledger().find((e) => e.id === '104')
     if (byId) return byId
     return null
+  })
+
+  /**
+   * GET /evolution/proposals — tolerant by design: while the server lane is
+   * undeployed (404, or the SPA fallback answering with HTML → parsed as {})
+   * we degrade to a quiet inline "Proposals unavailable" note, never a page error.
+   */
+  const loadProposals = async () => {
+    setProposalsLoading(true)
+    try {
+      const j = await api.listProposals()
+      if (Array.isArray(j?.proposals)) {
+        setProposals(j.proposals)
+        setProposalsUnavailable(false)
+      } else {
+        setProposals([])
+        setProposalsUnavailable(true)
+      }
+    } catch {
+      setProposals([])
+      setProposalsUnavailable(true)
+    } finally {
+      setProposalsLoading(false)
+    }
+  }
+
+  /** Filter pills = states actually present in the data (plus the active one), in pipeline order. */
+  const proposalStates = createMemo<ProposalState[]>(() => {
+    const present = new Set<string>(proposals().map((p) => p.state))
+    const active = stateFilter()
+    const ordered = PROPOSAL_STATE_ORDER.filter((s) => present.has(s) || s === active)
+    // forward-compat: a state added server-side later still gets a pill
+    for (const s of present) {
+      if (s !== active && !PROPOSAL_STATE_ORDER.includes(s as ProposalState)) ordered.push(s as ProposalState)
+    }
+    return ordered
+  })
+
+  const visibleProposals = createMemo(() => {
+    const f = stateFilter()
+    const all = proposals()
+    return f ? all.filter((p) => p.state === f) : all
   })
 
   const fetchAll = async () => {
@@ -207,6 +311,9 @@ export default function EvolutionPage() {
           .then((j) => setMemoryEvolutionCount(typeof j.count === 'number' ? j.count : Array.isArray(j.entries) ? j.entries.length : 0))
           .catch(() => setMemoryEvolutionCount(0)),
       )
+
+      // Proposals — own signal + quiet "unavailable" fallback, never fails the page
+      promises.push(loadProposals())
 
       await Promise.allSettled(promises)
     } catch (e) {
@@ -340,6 +447,55 @@ export default function EvolutionPage() {
       void fetchAll()
     } catch (e) {
       toast.error(`Reject failed: ${(e as Error).message}`)
+    } finally {
+      setActionBusy(null)
+    }
+  }
+
+  // ── Proposal actions — each re-fetches the list on settle ────────
+  async function advanceOne(p: PatchProposal) {
+    setActionBusy(`advance:${p.id}`)
+    try {
+      const j = await api.advanceProposal(p.id)
+      const next = j?.proposal?.state
+      toast.success(next ? `Advanced ${p.id} → ${next}` : `Advanced ${p.id}`)
+      void loadProposals()
+    } catch (e) {
+      toast.error(`Advance failed: ${(e as Error).message}`)
+    } finally {
+      setActionBusy(null)
+    }
+  }
+
+  async function promoteOne(p: PatchProposal) {
+    setActionBusy(`promote:${p.id}`)
+    try {
+      const j = await api.promoteProposal(p.id)
+      if (j?.applied) toast.success(j.prUrl ? `Promoted ${p.id} — ${j.prUrl}` : `Promoted ${p.id}`)
+      else toast.error(`Promote not applied for ${p.id}`)
+      void loadProposals()
+    } catch (e) {
+      toast.error(`Promote failed: ${(e as Error).message}`)
+    } finally {
+      setActionBusy(null)
+    }
+  }
+
+  async function rollbackOne(p: PatchProposal) {
+    const reason = window.prompt(`Rollback reason for ${p.id}:`)
+    if (reason === null) return // dismissed — no action
+    const trimmed = reason.trim()
+    if (!trimmed) {
+      toast.error('Rollback needs a reason')
+      return
+    }
+    setActionBusy(`rollback:${p.id}`)
+    try {
+      await api.rollbackProposal(p.id, trimmed)
+      toast.success(`Rolled back ${p.id}`)
+      void loadProposals()
+    } catch (e) {
+      toast.error(`Rollback failed: ${(e as Error).message}`)
     } finally {
       setActionBusy(null)
     }
@@ -883,6 +1039,251 @@ export default function EvolutionPage() {
                 Failed improvements remain visible — failure memory is knowledge.
               </div>
             </div>
+          </section>
+
+          {/* Proposals — governance pipeline (GET /evolution/proposals) */}
+          <section
+            class="card"
+            aria-labelledby="proposals-title"
+            style={{ padding: '16px', display: 'flex', 'flex-direction': 'column', gap: '12px' }}
+          >
+            <div style={{ display: 'flex', 'align-items': 'flex-start', 'justify-content': 'space-between', gap: '10px', 'flex-wrap': 'wrap' }}>
+              <div>
+                <div
+                  id="proposals-title"
+                  style={{ 'font-size': 'var(--fs-xs)', 'font-weight': '700', 'letter-spacing': '0.04em', 'text-transform': 'uppercase', color: 'var(--fg-muted)' }}
+                >
+                  Proposals
+                </div>
+                <div style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'line-height': '1.5', 'margin-top': '2px' }}>
+                  Propose → Benchmark → Security → Canary → Promote · rollback always available
+                </div>
+              </div>
+              <button
+                type="button"
+                class="btn btn-ghost"
+                onClick={() => void loadProposals()}
+                disabled={proposalsLoading()}
+                aria-busy={proposalsLoading() ? 'true' : 'false'}
+                style={{ padding: '6px 10px', 'font-size': 'var(--fs-xs)', border: '1px solid var(--border)', 'border-radius': 'var(--r-md)', 'min-height': '32px' }}
+              >
+                ↻ Refresh
+              </button>
+            </div>
+
+            <Show when={!proposalsUnavailable()}>
+              {/* State filter — pill tabs; only states present get a pill (no dead tabs) */}
+              <Show when={!proposalsLoading() || proposals().length > 0}>
+                <div role="group" aria-label="Filter proposals by state" style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap', 'align-items': 'center' }}>
+                  <button
+                    type="button"
+                    class={`pill pill-btn ${stateFilter() === '' ? 'pill-accent' : ''}`}
+                    aria-pressed={stateFilter() === '' ? 'true' : 'false'}
+                    onClick={() => setStateFilter('')}
+                    style={{ 'font-size': 'var(--fs-2xs)' }}
+                  >
+                    All <span style={{ 'font-family': 'var(--font-mono)' }}>{proposals().length}</span>
+                  </button>
+                  <For each={proposalStates()}>
+                    {(s) => (
+                      <button
+                        type="button"
+                        class={`pill pill-btn ${stateFilter() === s ? 'pill-accent' : ''}`}
+                        aria-pressed={stateFilter() === s ? 'true' : 'false'}
+                        onClick={() => setStateFilter(stateFilter() === s ? '' : s)}
+                        style={{ 'font-size': 'var(--fs-2xs)' }}
+                      >
+                        {s} <span style={{ 'font-family': 'var(--font-mono)' }}>{proposals().filter((p) => p.state === s).length}</span>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Show>
+
+              {/* Loading — skeleton only before first data, rows stay put on refresh */}
+              <Show when={proposalsLoading() && proposals().length === 0}>
+                <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }} aria-hidden="true">
+                  <div class="skeleton" style={{ height: '64px' }} />
+                  <div class="skeleton" style={{ height: '64px' }} />
+                </div>
+              </Show>
+
+              {/* Empty state */}
+              <Show when={!proposalsLoading() && visibleProposals().length === 0}>
+                <div
+                  style={{
+                    padding: '16px 12px',
+                    'text-align': 'center',
+                    'font-size': 'var(--fs-xs)',
+                    color: 'var(--fg-faint)',
+                    background: 'var(--bg-app)',
+                    border: '1px dashed var(--border)',
+                    'border-radius': 'var(--r-md)',
+                  }}
+                >
+                  {stateFilter() ? `No proposals in ${stateFilter()}` : 'No proposals yet'}
+                </div>
+              </Show>
+
+              <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px', 'min-height': '48px' }} role="list" aria-label="Patch proposals">
+                <For each={visibleProposals()}>
+                  {(p) => {
+                    const anyBusy = () => actionBusy() !== null
+                    const mine = (k: string) => actionBusy() === `${k}:${p.id}`
+                    return (
+                      <div
+                        role="listitem"
+                        class="card"
+                        style={{
+                          padding: '10px 12px',
+                          background: 'var(--bg-app)',
+                          border: '1px solid var(--border)',
+                          display: 'flex',
+                          'flex-direction': 'column',
+                          gap: '8px',
+                          'min-height': '64px',
+                        }}
+                      >
+                        <div style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'flex-wrap': 'wrap', 'justify-content': 'space-between' }}>
+                          <div style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'flex-wrap': 'wrap', 'min-width': '0' }}>
+                            <span style={{ 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-xs)', 'font-weight': '700', color: 'var(--fg)' }}>
+                              {p.id}
+                            </span>
+                            <span
+                              title={p.targetFile ?? 'no target file'}
+                              style={{
+                                'font-family': 'var(--font-mono)',
+                                'font-size': 'var(--fs-2xs)',
+                                color: 'var(--fg-subtle)',
+                                'max-width': '300px',
+                                overflow: 'hidden',
+                                'text-overflow': 'ellipsis',
+                                'white-space': 'nowrap',
+                              }}
+                            >
+                              {p.targetFile ?? '—'}
+                            </span>
+                            <span class={`pill ${severityPillClass(p.severity)}`} style={{ 'font-size': 'var(--fs-2xs)' }}>
+                              {p.severity || '—'}
+                            </span>
+                            <span class="pill pill-cost" style={{ 'font-size': 'var(--fs-2xs)' }}>
+                              score {Number.isFinite(p.score) ? p.score : '—'}
+                            </span>
+                            <span
+                              class={`pill ${statePillClass(p.state)}`}
+                              style={{ 'font-size': 'var(--fs-2xs)', 'font-family': 'var(--font-mono)' }}
+                              aria-label={`State ${p.state ?? 'unknown'}`}
+                            >
+                              {p.state ?? 'UNKNOWN'}
+                            </span>
+                            <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'font-family': 'var(--font-mono)' }}>
+                              {fmtProposalTime(p.createdAt)}
+                            </span>
+                          </div>
+                          <div
+                            role="group"
+                            aria-label={`Actions for proposal ${p.id}`}
+                            style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap', 'align-items': 'center' }}
+                          >
+                            <button
+                              type="button"
+                              class="btn btn-outline"
+                              onClick={() => void advanceOne(p)}
+                              disabled={anyBusy() || !canAdvance(p.state)}
+                              aria-busy={mine('advance') ? 'true' : 'false'}
+                              title={canAdvance(p.state) ? `POST /evolution/proposals/${p.id}/advance` : `Cannot advance from ${p.state}`}
+                              style={{ padding: '7px 12px', 'font-size': 'var(--fs-xs)', 'min-height': '36px' }}
+                            >
+                              {mine('advance') ? 'Advancing…' : 'Advance'}
+                            </button>
+                            <Show when={p.state === 'CANARY_PASSED'}>
+                              <button
+                                type="button"
+                                class="btn btn-solid"
+                                onClick={() => void promoteOne(p)}
+                                disabled={anyBusy()}
+                                aria-busy={mine('promote') ? 'true' : 'false'}
+                                title={`POST /evolution/proposals/${p.id}/promote`}
+                                style={{ padding: '7px 12px', 'font-size': 'var(--fs-xs)', 'min-height': '36px' }}
+                              >
+                                {mine('promote') ? 'Promoting…' : 'Promote'}
+                              </button>
+                            </Show>
+                            <Show when={p.state === 'PROMOTED'}>
+                              <button
+                                type="button"
+                                class="btn btn-danger-ghost"
+                                onClick={() => void rollbackOne(p)}
+                                disabled={anyBusy()}
+                                aria-busy={mine('rollback') ? 'true' : 'false'}
+                                title={`POST /evolution/proposals/${p.id}/rollback — prompts for a reason`}
+                                style={{ padding: '7px 12px', 'font-size': 'var(--fs-xs)', 'min-height': '36px' }}
+                              >
+                                {mine('rollback') ? 'Rolling back…' : 'Rollback'}
+                              </button>
+                            </Show>
+                          </div>
+                        </div>
+                        <Show when={Boolean(p.reason)}>
+                          <div
+                            title={p.reason}
+                            style={{
+                              'font-size': 'var(--fs-2xs)',
+                              color: 'var(--fg-muted)',
+                              'line-height': '1.5',
+                              overflow: 'hidden',
+                              'text-overflow': 'ellipsis',
+                              'white-space': 'nowrap',
+                            }}
+                          >
+                            {p.reason}
+                          </div>
+                        </Show>
+                        <Show when={Boolean(p.prUrl)}>
+                          <a
+                            href={p.prUrl}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--accent)', 'font-family': 'var(--font-mono)' }}
+                          >
+                            {p.prUrl}
+                          </a>
+                        </Show>
+                      </div>
+                    )
+                  }}
+                </For>
+              </div>
+            </Show>
+
+            {/* Graceful degradation — server lane not deployed / 404 / SPA fallback */}
+            <Show when={proposalsUnavailable()}>
+              <div
+                role="status"
+                style={{
+                  display: 'flex',
+                  'align-items': 'center',
+                  gap: '8px',
+                  'flex-wrap': 'wrap',
+                  'font-size': 'var(--fs-xs)',
+                  color: 'var(--fg-faint)',
+                  'font-family': 'var(--font-mono)',
+                  'min-height': '32px',
+                }}
+              >
+                <span>Proposals unavailable</span>
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  onClick={() => void loadProposals()}
+                  disabled={proposalsLoading()}
+                  aria-busy={proposalsLoading() ? 'true' : 'false'}
+                  style={{ padding: '4px 8px', 'font-size': 'var(--fs-2xs)', 'min-height': '28px', border: '1px solid var(--border)', 'border-radius': 'var(--r-md)' }}
+                >
+                  ↻ Retry
+                </button>
+              </div>
+            </Show>
           </section>
 
           {/* Safety footer */}

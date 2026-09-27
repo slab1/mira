@@ -18,6 +18,10 @@
  *   POST   /session/import     → { id, copiedMessages, copiedParts, copiedTodos }
  *   GET    /tools
  *   POST   /permission/check
+ *   GET    /evolution/proposals?state=   → { proposals: PatchProposal[] }
+ *   POST   /evolution/proposals/:id/advance  → { proposal }
+ *   POST   /evolution/proposals/:id/promote  → { applied, prUrl? }
+ *   POST   /evolution/proposals/:id/rollback → { ok: true }
  *   WS     /                   → BusEvent stream
  */
 
@@ -174,6 +178,63 @@ export type BusEvent = {
   payload?: JsonValue
   sessionID?: string
   timestamp: number
+}
+
+// ── Evolution governance — patch proposals ─────────────────────────
+// Mirrors packages/server/src/patching/governance/types.ts exactly.
+
+export type ProposalState =
+  | 'PROPOSED'
+  | 'BENCHMARK_PENDING' | 'BENCHMARK_PASSED' | 'BENCHMARK_FAILED'
+  | 'SECURITY_PENDING' | 'SECURITY_PASSED' | 'SECURITY_FAILED'
+  | 'CANARY_PENDING' | 'CANARY_PASSED' | 'CANARY_FAILED'
+  | 'PROMOTED'
+  | 'ROLLED_BACK'
+  | 'REJECTED'
+
+export type BenchmarkResult = {
+  passed: boolean
+  reason: string
+  before?: unknown
+  after?: unknown
+  delta?: Record<string, number>
+}
+
+export type CanaryResult = {
+  passed: boolean
+  reason: string
+  metrics?: Record<string, unknown>
+}
+
+export type CanaryConfig = {
+  trafficPct: number
+  durationMs: number
+  slo?: { p50Ms?: number; p95Ms?: number; errorRate?: number }
+}
+
+export type PatchProposal = {
+  id: string
+  patchId: string
+  painPointId: string
+  kind: string
+  targetFile: string | null
+  reason: string
+  change: string
+  severity: string
+  score: number
+  state: ProposalState
+  metadata: {
+    verifyResult: unknown
+    benchmark?: BenchmarkResult
+    security?: unknown
+    canary?: CanaryResult
+  }
+  createdAt: number
+  updatedAt: number
+  promotedAt?: number
+  rolledBackAt?: number
+  prUrl?: string
+  canaryConfig?: CanaryConfig
 }
 
 // ── Settings types ─────────────────────────────────────────────────
@@ -1238,6 +1299,30 @@ export const api = {
     req<{ ok: boolean; deleted: boolean }>(`/session/${id}/queue/item`, {
       method: 'DELETE',
       body: JSON.stringify({ text }),
+    }),
+
+  // ── Evolution proposals (governance pipeline) ───────────────────
+  /** GET /evolution/proposals?state=<optional> → { proposals } (404 until the server lane ships). */
+  listProposals: (state?: string) =>
+    req<{ proposals: PatchProposal[] }>(
+      state ? `/evolution/proposals?state=${encodeURIComponent(state)}` : '/evolution/proposals',
+    ),
+  /** POST /evolution/proposals/:id/advance → { proposal } */
+  advanceProposal: (id: string) =>
+    req<{ proposal: PatchProposal }>(`/evolution/proposals/${encodeURIComponent(id)}/advance`, {
+      method: 'POST',
+    }),
+  /** POST /evolution/proposals/:id/promote → { applied, prUrl? } */
+  promoteProposal: (id: string) =>
+    req<{ applied: boolean; prUrl?: string }>(
+      `/evolution/proposals/${encodeURIComponent(id)}/promote`,
+      { method: 'POST' },
+    ),
+  /** POST /evolution/proposals/:id/rollback { reason } → { ok: true } */
+  rollbackProposal: (id: string, reason: string) =>
+    req<{ ok: true }>(`/evolution/proposals/${encodeURIComponent(id)}/rollback`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
     }),
 }
 
