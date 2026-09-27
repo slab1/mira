@@ -385,7 +385,9 @@ export function mountEvolutionProposalRoutes(
     const exists = await governance.get(id)
     if (!exists) return c.json({ error: "not found", id }, 404)
     const result = await governance.promote(id)
-    return c.json({ applied: result.applied, prUrl: result.prUrl })
+    // backward compatible: prUrl/regressionBlocked/reason are omitted from the
+    // JSON body when undefined; failure reasons must reach the client.
+    return c.json({ applied: result.applied, prUrl: result.prUrl, regressionBlocked: result.regressionBlocked, reason: result.reason })
   })
 
   // ── POST /evolution/proposals/:id/rollback  body: { reason } ─────

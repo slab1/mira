@@ -2,7 +2,7 @@
  * Governance proposal routes:
  *   GET  /evolution/proposals?state=<s>       → { proposals: PatchProposal[] }
  *   POST /evolution/proposals/:id/advance     → { proposal }
- *   POST /evolution/proposals/:id/promote     → { applied, prUrl? }
+ *   POST /evolution/proposals/:id/promote     → { applied, prUrl?, regressionBlocked?, reason? }
  *   POST /evolution/proposals/:id/rollback    → { ok: true }   body { reason }
  *
  * Wired the same way evolution.ts gets its other deps: the GovernanceGate
@@ -67,6 +67,11 @@ beforeEach(async () => {
     rootDir: process.cwd(),
     // deterministic promote — no git/gh in tests
     promoter: { promote: async () => ({ applied: true, prUrl: 'https://github.com/slab1/mira/pull/1' }) },
+    // instrumented stage fakes — promote() auto-derives regression evidence
+    // (baseline=metadata.benchmark.before, candidate=metadata.canary.metrics)
+    // from what advance() stores; p95Ms 100 → 100 = no regression
+    benchmark: { run: async () => ({ passed: true, reason: 'ok', before: { p95Ms: 100 } }) },
+    canary: { start: async () => ({ passed: true, reason: 'ok', metrics: { p95Ms: 100 } }) },
   })
   app = new Hono<{ Variables: { requestId: string } }>()
   mountEvolutionRoutes(app, { db, bus, governance: gate })
@@ -137,8 +142,14 @@ describe('POST /evolution/proposals/:id/advance', () => {
 })
 
 describe('POST /evolution/proposals/:id/promote', () => {
-  test('returns { applied, prUrl } and persists PROMOTED', async () => {
+  test('returns { applied, prUrl } and persists PROMOTED (after full pipeline)', async () => {
     const p = await gate.createProposal(PATCH, VERIFY)
+    // only CANARY_PASSED may promote — advance through every stage first
+    await json(`/evolution/proposals/${p.id}/advance`, post({}))
+    await json(`/evolution/proposals/${p.id}/advance`, post({}))
+    const s3 = await json(`/evolution/proposals/${p.id}/advance`, post({}))
+    expect(s3.body.proposal.state).toBe('CANARY_PASSED')
+
     const res = await json(`/evolution/proposals/${p.id}/promote`, post({}))
     expect(res.status).toBe(200)
     expect(res.body.applied).toBe(true)
@@ -147,6 +158,50 @@ describe('POST /evolution/proposals/:id/promote', () => {
     const list = await json('/evolution/proposals?state=PROMOTED')
     expect(list.body.proposals.length).toBe(1)
     expect(list.body.proposals[0].prUrl).toBe('https://github.com/slab1/mira/pull/1')
+  })
+
+  test('state guard: promote before CANARY_PASSED → { applied:false, reason: invalid_state:* }', async () => {
+    const p = await gate.createProposal(PATCH, VERIFY) // PROPOSED — no skip to PROMOTED
+    const res = await json(`/evolution/proposals/${p.id}/promote`, post({}))
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ applied: false, reason: 'invalid_state:PROPOSED' })
+    expect((await gate.get(p.id))?.state).toBe('PROPOSED')
+  })
+
+  test('failure reasons reach the client: metrics missing → reason: metrics_missing', async () => {
+    const p = await gate.createProposal(PATCH, VERIFY)
+    // park at CANARY_PASSED with NO stage metrics (legacy/unevidenced row)
+    gate.store.update(p.id, { state: 'CANARY_PASSED', metadata: { verifyResult: VERIFY }, updatedAt: Date.now() })
+
+    const res = await json(`/evolution/proposals/${p.id}/promote`, post({}))
+    expect(res.status).toBe(200)
+    expect(res.body.applied).toBe(false)
+    expect(res.body.reason).toBe('metrics_missing')
+    expect(res.body.regressionBlocked).toBeUndefined()
+    expect((await gate.get(p.id))?.state).toBe('CANARY_PASSED')
+  })
+
+  test('regression gate: { applied:false, regressionBlocked:true, reason } + rollback', async () => {
+    const p = await gate.createProposal(PATCH, VERIFY)
+    // canary p95Ms 250 vs baseline 100 = +150% > latency tolerance (5%)
+    gate.store.update(p.id, {
+      state: 'CANARY_PASSED',
+      metadata: {
+        verifyResult: VERIFY,
+        benchmark: { passed: true, reason: 'ok', before: { p95Ms: 100 } },
+        canary: { passed: true, reason: 'ok', metrics: { p95Ms: 250 } },
+      },
+      updatedAt: Date.now(),
+    })
+
+    const res = await json(`/evolution/proposals/${p.id}/promote`, post({}))
+    expect(res.status).toBe(200)
+    expect(res.body.applied).toBe(false)
+    expect(res.body.regressionBlocked).toBe(true)
+    expect(String(res.body.reason)).toContain('regression: latency/p95Ms')
+
+    const list = await json('/evolution/proposals?state=ROLLED_BACK')
+    expect(list.body.proposals.map((x: { id: string }) => x.id)).toEqual([p.id])
   })
 
   test('404 for an unknown proposal id', async () => {
