@@ -9,8 +9,8 @@ import { sanitizePath, isPathAllowed } from '../guardrails/index.js'
 import type { MiraConfig, JsonValue, ProviderConfig } from '../types/index.js'
 import type { Context } from 'hono'
 
-function expandEnv(value: string): string {
-  if (!value) return value
+function expandEnv(value: string | undefined | null): string {
+  if (typeof value !== 'string' || !value) return value ?? ''
   return value.replace(/\{env:([^}]+)\}/g, (_, name: string) => process.env[name] ?? '')
 }
 function maskApiKey(key: string): string {
@@ -18,14 +18,30 @@ function maskApiKey(key: string): string {
   if (key.length <= 4) return '***'
   return `${key.slice(0, 3)}***${key.slice(-4)}`
 }
-function redactConfig<T extends MiraConfig | import('../types/index.js').MiraConfig>(cfg: T): T {
+const SENSITIVE_HEADER_NAME =
+  /(?:api[-_]?key|authorization|token|secret|password|credential|cookie)/i
+
+export function redactConfig<T extends MiraConfig | import('../types/index.js').MiraConfig>(
+  cfg: T,
+): T {
   const out = JSON.parse(JSON.stringify(cfg)) as T
   const providers = (out as MiraConfig).provider as
-    Record<string, { options?: { apiKey?: string } }> | undefined
+    | Record<string, { options?: { apiKey?: string | string[]; headers?: Record<string, string> } }>
+    | undefined
   if (providers && typeof providers === 'object') {
     for (const p of Object.values(providers)) {
       const opts = p.options
-      if (opts && typeof opts.apiKey === 'string' && opts.apiKey) opts.apiKey = '***'
+      if (!opts) continue
+      if (Array.isArray(opts.apiKey)) {
+        opts.apiKey = opts.apiKey.map(() => '***')
+      } else if (typeof opts.apiKey === 'string' && opts.apiKey) {
+        opts.apiKey = '***'
+      }
+      if (opts.headers) {
+        for (const name of Object.keys(opts.headers)) {
+          if (SENSITIVE_HEADER_NAME.test(name)) opts.headers[name] = '***'
+        }
+      }
     }
   }
   return out
@@ -61,29 +77,63 @@ function resolveCwd(c: Context): { cwd?: string; error?: string; status?: number
 
 export function mountConfigRoutes(
   app: Hono<{ Variables: { requestId: string } }>,
-  opts?: { bus?: { publish: (e: any) => void }; gateway?: { stats: () => unknown; registry?: { healthSnapshot?: () => unknown; health?: () => unknown; statsAll?: () => unknown; providersHealth?: () => unknown } } },
+  opts?: {
+    bus?: { publish: (e: any) => void }
+    gateway?: {
+      stats: () => unknown
+      registry?: {
+        healthSnapshot?: () => unknown
+        health?: () => unknown
+        statsAll?: () => unknown
+        providersHealth?: () => unknown
+      }
+    }
+  },
 ) {
   function gatewaySnapshot(): Record<string, unknown> | null {
     try {
       const g: unknown = opts?.gateway as unknown
-      const reg = (g as { registry?: { healthSnapshot?: () => unknown; health?: () => unknown; statsAll?: () => unknown; providersHealth?: () => unknown } })?.registry
+      const reg = (
+        g as {
+          registry?: {
+            healthSnapshot?: () => unknown
+            health?: () => unknown
+            statsAll?: () => unknown
+            providersHealth?: () => unknown
+          }
+        }
+      )?.registry
       if (reg?.healthSnapshot) return reg.healthSnapshot() as Record<string, unknown>
-      if (reg?.health) return { lanes: reg.health(), providers: reg.providersHealth?.() ?? {}, stats: reg.statsAll?.() ?? {} } as Record<string, unknown>
+      if (reg?.health)
+        return {
+          lanes: reg.health(),
+          providers: reg.providersHealth?.() ?? {},
+          stats: reg.statsAll?.() ?? {},
+        } as Record<string, unknown>
     } catch {}
     return null
   }
   // Flat MiraConfig (redacted) — matches the web Settings store and TUI client contract
   app.get('/config', async (c: Context) => {
     const resolved = resolveCwd(c)
-    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status as 400 | 403) ?? 400)
+    if (resolved.error)
+      return c.json({ error: resolved.error }, (resolved.status as 400 | 403) ?? 400)
     const cwd = resolved.cwd
-    const base = cwd ? (await getConfigLayers(cwd)).merged as MiraConfig : (getConfig() as MiraConfig)
+    const base = cwd
+      ? ((await getConfigLayers(cwd)).merged as MiraConfig)
+      : (getConfig() as MiraConfig)
     const redacted = redactConfig(base as MiraConfig)
     // Extend GET /config to return health + lane stats when ?health=1 or ?include=health
     const includeHealth = c.req.query('health') === '1' || c.req.query('include') === 'health'
     if (includeHealth) {
       const snap = gatewaySnapshot()
-      if (snap) return c.json({ ...redacted, _health: snap, _laneStats: (snap as { stats?: unknown }).stats, _providersHealth: (snap as { providers?: unknown }).providers } as unknown as Record<string, unknown>)
+      if (snap)
+        return c.json({
+          ...redacted,
+          _health: snap,
+          _laneStats: (snap as { stats?: unknown }).stats,
+          _providersHealth: (snap as { providers?: unknown }).providers,
+        } as unknown as Record<string, unknown>)
     }
     // Also support ?health alias that returns full health snapshot alongside config
     // For TraceViewer and ops, GET /config?health=1 gives lane + provider health without extra roundtrip
@@ -92,7 +142,8 @@ export function mountConfigRoutes(
   // Debug: full layer breakdown (moved off /config so clients get a plain MiraConfig)
   app.get('/config/layers', async (c: Context) => {
     const resolved = resolveCwd(c)
-    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status as 400 | 403) ?? 400)
+    if (resolved.error)
+      return c.json({ error: resolved.error }, (resolved.status as 400 | 403) ?? 400)
     const cwd = resolved.cwd
     const { merged, layers } = await getConfigLayers(cwd ?? process.cwd())
     return c.json({
@@ -104,7 +155,8 @@ export function mountConfigRoutes(
   })
   app.patch('/config', async (c: Context) => {
     const resolved = resolveCwd(c)
-    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status as 400 | 403) ?? 400)
+    if (resolved.error)
+      return c.json({ error: resolved.error }, (resolved.status as 400 | 403) ?? 400)
     const cwd = resolved.cwd ?? process.cwd()
     const body = (await c.req.json().catch(() => null)) as Record<string, JsonValue> | null
     if (!body) return c.json({ error: 'invalid JSON body' }, 400)
@@ -132,7 +184,8 @@ export function mountConfigRoutes(
   // Permission matrix — what the Settings Permissions tab reads (was missing; store fell back to config.permission)
   app.get('/permission', (c: Context) => {
     const resolved = resolveCwd(c)
-    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status as 400 | 403) ?? 400)
+    if (resolved.error)
+      return c.json({ error: resolved.error }, (resolved.status as 400 | 403) ?? 400)
     const cwd = resolved.cwd
     const cfg = getConfig(cwd) as MiraConfig
     return c.json(cfg.permission ?? {})
@@ -181,13 +234,24 @@ export function mountConfigRoutes(
       const cfg = getConfig() as MiraConfig
       const providers = (cfg as MiraConfig).provider ?? {}
       const snap = gatewaySnapshot()
-      const provHealth = (snap?.providers ?? {}) as Record<string, { state?: string; status?: string; latencyMs?: number; failureCount?: number; cooldownUntil?: number | null; successCount?: number }>
+      const provHealth = (snap?.providers ?? {}) as Record<
+        string,
+        {
+          state?: string
+          status?: string
+          latencyMs?: number
+          failureCount?: number
+          cooldownUntil?: number | null
+          successCount?: number
+        }
+      >
       const laneStats = (snap?.stats ?? {}) as Record<string, unknown>
       const lanes = (snap?.lanes ?? {}) as Record<string, unknown>
       const list = Object.entries(providers).map(([id, p]) => {
         try {
           const prov = p as MiraConfig['provider'][string]
-          const rawKey = (prov as { options?: { apiKey?: string } }).options?.apiKey ?? ''
+          const rawApiKey = (prov as { options?: { apiKey?: string | string[] } }).options?.apiKey
+          const rawKey = Array.isArray(rawApiKey) ? (rawApiKey[0] ?? '') : (rawApiKey ?? '')
           const apiKey = expandEnv(rawKey)
           const rawBase = (prov as { options?: { baseURL?: string } }).options?.baseURL ?? ''
           const masked = apiKey ? maskApiKey(apiKey) : ''
@@ -204,7 +268,9 @@ export function mountConfigRoutes(
                 ? (m as { name: string }).name
                 : mid,
           }))
-          const health = (provHealth as Record<string, unknown>)[id.toLowerCase()] ?? (provHealth as Record<string, unknown>)[id]
+          const health =
+            (provHealth as Record<string, unknown>)[id.toLowerCase()] ??
+            (provHealth as Record<string, unknown>)[id]
           return {
             id,
             name: (prov as { name?: string }).name ?? id,

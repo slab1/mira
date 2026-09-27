@@ -56,7 +56,6 @@ export interface LoopMessage {
   toolCalls?: Array<{ id: string; name: string; args: Record<string, JsonValue> }>
   toolResults?: Array<{ toolCallID: string; name: string; result: JsonValue; isError: boolean }>
   toolCallID?: string
-  isExecutorContext?: boolean
 }
 
 export interface SessionPromptDeps {
@@ -110,48 +109,6 @@ export interface LoopOptions {
   compactionThreshold?: number // 0.8 = compact at 80% context
   signal?: AbortSignal
   agent?: string | null // per-turn agent override (Kilo K1 parity)
-}
-
-/** Strip reasoning_content from all messages except last 2 assistant messages. */
-function pruneReasoning(messages: LoopMessage[]): LoopMessage[] {
-  const enabled = process.env.MIRA_CONTEXT_REASONING_PRUNE !== '0'
-  if (!enabled) return messages
-  const assistantIndices: number[] = []
-  messages.forEach((m, i) => {
-    if (m.role === 'assistant') assistantIndices.push(i)
-  })
-  const keep = new Set(assistantIndices.slice(-2))
-  return messages.map((m, i) => {
-    const copy = { ...m } as LoopMessage & { reasoning_content?: unknown }
-    if (copy.reasoning_content && !keep.has(i)) {
-      delete (copy as any).reasoning_content
-    }
-    return copy
-  })
-}
-
-/** Summarize executor tool traces into a summary block when step count > 8. */
-function summarizeToolTraces(messages: LoopMessage[], stepCount: number): LoopMessage[] {
-  if (stepCount <= 8) return messages
-  const toolSummaries: string[] = []
-  const filtered: LoopMessage[] = []
-  for (const m of messages) {
-    if (m.role === 'tool' && m.isExecutorContext) {
-      const preview = String(m.content ?? '').slice(0, 200)
-      const id = m.toolCallID ?? 'unknown'
-      toolSummaries.push(`Tool ${id}: ${preview}`)
-    } else {
-      filtered.push(m)
-    }
-  }
-  if (toolSummaries.length) {
-    filtered.push({
-      role: 'system',
-      content: `Executor tool trace summary (${toolSummaries.length} traces):\n${toolSummaries.join('\n')}`,
-      isExecutorContext: true,
-    })
-  }
-  return filtered
 }
 
 // ── Subgateway routing helpers ─────────────────────────────────────
@@ -1116,11 +1073,9 @@ export class SessionPrompt {
 
       // ── LLM.stream (Vercel AI SDK v5) ──
       send('step_start', { step, model })
-      let streamMessages = pruneReasoning(messages)
-      streamMessages = summarizeToolTraces(streamMessages, step)
       const stream = await this.deps.gateway.stream({
         model,
-        messages: streamMessages,
+        messages,
         tools: this.filterToolsForAgent(opts.agent), // lane-contract enforcement (agent allowlist)
         system: systemPrompt,
         signal: opts?.signal,
@@ -1477,12 +1432,7 @@ export class SessionPrompt {
 
       // ── finish-step: append tool results to context for next iteration ──
       messages.push({ role: 'assistant', content: stepText, toolCalls })
-      messages.push({
-        role: 'tool',
-        toolResults,
-        content: JSON.stringify(toolResults),
-        isExecutorContext: true,
-      })
+      messages.push({ role: 'tool', toolResults, content: JSON.stringify(toolResults) })
 
       // Also persist accumulated text so far
       await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
@@ -1664,7 +1614,7 @@ export class SessionPrompt {
           for (const d of docs) this.trackInjectedMemory(sessionID, d)
           context.push({
             role: 'system',
-            content: `Relevant memory:\n${docs.map((d) => `- [§${d.id}] [${d.title}]: ${d.content.slice(0, 300)}`).join('\n')}`,
+            content: `Relevant memory:\n${docs.map((d) => `- [${d.title}](${d.id}): ${d.content.slice(0, 300)}`).join('\n')}`,
           })
         }
       } catch {}
@@ -1693,7 +1643,7 @@ export class SessionPrompt {
         for (const d of loops) this.trackInjectedMemory(sessionID, d)
         context.push({
           role: 'system',
-          content: `Known doom-loop anti-patterns — avoid repeating:\n${loops.map((d) => `- [§${d.id}] [${d.title}]: ${d.content.slice(0, 300)}`).join('\n')}`,
+          content: `Known doom-loop anti-patterns — avoid repeating:\n${loops.map((d) => `- [${d.title}]: ${d.content.slice(0, 300)}`).join('\n')}`,
         })
       }
     } catch {}
@@ -1721,7 +1671,6 @@ export class SessionPrompt {
           role: 'tool',
           content: JSON.stringify(p.result ?? null),
           toolCallID: p.toolCallID,
-          isExecutorContext: true,
         })
       }
     }

@@ -23,3 +23,5 @@ Follow plan-first workflow: Explore → Plan → Implement → Verify.
 <!-- Mira Improvement (2026-09-06): Pattern: 08804v1] Cognitive Dissonance Artificial Intelligence (CD-AI): The Mind at War with Itself.
 Source: https://arxiv.org/abs/2507.08804v1 — Cognitive Dissonance Artificial Intelligence (CD-AI): The Mind at War with Itself. Harnessing Discomfort to Sharpen Critical Thinking
 Excerpt: [2507.08804 -->
+
+<!-- Mira Patch (2026-09-23): Make behavior predictable: enforce plan-first workflow; add decision log per step. Evidence: no stable success patterns -->

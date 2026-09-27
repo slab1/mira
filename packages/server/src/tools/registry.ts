@@ -33,6 +33,15 @@ export type { JsonValue }
 
 // ── Tool Definition ────────────────────────────────────────────────
 
+export interface ToolMetadata {
+  riskLevel: 'low' | 'medium' | 'high'
+  sideEffect: 'none' | 'read' | 'write' | 'destructive'
+  isReadOnly: boolean
+  isIdempotent: boolean
+  maxCallsPerRun?: number
+  timeoutMs?: number
+}
+
 export interface ToolDef<T extends z.ZodTypeAny = z.ZodTypeAny> {
   name: string
   description: string
@@ -41,6 +50,8 @@ export interface ToolDef<T extends z.ZodTypeAny = z.ZodTypeAny> {
   category: 'file' | 'execution' | 'planning' | 'web' | 'memory' | 'session' | 'mcp' | 'other'
   /** if true, tool requires permission check (most do) */
   needsPermission?: boolean
+  /** optional execution metadata for tool execution layer */
+  metadata?: ToolMetadata
   /** execute with session context — args validated by schema in Registry.execute before call.
    *  Args are typed as z.output<T> so each tool's Zod schema drives exact destructured types. */
   execute: (args: z.output<T>, ctx: ToolContext) => Promise<JsonValue>
@@ -85,6 +96,8 @@ export class ToolRegistry {
   private tools = new Map<string, ToolDef>()
   private subagentRunner?: ToolContext['subagentRunner']
   private defaultCtx: Partial<ToolContext> = {}
+  /** sessionID -> tool name -> call count for maxCallsPerRun enforcement */
+  private callCounts = new Map<string, Map<string, number>>()
 
   constructor(private deps: RegistryDeps) {}
 
@@ -292,6 +305,25 @@ export class ToolRegistry {
       }
     }
 
+    // Tool execution layer: maxCallsPerRun enforcement
+    const metadata = tool.metadata
+    if (metadata?.maxCallsPerRun) {
+      let sessionMap = this.callCounts.get(ctx.sessionID)
+      if (!sessionMap) {
+        sessionMap = new Map<string, number>()
+        this.callCounts.set(ctx.sessionID, sessionMap)
+      }
+      const count = sessionMap.get(name) ?? 0
+      if (count >= metadata.maxCallsPerRun) {
+        const err = new Error(
+          `Tool ${name} rate limit exceeded (${metadata.maxCallsPerRun} per run)`,
+        )
+        ;(err as any).code = 'TOOL_RATE_LIMIT'
+        throw err
+      }
+      sessionMap.set(name, count + 1)
+    }
+
     let result: JsonValue | null = null
     let error: JsonValue | null = null
     // Snapshot target files BEFORE mutation (edit/write/patch) — enables /undo
@@ -315,7 +347,16 @@ export class ToolRegistry {
       }
     }
     try {
-      result = await tool.execute(parsedArgs, fullCtx)
+      const timeoutMs = metadata?.timeoutMs ?? 30000
+      const execPromise = tool.execute(parsedArgs, fullCtx)
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          const err = new Error(`Tool ${name} timed out after ${timeoutMs}ms`)
+          ;(err as any).code = 'TOOL_TIMEOUT'
+          reject(err)
+        }, timeoutMs)
+      })
+      result = await Promise.race([execPromise, timeoutPromise])
       // Track successful reads so later mutations of the same path are permitted
       if (name === 'read') {
         const p =
@@ -324,8 +365,32 @@ export class ToolRegistry {
         if (typeof p === 'string' && p)
           this.recordRead(ctx.sessionID, resolve(ctx.cwd ?? process.cwd(), p))
       }
+      // Result normalization
+      if (result !== null && typeof result !== 'object') {
+        result = { ok: true, data: result } as JsonValue
+      }
+      // Emit tool executed event
+      ;(ctx.bus as any)?.emit?.('tool.executed', {
+        sessionID: ctx.sessionID,
+        messageID: ctx.messageID,
+        tool: name,
+        metadata,
+        timestamp: Date.now(),
+        success: true,
+      })
     } catch (e) {
       error = String(e) as JsonValue
+      // Emit tool executed event on error
+      ;(ctx.bus as any)?.emit?.('tool.executed', {
+        sessionID: ctx.sessionID,
+        messageID: ctx.messageID,
+        tool: name,
+        metadata,
+        timestamp: Date.now(),
+        success: false,
+        error,
+        errorCode: (e as any)?.code,
+      })
       throw e
     } finally {
       // Guardrails post-execution audit log

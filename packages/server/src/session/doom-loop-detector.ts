@@ -28,6 +28,7 @@ export interface LoopSignal {
 
 export class DoomLoopDetector {
   private history: string[] = []
+  private pollHistory: Array<{ fp: string; resultHash?: string }> = []
   private fileEditHistory = new Map<string, { lastHash?: string; count: number }>()
   private errorHistory: string[] = []
   private llmOutputHistory: string[] = []
@@ -46,6 +47,8 @@ export class DoomLoopDetector {
     2,
   )
   private readonly maxCycleLength = 4
+  private readonly pollThreshold = this.clamp(process.env.MIRA_DOOM_POLL_THRESHOLD, 3, 2)
+  private readonly pingPongThreshold = this.clamp(process.env.MIRA_DOOM_PINGPONG_THRESHOLD, 4, 3)
 
   private fingerprint(tool: string, args: JsonValue): string {
     if (!args || typeof args !== 'object') return `${tool}:`
@@ -80,8 +83,26 @@ export class DoomLoopDetector {
 
   check(call: ToolCall): LoopSignal {
     const fp = this.fingerprint(call.name, call.args)
+    const resultHash = call.result ? this.hashResult(call.result) : undefined
     this.history.push(fp)
     if (this.history.length > this.window) this.history.shift()
+    this.pollHistory.push({ fp, resultHash })
+    if (this.pollHistory.length > this.window) this.pollHistory.shift()
+
+    // 0. Result-aware poll_no_progress detection
+    if (this.pollHistory.length >= this.pollThreshold) {
+      const recent = this.pollHistory.slice(-this.pollThreshold)
+      const firstFp = recent[0].fp
+      const firstHash = recent[0].resultHash
+      if (firstHash && recent.every((r) => r.fp === firstFp && r.resultHash === firstHash)) {
+        return {
+          detected: true,
+          reason: 'poll_no_progress',
+          tool: call.name,
+          pattern: recent.map((r) => r.fp),
+        }
+      }
+    }
 
     // 1. Identical consecutive calls
     if (this.history.length >= this.maxIdentical) {
@@ -109,6 +130,31 @@ export class DoomLoopDetector {
             reason: `Repeating tool sequence detected (${len} steps)`,
             tool: call.name,
             pattern: [...first, ...second],
+          }
+        }
+      }
+    }
+
+    // Ping-pong detection (alternating A-B-A-B)
+    if (this.history.length >= this.pingPongThreshold) {
+      const recent = this.history.slice(-this.pingPongThreshold)
+      const first = recent[0]
+      const second = recent[1]
+      if (first !== second) {
+        let ok = true
+        for (let i = 0; i < recent.length; i++) {
+          const expected = i % 2 === 0 ? first : second
+          if (recent[i] !== expected) {
+            ok = false
+            break
+          }
+        }
+        if (ok) {
+          return {
+            detected: true,
+            reason: 'ping_pong',
+            tool: call.name,
+            pattern: [...recent],
           }
         }
       }
@@ -217,6 +263,7 @@ export class DoomLoopDetector {
 
   reset() {
     this.history = []
+    this.pollHistory = []
     this.errorHistory = []
     this.llmOutputHistory = []
     this.fileEditHistory.clear()
