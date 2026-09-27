@@ -40,6 +40,8 @@ import { ApprovalGate } from "../evolution/approval.js"
 import { ResourceLimits } from "../evolution/resources.js"
 import { SecurityValidator } from "../evolution/security.js"
 import { RollbackManager } from "../evolution/rollback.js"
+import { isProposalState, type ProposalState } from "../patching/governance/types.js"
+import type { GovernanceGateLike } from "../patching/governance/index.js"
 
 export interface EvolutionRouteDeps {
   db: MiraDB
@@ -51,6 +53,9 @@ export interface EvolutionRouteDeps {
   resourceLimits?: ResourceLimits
   securityValidator?: SecurityValidator
   rollbackManager?: RollbackManager
+  /** Governance gate from learning/index.ts — when set, the
+   *  /evolution/proposals* routes are mounted on this app too. */
+  governance?: GovernanceGateLike
 }
 
 export function mountEvolutionRoutes(
@@ -90,6 +95,10 @@ export function mountEvolutionRoutes(
         "GET /evolution/risk/:id",
         "POST /evolution/approve/:id",
         "POST /evolution/rollback/:id",
+        "GET /evolution/proposals?state=",
+        "POST /evolution/proposals/:id/advance",
+        "POST /evolution/proposals/:id/promote",
+        "POST /evolution/proposals/:id/rollback",
       ],
       canary: "Target (Phase 5)",
       shadow: "Target (Phase 4)",
@@ -326,5 +335,69 @@ export function mountEvolutionRoutes(
     }
     const after = ledger.get(id)
     return c.json({ ok: true, id, rolledBack: true, verdict: after?.verdict ?? "rolledback" })
+  })
+
+  // Governance pipeline (patch proposals) — only when a gate was passed in;
+  // mountLearningRoutes mounts the same routes with learning's gate instance.
+  if (deps.governance) mountEvolutionProposalRoutes(app, { governance: deps.governance })
+}
+
+// ── Governance proposal routes (patching/governance) ────────────────────────
+// Mounted once per app: mountEvolutionRoutes() when given a gate, and
+// mountLearningRoutes() with the learning system's gate (the instance created
+// in learning/index.ts). The WeakSet guard makes double-mounting a no-op so
+// whichever lane mounts first wins.
+
+const proposalRoutesMounted = new WeakSet<Hono<{ Variables: { requestId: string } }>>()
+
+export function mountEvolutionProposalRoutes(
+  app: Hono<{ Variables: { requestId: string } }>,
+  deps: { governance: GovernanceGateLike },
+): void {
+  if (proposalRoutesMounted.has(app)) return
+  proposalRoutesMounted.add(app)
+  const governance = deps.governance
+
+  // ── GET /evolution/proposals?state=<s> ───────────────────────────
+  app.get("/evolution/proposals", async (c) => {
+    const state = c.req.query("state")
+    if (state !== undefined && state !== "" && !isProposalState(state)) {
+      return c.json({ error: `invalid state: ${state.slice(0, 40)}` }, 400)
+    }
+    const proposals = await governance.list(
+      state && isProposalState(state) ? (state as ProposalState) : undefined,
+    )
+    return c.json({ proposals })
+  })
+
+  // ── POST /evolution/proposals/:id/advance ────────────────────────
+  // Runs exactly one pipeline stage (benchmark → security → canary).
+  app.post("/evolution/proposals/:id/advance", async (c) => {
+    const id = c.req.param("id")
+    const proposal = await governance.advance(id)
+    if (!proposal) return c.json({ error: "not found", id }, 404)
+    return c.json({ proposal })
+  })
+
+  // ── POST /evolution/proposals/:id/promote ────────────────────────
+  app.post("/evolution/proposals/:id/promote", async (c) => {
+    const id = c.req.param("id")
+    const exists = await governance.get(id)
+    if (!exists) return c.json({ error: "not found", id }, 404)
+    const result = await governance.promote(id)
+    return c.json({ applied: result.applied, prUrl: result.prUrl })
+  })
+
+  // ── POST /evolution/proposals/:id/rollback  body: { reason } ─────
+  app.post("/evolution/proposals/:id/rollback", async (c) => {
+    const id = c.req.param("id")
+    let body: { reason?: unknown } | null = null
+    try { body = (await c.req.json() as unknown) as { reason?: unknown } | null } catch { body = null }
+    const reason = typeof body?.reason === "string" ? body.reason.trim().slice(0, 500) : ""
+    if (!reason) return c.json({ error: "body.reason string required" }, 400)
+    const exists = await governance.get(id)
+    if (!exists) return c.json({ error: "not found", id }, 404)
+    await governance.rollback(id, reason)
+    return c.json({ ok: true })
   })
 }

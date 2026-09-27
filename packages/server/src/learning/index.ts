@@ -41,6 +41,7 @@ import { ImprovementEngine } from './improvement.js'
 import { LearningScheduler } from './scheduler.js'
 import { createPatchingSystem, type PatchingEngine } from '../patching/index.js'
 import { createGovernanceGate } from '../patching/governance/index.js'
+import { mountEvolutionProposalRoutes } from '../routes/evolution.js'
 import type { Bus } from '../bus/index.js'
 import type { MiraDB } from '../storage/db.js'
 import type { Gateway } from '../gateway/index.js'
@@ -112,6 +113,7 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
     improvement,
     patching,
     scheduler,
+    governance,
     gateway: deps.gateway,
     db: deps.db,
     bus: deps.bus,
@@ -123,6 +125,11 @@ export function mountLearningRoutes(
   app: Hono<{ Variables: { requestId: string } }>,
   system: LearningSystem,
 ): void {
+  // Governance proposal routes (/evolution/proposals*) — wired to the
+  // GovernanceGate created in createLearningSystem(). Idempotent: no-ops if
+  // mountEvolutionRoutes already mounted them on this app.
+  mountEvolutionProposalRoutes(app, { governance: system.governance })
+
   app.get('/learning/status', (c) => {
     const { top, bottom } = rankByUtility(system.knowledge)
     return c.json({

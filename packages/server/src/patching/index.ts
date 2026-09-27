@@ -42,6 +42,7 @@ import { LatencyTracker, type LatencyStats, type LatencyBudget } from "./latency
 import { SecurityScanner, type SecurityScanResult, type SecurityScannerConfig } from "./security.js"
 import type { MiraDB } from "../storage/db.js"
 import type { Gateway } from "../gateway/index.js"
+import type { GovernanceGateLike } from "./governance/index.js"
 import type { JsonValue } from "../types/index.js"
 
 // Re-exports for ergonomic imports
@@ -72,7 +73,9 @@ export interface PatchingEngineDeps {
   db?: MiraDB
   knowledge?: KnowledgeBase
   gateway?: Gateway
-  governance?: any
+  /** Governance gate — when set, verified patches become proposals instead
+   *  of being applied directly (see patching/governance/index.ts). */
+  governance?: GovernanceGateLike
 }
 
 export interface CycleInput {

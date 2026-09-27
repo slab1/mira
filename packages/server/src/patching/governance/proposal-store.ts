@@ -2,9 +2,11 @@ import type { MiraDB } from '../../storage/db.js';
 import type { PatchProposal, ProposalState } from './types.js';
 
 export class ProposalStore {
-  constructor(private db?: MiraDB) {}
+  constructor(private db?: MiraDB) {
+    this.init()
+  }
 
-  async init(): Promise<void> {
+  init(): void {
     if (!this.db) return;
     this.db.sqlite.exec(`
       CREATE TABLE IF NOT EXISTS patch_proposals (
@@ -21,16 +23,31 @@ export class ProposalStore {
         updated_at INTEGER NOT NULL,
         promoted_at INTEGER,
         rolled_back_at INTEGER,
-        pr_url TEXT
+        pr_url TEXT,
+        reason TEXT,
+        "change" TEXT
       );
     `);
+    // Idempotent column adds for DBs created before reason/change were
+    // persisted (same pattern as storage/db.ts addColumn — SQLite has no
+    // ADD COLUMN IF NOT EXISTS).
+    for (const col of ['reason', 'change']) {
+      try {
+        this.db.sqlite.exec(`ALTER TABLE patch_proposals ADD COLUMN ${col === 'change' ? '"change"' : col} TEXT;`);
+      } catch (e) {
+        const msg = String(e);
+        if (!msg.includes('duplicate column name')) {
+          console.warn(`[governance] addColumn patch_proposals.${col} failed:`, msg);
+        }
+      }
+    }
   }
 
   create(proposal: PatchProposal): void {
     if (!this.db) return;
     this.db.sqlite.prepare(`
-      INSERT INTO patch_proposals (id, patch_id, pain_point, target_file, kind, severity, score, state, metadata, created_at, updated_at, promoted_at, rolled_back_at, pr_url)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO patch_proposals (id, patch_id, pain_point, target_file, kind, severity, score, state, metadata, created_at, updated_at, promoted_at, rolled_back_at, pr_url, reason, "change")
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       proposal.id,
       proposal.patchId,
@@ -46,6 +63,8 @@ export class ProposalStore {
       proposal.promotedAt ?? null,
       proposal.rolledBackAt ?? null,
       proposal.prUrl ?? null,
+      proposal.reason,
+      proposal.change,
     );
   }
 
@@ -67,36 +86,56 @@ export class ProposalStore {
 
   get(id: string): PatchProposal | null {
     if (!this.db) return null;
-    const row = this.db.sqlite.prepare(`SELECT * FROM patch_proposals WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    const row = this.db.sqlite.prepare(`SELECT * FROM patch_proposals WHERE id = ?`).get(id) as ProposalRow | undefined;
     return row ? this.rowToProposal(row) : null;
   }
 
   list(state?: ProposalState): PatchProposal[] {
     if (!this.db) return [];
     const rows = state
-      ? this.db.sqlite.prepare(`SELECT * FROM patch_proposals WHERE state = ? ORDER BY created_at DESC`).all(state) as Record<string, unknown>[]
-      : this.db.sqlite.prepare(`SELECT * FROM patch_proposals ORDER BY created_at DESC`).all() as Record<string, unknown>[];
+      ? this.db.sqlite.prepare(`SELECT * FROM patch_proposals WHERE state = ? ORDER BY created_at DESC`).all(state) as ProposalRow[]
+      : this.db.sqlite.prepare(`SELECT * FROM patch_proposals ORDER BY created_at DESC`).all() as ProposalRow[];
     return rows.map(this.rowToProposal);
   }
 
-  private rowToProposal(row: Record<string, unknown>): PatchProposal {
+  private rowToProposal(row: ProposalRow): PatchProposal {
     return {
-      id: row.id as string,
-      patchId: row.patch_id as string,
-      painPointId: row.pain_point as string,
-      kind: row.kind as string,
-      targetFile: row.target_file as string | null,
-      reason: '',
-      change: '',
-      severity: row.severity as string,
-      score: row.score as number,
+      id: row.id,
+      patchId: row.patch_id,
+      painPointId: row.pain_point,
+      kind: row.kind,
+      targetFile: row.target_file,
+      reason: row.reason ?? '',
+      change: row.change ?? '',
+      severity: row.severity,
+      score: row.score,
       state: row.state as ProposalState,
-      metadata: JSON.parse(row.metadata as string),
-      createdAt: row.created_at as number,
-      updatedAt: row.updated_at as number,
-      promotedAt: (row.promoted_at as number) ?? undefined,
-      rolledBackAt: (row.rolled_back_at as number) ?? undefined,
-      prUrl: (row.pr_url as string) ?? undefined,
+      metadata: JSON.parse(row.metadata) as PatchProposal['metadata'],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      promotedAt: row.promoted_at ?? undefined,
+      rolledBackAt: row.rolled_back_at ?? undefined,
+      prUrl: row.pr_url ?? undefined,
     };
   }
+}
+
+/** Typed shape of a patch_proposals row (snake_case columns). */
+interface ProposalRow {
+  id: string;
+  patch_id: string;
+  pain_point: string;
+  target_file: string | null;
+  kind: string;
+  severity: string;
+  score: number;
+  state: string;
+  metadata: string;
+  created_at: number;
+  updated_at: number;
+  promoted_at: number | null;
+  rolled_back_at: number | null;
+  pr_url: string | null;
+  reason?: string;
+  change?: string;
 }
