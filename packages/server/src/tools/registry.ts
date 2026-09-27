@@ -329,13 +329,27 @@ export class ToolRegistry {
     // Snapshot target files BEFORE mutation (edit/write/patch) — enables /undo
     const MUTATING = ToolRegistry.MUTATING
     if (MUTATING.has(name)) {
-      const p =
-        (parsed.data as Record<string, string>)?.path ??
-        (parsed.data as Record<string, string>)?.file
+      const rec = parsed.data as Record<string, string>
+      const base = ctx.cwd ?? process.cwd()
+      const p = rec?.path ?? rec?.file
+      const targets: string[] = []
       if (typeof p === 'string' && p) {
-        const abs = resolve(ctx.cwd ?? process.cwd(), p)
+        const abs = resolve(base, p)
         // Read-before-edit guard — throws OUTSIDE the snapshot try so it propagates
         this.assertReadBeforeMutation(ctx.sessionID, abs)
+        targets.push(abs)
+      } else if (name === 'patch' && typeof rec?.patch === 'string' && rec.patch) {
+        // patch has no path/file arg — derive target(s) from unified diff headers
+        // (--- / +++ / diff --git), skipping /dev/null, resolved against patch cwd
+        try {
+          const { extractPatchPaths } = await import('../guardrails/index.js')
+          const patchCwd = typeof rec.cwd === 'string' && rec.cwd ? rec.cwd : base
+          for (const rel of extractPatchPaths(rec.patch)) targets.push(resolve(patchCwd, rel))
+        } catch (e) {
+          console.warn(`[tools] patch snapshot path extraction failed: ${String(e)}`)
+        }
+      }
+      for (const abs of [...new Set(targets)]) {
         try {
           const { snapshotFile } = await import('../storage/snapshots.js')
           snapshotFile(this.deps.db, {
@@ -343,8 +357,15 @@ export class ToolRegistry {
             messageID: ctx.messageID,
             path: abs,
           })
-        } catch {}
+        } catch (e) {
+          console.warn(`[tools] snapshot failed for ${abs}: ${String(e)}`)
+        }
       }
+    }
+    if (name === 'bash') {
+      // bash intentionally NOT in MUTATING (blanket snapshotting is too noisy and no
+      // per-command touched-path discovery exists) — shell writes stay unsnapshotted
+      console.debug('[tools] bash: file mutations via shell are unsnapshotted (not revertable via /undo)')
     }
     try {
       const timeoutMs = metadata?.timeoutMs ?? 30000

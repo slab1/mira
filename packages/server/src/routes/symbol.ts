@@ -2,6 +2,7 @@ import type { Hono } from 'hono'
 import { existsSync, statSync } from 'node:fs'
 import { sanitizePath } from '../guardrails/index.js'
 import { getSymbolIndex } from '../symbols/index.js'
+import { isAbsolute, join } from 'node:path'
 
 export function mountSymbolRoutes(app: Hono<{ Variables: { requestId: string } }>) {
   // GET /workspace/symbol?cwd=/tmp/other&query=Foo  — workspace-aware symbol search
@@ -28,7 +29,7 @@ export function mountSymbolRoutes(app: Hono<{ Variables: { requestId: string } }
     } else {
       cwd = sanitizedCwd.sanitized ?? cwd
     }
-    if (!cwd.startsWith('/')) cwd = `${process.cwd()}/${cwd}`
+    if (!isAbsolute(cwd)) cwd = join(process.cwd(), cwd)
     cwd = cwd.replace(/\/+/g, '/').replace(/\/$/, '') || '/'
 
     try {

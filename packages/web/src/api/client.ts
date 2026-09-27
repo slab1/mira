@@ -592,7 +592,7 @@ function authHeaders(extra?: HeadersInit): HeadersInit {
   return { ...(t ? { Authorization: `Bearer ${t}` } : {}), ...(extra || {}) }
 }
 
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
+export async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const bases = baseUrlCandidates()
   let lastErr: Error | null = null
   for (const base of bases) {

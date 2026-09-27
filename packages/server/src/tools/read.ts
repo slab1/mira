@@ -4,6 +4,7 @@
  */
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
+import { isAbsolute, join } from "node:path"
 
 const readSchema = z.object({
   path: z.string().describe("Absolute or relative path to file"),
@@ -18,7 +19,7 @@ export const readTool = {
   schema: readSchema,
   async execute({ path, offset = 1, limit = 2000 }, ctx) {
     const cwd = ctx.cwd ?? process.cwd()
-    const abs = path.startsWith("/") ? path : `${cwd}/${path}`
+    const abs = isAbsolute(path) ? path : join(cwd, path)
     const file = Bun.file(abs)
     if (!(await file.exists())) throw new Error(`File not found: ${path}`)
 

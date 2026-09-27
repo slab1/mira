@@ -136,7 +136,7 @@ function resolveForTool(
 ): PermissionDecision | null {
   if (rule === undefined) return null
   if (typeof rule === 'string') {
-    return { action: rule, reason: `explicit ${tool}=${rule}` }
+    return { action: rule as PermissionAction, reason: `explicit ${tool}=${rule}` }
   }
   // Record<string, PermissionAction> — pattern map
   // For file tools, match against path arg; for mcp, match tool name
@@ -239,7 +239,7 @@ export class PermissionManager {
       const d = resolveForTool(tool, args, this.rules['*'])
       if (d) return augmentDecision(d, tool, args)
     }
-    const d = { action: 'ask', reason: `no rule for ${tool} — default ask` }
+    const d = { action: 'ask' as PermissionAction, reason: `no rule for ${tool} — default ask` }
     return augmentDecision(d, tool, args)
   }
 

@@ -6,6 +6,7 @@
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 import { applyEditWithFallback } from "./edit-fallback.js"
+import { isAbsolute, join } from "node:path"
 
 const editSchema = z.object({
   path: z.string().describe("File to edit"),
@@ -22,7 +23,7 @@ export const editTool = {
   schema: editSchema,
   async execute({ path, oldString, newString, replaceAll }, ctx) {
     const cwd = ctx.cwd ?? process.cwd()
-    const abs = path.startsWith("/") ? path : `${cwd}/${path}`
+    const abs = isAbsolute(path) ? path : join(cwd, path)
 
     // Use 9-layer fallback engine with verification — workspace-aware (P2-1)
     const result = await applyEditWithFallback(abs, oldString, newString, replaceAll ?? false, cwd)

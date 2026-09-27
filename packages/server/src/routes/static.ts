@@ -41,6 +41,16 @@ const API_ROUTE_PREFIXES = [
   '/webhooks',
   '/v1',
   '/symbol',
+  // API namespaces that must never receive the SPA fallback: an unmatched path
+  // under these should fall through to 404, not answer JSON clients with
+  // index.html (200 text/html).
+  '/files',
+  '/artifacts',
+  '/changes',
+  '/missions',
+  '/cost',
+  // Registered route (index.ts: /eval/model/:model) that had no prefix.
+  '/eval',
 ]
 
 function isApiRoute(path: string): boolean {

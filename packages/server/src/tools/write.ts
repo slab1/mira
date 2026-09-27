@@ -5,7 +5,7 @@
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 import { mkdir } from "node:fs/promises"
-import { dirname } from "node:path"
+import { dirname, isAbsolute, join } from "node:path"
 
 const writeSchema = z.object({
   path: z.string().describe("File path to write"),
@@ -20,7 +20,7 @@ export const writeTool = {
   schema: writeSchema,
   async execute({ path, content }, ctx) {
     const cwd = ctx.cwd ?? process.cwd()
-    const abs = path.startsWith("/") ? path : `${cwd}/${path}`
+    const abs = isAbsolute(path) ? path : join(cwd, path)
     await mkdir(dirname(abs), { recursive: true })
     await Bun.write(abs, content)
     return { ok: true, path, bytes: Buffer.byteLength(content, "utf8") }

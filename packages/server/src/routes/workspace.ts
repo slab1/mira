@@ -3,6 +3,7 @@ import { Glob } from 'bun'
 import { existsSync, readFileSync, statSync, readdirSync } from 'node:fs'
 import { isPathAllowed, sanitizePath } from '../guardrails/index.js'
 import { getConfig } from '../config/store.js'
+import { isAbsolute, join } from 'node:path'
 
 const DEFAULT_IGNORES = [
   '.git',
@@ -234,7 +235,7 @@ export function mountWorkspaceRoutes(app: Hono<{ Variables: { requestId: string 
       return c.json({ error: `invalid path: ${sanitized.reason}` }, 400)
     }
     let absPath = sanitized.sanitized ?? rawPath
-    if (!absPath.startsWith('/')) absPath = `${process.cwd()}/${absPath}`
+    if (!isAbsolute(absPath)) absPath = join(process.cwd(), absPath)
     absPath = absPath.replace(/\/+/g, '/').replace(/\/$/, '') || '/'
 
     // Validate exists and is directory
@@ -337,8 +338,8 @@ export function mountWorkspaceRoutes(app: Hono<{ Variables: { requestId: string 
       cwd = sanitizedCwd.sanitized ?? cwd
     }
     // Normalize to absolute path
-    if (!cwd.startsWith('/')) {
-      cwd = `${process.cwd()}/${cwd}`
+    if (!isAbsolute(cwd)) {
+      cwd = join(process.cwd(), cwd)
     }
     cwd = cwd.replace(/\/+/g, '/').replace(/\/$/, '') || '/'
 
@@ -371,6 +372,11 @@ export function mountWorkspaceRoutes(app: Hono<{ Variables: { requestId: string 
       allowedRoots = isProd ? ['./data', './packages', './src'] : []
     }
     // isExplicitCwd bypass handled in file loop (allow all within explicitly requested cwd)
+    // — but the explicit cwd itself must pass allowedRoots, otherwise a caller sending
+    // e.g. ?cwd=/ would bypass root confinement entirely (same check as POST /workspaces).
+    if (isExplicitCwd && allowedRoots.length > 0 && !isPathAllowed(cwd, allowedRoots)) {
+      return c.json({ error: `cwd not allowed: ${cwd}` }, 403)
+    }
 
     // Parse limit
     let limit = 500

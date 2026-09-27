@@ -53,6 +53,7 @@ import { mountMeRoutes } from './routes/me.js'
 import { mountSessionExtrasRoutes } from './routes/session-extras.js'
 import { mountToolsRoutes } from './routes/tools-routes.js'
 import { mountWorkspaceRoutes } from './routes/workspace.js'
+import { mountWorkspacesRoutes } from './routes/workspaces.js'
 import { mountSymbolRoutes } from './routes/symbol.js'
 import { mountStaticRoutes } from './routes/static.js'
 import { mountEvolutionRoutes } from './routes/evolution.js'
@@ -695,6 +696,7 @@ async function main() {
   mountToolsRoutes(app, { tools, permissions, guardrails, gateway })
   mountLearningRoutes(app, learning)
   mountWorkspaceRoutes(app)
+  mountWorkspacesRoutes(app, { db })
   mountSymbolRoutes(app)
   // Phase 1 Evolution Core — read-only, no auto-promote, no canary/shadow (MIRA_WEAKNESSES_AND_OBSTACLES.md:23)
   try {
