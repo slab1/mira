@@ -29,6 +29,18 @@ const API_ROUTE_PREFIXES = [
   '/autocomplete',
   '/workspaces',
   '/workspace',
+  // Phase 1-6 evolution stack + pre-existing routes that were being
+  // swallowed by the SPA fallback when static was mounted before them:
+  '/evolution',
+  '/engines',
+  '/shadow',
+  '/canary',
+  '/memory',
+  '/gateway',
+  '/me',
+  '/webhooks',
+  '/v1',
+  '/symbol',
 ]
 
 function isApiRoute(path: string): boolean {

@@ -7,6 +7,9 @@ import {
   PATTERN_SIMILARITY_FLOOR,
   buildDynamicTopicsFromAnalysis,
   DEFAULT_TOPICS,
+  clearDuckDuckGoSearchCache,
+  clearDomainCooldowns,
+  activeDomainCooldowns,
 } from './online.js'
 import type { Insight } from './online.js'
 import { KnowledgeBase } from './knowledge.js'
@@ -338,5 +341,174 @@ describe('DEFAULT_TOPICS — designer des-1 docs seeding', () => {
     expect(queries).toContain('opencode docs agent configuration opencode.json permissions 2026')
     expect(queries).toContain('opencode docs custom tools commands MCP setup 2026')
     expect(queries).toContain('opencode docs TUI session share best practices 2026')
+  })
+})
+
+// ----------------------------------------------------------------
+// Phase 1/2/5: DDG tier-4 last resort + domain cooldown + code-fence patterns
+// ----------------------------------------------------------------
+
+/** Minimal html.duckduckgo.com fixture: two results with redirect links. */
+const DDG_FIXTURE = `
+<div class="result">
+  <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fddg-target.example%2Fresult&amp;rut=abc">Agent memory <b>retrieval</b> guide</a>
+  <a class="result__snippet" href="https://ddg-target.example/result">How to wire <b>agent</b> memory retrieval with mcp.</a>
+</div>
+<div class="result">
+  <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fother.example%2Fx&amp;rut=def">Secondary result</a>
+  <a class="result__snippet">another snippet</a>
+</div>`
+
+describe('keyless search tier-4 — DuckDuckGo HTML fallback', () => {
+  test('DDG tier-4 reached when upper tiers return nothing (mock fetch)', async () => {
+    const prev = {
+      firecrawl: process.env.FIRECRAWL_API_KEY,
+      tavily: process.env.TAVILY_API_KEY,
+      githubPat: process.env.GITHUB_PAT,
+    }
+    delete process.env.FIRECRAWL_API_KEY
+    delete process.env.TAVILY_API_KEY
+    delete process.env.GITHUB_PAT
+    clearDuckDuckGoSearchCache()
+    clearDomainCooldowns()
+
+    const seen: string[] = []
+    const origFetch = globalThis.fetch
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input)
+      seen.push(url)
+      if (url.includes('hn.algolia.com')) return new Response(JSON.stringify({ hits: [] }), { status: 200 })
+      if (url.includes('html.duckduckgo.com')) return new Response(DDG_FIXTURE, { status: 200 })
+      if (url.includes('ddg-target.example')) {
+        return new Response(
+          '<html><head><title>DDG target</title></head><body>' +
+            'agent memory retrieval: this page documents an agent tool loop technique with mcp memory integration. '.repeat(
+              20,
+            ) +
+            '</body></html>',
+          { status: 200 },
+        )
+      }
+      return new Response('not found', { status: 404 })
+    }) as typeof globalThis.fetch
+
+    try {
+      const learner = new OnlineLearner({})
+      const insights = await learner.learnOnce([
+        { query: 'ddg tier probe agent memory', category: 'agent-technique' },
+      ])
+      // Upper tiers were empty → tier-4 must have been consulted, and its
+      // results must flow through fetch → extraction (no fabrication).
+      expect(seen.some((u) => u.includes('hn.algolia.com'))).toBe(true)
+      expect(seen.some((u) => u.includes('html.duckduckgo.com'))).toBe(true)
+      expect(insights.length).toBeGreaterThan(0)
+      expect(insights[0].source).toBe('https://ddg-target.example/result')
+      expect(insights[0].sourceTitle.length).toBeGreaterThan(0)
+    } finally {
+      globalThis.fetch = origFetch
+      if (prev.firecrawl === undefined) delete process.env.FIRECRAWL_API_KEY
+      else process.env.FIRECRAWL_API_KEY = prev.firecrawl
+      if (prev.tavily === undefined) delete process.env.TAVILY_API_KEY
+      else process.env.TAVILY_API_KEY = prev.tavily
+      if (prev.githubPat === undefined) delete process.env.GITHUB_PAT
+      else process.env.GITHUB_PAT = prev.githubPat
+      clearDuckDuckGoSearchCache()
+      clearDomainCooldowns()
+    }
+  })
+})
+
+describe('per-domain politeness cooldown', () => {
+  test('a domain with ≥1 fetch error is skipped in subsequent cycles (2h)', async () => {
+    clearDomainCooldowns()
+    const attempts: string[] = []
+    const learner = new OnlineLearner(
+      {},
+      {
+        searchFn: async () => [
+          { title: 'A1', url: 'https://flaky.example/one', snippet: 'agent technique' },
+          { title: 'A2', url: 'https://flaky.example/two', snippet: 'agent technique' },
+          { title: 'B', url: 'https://stable.example/ok', snippet: 'agent technique' },
+        ],
+        fetchFn: async (url) => {
+          attempts.push(url)
+          if (url.includes('flaky.example')) throw new Error('ECONNRESET')
+          return {
+            url,
+            title: 'ok',
+            markdown: 'The agent memory retrieval loop works. '.repeat(30),
+            truncated: false,
+          }
+        },
+      },
+    )
+    const topics = [{ query: 'agent memory', category: 'agent-technique' as const }]
+
+    await learner.learnOnce(topics)
+    // First error marks the domain → the second flaky URL is skipped in-run
+    expect(attempts.filter((a) => a.includes('flaky.example'))).toHaveLength(1)
+    expect(attempts.filter((a) => a.includes('stable.example'))).toHaveLength(1)
+    expect(activeDomainCooldowns()).toContain('flaky.example')
+
+    // Next cycle: the erroring domain is skipped entirely, stable still fetched
+    attempts.length = 0
+    await learner.learnOnce(topics)
+    expect(attempts.filter((a) => a.includes('flaky.example'))).toHaveLength(0)
+    expect(attempts.filter((a) => a.includes('stable.example'))).toHaveLength(1)
+
+    clearDomainCooldowns()
+    expect(activeDomainCooldowns()).toHaveLength(0)
+  })
+})
+
+describe('extractPattern — code-fenced snippet candidates', () => {
+  test('code-fence first line is extracted when no imperative line exists', () => {
+    const learner = new OnlineLearner({})
+    const markdown = [
+      'Some intro prose about agent tooling, mcp sdk api integration and eval harness.',
+      '',
+      '```bash',
+      'mira config set retrieval.hybrid on',
+      '```',
+      '',
+      'Closing notes about the loop.',
+    ].join('\n')
+    const insights = learner.extractInsights([
+      {
+        url: 'https://x.local/fence',
+        title: 'Recipe',
+        category: 'tool',
+        snippet: '',
+        markdown,
+        truncated: false,
+      },
+    ])
+    expect(insights).toHaveLength(1)
+    expect(insights[0].pattern).toBe('mira config set retrieval.hybrid on')
+  })
+
+  test('imperative prose line still wins over a later fence line', () => {
+    const learner = new OnlineLearner({})
+    const markdown = [
+      'Use content hashes for every agent tool cache key in the loop.',
+      '',
+      '```',
+      'export const cacheKey = hash(url)',
+      '```',
+      '',
+      'agent tool mcp sdk api integration documentation body. '.repeat(10),
+    ].join('\n')
+    const insights = learner.extractInsights([
+      {
+        url: 'https://x.local/prose',
+        title: 'Prose first',
+        category: 'tool',
+        snippet: '',
+        markdown,
+        truncated: false,
+      },
+    ])
+    expect(insights).toHaveLength(1)
+    expect(insights[0].pattern).toBe('Use content hashes for every agent tool cache key in the loop.')
   })
 })

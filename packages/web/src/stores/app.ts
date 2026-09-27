@@ -97,6 +97,19 @@ export function createAppStore() {
 
   const [input, setInput] = createSignal('')
 
+  // ── Extra BusEvent listeners ──────────────────────────────────────
+  // Pages that need events the store itself doesn't own (Mission Control
+  // watches session.* / job.* for EVERY session, not just the current one)
+  // subscribe here so they share this single authenticated + reconnecting
+  // socket instead of opening a second WebSocket.
+  const busListeners = new Set<(e: BusEvent) => void>()
+  function subscribeBus(fn: (e: BusEvent) => void): () => void {
+    busListeners.add(fn)
+    return () => {
+      busListeners.delete(fn)
+    }
+  }
+
   // Guard against concurrent session creates (race: user clicks "+" while
   // loadSessions auto-creates the first session, leading to two entries).
   let creating = false
@@ -260,6 +273,15 @@ export function createAppStore() {
           setState('budgetWarning', `Cost $${p.currentUSD.toFixed(4)} / $${p.capUSD} (${pct}%)`)
         }
         break
+      }
+    }
+    // Fan out to page-level subscribers (Mission Control live cockpit) —
+    // never let a listener's throw break the store's own handling.
+    for (const fn of busListeners) {
+      try {
+        fn(e)
+      } catch (err) {
+        console.warn('[mira] bus listener error', err)
       }
     }
   }
@@ -635,6 +657,8 @@ export function createAppStore() {
     clearError: () => setState('error', null),
     setBudgetWarning: (msg: string | null) => setState('budgetWarning', msg),
     clearBudgetWarning: () => setState('budgetWarning', null),
+    /** Subscribe to the shared WebSocket BusEvent stream (returns unsubscribe). */
+    subscribeBus,
     // actions
     loadSessions,
     createSession,

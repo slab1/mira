@@ -6,6 +6,7 @@ import { createLearningSystem, mountLearningRoutes, type LearningSystem } from '
 import { createDatabase, migrate } from '../storage/db.js'
 import { writeFinding } from '../tools/findings.js'
 import { Bus } from '../bus/index.js'
+import type { Insight } from './online.js'
 import type { JsonValue } from '../types/index.js'
 
 describe('embedKeyword', () => {
@@ -247,5 +248,135 @@ describe('designer des-1 docs-memory seed', () => {
     })
     expect(mira.length).toBeGreaterThan(0)
     expect(mira.some((e) => e.tags.includes('retrieval') || e.title.includes('hybrid'))).toBe(true)
+  })
+})
+
+// ── Phase 2/3: merge counters + 60-day expiry sweep ─────────────────
+
+function insight(id: string, source: string, pattern: string, tags: string[]): Insight {
+  return {
+    id,
+    source,
+    sourceTitle: `src ${id}`,
+    category: 'agent-technique',
+    summary: pattern,
+    pattern,
+    relevance: 0.9,
+    tags,
+    rawExcerpt: '',
+    createdAt: Date.now(),
+  }
+}
+
+describe('storeInsight merge counters — verifiers / hitCount / lastSeen', () => {
+  test('verifiers counts distinct source URLs; hitCount + lastSeen refresh on every store', async () => {
+    const kb = new KnowledgeBase()
+    const base = insight('ins_verifiers', 'https://a.example/1', 'Pin tool versions via content hash.', [
+      'cache',
+    ])
+
+    const first = await kb.storeInsight(base)
+    expect(first.metadata.verifiers).toBe(1)
+    expect(first.metadata.hitCount).toBe(1)
+    const firstSeen = first.metadata.lastSeen as number
+    expect(typeof firstSeen).toBe('number')
+
+    // Same pattern backed by a second source → verifiers increments
+    const second = await kb.storeInsight({ ...base, source: 'https://b.example/2' })
+    expect(second.id).toBe(first.id)
+    expect(second.metadata.verifiers).toBe(2)
+    expect(second.metadata.hitCount).toBe(2)
+    expect(second.metadata.lastSeen as number).toBeGreaterThanOrEqual(firstSeen)
+
+    // A source we've already counted → verifiers unchanged, hitCount still bumps
+    const third = await kb.storeInsight(base)
+    expect(third.metadata.verifiers).toBe(2)
+    expect(third.metadata.hitCount).toBe(3)
+    expect(kb.list({ source: 'online' })).toHaveLength(1)
+  })
+})
+
+describe('60-day expiry sweep — tombstones hidden from retrieval/list', () => {
+  test('stale entries are tombstoned and excluded from retrieve() + list()', async () => {
+    const kb = new KnowledgeBase()
+    const now = Date.now()
+    const day = 24 * 60 * 60 * 1000
+
+    const fresh = await kb.storeInsight(
+      insight('ins_fresh', 'https://fresh.example/1', 'agent memory retrieval hygiene for sessions', [
+        'agent',
+        'memory',
+        'retrieval',
+      ]),
+    )
+    const stale = await kb.storeInsight(
+      insight('ins_stale', 'https://stale.example/1', 'agent memory retrieval hygiene for sessions', [
+        'agent',
+        'memory',
+        'retrieval',
+      ]),
+    )
+
+    // Backdate the stale entry beyond 60 days (lastSeen + updatedAt)
+    const staleEntry = kb.get(stale.id)!
+    staleEntry.metadata = { ...staleEntry.metadata, lastSeen: now - 61 * day }
+    staleEntry.updatedAt = now - 61 * day
+
+    expect(kb.sweepExpired(now)).toBe(1)
+    expect(kb.get(stale.id)!.metadata.tombstone).toBe(1)
+    expect(kb.get(fresh.id)!.metadata.tombstone).toBeUndefined()
+
+    // Excluded from list paths
+    expect(kb.list().some((e) => e.id === stale.id)).toBe(false)
+    expect(kb.list().some((e) => e.id === fresh.id)).toBe(true)
+
+    // Excluded from retrieval
+    const res = await kb.retrieve({ query: 'agent memory retrieval', limit: 10, hybrid: false })
+    expect(res.some((e) => e.id === stale.id)).toBe(false)
+    expect(res.some((e) => e.id === fresh.id)).toBe(true)
+
+    // Idempotent: second sweep finds nothing new
+    expect(kb.sweepExpired(now)).toBe(0)
+  })
+})
+
+// ── Phase 4: /learning/status surfacing ──────────────────────────────
+
+describe('GET /learning/status — topPerforming / worstPerforming', () => {
+  test('surfaces top 3 + bottom 3 knowledge entries by utility', async () => {
+    const { system, app } = await testApp()
+    const specs: Array<[string, number]> = [
+      ['ins_top', 5],
+      ['ins_mid', 2],
+      ['ins_zero', 0],
+      ['ins_low', -1],
+      ['ins_worst', -3],
+    ]
+    for (const [id, utility] of specs) {
+      const e = await system.knowledge.storeInsight(
+        insight(id, `https://x.local/${id}`, `pattern ${id} for status surfacing`, ['status']),
+      )
+      for (let i = 0; i < Math.abs(utility); i++) {
+        system.knowledge.bumpUtility(e.id, utility > 0 ? 1 : -1)
+      }
+    }
+
+    const res = await app.request('/learning/status')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      scheduler: unknown
+      knowledge: { size: number }
+      usage: { sessions: number }
+      topPerforming: Array<{ id: string; utility: number }>
+      worstPerforming: Array<{ id: string; utility: number }>
+    }
+    // Existing surface preserved
+    expect(body.scheduler).toBeDefined()
+    expect(body.knowledge.size).toBe(5)
+    // Phase 4 surfacing
+    expect(body.topPerforming).toHaveLength(3)
+    expect(body.worstPerforming).toHaveLength(3)
+    expect(body.topPerforming.map((p) => p.utility)).toEqual([5, 2, 0])
+    expect(body.worstPerforming.map((p) => p.utility)).toEqual([-3, -1, 0])
   })
 })

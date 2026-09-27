@@ -287,17 +287,37 @@ export class KnowledgeBase {
 
   /** Store an Online insight as semantic memory.
    *  Deterministic id derivation (`mem_<insightId>`) so repeat cycles bump an
-   *  existing row instead of piling duplicates; utility score preserved. */
+   *  existing row instead of piling duplicates; utility score preserved.
+   *  Merge counters (Phase 3): `verifiers` = distinct source URLs backing the
+   *  same pattern, `hitCount` = every store, `lastSeen` = latest store time
+   *  (feeds the 60-day expiry sweep). */
   async storeInsight(insight: Insight): Promise<MemoryEntry> {
     const memId = `mem_${insight.id}`
+    const now = Date.now()
     const existing = this.entries.get(memId)
     if (existing) {
       // Re-hydrate with fresh content, bump access count as "still surfaced" signal
       existing.title = insight.summary.slice(0, 180)
       existing.content = `Pattern: ${insight.pattern}\nSource: ${insight.source} — ${insight.sourceTitle}\nExcerpt: ${insight.rawExcerpt}\nRelevance: ${insight.relevance}`
       existing.tags = insight.tags
-      existing.updatedAt = Date.now()
+      existing.updatedAt = now
       existing.accessCount = (existing.accessCount ?? 0) + 1
+      // Merge counters: verifiers counts *distinct* sources (increment only
+      // when the incoming url isn't already backing this pattern)
+      const sources = Array.isArray(existing.metadata.sourceUrls)
+        ? [...(existing.metadata.sourceUrls as string[])]
+        : typeof existing.metadata.url === 'string'
+          ? [existing.metadata.url]
+          : []
+      if (insight.source && !sources.includes(insight.source)) sources.push(insight.source)
+      existing.metadata = {
+        ...existing.metadata,
+        url: insight.source,
+        sourceUrls: sources,
+        verifiers: sources.length,
+        hitCount: ((existing.metadata.hitCount as number) || 1) + 1,
+        lastSeen: now,
+      }
       await this.persist(existing).catch(() => {})
       return existing
     }
@@ -312,6 +332,10 @@ export class KnowledgeBase {
         category: insight.category,
         relevance: insight.relevance,
         url: insight.source,
+        sourceUrls: [insight.source],
+        verifiers: 1, // one distinct source so far
+        hitCount: 1, // first store
+        lastSeen: now, // Phase 3 expiry sweep input
         utility: 0, // starts neutral; prompt feedback adjusts up/down
       },
       // Force deterministic id so dedupe works across cycles
@@ -338,6 +362,29 @@ export class KnowledgeBase {
     e.metadata = { ...e.metadata, utility: nxt }
     e.updatedAt = Date.now()
     this.persist(e).catch(() => {})
+  }
+
+  /**
+   * Phase 3 lifecycle — 60-day expiry sweep: entries whose `lastSeen` (or, for
+   * legacy rows without one, `updatedAt`) is older than `maxAgeMs` get
+   * `metadata.tombstone = 1` and drop out of the retrieval/list paths.
+   * Wired into the scheduler's improvement cycle. Returns tombstone count.
+   */
+  sweepExpired(now = Date.now(), maxAgeMs = KNOWLEDGE_EXPIRY_MS): number {
+    let swept = 0
+    for (const e of this.entries.values()) {
+      if (e.metadata.tombstone === 1) continue // already tombstoned
+      const lastSeen =
+        (typeof e.metadata.lastSeen === 'number' ? e.metadata.lastSeen : 0) ||
+        e.updatedAt ||
+        e.lastAccessedAt ||
+        e.createdAt
+      if (now - lastSeen <= maxAgeMs) continue
+      e.metadata = { ...e.metadata, tombstone: 1 }
+      this.persist(e).catch(() => {})
+      swept++
+    }
+    return swept
   }
 
   /** Store a usage analysis as episodic + semantic memories */
@@ -388,6 +435,7 @@ export class KnowledgeBase {
     const scored: Array<MemoryEntry & { _score: number; _rawScore: number }> = []
     for (const e of this.entries.values()) {
       if (opts.tier && e.tier !== opts.tier) continue
+      if (e.metadata.tombstone === 1) continue // expired — hidden from retrieval
       const emb = e.embedding ?? embedKeyword(e.title + ' ' + e.content)
       const s = cosine(qEmb, emb)
       // Tag overlap bonus
@@ -433,7 +481,7 @@ export class KnowledgeBase {
         for (const linkId of (t.graphLinks ?? []).slice(0, 3)) {
           if (seen.has(linkId)) continue
           const n = this.entries.get(linkId)
-          if (n) {
+          if (n && n.metadata.tombstone !== 1) {
             seen.add(linkId)
             const nEmb = n.embedding ?? embedKeyword(n.title + ' ' + n.content)
             const raw = cosine(qEmb, nEmb) * 0.7
@@ -453,7 +501,7 @@ export class KnowledgeBase {
           for (const eid of ids) {
             if (seen.has(eid)) continue
             const n = this.entries.get(eid)
-            if (!n) continue
+            if (!n || n.metadata.tombstone === 1) continue
             seen.add(eid)
             const nEmb = n.embedding ?? embedKeyword(n.title + ' ' + n.content)
             const raw = cosine(qEmb, nEmb) * 0.6
@@ -496,9 +544,10 @@ export class KnowledgeBase {
     return e
   }
 
-  /** List by tier/source (for debugging / TUI) */
+  /** List by tier/source (for debugging / TUI) — tombstoned entries excluded */
   list(filter?: { tier?: MemoryTier; source?: MemorySource; limit?: number }): MemoryEntry[] {
     let arr = [...this.entries.values()]
+    arr = arr.filter((e) => e.metadata.tombstone !== 1)
     if (filter?.tier) arr = arr.filter((e) => e.tier === filter.tier)
     if (filter?.source) arr = arr.filter((e) => e.source === filter.source)
     arr.sort((a, b) => b.updatedAt - a.updatedAt)
@@ -745,6 +794,9 @@ export class KnowledgeBase {
 // Half-life 30 days: score *= 0.5^(ageDays/30)
 // Recent entries keep ~1.0, 30d old → 0.5, 60d → 0.25, 90d → 0.125
 const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000
+
+/** Phase 3 expiry sweep: entries unseen for 60 days are tombstoned. */
+export const KNOWLEDGE_EXPIRY_MS = 60 * 24 * 60 * 60 * 1000
 
 export function temporalDecay(lastAccessedAt: number, now = Date.now()): number {
   const ageMs = Math.max(0, now - lastAccessedAt)

@@ -1,6 +1,7 @@
 # Mira Online Learning
 
 > **Status:** `Implemented` (scheduler + research scaffolding) / `Target` (active research loop) — see per-section.
+> **Server module roadmap:** `docs/ONLINE_LEARNING_ROADMAP.md` (5 phases, status refreshed 2026-09-25 — keyless acquisition, LLM extraction, cross-run dedup, utility loop all ✅; remaining: DDG tier-4, verifiers, tombstone sweep, status surfacing, ops hygiene + 2 test files).
 
 ## Research System — Target (scaffold Implemented)
 

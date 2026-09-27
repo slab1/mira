@@ -308,8 +308,8 @@ describe('doom-loop detection E2E', () => {
       description: 'mock bash for test',
       category: 'execution',
       schema: z.object({ command: z.string() }).passthrough(),
-      execute: async (args) => ({
-        stdout: `mock ${(args as { command: string }).command}`,
+      execute: async (args: { command: string }) => ({
+        stdout: `mock ${args.command}`,
         exitCode: 0,
       }),
     } as never)

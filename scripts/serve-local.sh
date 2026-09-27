@@ -48,6 +48,19 @@ case "${1:-start}" in
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
       echo "[mira] already running (pid $(cat "$PID_FILE"))"; exit 0
     fi
+    # ── deps integrity preflight (prevent ENOSPC-corruption reaching runtime) ──
+    # Half-extracted packages (disk-full bun installs) fail minutes later with
+    # cryptic MODULE_NOT_FOUND — fail HERE with the repair command instead.
+    if VERIFY_OUT=$(node "$REPO_DIR/scripts/verify-install.js" 2>&1); then
+      echo "[mira] $(echo "$VERIFY_OUT" | tail -1)"
+    else
+      echo "$VERIFY_OUT" | sed 's/^/[mira] /' >&2
+      echo "[mira] ❌ node_modules corrupt — run: cd $REPO_DIR && scripts/install.sh" >&2
+      exit 1
+    fi
+    # disk floor warn (install guard lives in scripts/install.sh, needs 2G)
+    FREE_MB=$(( $(df -k "$REPO_DIR" | tail -1 | awk '{print $4}') / 1024 ))
+    [ "$FREE_MB" -lt 500 ] && echo "[mira] ⚠ disk low: ${FREE_MB}M free (corruption risk — free space before any bun install)" >&2 || true
     if [ -z "${MIRA_TOKEN:-}" ] && [ -z "${MIRA_API_KEYS:-}" ]; then
       if [ "${NODE_ENV:-}" = "production" ] && [ "${MIRA_STRICT_AUTH:-1}" != "0" ]; then
         echo "[mira] ❌ MIRA_TOKEN/MIRA_API_KEYS required in production — refusing to start open server" >&2

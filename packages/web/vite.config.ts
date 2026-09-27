@@ -114,6 +114,11 @@ export default defineConfig({
       '/autocomplete': { target: API_TARGET, changeOrigin: true },
       '/terminal': { target: API_TARGET, changeOrigin: true },
       '/metrics': { target: API_TARGET, changeOrigin: true },
+      '/evolution': { target: API_TARGET, changeOrigin: true },
+      '/engines': { target: API_TARGET, changeOrigin: true },
+      '/shadow': { target: API_TARGET, changeOrigin: true },
+      '/canary': { target: API_TARGET, changeOrigin: true },
+      '/memory': { target: API_TARGET, changeOrigin: true },
       // WebSocket (GlobalBus) — catch-all must be last; HMR WS isolated on 24678 so it never hits this proxy.
       // bypass() keeps Vite's own dev requests local: without it the '/'
       // catch-all hijacks /src/*, /@vite/*, /node_modules/* etc. and forwards

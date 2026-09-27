@@ -12,6 +12,8 @@
     "build": "turbo build",
     "test": "turbo test",
     "typecheck": "turbo typecheck",
+    "deps:install": "scripts/install.sh",
+    "deps:check": "node scripts/verify-install.js",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
@@ -24,5 +26,12 @@
     "prettier": "^3.4.0",
     "turbo": "^2.11.2",
     "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "esbuild": "^0.28.2",
+    "escape-string-regexp": "^5.0.0",
+    "find-up": "^8.0.0",
+    "locate-path": "^8.0.0",
+    "supports-color": "^11.0.0"
   }
 }
