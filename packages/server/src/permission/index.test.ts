@@ -67,7 +67,7 @@ describe('classifyToolRisk', () => {
 describe('augmentDecision (via PermissionManager.check)', () => {
   test('approvalPayload attached when action=ask AND risk high (bash rm)', async () => {
     const pm = new PermissionManager({ bash: 'ask' })
-    const d = await pm.check({ tool: 'bash', args: { command: 'rm -rf build' } })
+    const d = await pm.check({ sessionID: 'test-sess', tool: 'bash', args: { command: 'rm -rf build' } })
     expect(d.action).toBe('ask')
     expect(d.approvalPayload).toBeDefined()
     expect(d.approvalPayload!.whatWillChange).toBe('rm -rf build')
@@ -77,7 +77,7 @@ describe('augmentDecision (via PermissionManager.check)', () => {
 
   test('no approvalPayload when action=ask but risk not high/destructive (edit)', async () => {
     const pm = new PermissionManager({ edit: 'ask' })
-    const d = await pm.check({ tool: 'edit', args: { path: 'src/a.ts' } })
+    const d = await pm.check({ sessionID: 'test-sess', tool: 'edit', args: { path: 'src/a.ts' } })
     expect(d.action).toBe('ask')
     expect(d.risk).toEqual({ riskLevel: 'medium', sideEffect: 'write', isReversible: true })
     expect(d.approvalPayload).toBeUndefined()
@@ -85,7 +85,7 @@ describe('augmentDecision (via PermissionManager.check)', () => {
 
   test('no approvalPayload when risk high but action != ask (explicit allow)', async () => {
     const pm = new PermissionManager({ bash: 'allow' })
-    const d = await pm.check({ tool: 'bash', args: { command: 'rm -rf build' } })
+    const d = await pm.check({ sessionID: 'test-sess', tool: 'bash', args: { command: 'rm -rf build' } })
     expect(d.action).toBe('allow')
     expect(d.risk!.riskLevel).toBe('high')
     expect(d.approvalPayload).toBeUndefined()
@@ -93,14 +93,14 @@ describe('augmentDecision (via PermissionManager.check)', () => {
 
   test('canUndo reflects isReversible (deny on destructive bash still carries risk)', async () => {
     const pm = new PermissionManager({ bash: 'deny' })
-    const d = await pm.check({ tool: 'bash', args: { command: 'sudo rm -rf /' } })
+    const d = await pm.check({ sessionID: 'test-sess', tool: 'bash', args: { command: 'sudo rm -rf /' } })
     expect(d.action).toBe('deny')
     expect(d.risk!.isReversible).toBe(false)
   })
 
   test('PermissionDecision fields (action, reason, matchedPattern, arity) preserved through augmentation', async () => {
     const pm = new PermissionManager({ edit: { 'src/secret/*': 'deny', '*': 'allow' } })
-    const deny = await pm.check({ tool: 'edit', args: { path: 'src/secret/key.txt' } })
+    const deny = await pm.check({ sessionID: 'test-sess', tool: 'edit', args: { path: 'src/secret/key.txt' } })
     expect(deny.action).toBe('deny')
     expect(deny.matchedPattern).toBe('src/secret/*')
     expect(deny.reason).toContain('src/secret/*')
@@ -108,7 +108,7 @@ describe('augmentDecision (via PermissionManager.check)', () => {
 
     // arity preserved when BashArity layer falls through (ask + destructive)
     const pm2 = new PermissionManager({})
-    const arity = await pm2.check({ tool: 'bash', args: { command: 'rm -rf x' } })
+    const arity = await pm2.check({ sessionID: 'test-sess', tool: 'bash', args: { command: 'rm -rf x' } })
     expect(arity.action).toBe('ask')
     expect(arity.arity).toBe(2)
     expect(arity.reason).toContain('BashArity')
@@ -145,50 +145,50 @@ describe('classifyBashArity / bashArityDecision', () => {
 describe('PermissionManager end-to-end (5 layers)', () => {
   test('explicit deny rule wins', async () => {
     const pm = new PermissionManager({ bash: 'deny' })
-    const d = await pm.check({ tool: 'bash', args: { command: 'ls' } })
+    const d = await pm.check({ sessionID: 'test-sess', tool: 'bash', args: { command: 'ls' } })
     expect(d.action).toBe('deny')
     expect(d.reason).toContain('explicit')
   })
 
   test('explicit allow rule wins', async () => {
     const pm = new PermissionManager({ read: 'allow' })
-    const d = await pm.check({ tool: 'read', args: { path: '/etc/passwd' } })
+    const d = await pm.check({ sessionID: 'test-sess', tool: 'read', args: { path: '/etc/passwd' } })
     expect(d.action).toBe('allow')
   })
 
   test('wildcard key rule matches (mcp_*)', async () => {
     const pm = new PermissionManager({ 'mcp_*': 'ask' })
-    const d = await pm.check({ tool: 'mcp_firecrawl_scrape', args: {} })
+    const d = await pm.check({ sessionID: 'test-sess', tool: 'mcp_firecrawl_scrape', args: {} })
     expect(d.action).toBe('ask')
     expect(d.reason).toContain('explicit')
   })
 
   test('pattern record matched against command/path value', async () => {
     const pm = new PermissionManager({ bash: { 'git *': 'allow', '*': 'ask' } })
-    const allow = await pm.check({ tool: 'bash', args: { command: 'git push' } })
+    const allow = await pm.check({ sessionID: 'test-sess', tool: 'bash', args: { command: 'git push' } })
     expect(allow.action).toBe('allow')
     expect(allow.matchedPattern).toBe('git *')
-    const ask = await pm.check({ tool: 'bash', args: { command: 'make clean' } })
+    const ask = await pm.check({ sessionID: 'test-sess', tool: 'bash', args: { command: 'make clean' } })
     expect(ask.action).toBe('ask')
   })
 
   test('BashArity fallback when no rule for bash', async () => {
     const pm = new PermissionManager({ read: 'allow' })
-    const d = await pm.check({ tool: 'bash', args: { command: 'ls' } })
+    const d = await pm.check({ sessionID: 'test-sess', tool: 'bash', args: { command: 'ls' } })
     expect(d.action).toBe('allow')
     expect(d.arity).toBe(0)
   })
 
   test('explicit bash rule overrides BashArity', async () => {
     const pm = new PermissionManager({ bash: 'deny' })
-    const d = await pm.check({ tool: 'bash', args: { command: 'ls' } })
+    const d = await pm.check({ sessionID: 'test-sess', tool: 'bash', args: { command: 'ls' } })
     expect(d.action).toBe('deny')
     expect(d.arity).toBeUndefined()
   })
 
   test('default ask when nothing matches', async () => {
     const pm = new PermissionManager({})
-    const d = await pm.check({ tool: 'webfetch' as PermissionRequest['tool'], args: {} })
+    const d = await pm.check({ sessionID: 'test-sess', tool: 'webfetch' as PermissionRequest['tool'], args: {} })
     expect(d.action).toBe('ask')
     expect(d.reason).toContain('default ask')
     expect(d.approvalPayload).toBeUndefined()
@@ -196,14 +196,14 @@ describe('PermissionManager end-to-end (5 layers)', () => {
 
   test('global "*" wildcard rule used before default ask', async () => {
     const pm = new PermissionManager({ '*': 'allow' })
-    const d = await pm.check({ tool: 'webfetch' as PermissionRequest['tool'], args: {} })
+    const d = await pm.check({ sessionID: 'test-sess', tool: 'webfetch' as PermissionRequest['tool'], args: {} })
     expect(d.action).toBe('allow')
   })
 
   test('setRules updates config at runtime', async () => {
     const pm = new PermissionManager({ bash: 'deny' })
     pm.setRules({ bash: 'allow' })
-    const d = await pm.check({ tool: 'bash', args: { command: 'ls' } })
+    const d = await pm.check({ sessionID: 'test-sess', tool: 'bash', args: { command: 'ls' } })
     expect(d.action).toBe('allow')
     expect(pm.listRules()).toEqual({ bash: 'allow' })
   })
