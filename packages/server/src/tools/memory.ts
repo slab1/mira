@@ -6,6 +6,7 @@
 import { z } from "zod"
 import type { ToolDef } from "./registry.js"
 import { sharedKnowledge } from "../learning/knowledge.js"
+import { cautionFlag, effectiveConfidence } from "../memory/provenance.js"
 
 const memorySearchSchema = z.object({
   query: z.string().describe("Search query"),
@@ -21,9 +22,26 @@ export const memorySearchTool = {
   async execute({ query, scope = "all", limit = 5 }, _ctx) {
     const kb = sharedKnowledge()
     const docs = await kb.retrieve({ query, limit, tier: scope === "all" ? undefined : (scope as "episodic" | "semantic" | "procedural") })
+    // §4: provenance becomes visible to the agent (additive — nothing removed)
+    const now = Date.now()
     return {
       query, scope,
-      results: docs.map(d => ({ title: d.title, content: d.content, tags: d.tags, tier: d.tier, score: d.score })),
+      results: docs.map(d => ({
+        title: d.title,
+        content: d.content,
+        tags: d.tags,
+        tier: d.tier,
+        score: d.score,
+        provenance: {
+          level: d.provenance,
+          confidence: effectiveConfidence(d, now),
+          caution: cautionFlag(d, now),
+          sourceKind: d.sourceKind,
+          sourceRef: d.sourceRef,
+          createdBy: d.createdBy,
+          evidence: d.evidence,
+        },
+      })),
       count: docs.length,
     }
   },
@@ -49,6 +67,10 @@ export const memoryWriteTool = {
       content,
       tags: tags ?? [],
       metadata: { sessionID: ctx?.sessionID ?? null },
+      // §6.5: origin captured at the agent-facing write chokepoint
+      sourceKind: "agent-authored",
+      sourceRef: ctx?.sessionID ? `session:${ctx.sessionID}` : null,
+      createdBy: `agent:${ctx?.agent ?? "unknown"}`,
     })
     return { ok: true, id: entry.id, type, persisted: content.slice(0, 200) }
   },

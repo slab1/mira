@@ -23,7 +23,8 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
 import { spawnSync } from 'node:child_process'
-import type { MemoryEntry } from '../learning/knowledge.js'
+import type { MemoryEntry, ProvenanceLevel } from '../learning/knowledge.js'
+import { normalizeProvenance, cautionFlag, effectiveConfidence, type EvidenceRef, type SourceKind } from './provenance.js'
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -34,6 +35,13 @@ export interface EpisodicEntry {
   outcome: string
   metadata?: Record<string, unknown>
   score?: number
+  // Trust & Provenance (docs/PROVENANCE_DESIGN.md §6.4) — optional on read
+  // (legacy jsonl rows have none), always written by store_experience().
+  provenance?: ProvenanceLevel
+  confidence?: number
+  sourceKind?: SourceKind
+  sourceRef?: string | null
+  evidence?: EvidenceRef[]
 }
 
 export interface SemanticRelation {
@@ -42,6 +50,12 @@ export interface SemanticRelation {
   o: string
   timestamp: number
   score?: number
+  // Trust & Provenance (§6.4) — optional on read, written by store_fact().
+  provenance?: ProvenanceLevel
+  confidence?: number
+  sourceKind?: SourceKind
+  sourceRef?: string | null
+  evidence?: EvidenceRef[]
 }
 
 export interface SemanticStore {
@@ -119,12 +133,19 @@ export class MemoryController {
     outcome: string,
     metadata: Record<string, unknown> = {},
   ): void {
+    // §6.4 chokepoint 4: file-store writes get provenance defaults too
+    const prov = normalizeProvenance({}, { now: Date.now() })
     const entry: EpisodicEntry = {
       timestamp: Date.now() / 1000,
       task,
       action,
       outcome,
       metadata,
+      provenance: prov.provenance,
+      confidence: prov.confidence,
+      sourceKind: prov.sourceKind,
+      sourceRef: prov.sourceRef,
+      evidence: prov.evidence,
     }
     try {
       fs.mkdirSync(this.memoryDir, { recursive: true })
@@ -277,11 +298,18 @@ export class MemoryController {
 
   store_fact(subject: string, predicate: string, object_: string): void {
     const data = this._load_semantic()
+    // §6.4 chokepoint 4: semantic triples carry the same provenance defaults
+    const prov = normalizeProvenance({}, { now: Date.now() })
     const relation: SemanticRelation = {
       s: subject,
       p: predicate,
       o: object_,
       timestamp: Date.now() / 1000,
+      provenance: prov.provenance,
+      confidence: prov.confidence,
+      sourceKind: prov.sourceKind,
+      sourceRef: prov.sourceRef,
+      evidence: prov.evidence,
     }
     data.relations.push(relation)
     for (const entity of [subject, object_]) {
@@ -447,13 +475,25 @@ export class MemoryController {
 
   /** Build the COGNITIVE CONTEXT block injected into subagent prompts (port spawner.py packet_summary) */
   formatCognitivePacket(packet: CognitivePacket): string {
+    const now = Date.now()
+    // §4 (docs/PROVENANCE_DESIGN.md): provenance visible — level + effective
+    // confidence + ⚠ caution; legacy rows without provenance render unchanged.
+    const tag = (e: {
+      provenance?: ProvenanceLevel
+      confidence?: number
+      lastVerifiedAt?: number
+      createdAt?: number
+    }): string =>
+      e.provenance
+        ? `[${e.provenance} ${effectiveConfidence(e, now).toFixed(2)}${cautionFlag(e, now) ? ' ⚠' : ''}] `
+        : ''
     const parts: string[] = []
     if (packet.episodic.length) {
       parts.push(
         'PAST EXPERIENCES: ' +
           packet.episodic
             .slice(0, 3)
-            .map((e) => `[${e.outcome}] ${e.task} -> ${e.action}`)
+            .map((e) => `${tag(e)}[${e.outcome}] ${e.task} -> ${e.action}`)
             .join('; '),
       )
     }
@@ -462,7 +502,7 @@ export class MemoryController {
         'KNOWN FACTS: ' +
           packet.semantic
             .slice(0, 3)
-            .map((f) => `${f.s} ${f.p} ${f.o}`)
+            .map((f) => `${tag(f)}${f.s} ${f.p} ${f.o}`)
             .join('; '),
       )
     }

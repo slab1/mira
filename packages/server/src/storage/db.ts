@@ -252,6 +252,30 @@ export async function migrate(db: MiraDB) {
   addColumn('knowledge_entries', 'last_accessed_at', 'INTEGER')
   addColumn('knowledge_entries', 'access_count', 'INTEGER')
   addColumn('knowledge_entries', 'entities', 'TEXT')
+  // Trust & Provenance (docs/PROVENANCE_DESIGN.md §2.2): 8 columns + backfill.
+  // addColumn ignores `duplicate column name`, so DBs where the parallel lane
+  // already added nullable provenance/confidence keep theirs — the UPDATEs below
+  // then make legacy NULLs durable-safe (unknown → the lowest honest rung).
+  addColumn('knowledge_entries', 'provenance', "TEXT NOT NULL DEFAULT 'unverified'")
+  addColumn('knowledge_entries', 'confidence', 'REAL NOT NULL DEFAULT 0.2')
+  addColumn('knowledge_entries', 'source_kind', "TEXT NOT NULL DEFAULT 'unknown'")
+  addColumn('knowledge_entries', 'source_ref', 'TEXT') // nullable by nature
+  addColumn('knowledge_entries', 'created_by', "TEXT NOT NULL DEFAULT 'legacy'")
+  addColumn('knowledge_entries', 'evidence', "TEXT NOT NULL DEFAULT '[]'")
+  addColumn('knowledge_entries', 'derived_from', "TEXT NOT NULL DEFAULT '[]'")
+  addColumn('knowledge_entries', 'last_verified_at', 'INTEGER') // nullable → created_at on read
+  // Backfill pre-existing rows (mandatory for lane-created nullable columns,
+  // no-op when the DEFAULTs above already applied). §2.2 / §2.4.
+  try {
+    sqlite.exec(`UPDATE knowledge_entries SET provenance = 'unverified' WHERE provenance IS NULL;`)
+    sqlite.exec(`UPDATE knowledge_entries SET confidence = 0.2 WHERE confidence IS NULL;`)
+    sqlite.exec(`UPDATE knowledge_entries SET source_kind = 'unknown' WHERE source_kind IS NULL;`)
+    sqlite.exec(`UPDATE knowledge_entries SET created_by = 'legacy' WHERE created_by IS NULL;`)
+    sqlite.exec(`UPDATE knowledge_entries SET evidence = '[]' WHERE evidence IS NULL;`)
+    sqlite.exec(`UPDATE knowledge_entries SET derived_from = '[]' WHERE derived_from IS NULL;`)
+  } catch (e) {
+    console.warn('[storage] knowledge_entries provenance backfill failed:', String(e))
+  }
   // Create tier/source indexes after columns exist (for old DBs)
   try {
     sqlite.exec(`CREATE INDEX IF NOT EXISTS knowledge_entries_tier_idx ON knowledge_entries(tier);`)

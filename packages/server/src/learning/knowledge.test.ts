@@ -1,12 +1,21 @@
 import { describe, test, expect } from 'bun:test'
 import { Hono } from 'hono'
 import { embedKeyword, cosine } from './knowledge.js'
-import { KNOWLEDGE_SEED_ENTRIES, seedDefaultKnowledge, KnowledgeBase } from './knowledge.js'
+import {
+  KNOWLEDGE_SEED_ENTRIES,
+  seedDefaultKnowledge,
+  KnowledgeBase,
+  setSharedKnowledge,
+  sharedKnowledge,
+} from './knowledge.js'
 import { createLearningSystem, mountLearningRoutes, type LearningSystem } from './index.js'
 import { createDatabase, migrate } from '../storage/db.js'
 import { writeFinding } from '../tools/findings.js'
+import { memoryWriteTool } from '../tools/memory.js'
+import type { ToolContext } from '../tools/registry.js'
 import { Bus } from '../bus/index.js'
 import type { Insight } from './online.js'
+import type { UsageAnalysis } from './usage.js'
 import type { JsonValue } from '../types/index.js'
 
 describe('embedKeyword', () => {
@@ -378,5 +387,216 @@ describe('GET /learning/status — topPerforming / worstPerforming', () => {
     expect(body.worstPerforming).toHaveLength(3)
     expect(body.topPerforming.map((p) => p.utility)).toEqual([5, 2, 0])
     expect(body.worstPerforming.map((p) => p.utility)).toEqual([-3, -1, 0])
+  })
+})
+
+// ── Trust & Provenance (docs/PROVENANCE_DESIGN.md §5 enforcement) ─────
+// The executable form of “provenance on ALL memories”: every write API
+// leaves zero NULL provenance/confidence/source_kind/created_by rows, and a
+// raw-SQL bypass insert inherits the column DEFAULTs.
+
+describe('provenance enforcement (§5)', () => {
+  test('bare store() → all provenance columns non-NULL on the row', async () => {
+    const { system, db } = await testApp()
+    const entry = await system.knowledge.store({
+      tier: 'semantic',
+      source: 'system',
+      title: 'Bare store provenance probe',
+      content: 'no provenance fields supplied at all',
+    })
+    const row = db.sqlite
+      .prepare(
+        `SELECT provenance, confidence, source_kind, source_ref, created_by, evidence, derived_from, last_verified_at
+         FROM knowledge_entries WHERE id = ?`,
+      )
+      .get(entry.id) as Record<string, unknown>
+    expect(row.provenance).toBe('agent-generated')
+    expect(row.confidence).toBe(0.5)
+    expect(row.source_kind).toBe('agent-authored')
+    expect(row.source_ref).toBeNull()
+    expect(row.created_by).toBe('system')
+    expect(row.evidence).toBe('[]')
+    expect(row.derived_from).toBe('[]')
+    expect(row.last_verified_at).toBeGreaterThan(0)
+    // in-memory entry mirrors the persisted row
+    expect(entry.sourceKind).toBe('agent-authored')
+    expect(entry.lastVerifiedAt).toBe(entry.createdAt)
+    expect(entry.evidence).toEqual([])
+  })
+
+  test('sweep: write APIs + raw-SQL bypass → zero NULL provenance rows', async () => {
+    const { system, app, db } = await testApp()
+
+    // §5 funnel list — every in-process writer
+    await system.knowledge.store({
+      tier: 'semantic',
+      source: 'system',
+      title: 'Sweep bare store',
+      content: 'sweep bare store content',
+    })
+    await system.knowledge.storeInsight(
+      insight('ins_sweep', 'https://sweep.example/1', 'sweep pattern provenance everywhere', [
+        'sweep',
+      ]),
+    )
+    await system.knowledge.storeUsageAnalysis({
+      window: { from: 0, to: 0, sessions: 1 },
+      failurePatterns: [],
+      successPatterns: [],
+      toolStats: {},
+      modelStats: {},
+      generatedAt: Date.now(),
+    } satisfies UsageAnalysis)
+    await seedDefaultKnowledge(system.knowledge)
+
+    // memory_write tool — point the shared singleton at this system, restore after
+    const prevKB = sharedKnowledge()
+    setSharedKnowledge(system.knowledge)
+    try {
+      await memoryWriteTool.execute(
+        { content: 'sweep memory_write row' },
+        { sessionID: 'sess_sweep', messageID: 'msg_sweep', agent: 'sweeper' } as ToolContext,
+      )
+    } finally {
+      setSharedKnowledge(prevKB)
+    }
+
+    // POST /knowledge route
+    const seeded = await app.request('/knowledge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Sweep route seed', content: 'route content' }),
+    })
+    expect(seeded.status).toBe(201)
+
+    // finding promote route
+    const f = await writeFinding(db, {
+      title: 'Sweep finding',
+      severity: 'minor',
+      source: 'agent',
+    })
+    const promoted = await app.request(`/finding/${f.id}/promote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    expect(promoted.status).toBe(201)
+
+    // raw-SQL bypass — the DB-level DEFAULTs are the backstop (§5)
+    db.sqlite.exec(
+      `INSERT INTO knowledge_entries (id, kind, content, created_at) VALUES ('raw_bypass_sweep', 'semantic', 'raw bypass row', ${Date.now()})`,
+    )
+
+    // flush fire-and-forget persists (reverse-edge / touch writes)
+    await new Promise((r) => setTimeout(r, 100))
+
+    const total = db.sqlite.prepare('SELECT COUNT(*) as c FROM knowledge_entries').get() as {
+      c: number
+    }
+    expect(total.c).toBeGreaterThan(10)
+
+    // THE keystone assertion
+    const bad = db.sqlite
+      .prepare(
+        `SELECT COUNT(*) as c FROM knowledge_entries
+         WHERE provenance IS NULL OR confidence IS NULL OR source_kind IS NULL OR created_by IS NULL`,
+      )
+      .get() as { c: number }
+    expect(bad.c).toBe(0)
+
+    // and the bypass row specifically inherited the safe defaults
+    const raw = db.sqlite
+      .prepare(
+        `SELECT provenance, confidence, source_kind, created_by FROM knowledge_entries WHERE id = 'raw_bypass_sweep'`,
+      )
+      .get() as Record<string, unknown>
+    expect(raw.provenance).toBe('unverified')
+    expect(raw.confidence).toBe(0.2)
+    expect(raw.source_kind).toBe('unknown')
+    expect(raw.created_by).toBe('legacy')
+  })
+
+  test('POST /knowledge sets user-stated / human-verified (§3 / §6.6)', async () => {
+    const { app } = await testApp()
+    const res = await app.request('/knowledge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Human asserted fact', content: 'a human said this is true' }),
+    })
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as {
+      provenance: string
+      confidence: number
+      sourceKind: string
+      createdBy: string
+    }
+    expect(body.provenance).toBe('human-verified')
+    expect(body.confidence).toBe(1)
+    expect(body.sourceKind).toBe('user-stated')
+    expect(body.createdBy).toBe('user')
+  })
+
+  test('finding promote → derived provenance chained to the finding (§6.6)', async () => {
+    const { app, db } = await testApp()
+    const f = await writeFinding(db, {
+      title: 'Promote provenance chain',
+      severity: 'major',
+      evidence: 'src/x.ts:1',
+      source: 'agent',
+    })
+    const res = await app.request(`/finding/${f.id}/promote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as {
+      entry: {
+        provenance: string
+        confidence: number
+        sourceKind: string
+        sourceRef: string
+        derivedFrom: string[]
+      }
+    }
+    expect(body.entry.sourceKind).toBe('derived')
+    expect(body.entry.sourceRef).toBe(`finding:${f.id}`)
+    expect(body.entry.derivedFrom).toEqual([`finding:${f.id}`])
+    // derived can never launder trust upward (§3)
+    expect(body.entry.confidence).toBeLessThanOrEqual(0.7)
+    expect(body.entry.provenance).not.toBe('human-verified')
+  })
+
+  test('read-time evidence backfill from metadata.sourceUrls (§2.4)', async () => {
+    const { db } = await testApp()
+    const createdAt = Date.now()
+    db.sqlite
+      .prepare(
+        `INSERT INTO knowledge_entries (id, tier, source, title, content, metadata, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'legacy_sourceurls',
+        'semantic',
+        'online',
+        'Legacy URL insight',
+        'legacy pattern body',
+        JSON.stringify({ sourceUrls: ['https://legacy.example/a'] }),
+        createdAt,
+      )
+
+    const kb2 = new KnowledgeBase({ db })
+    await kb2.load()
+    const e = kb2.get('legacy_sourceurls')
+    expect(e).toBeDefined()
+    // unknown → the lowest honest rung
+    expect(e!.provenance).toBe('unverified')
+    expect(e!.confidence).toBe(0.2)
+    expect(e!.createdBy).toBe('legacy')
+    // evidence derived at read time + sourceKind upgraded to imported
+    expect(e!.sourceKind).toBe('imported')
+    expect(e!.evidence).toEqual([
+      { kind: 'url', ref: 'https://legacy.example/a', at: createdAt },
+    ])
   })
 })

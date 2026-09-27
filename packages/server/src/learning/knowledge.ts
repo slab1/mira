@@ -29,11 +29,36 @@ import type { Insight } from './online.js'
 import type { UsageAnalysis, FailurePattern, SuccessPattern } from './usage.js'
 import type { MiraDB } from '../storage/db.js'
 import type { JsonValue } from '../types/index.js'
+import {
+  backfillEvidence,
+  cautionFlag,
+  effectiveConfidence,
+  normalizeProvenance,
+  type EvidenceRef,
+  type SourceKind,
+} from '../memory/provenance.js'
 
 // ── Types ────────────────────────────────────────────────────────────
 
 export type MemoryTier = 'episodic' | 'semantic' | 'procedural'
 export type MemorySource = 'online' | 'usage' | 'improvement' | 'user' | 'system'
+
+/** Trust & Provenance: how strongly a memory can be relied on. */
+export type ProvenanceLevel =
+  | 'human-verified'    // human explicitly confirmed
+  | 'ci-verified'       // CI / automated test suite verified
+  | 'benchmark-verified'// verified via benchmark run
+  | 'agent-generated'   // agent produced, not externally verified
+  | 'unverified'        // no evidence of correctness
+
+/** Confidence score ranges by provenance. */
+export const PROVENANCE_CONFIDENCE: Record<ProvenanceLevel, number> = {
+  'human-verified': 1.0,
+  'ci-verified': 0.9,
+  'benchmark-verified': 0.85,
+  'agent-generated': 0.5,
+  'unverified': 0.2,
+}
 
 export interface MemoryEntry {
   id: string
@@ -46,6 +71,15 @@ export interface MemoryEntry {
   embedding?: number[] // optional vector (keyword hash or real embedding)
   metadata: Record<string, JsonValue>
   score?: number // retrieval score (filled on search)
+  provenance: ProvenanceLevel // trust tier of this memory
+  confidence: number // 0..1 reliability score (derived from provenance unless overridden)
+  // Trust & Provenance additions (docs/PROVENANCE_DESIGN.md §2.1/§2.3)
+  sourceKind: SourceKind // origin class of the memory
+  sourceRef: string | null // primary origin pointer (session:<id>, msg:<id>, finding:<id>, URL)
+  createdBy: string // actor: agent:<name>, user, scheduler:online, system, legacy
+  evidence: EvidenceRef[] // links backing the claim (§4, cap 8)
+  derivedFrom: string[] // parent memory ids for synthesized memories (cap 5)
+  lastVerifiedAt: number // createdAt unless corroborated/verified later (staleness input)
   createdAt: number
   updatedAt: number
   // H2-1: temporal decay
@@ -64,6 +98,16 @@ export interface StoreInput {
   metadata?: Record<string, JsonValue>
   links?: string[] // graph edges to existing entry ids
   entities?: string[] // explicit entities (auto-extracted if omitted)
+  provenance?: ProvenanceLevel // default 'agent-generated'
+  confidence?: number // default derived from provenance
+  // Provenance additions — ALL OPTIONAL so `store(x as never)` cast sites
+  // (session/prompt.ts) keep compiling; defaulted at the store() chokepoint.
+  sourceKind?: SourceKind
+  sourceRef?: string | null
+  createdBy?: string
+  evidence?: EvidenceRef[]
+  derivedFrom?: string[]
+  lastVerifiedAt?: number
 }
 
 export interface RetrieveOptions {
@@ -72,6 +116,9 @@ export interface RetrieveOptions {
   limit?: number // default 8
   minScore?: number // default 0.15
   hybrid?: boolean // default true (vector + graph expansion)
+  /** provenance gate (§4): drop results whose effective confidence is below
+   *  this. P0 ships it unset (= off) — retrieval flags, never hides by default. */
+  minConfidence?: number
 }
 
 export interface KnowledgeBaseDeps {
@@ -95,6 +142,14 @@ interface KnowledgeRow {
   last_accessed_at?: number | null
   access_count?: number | null
   entities?: string | null
+  provenance?: string | null
+  confidence?: number | null
+  source_kind?: string | null
+  source_ref?: string | null
+  created_by?: string | null
+  evidence?: string | null
+  derived_from?: string | null
+  last_verified_at?: number | null
   // legacy
   kind?: string | null
   session_id?: string | null
@@ -167,6 +222,14 @@ export class KnowledgeBase {
           last_accessed_at INTEGER,
           access_count INTEGER,
           entities TEXT,
+          provenance TEXT,
+          confidence REAL,
+          source_kind TEXT NOT NULL DEFAULT 'unknown',
+          source_ref TEXT,
+          created_by TEXT NOT NULL DEFAULT 'legacy',
+          evidence TEXT NOT NULL DEFAULT '[]',
+          derived_from TEXT NOT NULL DEFAULT '[]',
+          last_verified_at INTEGER,
           session_id TEXT,
           kind TEXT
         );
@@ -193,6 +256,16 @@ export class KnowledgeBase {
       addCol('last_accessed_at', 'INTEGER')
       addCol('access_count', 'INTEGER')
       addCol('entities', 'TEXT')
+      addCol('provenance', 'TEXT')
+      addCol('confidence', 'REAL')
+      // Trust & Provenance (§2.2) — guarded: duplicate column name is ignored,
+      // so DBs where db.ts migrate() already added these are left alone.
+      addCol('source_kind', "TEXT NOT NULL DEFAULT 'unknown'")
+      addCol('source_ref', 'TEXT')
+      addCol('created_by', "TEXT NOT NULL DEFAULT 'legacy'")
+      addCol('evidence', "TEXT NOT NULL DEFAULT '[]'")
+      addCol('derived_from', "TEXT NOT NULL DEFAULT '[]'")
+      addCol('last_verified_at', 'INTEGER')
 
       const rows = sqlite
         .prepare(
@@ -204,7 +277,7 @@ export class KnowledgeBase {
         const tier = (r.tier as MemoryTier | null) ?? (r.kind as MemoryTier | null) ?? 'episodic'
         const source = (r.source as MemorySource | null) ?? 'system'
         const title = r.title ?? r.content.slice(0, 80)
-        const e: MemoryEntry = {
+        const e: MemoryEntry = backfillEvidence({
           id: r.id,
           tier,
           source,
@@ -216,12 +289,20 @@ export class KnowledgeBase {
             ? (safeJsonParse<number[] | null>(r.embedding, null) ?? undefined)
             : undefined,
           metadata: safeJsonParse<Record<string, JsonValue>>(r.metadata, {}),
+          provenance: (r.provenance as ProvenanceLevel | null) ?? 'unverified',
+          confidence: r.confidence ?? PROVENANCE_CONFIDENCE[(r.provenance as ProvenanceLevel | null) ?? 'unverified'],
+          sourceKind: (r.source_kind as SourceKind | null) ?? 'unknown',
+          sourceRef: r.source_ref ?? null,
+          createdBy: r.created_by ?? 'legacy',
+          evidence: safeJsonParse<EvidenceRef[]>(r.evidence, []),
+          derivedFrom: safeJsonParse<string[]>(r.derived_from, []),
+          lastVerifiedAt: r.last_verified_at ?? r.created_at,
           createdAt: r.created_at,
           updatedAt: r.updated_at ?? r.created_at,
           lastAccessedAt: r.last_accessed_at ?? r.updated_at ?? r.created_at,
           accessCount: r.access_count ?? 0,
           entities: safeJsonParse<string[]>(r.entities, []),
-        }
+        })
         // Backfill entities if empty (extract from title+content+tags)
         if (!e.entities.length) {
           e.entities = extractEntities(e.title + ' ' + e.content, e.tags)
@@ -243,6 +324,16 @@ export class KnowledgeBase {
     const entities = (
       input.entities ?? extractEntities(input.title + ' ' + input.content, input.tags ?? [])
     ).slice(0, 12)
+    // §5 chokepoint 1: THE normalization point — provenance + the 6 origin
+    // fields are never undefined. Lane defaults (agent-generated / derived
+    // from provenance) remain the fallback inside normalizeProvenance.
+    const provenance = normalizeProvenance(input, {
+      now,
+      parents: (input.derivedFrom ?? [])
+        .map((id) => this.entries.get(id))
+        .filter((e): e is MemoryEntry => !!e)
+        .map((e) => ({ provenance: e.provenance, confidence: e.confidence })),
+    })
     const entry: MemoryEntry = {
       id: `mem_${now.toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
       tier: input.tier,
@@ -253,6 +344,7 @@ export class KnowledgeBase {
       graphLinks: (input.links ?? []).slice(0, 12),
       embedding: embedKeyword(input.title + ' ' + input.content),
       metadata: input.metadata ?? {},
+      ...provenance,
       createdAt: now,
       updatedAt: now,
       lastAccessedAt: now,
@@ -436,6 +528,9 @@ export class KnowledgeBase {
     for (const e of this.entries.values()) {
       if (opts.tier && e.tier !== opts.tier) continue
       if (e.metadata.tombstone === 1) continue // expired — hidden from retrieval
+      // §4 optional provenance gate — unset by default (flag, don't hide)
+      if (opts.minConfidence !== undefined && effectiveConfidence(e, now) < opts.minConfidence)
+        continue
       const emb = e.embedding ?? embedKeyword(e.title + ' ' + e.content)
       const s = cosine(qEmb, emb)
       // Tag overlap bonus
@@ -563,9 +658,13 @@ export class KnowledgeBase {
   async buildCognitivePacket(query: string, limit = 6): Promise<string> {
     const memories = await this.retrieve({ query, limit })
     if (!memories.length) return ''
-    const lines = memories.map(
-      (m) => `- [${m.tier}/${m.source}] ${m.title}: ${m.content.slice(0, 220)}`,
-    )
+    const now = Date.now()
+    // §4: provenance becomes visible — level + effective confidence + ⚠ caution
+    const lines = memories.map((m) => {
+      const eff = effectiveConfidence(m, now)
+      const caution = cautionFlag(m, now)
+      return `- [${m.tier}/${m.source} · ${m.provenance} ${eff.toFixed(2)}${caution ? ' ⚠' : ''}] ${m.title}: ${m.content.slice(0, 220)}`
+    })
     return `## Relevant Memory (KnowledgeBase)\n${lines.join('\n')}`
   }
 
@@ -737,8 +836,8 @@ export class KnowledgeBase {
       sqlite
         .prepare(
           `INSERT OR REPLACE INTO knowledge_entries
-          (id, session_id, kind, tier, source, title, content, tags, graph_links, embedding, metadata, created_at, updated_at, last_accessed_at, access_count, entities)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, session_id, kind, tier, source, title, content, tags, graph_links, embedding, metadata, created_at, updated_at, last_accessed_at, access_count, entities, provenance, confidence, source_kind, source_ref, created_by, evidence, derived_from, last_verified_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           entry.id,
@@ -757,6 +856,14 @@ export class KnowledgeBase {
           entry.lastAccessedAt,
           entry.accessCount,
           JSON.stringify(entry.entities),
+          entry.provenance,
+          entry.confidence,
+          entry.sourceKind,
+          entry.sourceRef,
+          entry.createdBy,
+          JSON.stringify(entry.evidence),
+          JSON.stringify(entry.derivedFrom),
+          entry.lastVerifiedAt,
         )
     } catch (e) {
       // Fallback for DBs where new columns don't exist yet (should not happen after migrate, but be safe)
@@ -764,8 +871,8 @@ export class KnowledgeBase {
         sqlite
           .prepare(
             `INSERT OR REPLACE INTO knowledge_entries
-            (id, tier, source, title, content, tags, graph_links, embedding, metadata, created_at, updated_at, last_accessed_at, access_count, entities)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, tier, source, title, content, tags, graph_links, embedding, metadata, created_at, updated_at, last_accessed_at, access_count, entities, provenance, confidence, source_kind, source_ref, created_by, evidence, derived_from, last_verified_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             entry.id,
@@ -782,6 +889,14 @@ export class KnowledgeBase {
             entry.lastAccessedAt,
             entry.accessCount,
             JSON.stringify(entry.entities),
+            entry.provenance,
+            entry.confidence,
+            entry.sourceKind,
+            entry.sourceRef,
+            entry.createdBy,
+            JSON.stringify(entry.evidence),
+            JSON.stringify(entry.derivedFrom),
+            entry.lastVerifiedAt,
           )
       } catch (fallbackErr) {
         console.error('[knowledge] persist fallback also failed:', fallbackErr)

@@ -220,6 +220,9 @@ export function mountLearningRoutes(
       content,
       tags,
       metadata: { seededFrom: 'graph', sessionID },
+      // §6.6: a human asserted this → human-verified (1.0) per §3 mapping
+      sourceKind: 'user-stated',
+      createdBy: 'user',
     })
     system.bus?.publish({
       type: 'job.updated',
@@ -265,6 +268,10 @@ export function mountLearningRoutes(
         content: `Finding ${String(row.severity)}: ${String(row.evidence ?? 'no evidence')}. Source: ${String(row.source)}. Resolved to knowledge.`,
         tags: [String(row.severity), String(row.source), 'resolved'],
         metadata: { findingId: id, severity: String(row.severity), source: String(row.source) },
+        // §6.6: synthesized from a finding — chain stays queryable (§2.1)
+        sourceKind: 'derived',
+        derivedFrom: [`finding:${id}`],
+        sourceRef: `finding:${id}`,
       })
       system.bus?.publish({
         type: 'job.updated',
