@@ -72,6 +72,7 @@ export interface PatchingEngineDeps {
   db?: MiraDB
   knowledge?: KnowledgeBase
   gateway?: Gateway
+  governance?: any
 }
 
 export interface CycleInput {
@@ -233,11 +234,19 @@ export class PatchingEngine {
         continue
       }
 
-      // Auto-patch decision: only apply if severity qualifies
+      // Auto-patch decision: only create proposal if severity qualifies
       const pp = painPoints.find(p => p.id === patch.painPointId)
-      const shouldApply = this.config.autoPatch && pp ? pp.autoPatch : false
-      if (!shouldApply) {
-        console.log(`    verified but below auto-patch severity — not applying`)
+      const shouldPropose = this.config.autoPatch && pp ? pp.autoPatch : false
+      if (!shouldPropose) {
+        console.log(`    verified but below auto-patch severity — not proposing`)
+        details.push({ id: patch.id, targetFile: patch.targetFile, verified: true, applied: false })
+        continue
+      }
+
+      // Governance: create proposal instead of direct apply
+      if (this.deps.governance) {
+        const proposal = await this.deps.governance.createProposal(patch, vr)
+        console.log(`    proposal created ${proposal.id} — governance gated`)
         details.push({ id: patch.id, targetFile: patch.targetFile, verified: true, applied: false })
         continue
       }

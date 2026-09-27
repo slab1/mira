@@ -40,6 +40,7 @@ import { KnowledgeBase, type MemoryTier, type MemorySource } from './knowledge.j
 import { ImprovementEngine } from './improvement.js'
 import { LearningScheduler } from './scheduler.js'
 import { createPatchingSystem, type PatchingEngine } from '../patching/index.js'
+import { createGovernanceGate } from '../patching/governance/index.js'
 import type { Bus } from '../bus/index.js'
 import type { MiraDB } from '../storage/db.js'
 import type { Gateway } from '../gateway/index.js'
@@ -60,6 +61,7 @@ export interface LearningSystem {
   improvement: ImprovementEngine
   patching: PatchingEngine
   scheduler: LearningScheduler
+  governance: ReturnType<typeof createGovernanceGate>
   gateway?: Gateway
   db?: MiraDB
   bus?: Bus
@@ -81,8 +83,14 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
     { rootDir: deps.rootDir ?? process.cwd() },
   )
 
+  const governance = createGovernanceGate({
+    db: deps.db,
+    bus: deps.bus,
+    rootDir: deps.rootDir ?? process.cwd(),
+  })
+
   const patching = createPatchingSystem(
-    { bus: deps.bus, db: deps.db, knowledge, gateway: deps.gateway },
+    { bus: deps.bus, db: deps.db, knowledge, gateway: deps.gateway, governance },
     { rootDir: deps.rootDir ?? process.cwd(), autoPatch: true },
   )
 
