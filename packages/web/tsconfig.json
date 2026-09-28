@@ -18,7 +18,7 @@
     "paths": {
       "@/*": ["./src/*"]
     },
-    "types": ["vite/client"]
+    "types": ["vite/client", "bun-types"]
   },
   "include": ["src", "vite.config.ts"],
   "exclude": ["dist", "node_modules"]

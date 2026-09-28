@@ -2,6 +2,7 @@ import { createSignal, onMount, Show, onCleanup, createResource, For, createEffe
 import './index.css'
 import { createAppStore } from './stores/app'
 import { createSettingsStore } from './stores/settings'
+import { createRealtimeLayer } from './realtime/websocket'
 import { SessionList } from './components/SessionList'
 import { ChatView } from './components/ChatView'
 import { ActivityPanel } from './components/ActivityPanel'
@@ -19,7 +20,14 @@ import { HeaderModelSelector, HeaderAgentSelector } from './components/HeaderSel
 import BrioPage from './pages/Brio'
 import EvolutionPage from './pages/Evolution'
 import MissionsPage from './pages/Missions'
+import DashboardPage from './pages/Dashboard'
+import IntelligencePage from './pages/Intelligence'
+import ChangesPage from './pages/Changes'
+import SystemPage from './pages/System'
 import { TopNav, type WorkspaceId, type WorkSubTab } from './components/TopNav'
+import { AutonomyDial, type AutonomyMode } from './components/AutonomyDial'
+import { CustomizationPanel } from './components/CustomizationPanel'
+import { updateUrl, parseUrl } from './routing/deepLinks'
 
 // ── Workspace stubs (incremental per MIRA_UI_IMPLEMENTATION_ROADMAP.md) ──
 function StubCard(props: { icon: string; title: string; desc: string; items: string[]; cta?: string }) {
@@ -290,6 +298,7 @@ export default function App() {
   const settings = createSettingsStore()
   const [authorized, setAuthorized] = createSignal(false)
   const [settingsOpen, setSettingsOpen] = createSignal(false)
+  const [customizationOpen, setCustomizationOpen] = createSignal(false)
   const [paletteOpen, setPaletteOpen] = createSignal(false)
   // Mobile: session sidebar is an off-canvas drawer; toggled by the hamburger.
   const [sidebarOpen, setSidebarOpen] = createSignal(false)
@@ -357,6 +366,29 @@ export default function App() {
     const ws = workspace()
     const wt = workTab()
     if (ws === 'work') setPage(wt === 'brio' ? 'brio' : 'chat')
+  })
+  // Deep linking: update URL when workspace changes
+  createEffect(() => {
+    const ws = workspace()
+    updateUrl(ws)
+  })
+  // Deep linking: handle browser back/forward
+  onMount(() => {
+    const onPopState = () => {
+      const { workspace: ws } = parseUrl()
+      if (ws !== workspace()) setWorkspace(ws as WorkspaceId)
+    }
+    window.addEventListener('popstate', onPopState)
+    onCleanup(() => window.removeEventListener('popstate', onPopState))
+  })
+
+  // RealtimeLayer — connect to WebSocket server
+  const realtime = createRealtimeLayer({
+    url: `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/`,
+  })
+  onMount(() => {
+    realtime.connect()
+    onCleanup(() => realtime.disconnect())
   })
   // H2-2 Mira Score GA — trace viewer drawer
   const [traceOpen, setTraceOpen] = createSignal(false)
@@ -1347,13 +1379,16 @@ export default function App() {
               />
             </Match>
             <Match when={workspace() === 'intelligence'}>
-              <IntelligenceStub />
+              <IntelligencePage />
             </Match>
             <Match when={workspace() === 'changes'}>
-              <ChangesStub />
+              <ChangesPage />
             </Match>
             <Match when={workspace() === 'system'}>
-              <SystemStub />
+              <SystemPage />
+            </Match>
+            <Match when={workspace() === 'dashboard'}>
+              <DashboardPage />
             </Match>
             <Match when={workspace() === 'work'}>
               <Show

@@ -32,6 +32,7 @@ import type { JsonValue } from "../types/index.js"
 import { mergeStrategySchema, type MergeStrategy } from "./orchestrate-planner.js"
 import { getJob } from "./task.js"
 import type { Job } from "./task.js"
+import { buildVerificationPatch } from "../verification.js"
 
 // Re-export the job board from task.ts so callers have one surface for
 // polling/cancelling orchestrate-spawned jobs. Orchestrate rows live in the
@@ -477,13 +478,22 @@ export const orchestrateTool = {
           }
           if (jobID) orchestrateJobAborts.delete(jobID)
           // Stash full text in the job row; parent sees only the 600-char preview.
+          // Verification settle (design §5 chokepoint 2 — inline terminal write,
+          // NOT via finishJob): completed branch has res.sessionID → compute the
+          // evidence-based state and merge into the same single UPDATE.
+          let verification: { state: string; at?: number } | undefined
           if (db && jobID) {
             try {
               if (res.status === "completed") {
+                const patch = await buildVerificationPatch(db, res.sessionID)
                 await db.update(jobs)
-                  .set({ status: "completed", result: res.text, childSessionID: res.sessionID, updatedAt: Date.now() })
+                  .set({ status: "completed", result: res.text, childSessionID: res.sessionID, ...patch, updatedAt: Date.now() })
                   .where(and(eq(jobs.id, jobID), eq(jobs.status, "running")))
+                verification = patch
+                  ? { state: patch.verificationState, at: patch.verificationUpdatedAt }
+                  : undefined
               } else if (res.status === "failed") {
+                // no child link (failure paths drop it) → stays UNVERIFIED (§3.1)
                 await db.update(jobs)
                   .set({ status: ac.signal.aborted ? "cancelled" : "failed", error: res.error, updatedAt: Date.now() })
                   .where(and(eq(jobs.id, jobID), eq(jobs.status, "running")))
@@ -493,7 +503,7 @@ export const orchestrateTool = {
           bus?.publish({
             type: res.status === "completed" ? "job.updated" : ac.signal.aborted ? "job.cancelled" : "job.updated",
             sessionID,
-            payload: { jobID, taskID: t.id, status: res.status, childSessionID: res.sessionID, preview: (res.text ?? res.error ?? "").slice(0, 600) } as JsonValue,
+            payload: { jobID, taskID: t.id, status: res.status, childSessionID: res.sessionID, preview: (res.text ?? res.error ?? "").slice(0, 600), verification } as JsonValue,
             timestamp: Date.now(),
           })
           return res

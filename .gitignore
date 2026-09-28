@@ -24,3 +24,7 @@ data/
 # TypeScript incremental build cache
 *.tsbuildinfo
 
+# shadow-test workspace snapshots (auto-created, never commit)
+.tmp_shadow_*
+**/.tmp_shadow_*
+

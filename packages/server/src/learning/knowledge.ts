@@ -377,6 +377,17 @@ export class KnowledgeBase {
     return entry
   }
 
+  /** Stamp a memory with elevated provenance (human-verified, ci-verified, etc). */
+  async stampProvenance(memoryId: string, level: ProvenanceLevel): Promise<MemoryEntry | null> {
+    const entry = this.entries.get(memoryId)
+    if (!entry) return null
+    entry.provenance = level
+    entry.confidence = PROVENANCE_CONFIDENCE[level]
+    entry.updatedAt = Date.now()
+    await this.persist(entry).catch(() => {})
+    return entry
+  }
+
   /** Store an Online insight as semantic memory.
    *  Deterministic id derivation (`mem_<insightId>`) so repeat cycles bump an
    *  existing row instead of piling duplicates; utility score preserved.
@@ -562,6 +573,11 @@ export class KnowledgeBase {
       const utilityAgeDays = (now - e.updatedAt) / (24 * 60 * 60 * 1000)
       const utilityDecay = Math.pow(0.99, utilityAgeDays) // 1%/day decay on utility
       score += Math.max(-20, Math.min(20, rawUtility)) * utilityDecay * 0.04
+
+      // Provenance confidence weighting: boost verified memories, penalize unverified
+      // human-verified (1.0) → 1.0x, ci-verified (0.9) → 0.95x, agent-generated (0.5) → 0.75x, unverified (0.2) → 0.6x
+      const confidence = e.confidence ?? 0.5
+      score *= 0.5 + confidence * 0.5
 
       if (score >= minScore) scored.push({ ...e, _score: score, _rawScore: s, score })
     }

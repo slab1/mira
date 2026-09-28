@@ -7,6 +7,9 @@
 import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core'
 import { relations } from 'drizzle-orm'
 import type { JsonValue } from '../types/index.js'
+// Task Verification States (docs/VERIFICATION_STATES_DESIGN.md §2.2) — type-only,
+// no runtime dependency on the memory module (same rule as provenance design §2.2).
+import type { EvidenceRef } from '../memory/provenance.js'
 
 export const sessions = sqliteTable(
   'sessions',
@@ -132,6 +135,18 @@ export const jobs = sqliteTable(
     error: text('error'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
+    // Task Verification States (docs/VERIFICATION_STATES_DESIGN.md §2.2).
+    // Evidence-based (§3) — only the two terminal writers ever set these (§5).
+    verificationState: text('verification_state', {
+      enum: ['UNVERIFIED', 'PARTIALLY_VERIFIED', 'VERIFIED', 'FAILED_VERIFICATION'],
+    })
+      .notNull()
+      .default('UNVERIFIED'),
+    verificationEvidence: text('verification_evidence', { mode: 'json' })
+      .$type<EvidenceRef[]>()
+      .notNull()
+      .default([]),
+    verificationUpdatedAt: integer('verification_updated_at'),
   },
   (t) => [
     index('jobs_parent_session_idx').on(t.parentSessionID),

@@ -34,6 +34,9 @@ import { SessionPrompt } from './session/prompt.js'
 import { MCPManager } from './mcp/index.js'
 import { loadConfig, getConfig } from './config/index.js'
 import { createLearningSystem, mountLearningRoutes } from './learning/index.js'
+import { createRepoGraph } from './repo/graph.js'
+import { createSemanticGraph } from './repo/semantic.js'
+import { createSandbox } from './sandbox/isolation.js'
 import { setSharedKnowledge } from './learning/knowledge.js'
 import {
   GuardrailsManager,
@@ -55,6 +58,7 @@ import { mountToolsRoutes } from './routes/tools-routes.js'
 import { mountWorkspaceRoutes } from './routes/workspace.js'
 import { mountWorkspacesRoutes } from './routes/workspaces.js'
 import { mountSymbolRoutes } from './routes/symbol.js'
+import { mountDashboardRoutes } from './routes/dashboard.js'
 import { mountStaticRoutes } from './routes/static.js'
 import { mountEvolutionRoutes } from './routes/evolution.js'
 import { ImprovementLedger } from './evolution/ledger.js'
@@ -578,6 +582,15 @@ async function main() {
     `learning ready — knowledge=${learning.knowledge.size()} scheduler=${learning.scheduler.status().running ? 'running' : 'idle'}`,
   )
 
+  // Repo knowledge graph + semantic graphs — build on startup
+  const repoGraph = createRepoGraph({ db, rootDir: process.cwd() })
+  const semanticGraph = createSemanticGraph({ db, rootDir: process.cwd() })
+  void repoGraph.build().then((r) => log(`repo graph built — ${r.nodes} nodes, ${r.edges} edges`)).catch((e) => warn('repo graph build failed:', String(e)))
+  void semanticGraph.build().then((r) => log(`semantic graph built — ${r.services} services, ${r.dependencyEdges} deps, ${r.callEdges} calls`)).catch((e) => warn('semantic graph build failed:', String(e)))
+
+  // Sandbox — available for tool execution
+  const sandbox = createSandbox()
+
   const tools = new ToolRegistry({ db, bus, permissions, gateway, guardrails })
   await tools.registerAll()
   const mcp = new MCPManager({ bus, tools, config: config.mcp })
@@ -698,6 +711,7 @@ async function main() {
   mountWorkspaceRoutes(app)
   mountWorkspacesRoutes(app, { db })
   mountSymbolRoutes(app)
+  mountDashboardRoutes(app, { db, bus, governance: learning.governance, agentMetrics: learning.agentMetrics, memoryQuality: learning.memoryQuality, workspace: learning.workspace, repoGraph })
   // Phase 1 Evolution Core — read-only, no auto-promote, no canary/shadow (MIRA_WEAKNESSES_AND_OBSTACLES.md:23)
   try {
     const evolutionLedger = new ImprovementLedger(db as unknown as import('./storage/db.js').MiraDB, bus)

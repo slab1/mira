@@ -79,6 +79,56 @@
       "sim_id": null,
       "durationMs": 1500,
       "at": "2026-09-27T07:04:30.426045+00:00"
+    },
+    {
+      "strategy_chosen": "designer",
+      "agent_target": "designer",
+      "outcome": "success",
+      "reason": "Evolution page: Proposals section (filter pills, severity/state pills, advance/promote/rollback actions, empty + unavailable states) + api client helpers",
+      "file_line": null,
+      "sim_id": null,
+      "durationMs": 900,
+      "at": "2026-09-27T13:36:08.579525+00:00"
+    },
+    {
+      "strategy_chosen": "fixer",
+      "agent_target": "fixer",
+      "outcome": "success",
+      "reason": "governance granular state machine restored + routes/tests finished (27/27 target, 91/91 scoped x3, tsc in-scope clean)",
+      "file_line": null,
+      "sim_id": null,
+      "durationMs": 1800,
+      "at": "2026-09-27T16:54:12.199420+00:00"
+    },
+    {
+      "strategy_chosen": "fixer",
+      "agent_target": "fixer",
+      "outcome": "success",
+      "reason": "governance promote enforcement: state guard (CANARY_PASSED only -> invalid_state:<s>) + auto-derived regression gate from stage metadata (metrics_missing deny, regression rollback+reason) + route reason passthrough; 34 scoped tests + 63 broader green, tsc 0 errors",
+      "file_line": null,
+      "sim_id": null,
+      "durationMs": 900,
+      "at": "2026-09-27T17:43:13.529642+00:00"
+    },
+    {
+      "strategy_chosen": "design_done",
+      "agent_target": "design_done",
+      "outcome": "Trust & Provenance design (docs/PROVENANCE_DESIGN.md)",
+      "reason": "",
+      "file_line": null,
+      "sim_id": null,
+      "durationMs": 600,
+      "at": "2026-09-27T19:11:12.321791+00:00"
+    },
+    {
+      "strategy_chosen": "architect",
+      "agent_target": "architect",
+      "outcome": "success",
+      "reason": "Trust & Provenance P0 #2 design: docs/PROVENANCE_DESIGN.md crosschecked against code",
+      "file_line": null,
+      "sim_id": null,
+      "durationMs": 1800,
+      "at": "2026-09-27T19:39:18.867875+00:00"
     }
   ],
   "active_tasks": [
@@ -179,14 +229,35 @@
       "last_updated": "2026-09-08T09:04:07.720317+00:00"
     },
     "fixer": {
-      "count": 4,
-      "completed": 4,
-      "successes": 4,
+      "count": 6,
+      "completed": 6,
+      "successes": 6,
       "success_rate": 1.0,
-      "last_updated": "2026-09-27T07:04:30.426045+00:00"
+      "last_updated": "2026-09-27T17:43:13.529642+00:00"
+    },
+    "designer": {
+      "count": 1,
+      "completed": 1,
+      "successes": 1,
+      "success_rate": 1.0,
+      "last_updated": "2026-09-27T13:36:08.579525+00:00"
+    },
+    "design_done": {
+      "count": 1,
+      "completed": 1,
+      "successes": 0,
+      "success_rate": 0.0,
+      "last_updated": "2026-09-27T19:11:12.321791+00:00"
+    },
+    "architect": {
+      "count": 1,
+      "completed": 1,
+      "successes": 1,
+      "success_rate": 1.0,
+      "last_updated": "2026-09-27T19:39:18.867875+00:00"
     }
   },
-  "last_updated": "2026-09-27T07:04:30.426045+00:00",
+  "last_updated": "2026-09-27T19:39:18.867875+00:00",
   "workflow_trace": [
     {
       "agent": "fixer",

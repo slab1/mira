@@ -1,7 +1,7 @@
 import { For } from 'solid-js'
 import type { JSX } from 'solid-js'
 
-export type WorkspaceId = 'work' | 'missions' | 'intelligence' | 'changes' | 'system' | 'evolution'
+export type WorkspaceId = 'work' | 'missions' | 'intelligence' | 'changes' | 'system' | 'evolution' | 'dashboard'
 export type WorkSubTab = 'chat' | 'brio'
 
 export const WORKSPACES: Array<{ id: WorkspaceId; label: string; shortLabel?: string; icon: string; desc: string }> = [
@@ -11,6 +11,7 @@ export const WORKSPACES: Array<{ id: WorkspaceId; label: string; shortLabel?: st
   { id: 'changes', label: 'Changes', icon: '⟡', desc: 'Diffs & snapshots' },
   { id: 'system', label: 'System', icon: '⬣', desc: 'Health & config' },
   { id: 'evolution', label: 'Evolution', icon: '✦', desc: 'Shadow → Canary → Promote' },
+  { id: 'dashboard', label: 'Dashboard', icon: '📊', desc: 'Agents · Governance · Learning · Cost' },
 ]
 
 export function TopNav(props: {

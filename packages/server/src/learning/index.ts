@@ -41,6 +41,10 @@ import { ImprovementEngine } from './improvement.js'
 import { LearningScheduler } from './scheduler.js'
 import { createPatchingSystem, type PatchingEngine } from '../patching/index.js'
 import { createGovernanceGate } from '../patching/governance/index.js'
+import { createAgentMetrics } from '../agents/metrics.js'
+import { createMemoryQualityTracker } from './quality.js'
+import { createWorkspaceIntelligence } from '../workspace/intelligence.js'
+import { createPolicyEngine } from '../policy/engine.js'
 import { mountEvolutionProposalRoutes } from '../routes/evolution.js'
 import type { Bus } from '../bus/index.js'
 import type { MiraDB } from '../storage/db.js'
@@ -63,6 +67,10 @@ export interface LearningSystem {
   patching: PatchingEngine
   scheduler: LearningScheduler
   governance: ReturnType<typeof createGovernanceGate>
+  agentMetrics: ReturnType<typeof createAgentMetrics>
+  memoryQuality: ReturnType<typeof createMemoryQualityTracker>
+  workspace: ReturnType<typeof createWorkspaceIntelligence>
+  policyEngine: ReturnType<typeof createPolicyEngine>
   gateway?: Gateway
   db?: MiraDB
   bus?: Bus
@@ -88,7 +96,22 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
     db: deps.db,
     bus: deps.bus,
     rootDir: deps.rootDir ?? process.cwd(),
+    onStagePass: (proposalId, stage) => {
+      // Stamp related memories with elevated provenance when a stage passes
+      const provenanceLevel = stage === 'benchmark' ? 'benchmark-verified' : 'ci-verified'
+      const related = knowledge.list({ limit: 200 }).filter(
+        (e) => e.metadata.proposalId === proposalId || e.title.includes(proposalId),
+      )
+      for (const mem of related.slice(0, 5)) {
+        void knowledge.stampProvenance(mem.id, provenanceLevel).catch(() => {})
+      }
+    },
   })
+
+  const agentMetrics = createAgentMetrics({ db: deps.db })
+  const memoryQuality = createMemoryQualityTracker({ db: deps.db })
+  const workspace = createWorkspaceIntelligence({ db: deps.db })
+  const policyEngine = createPolicyEngine({ db: deps.db, bus: deps.bus })
 
   const patching = createPatchingSystem(
     { bus: deps.bus, db: deps.db, knowledge, gateway: deps.gateway, governance },
@@ -114,6 +137,10 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
     patching,
     scheduler,
     governance,
+    agentMetrics,
+    memoryQuality,
+    workspace,
+    policyEngine,
     gateway: deps.gateway,
     db: deps.db,
     bus: deps.bus,

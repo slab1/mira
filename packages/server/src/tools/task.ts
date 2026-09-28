@@ -11,8 +11,10 @@ import { z } from "zod"
 import { and, desc, eq } from "drizzle-orm"
 import type { ToolDef } from "./registry.js"
 import type { MiraDB } from "../storage/db.js"
+import type { Bus } from "../bus/index.js"
 import { isKnownAgent } from "../agents/templates.js"
 import { jobs } from "../storage/schema.js"
+import { buildVerificationPatch } from "../verification.js"
 
 export type Job = typeof jobs.$inferSelect
 type JobStatus = Job["status"]
@@ -31,8 +33,22 @@ export const taskResponseSchema = z.object({
   result: z.string().optional(),
   error: z.string().optional(),
   message: z.string().optional(),
+  // Task Verification States (design §6): parent sees *verified*, not prose.
+  verification: z
+    .object({
+      state: z.enum(["UNVERIFIED", "PARTIALLY_VERIFIED", "VERIFIED", "FAILED_VERIFICATION"]),
+      at: z.number().optional(),
+    })
+    .optional(),
 })
 export type TaskResponse = z.infer<typeof taskResponseSchema>
+
+/** Job row → additive `verification` view for responses/payloads (§6). */
+function verificationView(row: Job | undefined) {
+  return row
+    ? { state: row.verificationState, at: row.verificationUpdatedAt ?? undefined }
+    : undefined
+}
 
 const taskSchema = z.object({
   description: z.string().describe("Short task label (3-5 words)"),
@@ -83,16 +99,44 @@ export async function cancelJob(db: MaybeDB, jobID: string): Promise<Job | undef
   return getJob(db, jobID)
 }
 
-/** Terminal transition — only applies while the job is still 'running'. */
+/**
+ * Terminal transition — only applies while the job is still 'running'.
+ *
+ * Verification settle (docs/VERIFICATION_STATES_DESIGN.md §5 chokepoint 1):
+ * compute the evidence-based state from the child session's parts and merge
+ * it into THIS SAME single UPDATE → status + verification land atomically and
+ * settle exactly once (`WHERE status='running'`). No childSessionID (failure
+ * paths) → no patch → row keeps its honest `UNVERIFIED` default.
+ * Publishes the discriminated `job.updated` / `kind:'verification.state'`
+ * event only when the settle produced evidence (state ≠ UNVERIFIED, §6).
+ */
 async function finishJob(
   db: MaybeDB,
   jobID: string,
   patch: { status: Exclude<JobStatus, "running">; result?: string; error?: string; childSessionID?: string },
-) {
-  if (!db) return
-  await db.update(jobs)
-    .set({ ...patch, updatedAt: Date.now() })
+  publish?: { bus?: Bus; sessionID?: string; taskID?: string },
+): Promise<Job | undefined> {
+  if (!db) return undefined
+  const verification = await buildVerificationPatch(db, patch.childSessionID)
+  const rows = await db.update(jobs)
+    .set({ ...patch, ...verification, updatedAt: Date.now() })
     .where(and(eq(jobs.id, jobID), eq(jobs.status, "running")))
+    .returning()
+  const row = rows[0]
+  if (row && verification && verification.verificationState !== "UNVERIFIED" && publish?.bus) {
+    publish.bus.publish({
+      type: "job.updated",
+      sessionID: publish.sessionID,
+      payload: {
+        jobID,
+        taskID: publish.taskID,
+        kind: "verification.state",
+        verification: verificationView(row),
+      },
+      timestamp: Date.now(),
+    })
+  }
+  return row
 }
 
 // ── Tool ───────────────────────────────────────────────────────────
@@ -154,11 +198,12 @@ export const taskTool = {
             jobAborts.delete(jobID)
             return finishJob(db, jobID, wasCancelled
               ? { status: "cancelled", error: "Subagent cancelled", childSessionID: sessionID }
-              : { status: "completed", result: text, childSessionID: sessionID })
-              .then(() => {
+              : { status: "completed", result: text, childSessionID: sessionID },
+              { bus, sessionID: ctx.sessionID, taskID })
+              .then((row) => {
                 bus?.publish({
                   type: "message.updated", sessionID: ctx.sessionID,
-                  payload: { taskID, jobID, status: wasCancelled ? "cancelled" : "completed", childSessionID: sessionID, summary: text },
+                  payload: { taskID, jobID, status: wasCancelled ? "cancelled" : "completed", childSessionID: sessionID, summary: text, verification: verificationView(row) },
                   timestamp: Date.now(),
                 })
               })
@@ -168,11 +213,12 @@ export const taskTool = {
             jobAborts.delete(jobID)
             return finishJob(db, jobID, wasCancelled
               ? { status: "cancelled", error: "Subagent cancelled" }
-              : { status: "failed", error: String(err) })
-              .then(() => {
+              : { status: "failed", error: String(err) },
+              { bus, sessionID: ctx.sessionID, taskID })
+              .then((row) => {
                 bus?.publish({
                   type: "message.updated", sessionID: ctx.sessionID,
-                  payload: { taskID, jobID, status: wasCancelled ? "cancelled" : "failed", error: String(err) },
+                  payload: { taskID, jobID, status: wasCancelled ? "cancelled" : "failed", error: String(err), verification: verificationView(row) },
                   timestamp: Date.now(),
                 })
               })
@@ -194,7 +240,8 @@ export const taskTool = {
         parentID: ctx.sessionID,
         agent,
       })
-      await finishJob(db, jobID, { status: "completed", result: text, childSessionID })
+      const row = await finishJob(db, jobID, { status: "completed", result: text, childSessionID },
+        { bus, sessionID: ctx.sessionID, taskID })
       return {
         taskID,
         jobID,
@@ -203,6 +250,7 @@ export const taskTool = {
         subagent_type,
         childSessionID,
         result: text,
+        verification: verificationView(row),
       }
     } catch (err) {
       await finishJob(db, jobID, { status: "failed", error: String(err) })

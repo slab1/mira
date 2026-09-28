@@ -31,6 +31,8 @@ export interface GovernanceGateDeps {
   canary?: CanaryStage;
   promoter?: PromoteStage;
   rollback?: RollbackStage;
+  /** Called when a stage passes — used to stamp memories with elevated provenance. */
+  onStagePass?: (proposalId: string, stage: 'benchmark' | 'security' | 'canary') => void;
 }
 
 /**
@@ -59,6 +61,7 @@ export class GovernanceGate implements GovernanceGateLike {
   private promoter: PromoteStage;
   private rollbackManager: RollbackStage;
   private regression: RegressionDetector;
+  private onStagePass?: GovernanceGateDeps['onStagePass'];
 
   constructor(deps: GovernanceGateDeps) {
     this.store = new ProposalStore(deps.db);
@@ -71,6 +74,7 @@ export class GovernanceGate implements GovernanceGateLike {
     this.promoter = deps.promoter ?? new Promoter(deps.rootDir);
     this.rollbackManager = deps.rollback ?? new RollbackManager({ bus: deps.bus });
     this.regression = new RegressionDetector();
+    this.onStagePass = deps.onStagePass;
   }
 
   async init(): Promise<void> {
@@ -180,6 +184,11 @@ export class GovernanceGate implements GovernanceGateLike {
       },
       timestamp: proposal.updatedAt,
     });
+
+    // Notify on stage pass — used to stamp memories with elevated provenance
+    if (passed) {
+      this.onStagePass?.(proposal.id, stage);
+    }
 
     return proposal;
   }

@@ -1,5 +1,5 @@
 import { createSignal, onMount, onCleanup, Show, For } from 'solid-js'
-import { api, getApiUrl, defaultApiUrl } from '../api/client'
+import { api, getApiUrl, defaultApiUrl, req } from '../api/client'
 
 type BrioChoice = { option: string; p: number; logprob: number; mean_logprob?: number; tokens?: number }
 type BrioSingle = {
@@ -229,26 +229,16 @@ export default function Brio() {
       }
     })()
     const doPost = async (path: string) => {
-      const token = (() => {
-        try {
-          return localStorage.getItem('mira_token') || (import.meta as { env?: Record<string, string> }).env?.VITE_MIRA_TOKEN || ''
-        } catch {
-          return ''
-        }
-      })()
-      const res = await fetch(`${base}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify(body),
-      })
-      const text = await res.text()
-      let json: unknown
       try {
-        json = JSON.parse(text)
-      } catch {
-        json = { raw: text }
+        const json = await req<unknown>(path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        return { res: { ok: true, status: 200 }, json }
+      } catch (e) {
+        return { res: { ok: false, status: 500 }, json: { error: String(e) } }
       }
-      return { res, json }
     }
 
     // Try Mira tool endpoint first

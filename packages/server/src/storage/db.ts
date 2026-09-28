@@ -276,6 +276,20 @@ export async function migrate(db: MiraDB) {
   } catch (e) {
     console.warn('[storage] knowledge_entries provenance backfill failed:', String(e))
   }
+  // Task Verification States (docs/VERIFICATION_STATES_DESIGN.md §2.2): 3 columns
+  // + backfill, same idempotent addColumn pattern as the provenance block above
+  // (duplicate column name ignored → boot-safe for fresh + existing DBs).
+  addColumn('jobs', 'verification_state', "TEXT NOT NULL DEFAULT 'UNVERIFIED'")
+  addColumn('jobs', 'verification_evidence', "TEXT NOT NULL DEFAULT '[]'")
+  addColumn('jobs', 'verification_updated_at', 'INTEGER')
+  // Backfill pre-existing rows → honest default (§2.4: never infer historical
+  // verification; evidence parts may have been compacted away).
+  try {
+    sqlite.exec(`UPDATE jobs SET verification_state = 'UNVERIFIED' WHERE verification_state IS NULL;`)
+    sqlite.exec(`UPDATE jobs SET verification_evidence = '[]' WHERE verification_evidence IS NULL;`)
+  } catch (e) {
+    console.warn('[storage] jobs verification backfill failed:', String(e))
+  }
   // Create tier/source indexes after columns exist (for old DBs)
   try {
     sqlite.exec(`CREATE INDEX IF NOT EXISTS knowledge_entries_tier_idx ON knowledge_entries(tier);`)
