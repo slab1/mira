@@ -15,6 +15,7 @@ import {
   classifyBashCommand,
   computeVerification,
   type VerificationPartInput,
+  type VerificationState,
 } from './verification.js'
 import { createDatabase, migrate, type MiraDB } from './storage/db.js'
 import { sessions, messages, parts } from './storage/schema.js'
@@ -191,7 +192,7 @@ function bashCrashP(command: string, at: number): VerificationPartInput {
   }
 }
 
-const scenarios: Array<{ name: string; parts: VerificationPartInput[]; state: string }> = [
+const scenarios: Array<{ name: string; parts: VerificationPartInput[]; state: VerificationState }> = [
   { name: 'no entries → UNVERIFIED', parts: [], state: 'UNVERIFIED' },
   { name: 'diagnose[typecheck] ok → PARTIALLY_VERIFIED', parts: [diag('typecheck', true, t1)], state: 'PARTIALLY_VERIFIED' },
   { name: 'diagnose[test] ok → VERIFIED', parts: [diag('test', true, t1)], state: 'VERIFIED' },
@@ -430,7 +431,7 @@ describe('e2e settles (§5 b — chokepoints)', () => {
     )
     expect(ev).toBeDefined()
     const p = payloadOf(ev) as { jobID: string; verification: { state: string; at?: number } }
-    expect(p.jobID).toBe(res.jobID)
+    expect(p.jobID).toBe(res.jobID as string)
     expect(p.verification.state).toBe('VERIFIED')
     expect(typeof p.verification.at).toBe('number')
   })
@@ -627,7 +628,7 @@ describe('settle edge cases (§5 c–e)', () => {
     await db.delete(parts).where(eq(parts.sessionID, res.childSessionID as string))
     const gone = db.sqlite
       .prepare(`SELECT COUNT(*) as c FROM parts WHERE session_id = ?`)
-      .get(res.childSessionID) as { c: number }
+      .get(res.childSessionID as string) as { c: number }
     expect(gone.c).toBe(0)
 
     const row = await getJob(db, res.jobID as string)
