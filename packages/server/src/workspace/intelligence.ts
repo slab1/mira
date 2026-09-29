@@ -58,10 +58,19 @@ export class WorkspaceIntelligence {
     `)
   }
 
-  /** Add or update a workspace item. */
+  /** Add or update a workspace item, deduplicating by (kind, title). */
   upsert(input: WorkspaceItemInput): WorkspaceItem {
     const now = Date.now()
-    const id = `ws_${input.kind}_${now.toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+    const sqlite = this.deps.db?.sqlite
+    // Look up an existing item with the same kind+title to reuse its stable ID.
+    // This prevents unbounded duplicate rows from repeated auto-updates (e.g. CI status polling).
+    const existing = sqlite
+      ?.prepare(`SELECT id, created_at FROM workspace_items WHERE kind = ? AND title = ? LIMIT 1`)
+      .get(input.kind, input.title) as { id: string; created_at: number } | undefined
+    const id =
+      existing?.id ??
+      `ws_${input.kind}_${now.toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+    const createdAt = existing?.created_at ?? now
     const item: WorkspaceItem = {
       id,
       kind: input.kind,
@@ -70,15 +79,26 @@ export class WorkspaceIntelligence {
       status: input.status ?? 'open',
       priority: input.priority ?? 'medium',
       metadata: input.metadata ?? {},
-      createdAt: now,
+      createdAt,
       updatedAt: now,
     }
-    this.deps.db?.sqlite
-      .prepare(
-        `INSERT OR REPLACE INTO workspace_items (id, kind, title, description, status, priority, metadata, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    sqlite
+      ?.prepare(
+        `INSERT OR REPLACE INTO workspace_items
+           (id, kind, title, description, status, priority, metadata, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(item.id, item.kind, item.title, item.description, item.status, item.priority, JSON.stringify(item.metadata), item.createdAt, item.updatedAt)
+      .run(
+        item.id,
+        item.kind,
+        item.title,
+        item.description,
+        item.status,
+        item.priority,
+        JSON.stringify(item.metadata),
+        item.createdAt,
+        item.updatedAt,
+      )
     return item
   }
 
@@ -88,8 +108,14 @@ export class WorkspaceIntelligence {
     if (!sqlite) return []
     const conditions: string[] = []
     const params: string[] = []
-    if (filter?.kind) { conditions.push('kind = ?'); params.push(filter.kind) }
-    if (filter?.status) { conditions.push('status = ?'); params.push(filter.status) }
+    if (filter?.kind) {
+      conditions.push('kind = ?')
+      params.push(filter.kind)
+    }
+    if (filter?.status) {
+      conditions.push('status = ?')
+      params.push(filter.status)
+    }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
     const rows = sqlite
       .prepare(`SELECT * FROM workspace_items ${where} ORDER BY updated_at DESC`)
@@ -99,7 +125,9 @@ export class WorkspaceIntelligence {
 
   /** Get a single workspace item by id. */
   get(id: string): WorkspaceItem | null {
-    const row = this.deps.db?.sqlite.prepare(`SELECT * FROM workspace_items WHERE id = ?`).get(id) as Record<string, unknown> | undefined
+    const row = this.deps.db?.sqlite
+      .prepare(`SELECT * FROM workspace_items WHERE id = ?`)
+      .get(id) as Record<string, unknown> | undefined
     return row ? this.rowToItem(row) : null
   }
 

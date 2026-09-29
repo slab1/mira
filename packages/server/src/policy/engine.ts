@@ -14,7 +14,13 @@ import type { MiraDB } from '../storage/db.js'
 import type { Bus } from '../bus/index.js'
 import type { PermissionRequest, PermissionAction } from '../types/index.js'
 import type { PermissionDecision } from '../permission/index.js'
-import { sanitizePath, isPathAllowed, sanitizeCommand, isBlockedFetchUrl, getEffectiveAllowedRoots } from '../guardrails/index.js'
+import {
+  sanitizePath,
+  isPathAllowed,
+  sanitizeCommand,
+  isBlockedFetchUrl,
+  getEffectiveAllowedRoots,
+} from '../guardrails/index.js'
 import { ToolRegistry } from '../tools/registry.js'
 
 export interface PolicyRequest {
@@ -72,7 +78,11 @@ export class PolicyEngine {
         return { action: 'deny', reason: `guardrails: ${sanitized.reason}`, layer: 'guardrails' }
       }
       if (!isPathAllowed(sanitized.sanitized ?? req.args.path, roots)) {
-        return { action: 'deny', reason: 'guardrails: path outside allowed roots', layer: 'guardrails' }
+        return {
+          action: 'deny',
+          reason: 'guardrails: path outside allowed roots',
+          layer: 'guardrails',
+        }
       }
     }
 
@@ -103,24 +113,37 @@ export class PolicyEngine {
     }
     if (tool.needsPermission) {
       const risk = tool.metadata?.riskLevel ?? 'medium'
-      return { action: 'ask', reason: `registry: tool "${req.tool}" requires permission`, layer: 'registry', risk }
+      return {
+        action: 'ask',
+        reason: `registry: tool "${req.tool}" requires permission`,
+        layer: 'registry',
+        risk,
+      }
     }
     return null
   }
 
   private checkPermissions(req: PolicyRequest): PolicyDecision {
     if (!this.registry) {
-      return { action: 'ask', reason: 'permissions: registry not available', layer: 'permissions', risk: 'medium' }
+      return {
+        action: 'ask',
+        reason: 'permissions: registry not available',
+        layer: 'permissions',
+        risk: 'medium',
+      }
     }
     const tool = this.registry.get(req.tool)
     if (!tool) {
       return { action: 'deny', reason: 'permissions: unknown tool', layer: 'permissions' }
     }
-    if (tool.needsPermission) {
-      const risk = tool.metadata?.riskLevel ?? 'medium'
-      return { action: 'ask', reason: `permissions: tool "${req.tool}" needs permission`, layer: 'permissions', risk }
+    // needsPermission is already checked (and returns 'ask') in checkRegistry().
+    // This layer only reaches here when checkRegistry() returned null (tool does not
+    // require permission), so the correct answer is always 'allow'.
+    return {
+      action: 'allow',
+      reason: 'permissions: tool does not require permission',
+      layer: 'permissions',
     }
-    return { action: 'allow', reason: 'permissions: tool does not require permission', layer: 'permissions' }
   }
 }
 

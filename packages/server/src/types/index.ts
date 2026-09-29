@@ -120,6 +120,9 @@ export type BusEventType =
   | 'server.error'
   | 'github.webhook'
   | 'config.updated'
+  | 'tool.executed'
+  | 'agent.tool.allowed'
+  | 'agent.tool.denied'
 
 export interface BusEvent<T = JsonValue> {
   type: BusEventType

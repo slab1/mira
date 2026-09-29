@@ -27,6 +27,7 @@ import type { PermissionManager } from '../permission/index.js'
 import type { Gateway } from '../gateway/index.js'
 import type { GuardrailsManager } from '../guardrails/index.js'
 import { getAgentTemplates, isKnownAgent } from '../agents/templates.js'
+import type { ContainerSandbox } from '../sandbox/isolation.js'
 
 // Single source of truth for JSON values lives in types/index.ts
 export type { JsonValue }
@@ -88,6 +89,8 @@ export interface RegistryDeps {
   permissions: PermissionManager
   gateway: Gateway
   guardrails?: GuardrailsManager
+  /** Optional container sandbox — when provided, bash can execute inside a container */
+  sandbox?: ContainerSandbox
 }
 
 // ── Registry ───────────────────────────────────────────────────────
@@ -99,7 +102,12 @@ export class ToolRegistry {
   /** sessionID -> tool name -> call count for maxCallsPerRun enforcement */
   private callCounts = new Map<string, Map<string, number>>()
 
-  constructor(private deps: RegistryDeps) {}
+  constructor(private deps: RegistryDeps) {
+    // Evict callCounts when a session is deleted to prevent unbounded memory growth
+    deps.bus.subscribe('session.deleted', (event) => {
+      if (event.sessionID) this.callCounts.delete(event.sessionID)
+    })
+  }
 
   /** Wire a subagent runner (called at bootstrap after SessionPrompt exists) */
   setSubagentRunner(fn: NonNullable<ToolContext['subagentRunner']>) {
@@ -230,11 +238,10 @@ export class ToolRegistry {
         if (tpl.tools && !tpl.tools.includes(name)) {
           const err = new Error(`Agent "${fullCtx.agent}" cannot use tool "${name}"`)
           ;(err as any).code = 'AGENT_TOOL_NOT_ALLOWED'
-          ;(ctx.bus as any)?.emit?.('agent.tool.denied', {
+          ctx.bus?.publish({
+            type: 'agent.tool.denied',
             sessionID: ctx.sessionID,
-            agent: fullCtx.agent,
-            tool: name,
-            reason: err.message,
+            payload: { agent: fullCtx.agent, tool: name, reason: err.message },
             timestamp: Date.now(),
           })
           throw err
@@ -245,11 +252,10 @@ export class ToolRegistry {
           if (MUTATING_TOOLS.has(name)) {
             const err = new Error(`Agent "${fullCtx.agent}" is readonly and cannot use "${name}"`)
             ;(err as any).code = 'AGENT_PERMISSION_DENIED'
-            ;(ctx.bus as any)?.emit?.('agent.tool.denied', {
+            ctx.bus?.publish({
+              type: 'agent.tool.denied',
               sessionID: ctx.sessionID,
-              agent: fullCtx.agent,
-              tool: name,
-              reason: err.message,
+              payload: { agent: fullCtx.agent, tool: name, reason: err.message },
               timestamp: Date.now(),
             })
             throw err
@@ -263,11 +269,10 @@ export class ToolRegistry {
             if (!allowed) {
               const err = new Error(`Agent "${fullCtx.agent}" bash command not allowed: ${cmd}`)
               ;(err as any).code = 'AGENT_BASH_NOT_ALLOWED'
-              ;(ctx.bus as any)?.emit?.('agent.tool.denied', {
+              ctx.bus?.publish({
+                type: 'agent.tool.denied',
                 sessionID: ctx.sessionID,
-                agent: fullCtx.agent,
-                tool: name,
-                reason: err.message,
+                payload: { agent: fullCtx.agent, tool: name, reason: err.message },
                 timestamp: Date.now(),
               })
               throw err
@@ -277,12 +282,12 @@ export class ToolRegistry {
       }
     }
 
-    // Emit agent tool metrics after allowlist enforcement
+    // Emit agent.tool.allowed after all allowlist enforcement passes
     if (fullCtx.agent && isKnownAgent(fullCtx.agent)) {
-      ;(ctx.bus as any)?.emit?.('agent.tool.allowed', {
+      ctx.bus?.publish({
+        type: 'agent.tool.allowed',
         sessionID: ctx.sessionID,
-        agent: fullCtx.agent,
-        tool: name,
+        payload: { agent: fullCtx.agent, tool: name },
         timestamp: Date.now(),
       })
     }
@@ -326,6 +331,7 @@ export class ToolRegistry {
 
     let result: JsonValue | null = null
     let error: JsonValue | null = null
+
     // Snapshot target files BEFORE mutation (edit/write/patch) — enables /undo
     const MUTATING = ToolRegistry.MUTATING
     if (MUTATING.has(name)) {
@@ -362,13 +368,9 @@ export class ToolRegistry {
         }
       }
     }
-    if (name === 'bash') {
-      // bash intentionally NOT in MUTATING (blanket snapshotting is too noisy and no
-      // per-command touched-path discovery exists) — shell writes stay unsnapshotted
-      console.debug('[tools] bash: file mutations via shell are unsnapshotted (not revertable via /undo)')
-    }
+
     try {
-      const timeoutMs = metadata?.timeoutMs ?? 30000
+      const timeoutMs = metadata?.timeoutMs ?? 30_000
       const execPromise = tool.execute(parsedArgs, fullCtx)
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
@@ -390,27 +392,27 @@ export class ToolRegistry {
       if (result !== null && typeof result !== 'object') {
         result = { ok: true, data: result } as JsonValue
       }
-      // Emit tool executed event
-      ;(ctx.bus as any)?.emit?.('tool.executed', {
+      // Emit tool.executed on success
+      ctx.bus?.publish({
+        type: 'tool.executed',
         sessionID: ctx.sessionID,
-        messageID: ctx.messageID,
-        tool: name,
-        metadata,
+        payload: { messageID: ctx.messageID, tool: name, success: true },
         timestamp: Date.now(),
-        success: true,
       })
     } catch (e) {
       error = String(e) as JsonValue
-      // Emit tool executed event on error
-      ;(ctx.bus as any)?.emit?.('tool.executed', {
+      // Emit tool.executed on error
+      ctx.bus?.publish({
+        type: 'tool.executed',
         sessionID: ctx.sessionID,
-        messageID: ctx.messageID,
-        tool: name,
-        metadata,
+        payload: {
+          messageID: ctx.messageID,
+          tool: name,
+          success: false,
+          error,
+          errorCode: (e as any)?.code,
+        },
         timestamp: Date.now(),
-        success: false,
-        error,
-        errorCode: (e as any)?.code,
       })
       throw e
     } finally {

@@ -77,7 +77,11 @@ export class CanaryManager {
     this.metrics = opts.metrics
     this.gatewayRegistry = opts.gatewayRegistry
     this.shadow = opts.shadow
-    this.monitor = new CanaryMonitor({ bus: this.bus as unknown as Bus, metrics: this.metrics as unknown as MetricsCollector, gatewayRegistry: this.gatewayRegistry as unknown as { healthSnapshot: () => unknown } })
+    this.monitor = new CanaryMonitor({
+      bus: this.bus as unknown as Bus,
+      metrics: this.metrics as unknown as MetricsCollector,
+      gatewayRegistry: this.gatewayRegistry as unknown as { healthSnapshot: () => unknown },
+    })
     this.promoter = new CanaryPromoter({
       registry: this.registry,
       ledger: this.ledger,
@@ -89,7 +93,10 @@ export class CanaryManager {
     })
     // Ensure SubgatewayRegistry has canary lane (opportunistic, nvidia primary stays)
     try {
-      const reg = this.gatewayRegistry as unknown as { lanes?: () => string[]; get?: (lane: string) => unknown }
+      const reg = this.gatewayRegistry as unknown as {
+        lanes?: () => string[]
+        get?: (lane: string) => unknown
+      }
       if (reg?.lanes && !reg.lanes().includes('canary')) {
         // lane will be created lazily on next syncFromConfig or via getOrDefault; no hard requirement
       }
@@ -101,11 +108,25 @@ export class CanaryManager {
    * Routes 5% traffic via SubgatewayRegistry lane canary vs default, monitors success/errors/regression/latency/cost,
    * emits canary.started.
    */
-  startCanary(candidateId: string, trafficPercent = 5, durationMs: number = 24 * 60 * 60 * 1000): { canaryId: string; candidateVersion: string; traffic: number; startedAt: number; expiresAt: number; parentVersion: string } {
+  startCanary(
+    candidateId: string,
+    trafficPercent = 5,
+    durationMs: number = 24 * 60 * 60 * 1000,
+  ): {
+    canaryId: string
+    candidateVersion: string
+    traffic: number
+    startedAt: number
+    expiresAt: number
+    parentVersion: string
+  } {
     const eng = this.registry.get(candidateId)
     if (!eng) throw new Error(`Engine ${candidateId} not found`)
     const candidateVersion = eng.version
-    const parentVersion = (this.registry as unknown as { priorOf?: (id: string) => string | undefined }).priorOf?.(candidateId) ?? candidateVersion
+    const parentVersion =
+      (this.registry as unknown as { priorOf?: (id: string) => string | undefined }).priorOf?.(
+        candidateId,
+      ) ?? candidateVersion
     const canaryId = randomId('canary')
     const startedAt = Date.now()
     const traffic = Math.max(0, Math.min(100, trafficPercent))
@@ -138,13 +159,24 @@ export class CanaryManager {
     this.canaries.set(canaryId, record)
 
     // Start monitor polling (Bus + metrics + gateway every 60s) with baseline
-    try { this.monitor.start(canaryId, baseline) } catch {}
+    try {
+      this.monitor.start(canaryId, baseline)
+    } catch {}
 
     // Emit canary.started
     try {
       this.bus?.publish({
         type: 'canary.started' as unknown as BusEventType,
-        payload: { canaryId, candidateId, candidateVersion, parentVersion, traffic, startedAt, expiresAt, baseline } as unknown as JsonValue,
+        payload: {
+          canaryId,
+          candidateId,
+          candidateVersion,
+          parentVersion,
+          traffic,
+          startedAt,
+          expiresAt,
+          baseline,
+        } as unknown as JsonValue,
         timestamp: startedAt,
       } as unknown as import('../types/index.js').BusEvent)
     } catch {}
@@ -159,7 +191,12 @@ export class CanaryManager {
           try {
             this.bus?.publish({
               type: 'canary.failed' as unknown as BusEventType,
-              payload: { canaryId, candidateId, reason: 'monitor failed at expiry', status } as unknown as JsonValue,
+              payload: {
+                canaryId,
+                candidateId,
+                reason: 'monitor failed at expiry',
+                status,
+              } as unknown as JsonValue,
               timestamp: Date.now(),
             } as unknown as import('../types/index.js').BusEvent)
           } catch {}
@@ -176,7 +213,9 @@ export class CanaryManager {
         }
       } catch {}
     }, dur)
-    try { (timer as unknown as { unref?: () => void }).unref?.() } catch {}
+    try {
+      ;(timer as unknown as { unref?: () => void }).unref?.()
+    } catch {}
     this.timers.set(canaryId, timer)
 
     // Ensure lane canary is reachable via SubgatewayRegistry (opportunistic)
@@ -203,39 +242,67 @@ export class CanaryManager {
     const timer = this.timers.get(id)
     if (timer) clearTimeout(timer)
     this.timers.delete(id)
-    try { this.monitor.stop(id) } catch {}
+    try {
+      this.monitor.stop(id)
+    } catch {}
     rec.status = 'stopped'
     try {
       this.bus?.publish({
         type: 'canary.completed' as unknown as BusEventType,
-        payload: { canaryId: id, candidateId: rec.candidateId, stopped: true } as unknown as JsonValue,
+        payload: {
+          canaryId: id,
+          candidateId: rec.candidateId,
+          stopped: true,
+        } as unknown as JsonValue,
         timestamp: Date.now(),
       } as unknown as import('../types/index.js').BusEvent)
     } catch {}
     return true
   }
 
-  /** Route 5% traffic via lane canary vs default — logical sampling, respects SubgatewayRegistry */
-  resolveLane(canaryId?: string): 'canary' | 'default' {
+  /**
+   * Route traffic via lane canary vs default.
+   * Uses a stable hash of sessionID (when provided) so the same session always
+   * lands in the same lane — no mid-session flipping between canary and default.
+   * Falls back to Math.random() when no sessionID is available.
+   */
+  resolveLane(canaryId?: string, sessionID?: string): 'canary' | 'default' {
+    // Deterministic 0-99 bucket from sessionID hash to ensure session stickiness
+    const bucket = sessionID
+      ? sessionID.split('').reduce((acc, c) => (acc * 31 + c.charCodeAt(0)) & 0xffff, 0) % 100
+      : Math.random() * 100
+
     if (!canaryId) {
-      // No specific canary — sample across all running canaries at 5% traffic
+      // No specific canary — sample across all running canaries
       const running = this.list().filter((c) => c.status === 'running')
       if (running.length === 0) return 'default'
-      const sample = Math.random() * 100
-      // use first running canary's traffic as sampling rate
-      return sample < (running[0]?.traffic ?? 5) ? 'canary' : 'default'
+      return bucket < (running[0]?.traffic ?? 5) ? 'canary' : 'default'
     }
     const rec = this.canaries.get(canaryId)
     if (!rec || rec.status !== 'running') return 'default'
-    const sample = Math.random() * 100
-    return sample < rec.traffic ? 'canary' : 'default'
+    return bucket < rec.traffic ? 'canary' : 'default'
   }
 
   /** For promoter/monitor: count and health */
-  count(): number { return this.canaries.size }
-  health(): { ok: boolean; phase: string; count: number; running: number; primary: string; fallback: string; lanes: string[]; monitor: ReturnType<CanaryMonitor['health']> } {
+  count(): number {
+    return this.canaries.size
+  }
+  health(): {
+    ok: boolean
+    phase: string
+    count: number
+    running: number
+    primary: string
+    fallback: string
+    lanes: string[]
+    monitor: ReturnType<CanaryMonitor['health']>
+  } {
     const lanes = (() => {
-      try { return (this.gatewayRegistry as unknown as { lanes?: () => string[] })?.lanes?.() ?? [] } catch { return [] }
+      try {
+        return (this.gatewayRegistry as unknown as { lanes?: () => string[] })?.lanes?.() ?? []
+      } catch {
+        return []
+      }
     })()
     const running = this.list().filter((c) => c.status === 'running').length
     return {
