@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Sensitive File Security Guard",
+      "trigger": "PreToolUse",
+      "action": {
+        "type": "agent",
+        "prompt": "A file write operation is about to execute. Check if the target file path matches any of these sensitive patterns:\n\n**BLOCK and ask for confirmation if the path matches:**\n- `.env` or any `.env.*` file (except `.env.example`)\n- `mira.json` (per-machine config, contains API keys)\n- `~/.mira/mira.env` or any path under `~/.mira/`\n- Any file named `*secret*`, `*token*`, `*credential*`, `*key*` outside of source code\n- `.github/workflows/*.yml` (CI/CD pipeline changes)\n- `packages/server/src/auth*` or `packages/server/src/routes/auth*`\n- `Dockerfile` or `docker-compose*.yml`\n\n**If writing to a sensitive file:**\n1. State exactly what change is being made and why\n2. Confirm no real secrets (API keys, tokens, hex strings ≥32 chars) are being written as literal values\n3. Verify `MIRA_TOKEN` is NOT being written into `.env` — it must only go in `~/.mira/mira.env`\n4. Check that `VITE_MIRA_TOKEN` is not being baked into a production build config\n\nIf the write looks safe, proceed. If it would introduce a real secret into a tracked file, stop and explain the security violation."
+      },
+      "matcher": "fs_write|str_replace|fs_append",
+      "enabled": true
+    }
+  ]
+}

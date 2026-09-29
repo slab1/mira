@@ -1,0 +1,14 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Format on Save",
+      "trigger": "PostFileSave",
+      "matcher": "\\.(ts|tsx|js|json|md|yml|yaml|css)$",
+      "action": {
+        "type": "agent",
+        "prompt": "A file was just saved. Remind the user that Mira enforces Prettier formatting via lint-staged on commit. If this file will be committed, ensure it is formatted:\n\n```bash\nbunx prettier --write <file>\n# or format everything:\nbun run format\n```\n\nPrettier config (`.prettierrc`): `semi: false`, `singleQuote: true`, `trailingComma: \"all\"`, `printWidth: 100`\n\nNo action needed if formatting was already applied."
+      }
+    }
+  ]
+}

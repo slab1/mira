@@ -1,0 +1,14 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Typecheck Reminder",
+      "trigger": "PostToolUse",
+      "matcher": "fs_write|str_replace|fs_append",
+      "action": {
+        "type": "agent",
+        "prompt": "A source file was just written or modified. After completing all file edits for this task, run typecheck before declaring done:\n\n- All packages: `bunx turbo run typecheck --continue`\n- Server only: `bun run --cwd packages/server typecheck`\n\nRun once when the full changeset is complete — not after every individual file edit. If typecheck already passed for this task, no further action needed."
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Conventional Commit Format Guard",
+      "trigger": "UserPromptSubmit",
+      "action": {
+        "type": "agent",
+        "prompt": "If the user is asking you to create a git commit, stage files, or write a commit message, enforce the Mira Conventional Commits format:\n\n```\n<type>(<scope>): <subject>    ← max 72 chars total\n                              ← blank line\n[optional body]               ← max 100 chars/line\n```\n\n**Allowed types:** `feat` `fix` `refactor` `perf` `test` `docs` `build` `chore` `style` `revert` `ci` `init`\n\n**Advisory scopes:** `server` `web` `tui` `cli` `shared` `slack` `vscode` `deps` `ci` `dx` `eval` `gateway` `memory` `auth` `guardrails` `lsp` `mcp`\n\n**Rules (enforced by commitlint — will fail pre-commit hook if violated):**\n- Subject must NOT start with capital letter, PascalCase, or be ALL CAPS\n- Header (type + scope + subject) must be ≤72 characters\n- Body lines must be ≤100 characters\n\n**Good:** `feat(server): add per-tenant rate limiting`\n**Bad:** `Added rate limiting` / `FEAT: Add Rate Limiting` / `fix: Updated the server to handle the new rate limit logic for all tenants in a multi-tenant setup`\n\nIf the user's proposed message violates these rules, suggest a corrected version before committing."
+      },
+      "enabled": true
+    }
+  ]
+}

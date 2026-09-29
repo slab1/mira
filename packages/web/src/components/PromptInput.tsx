@@ -458,7 +458,9 @@ export function PromptInput(props: {
   const [atIndex, setAtIndex] = createSignal(0)
   const [atVisible, setAtVisible] = createSignal(false)
   const [atDismissed, setAtDismissed] = createSignal(false)
-  const [workspaceFiles, setWorkspaceFiles] = createSignal<string[]>(MOCK_FILES)
+  // Empty initial state — real files are fetched from the server on focus/mount.
+  // MOCK_FILES removed: showing placeholder paths to users is a UX bug.
+  const [workspaceFiles, setWorkspaceFiles] = createSignal<string[]>([])
   let workspaceFetchedForCwd: string | null = null
   let workspaceFetching: Promise<void> | null = null
   const resolveCwd = () => {
@@ -470,9 +472,10 @@ export function PromptInput(props: {
     return undefined
   }
   const fetchWorkspaceFiles = (forceCwd?: string | null) => {
-    const cwd = forceCwd !== undefined ? forceCwd ?? undefined : resolveCwd()
+    const cwd = forceCwd !== undefined ? (forceCwd ?? undefined) : resolveCwd()
     const cacheKey = cwd ?? '__default__'
-    if (workspaceFetchedForCwd === cacheKey || workspaceFetching) return workspaceFetching ?? Promise.resolve()
+    if (workspaceFetchedForCwd === cacheKey || workspaceFetching)
+      return workspaceFetching ?? Promise.resolve()
     workspaceFetching = api
       .getWorkspaceTree(cwd)
       .then((files) => {

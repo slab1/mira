@@ -433,12 +433,21 @@ export function ChatView(props: {
   // Auto-scroll pinning
   const [pinned, setPinned] = createSignal(true)
 
-  // Background jobs
+  // Background jobs — poll every 4s while a session is active
   const [jobs, { refetch: refetchJobs }] = createResource(
     () => s().currentId,
     (id) => api.listJobs(id).catch(() => [] as Job[]),
   )
   let jobsTimer: number | undefined
+  // Register cleanup at component level so the interval is always cleared on unmount,
+  // regardless of whether currentId changed before unmount (fixes leak when component
+  // unmounts between effect re-runs).
+  onCleanup(() => {
+    if (jobsTimer) {
+      clearInterval(jobsTimer)
+      jobsTimer = undefined
+    }
+  })
   createEffect(() => {
     const id = s().currentId
     if (jobsTimer) {
@@ -447,9 +456,6 @@ export function ChatView(props: {
     }
     if (!id) return
     jobsTimer = window.setInterval(() => refetchJobs(), 4000)
-    onCleanup(() => {
-      if (jobsTimer) clearInterval(jobsTimer)
-    })
   })
   const runningJobs = () => (jobs() ?? []).filter((j) => j.status === 'running')
 

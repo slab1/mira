@@ -105,7 +105,12 @@ export class RealtimeLayer {
 
   private handleMessage(e: MessageEvent): void {
     try {
-      const raw = JSON.parse(e.data as string) as { type?: string; payload?: unknown; sequence?: number; timestamp?: number }
+      const raw = JSON.parse(e.data as string) as {
+        type?: string
+        payload?: unknown
+        sequence?: number
+        timestamp?: number
+      }
       if (!raw.type) return
 
       const event: DecodedEvent = {
@@ -119,7 +124,9 @@ export class RealtimeLayer {
       this._lastEventAt = event.timestamp
 
       const reconciled = createEvent('websocket', event.payload, event.sequence, event.timestamp)
-      this.eventStore = deduplicate([...this.eventStore, reconciled])
+      // Cap the event store at 500 entries to prevent unbounded memory growth
+      const merged = deduplicate([...this.eventStore, reconciled])
+      this.eventStore = merged.length > 500 ? merged.slice(merged.length - 500) : merged
 
       const gaps = detectGaps(this.eventStore)
       if (gaps.length > 0) {
