@@ -32,6 +32,13 @@ import type { ContainerSandbox } from '../sandbox/isolation.js'
 // Single source of truth for JSON values lives in types/index.ts
 export type { JsonValue }
 
+/** Typed error with a `code` property for tool execution failures. */
+export function toolError(code: string, message: string): Error {
+  const err = new Error(message) as Error & { code: string }
+  err.code = code
+  return err
+}
+
 // ── Tool Definition ────────────────────────────────────────────────
 
 export interface ToolMetadata {
@@ -144,6 +151,7 @@ export class ToolRegistry {
       () => import('./edit.js'),
       () => import('./glob.js'),
       () => import('./grep.js'),
+      () => import('./codegraph.js'),
       () => import('./websearch.js'),
       () => import('./webfetch.js'),
       () => import('./todowrite.js'),
@@ -236,8 +244,10 @@ export class ToolRegistry {
       const tpl = getAgentTemplates()[fullCtx.agent]
       if (tpl) {
         if (tpl.tools && !tpl.tools.includes(name)) {
-          const err = new Error(`Agent "${fullCtx.agent}" cannot use tool "${name}"`)
-          ;(err as any).code = 'AGENT_TOOL_NOT_ALLOWED'
+          const err = toolError(
+            'AGENT_TOOL_NOT_ALLOWED',
+            `Agent "${fullCtx.agent}" cannot use tool "${name}"`,
+          )
           ctx.bus?.publish({
             type: 'agent.tool.denied',
             sessionID: ctx.sessionID,
@@ -250,8 +260,10 @@ export class ToolRegistry {
         if (tpl.permissions === 'readonly') {
           const MUTATING_TOOLS = new Set(['write', 'edit', 'patch', 'bash'])
           if (MUTATING_TOOLS.has(name)) {
-            const err = new Error(`Agent "${fullCtx.agent}" is readonly and cannot use "${name}"`)
-            ;(err as any).code = 'AGENT_PERMISSION_DENIED'
+            const err = toolError(
+              'AGENT_PERMISSION_DENIED',
+              `Agent "${fullCtx.agent}" is readonly and cannot use "${name}"`,
+            )
             ctx.bus?.publish({
               type: 'agent.tool.denied',
               sessionID: ctx.sessionID,
@@ -267,8 +279,10 @@ export class ToolRegistry {
           if (cmd) {
             const allowed = tpl.bashAllowlist.some((p) => cmd.startsWith(p))
             if (!allowed) {
-              const err = new Error(`Agent "${fullCtx.agent}" bash command not allowed: ${cmd}`)
-              ;(err as any).code = 'AGENT_BASH_NOT_ALLOWED'
+              const err = toolError(
+                'AGENT_BASH_NOT_ALLOWED',
+                `Agent "${fullCtx.agent}" bash command not allowed: ${cmd}`,
+              )
               ctx.bus?.publish({
                 type: 'agent.tool.denied',
                 sessionID: ctx.sessionID,
@@ -320,10 +334,10 @@ export class ToolRegistry {
       }
       const count = sessionMap.get(name) ?? 0
       if (count >= metadata.maxCallsPerRun) {
-        const err = new Error(
+        const err = toolError(
+          'TOOL_RATE_LIMIT',
           `Tool ${name} rate limit exceeded (${metadata.maxCallsPerRun} per run)`,
         )
-        ;(err as any).code = 'TOOL_RATE_LIMIT'
         throw err
       }
       sessionMap.set(name, count + 1)
@@ -384,8 +398,7 @@ export class ToolRegistry {
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
           timeoutController.abort()
-          const err = new Error(`Tool ${name} timed out after ${timeoutMs}ms`)
-          ;(err as any).code = 'TOOL_TIMEOUT'
+          const err = toolError('TOOL_TIMEOUT', `Tool ${name} timed out after ${timeoutMs}ms`)
           reject(err)
         }, timeoutMs)
       })
@@ -420,7 +433,7 @@ export class ToolRegistry {
           tool: name,
           success: false,
           error,
-          errorCode: (e as any)?.code,
+          errorCode: (e as { code?: string } | null | undefined)?.code,
         },
         timestamp: Date.now(),
       })

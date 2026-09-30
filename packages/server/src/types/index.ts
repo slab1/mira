@@ -230,6 +230,8 @@ export interface RoutingConfig {
   fallbacks?: string[]
   defaultProvider?: string
   lanes?: Record<string, string>
+  /** Models that should no longer be used — sessions using them are migrated to fallbacks */
+  retiredModels?: string[]
 }
 
 export interface SubgatewayConfig {

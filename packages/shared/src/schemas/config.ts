@@ -94,6 +94,8 @@ export const routingConfigSchema = z.object({
     .record(z.string(), z.string())
     .optional()
     .describe('Lane routing: task or agent → subgateway lane'),
+  /** Models that should no longer be used — sessions using them are migrated to fallbacks */
+  retiredModels: z.array(z.string()).optional().describe('Retired model IDs to migrate away from'),
 })
 export type RoutingConfig = z.infer<typeof routingConfigSchema>
 
