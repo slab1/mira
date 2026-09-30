@@ -1,4 +1,13 @@
-import { createSignal, createResource, For, Show, onMount, onCleanup, createEffect } from 'solid-js'
+import {
+  createSignal,
+  createResource,
+  For,
+  Show,
+  onMount,
+  onCleanup,
+  createEffect,
+  createMemo,
+} from 'solid-js'
 import { api, type GraphNode, type GraphEdge, type KnowledgeGraph } from '../api/client'
 import { toast } from './Toast'
 
@@ -46,7 +55,8 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]): Map<string, { x: number
   const pos = new Map<string, { x: number; y: number }>()
 
   // Initial: tier columns (episodic left, semantic center, procedural right), jitter by hash
-  for (const n of nodes) {
+  for (let idx = 0; idx < nodes.length; idx++) {
+    const n = nodes[idx]
     const h = hashStr(n.id)
     let baseX: number
     if (n.tier === 'episodic') baseX = W * 0.22
@@ -56,7 +66,6 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]): Map<string, { x: number
     const jx = (h % 280) - 140
     const jy = (hashStr(n.label + n.id) % 480) - 240
     // also spread vertically by index to avoid stacking
-    const idx = nodes.indexOf(n)
     const rowY = pad + 60 + (idx % 8) * 64 + (h % 24)
     const x = Math.max(pad + 40, Math.min(W - pad - 40, baseX + jx * 0.6))
     const y = Math.max(pad + 20, Math.min(H - pad - 20, rowY + jy * 0.15))
@@ -130,13 +139,14 @@ export function MemoryGraph(props: Props) {
   const edges = () => graph()?.edges ?? []
   const selected = () => nodes().find((n) => n.id === selectedId()) ?? null
 
-  // positions derived
-  const positions = () => {
+  // positions derived — memoized so layout() only runs when nodes/edges change,
+  // not on every node/edge access inside the For loops
+  const positions = createMemo(() => {
     const ns = nodes()
     const es = edges()
     if (!ns.length) return new Map<string, { x: number; y: number }>()
     return layout(ns, es)
-  }
+  })
 
   // keyboard nav: arrow to cycle, Enter to select, Esc to clear
   const onKeyDown = (e: KeyboardEvent) => {

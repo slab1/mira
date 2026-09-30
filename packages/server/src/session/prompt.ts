@@ -919,6 +919,11 @@ export class SessionPrompt {
 
     const send = (event: string, data: JsonValue) => {
       const line = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+      // Backpressure: wait if the writer is not ready
+      if (!writer.ready) {
+        // Skip this chunk if the consumer is too slow — prevents unbounded buffering
+        return
+      }
       writer.write(encoder.encode(line))
     }
 

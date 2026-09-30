@@ -416,6 +416,13 @@ export class GuardrailsManager {
   private db?: { sqlite: Database }
   /** Explicit enforce from ctor cfg or MiraConfig (undefined = no explicit choice) */
   private enforceExplicit: boolean | undefined
+  /** Cache for effective roots/enforce per cwd — avoids repeated getConfig I/O */
+  private cwdConfigCache = new Map<string, { roots: string[]; enforce: boolean }>()
+  /** Cache for path validation results — key = path + '|' + roots.join(',') */
+  private pathCache = new Map<string, boolean>()
+  /** Max cache sizes to prevent unbounded growth */
+  private static readonly MAX_CWD_CACHE = 64
+  private static readonly MAX_PATH_CACHE = 1024
 
   constructor(cfg?: Partial<GuardrailConfig>, config?: MiraConfig, db?: { sqlite: Database }) {
     const guardCfg = config?.guardrails ?? {}
@@ -437,30 +444,47 @@ export class GuardrailsManager {
     this.logger.attachDB(db)
   }
 
+  /** Clear caches (call when config changes) */
+  clearCache(): void {
+    this.cwdConfigCache.clear()
+    this.pathCache.clear()
+  }
+
+  /** Get effective roots and enforce for a cwd (cached) */
+  private getEffectiveConfig(cwd: string | undefined): { roots: string[]; enforce: boolean } {
+    if (!cwd) {
+      return { roots: this.config.allowedRoots, enforce: this.config.enforce }
+    }
+    const cached = this.cwdConfigCache.get(cwd)
+    if (cached) return cached
+    const roots = getEffectiveAllowedRoots(cwd)
+    const enforce = getEffectiveEnforce(cwd)
+    const result = { roots, enforce }
+    if (this.cwdConfigCache.size >= GuardrailsManager.MAX_CWD_CACHE) {
+      this.cwdConfigCache.clear()
+    }
+    this.cwdConfigCache.set(cwd, result)
+    return result
+  }
+
+  /** Check if path is allowed (cached) */
+  private isPathAllowedCached(path: string, roots: string[]): boolean {
+    const key = `${path}|${roots.join(',')}`
+    const cached = this.pathCache.get(key)
+    if (cached !== undefined) return cached
+    const result = isPathAllowed(path, roots)
+    if (this.pathCache.size >= GuardrailsManager.MAX_PATH_CACHE) {
+      this.pathCache.clear()
+    }
+    this.pathCache.set(key, result)
+    return result
+  }
+
   /** Main check — returns decision (per-project: cwd drives allowedRoots/enforce) */
   async check(tool: string, args: JsonValue, ctx: { sessionID: string; cwd?: string }) {
     const decision: AuditEntry = { sessionID: ctx.sessionID, tool, args, decision: 'allow' }
-    // Per-project isolation: derive effective roots/enforce from session cwd.
-    // Precedence: env explicit > per-project config explicit > ctor/config explicit > prod default.
-    const effectiveRoots = ctx.cwd ? getEffectiveAllowedRoots(ctx.cwd) : this.config.allowedRoots
-    const envExplicit = parseEnforceEnv()
-    let effectiveEnforce: boolean
-    if (envExplicit !== undefined) {
-      effectiveEnforce = envExplicit
-    } else if (ctx.cwd) {
-      try {
-        const cfg = getConfig(ctx.cwd)
-        effectiveEnforce =
-          cfg.guardrails?.enforce !== undefined
-            ? !!cfg.guardrails.enforce
-            : (this.enforceExplicit ?? isProductionEnvironment())
-      } catch {
-        effectiveEnforce = this.enforceExplicit ?? isProductionEnvironment()
-      }
-    } else {
-      effectiveEnforce = this.enforceExplicit ?? isProductionEnvironment()
-    }
-    const enforce = effectiveEnforce
+    // Per-project isolation: derive effective roots/enforce from session cwd (cached).
+    const { roots: effectiveRoots, enforce } = this.getEffectiveConfig(ctx.cwd)
 
     try {
       // File tools path checks — now includes patch
@@ -475,7 +499,7 @@ export class GuardrailsManager {
             if (enforce) throw new Error(`Guardrail blocked ${tool}: ${s.reason}`)
             return decision
           }
-          if (!isPathAllowed(path, effectiveRoots)) {
+          if (!this.isPathAllowedCached(path, effectiveRoots)) {
             decision.decision = enforce ? 'deny' : 'warn'
             decision.reason = 'path outside allowed roots'
             await this.logger.log(decision)

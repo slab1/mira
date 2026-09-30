@@ -349,14 +349,6 @@ export async function liveOpenAIStream(ctx: {
         if (sseDone) {
           // Drain remaining pending before exit
           while (pendingChunks.length) yield pendingChunks.shift()!
-          // Emit usage-report if we have usage and haven't already via finish
-          if (
-            lastUsage &&
-            !pendingChunks.some((c) => c.type === 'finish' && (c as { usage?: unknown }).usage)
-          ) {
-            // Only emit usage-report if finish already emitted without usage, or no finish yet
-            // Check if last emitted was finish with usage — if not, emit usage-report
-          }
           break
         }
       }
@@ -389,14 +381,6 @@ export async function liveOpenAIStream(ctx: {
           finishReason: 'stop' as const,
           ...(lastUsage ? { usage: lastUsage } : {}),
         }
-      } else if (lastUsage) {
-        // If we already emitted finish but also have usage, ensure usage-report
-        // The finish already included usage, so no extra needed
-      }
-
-      if (lastUsage && sseDone) {
-        // Emit usage-report for cost tracking if not already in finish
-        // Only if finish didn't include usage (should have, but be safe)
       }
     } finally {
       clearChunkTimer()
@@ -404,38 +388,13 @@ export async function liveOpenAIStream(ctx: {
         reader.releaseLock()
       } catch {}
     }
-
-    // Emit usage-report as final chunk for cost tracking if we have usage
-    if (lastUsage) {
-      // This will be consumed by trackedStream wrapper; emit as usage-report if not already via finish
-      // We already included usage in finish, but also emit usage-report for compatibility
-    }
   }
 
   // Wrap gen to emit usage-report after finish for cost tracking
   async function* wrapped(): AsyncGenerator<GatewayChunk> {
-    let lastUsageLocal: { inputTokens: number; outputTokens: number } | null = null
-    let sawFinish = false
     for await (const chunk of gen()) {
-      if (chunk.type === 'finish' && chunk.usage) {
-        lastUsageLocal = {
-          inputTokens: chunk.usage.inputTokens ?? 0,
-          outputTokens: chunk.usage.outputTokens ?? 0,
-        }
-        sawFinish = true
-      }
-      // Also capture usage from finish
-      if (chunk.type === 'finish' && chunk.usage) {
-        lastUsageLocal = {
-          inputTokens: (chunk.usage.inputTokens ?? chunk.usage.prompt_tokens ?? 0) as number,
-          outputTokens: (chunk.usage.outputTokens ?? chunk.usage.completion_tokens ?? 0) as number,
-        }
-      }
       yield chunk
     }
-    // If we had usage but finish already emitted, also emit usage-report for trackedStream
-    // Actually gen already handles this; we just ensure lastUsage is emitted
-    // No-op: gen's finish includes usage, trackedStream will capture it
   }
 
   return wrapped()

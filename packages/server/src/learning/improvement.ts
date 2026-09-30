@@ -225,7 +225,7 @@ export class ImprovementEngine {
     // For TS engine/tool patches we run the relevant test suite; MD patches skip
     if (process.env.MIRA_SHADOW_RUN_TESTS !== '0' && imp.targetFile?.endsWith('.ts')) {
       try {
-        const { resolveBunBinary } = await import("../../../shared/src/utils/paths.js")
+        const { resolveBunBinary } = await import('../../../shared/src/utils/paths.js')
         const proc = Bun.spawn([resolveBunBinary(), 'test', '--timeout', '15000'], {
           cwd: this.config.rootDir,
           stdout: 'pipe',
@@ -529,7 +529,7 @@ function applyChange(original: string, change: string, targetFile: string): stri
   const isMD = targetFile.endsWith('.md')
   const note = isMD
     ? `\n\n<!-- Mira Improvement (${new Date().toISOString().slice(0, 10)}): ${change.slice(0, 300)} -->\n`
-    : `\n\n// Mira Improvement (${new Date().toString().slice(0, 10)}): ${change.slice(0, 300)}\n`
+    : `\n\n// Mira Improvement (${new Date().toISOString().slice(0, 10)}): ${change.slice(0, 300)}\n`
   // Avoid duplicating identical note
   if (original.includes(change.slice(0, 80))) return original
   return original + note

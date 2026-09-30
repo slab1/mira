@@ -509,12 +509,13 @@ export function createAppStore() {
         signal: abort.signal,
         onChunk: (chunk) => {
           setState('streamText', (t) => t + chunk)
-          // also patch the last assistant message content live
-          setState('messages', (msgs) =>
-            msgs.map((mm) =>
-              mm.id === asstId ? { ...mm, content: (mm.content || '') + chunk } : mm,
-            ),
-          )
+          // O(1) in-place update of the streaming assistant message (always last)
+          const msgs = state.messages
+          const idx = msgs.length - 1
+          const last = msgs[idx]
+          if (last && last.id === asstId) {
+            setState('messages', idx, 'content', (last.content || '') + chunk)
+          }
         },
         onEvent: (event) => {
           // Push live streaming events for the activity panel

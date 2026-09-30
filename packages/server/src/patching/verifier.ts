@@ -11,8 +11,9 @@
  *  4. Fallback → syntax check via Bun transpiler
  */
 
-import type { Patch } from "./patcher.js"
-import type { EvalReport } from "../eval/index.js"
+import type { Patch } from './patcher.js'
+import type { EvalReport } from '../eval/index.js'
+import { applyChange } from './apply-change.js'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -38,7 +39,7 @@ export class Verifier {
   constructor(config: VerifierConfig = {}) {
     this.config = {
       rootDir: config.rootDir ?? process.cwd(),
-      runTests: config.runTests ?? process.env.MIRA_SHADOW_RUN_TESTS === "1",
+      runTests: config.runTests ?? process.env.MIRA_SHADOW_RUN_TESTS === '1',
       runEval: config.runEval ?? false,
       timeoutMs: config.timeoutMs ?? 30_000,
     }
@@ -50,7 +51,7 @@ export class Verifier {
    */
   async verify(patch: Patch): Promise<VerifyResult> {
     if (!patch.targetFile) {
-      return { verified: false, reason: "no targetFile — cannot verify file-less patch" }
+      return { verified: false, reason: 'no targetFile — cannot verify file-less patch' }
     }
     const abs = `${this.config.rootDir}/${patch.targetFile}`
     const file = Bun.file(abs)
@@ -59,13 +60,13 @@ export class Verifier {
     }
 
     const tmpDir = `${this.config.rootDir}/.tmp_shadow_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`
-    const { mkdirSync, rmSync, writeFileSync } = await import("node:fs")
+    const { mkdirSync, rmSync, writeFileSync } = await import('node:fs')
     try {
       mkdirSync(tmpDir, { recursive: true })
       const original = await file.text()
-      const shadowPath = `${tmpDir}/shadow_${patch.targetFile.replace(/\//g, "_")}`
+      const shadowPath = `${tmpDir}/shadow_${patch.targetFile.replace(/\//g, '_')}`
       const patched = applyChange(original, patch.change, patch.targetFile)
-      writeFileSync(shadowPath, patched, "utf-8")
+      writeFileSync(shadowPath, patched, 'utf-8')
 
       // Core checks: tsc / markdown
       const core = await this.runShadowChecks(shadowPath, patch, original)
@@ -81,14 +82,20 @@ export class Verifier {
       if (this.config.runEval) {
         const evalResult = await this.runEval()
         if (!evalResult.verified) return evalResult
-        return { verified: true, reason: `shadow passed + tests + eval`, evalReport: evalResult.evalReport ?? undefined }
+        return {
+          verified: true,
+          reason: `shadow passed + tests + eval`,
+          evalReport: evalResult.evalReport ?? undefined,
+        }
       }
 
       return { verified: true, reason: core.reason }
     } catch (err) {
       return { verified: false, reason: `shadow error: ${String(err)}` }
     } finally {
-      try { rmSync(tmpDir, { recursive: true, force: true }) } catch {}
+      try {
+        rmSync(tmpDir, { recursive: true, force: true })
+      } catch {}
     }
   }
 
@@ -112,91 +119,119 @@ export class Verifier {
     const target = patch.targetFile!
 
     // TS/JS files: tsc --noEmit on shadow, fallback to syntax check if tsc unavailable
-    if (target.endsWith(".ts") || target.endsWith(".js")) {
+    if (target.endsWith('.ts') || target.endsWith('.js')) {
       try {
-        const proc = Bun.spawn(["npx", "tsc", "--noEmit", "--skipLibCheck", shadowPath], {
+        const proc = Bun.spawn(['npx', 'tsc', '--noEmit', '--skipLibCheck', shadowPath], {
           cwd: this.config.rootDir,
-          stdout: "pipe", stderr: "pipe",
+          stdout: 'pipe',
+          stderr: 'pipe',
         })
         // npx may hang offline — race with timeout, kill on expiry
         let exit: number | undefined
-        let stderr = "", stdout = ""
+        let stderr = '',
+          stdout = ''
         try {
           const timeoutMs = 2500
-          const result = await Promise.race([
+          const result = (await Promise.race([
             (async () => {
               const [sErr, sOut, e] = await Promise.all([
-                new Response(proc.stderr).text().catch(() => ""),
-                new Response(proc.stdout).text().catch(() => ""),
+                new Response(proc.stderr).text().catch(() => ''),
+                new Response(proc.stdout).text().catch(() => ''),
                 proc.exited,
               ])
               return { sErr, sOut, e }
             })(),
-            new Promise<never>((_, rej) => setTimeout(() => rej(new Error("tsc_timeout")), timeoutMs)),
-          ]) as { sErr: string; sOut: string; e: number }
-          stderr = result.sErr; stdout = result.sOut; exit = result.e
+            new Promise<never>((_, rej) =>
+              setTimeout(() => rej(new Error('tsc_timeout')), timeoutMs),
+            ),
+          ])) as { sErr: string; sOut: string; e: number }
+          stderr = result.sErr
+          stdout = result.sOut
+          exit = result.e
         } catch (err) {
-          try { proc.kill() } catch {}
+          try {
+            proc.kill()
+          } catch {}
           // tsc timed out or failed to spawn → fallback to transpiler
           const ok = await syntaxCheck(shadowPath)
-          if (!ok) return { verified: false, reason: `syntax check failed (tsc timeout): ${String(err)}` }
-          return { verified: true, reason: "shadow syntax passed (tsc timeout, used transpiler)" }
+          if (!ok)
+            return { verified: false, reason: `syntax check failed (tsc timeout): ${String(err)}` }
+          return { verified: true, reason: 'shadow syntax passed (tsc timeout, used transpiler)' }
         }
         if (exit === undefined) exit = 1
         const combined = `${stderr}${stdout}`.toLowerCase()
         // tsc not installed (bunx fallback copies, missing binary) → syntax check instead
-        const tscMissing = combined.includes("could not determine executable")
-          || combined.includes("not the tsc command")
-          || combined.includes("npm install typescript")
-          || combined.includes("not found")
-          || combined.includes("enoent")
-          || (exit !== 0 && combined.trim().length < 10)
+        const tscMissing =
+          combined.includes('could not determine executable') ||
+          combined.includes('not the tsc command') ||
+          combined.includes('npm install typescript') ||
+          combined.includes('not found') ||
+          combined.includes('enoent') ||
+          (exit !== 0 && combined.trim().length < 10)
         if (exit !== 0) {
           if (tscMissing) {
             const ok = await syntaxCheck(shadowPath)
-            if (!ok) return { verified: false, reason: `syntax check failed (tsc unavailable): ${combined.slice(0, 400)}` }
-            return { verified: true, reason: "shadow syntax passed (tsc unavailable, used transpiler)" }
+            if (!ok)
+              return {
+                verified: false,
+                reason: `syntax check failed (tsc unavailable): ${combined.slice(0, 400)}`,
+              }
+            return {
+              verified: true,
+              reason: 'shadow syntax passed (tsc unavailable, used transpiler)',
+            }
           }
-          return { verified: false, reason: `tsc failed (exit ${exit}): ${stderr.slice(0, 600)}`, shadowOutput: stderr }
+          return {
+            verified: false,
+            reason: `tsc failed (exit ${exit}): ${stderr.slice(0, 600)}`,
+            shadowOutput: stderr,
+          }
         }
       } catch (err) {
         const ok = await syntaxCheck(shadowPath)
         if (!ok) return { verified: false, reason: `syntax check failed: ${String(err)}` }
-        return { verified: true, reason: "shadow syntax passed (tsc threw, used transpiler)" }
+        return { verified: true, reason: 'shadow syntax passed (tsc threw, used transpiler)' }
       }
-      return { verified: true, reason: "shadow tsc passed" }
+      return { verified: true, reason: 'shadow tsc passed' }
     }
 
     // Markdown prompts: ensure non-empty and not broken
-    if (target.endsWith(".md")) {
-      const content = await Bun.file(shadowPath).text().catch(() => "")
-      if (content.length < 10) return { verified: false, reason: "shadow markdown empty" }
-      if (content.length > 500_000) return { verified: false, reason: "shadow markdown suspiciously large" }
-      return { verified: true, reason: "shadow markdown non-empty" }
+    if (target.endsWith('.md')) {
+      const content = await Bun.file(shadowPath)
+        .text()
+        .catch(() => '')
+      if (content.length < 10) return { verified: false, reason: 'shadow markdown empty' }
+      if (content.length > 500_000)
+        return { verified: false, reason: 'shadow markdown suspiciously large' }
+      return { verified: true, reason: 'shadow markdown non-empty' }
     }
 
     // Unknown type: syntax check via Bun transpiler
     const ok = await syntaxCheck(shadowPath)
-    if (!ok) return { verified: false, reason: "shadow syntax check failed" }
-    return { verified: true, reason: "shadow syntax passed" }
+    if (!ok) return { verified: false, reason: 'shadow syntax check failed' }
+    return { verified: true, reason: 'shadow syntax passed' }
   }
 
   private async runTests(): Promise<VerifyResult> {
     try {
-      const { resolveBunBinary } = await import("../../../shared/src/utils/paths.js")
-      const proc = Bun.spawn([resolveBunBinary(), "test", "--timeout", "15000"], {
+      const { resolveBunBinary } = await import('../../../shared/src/utils/paths.js')
+      const proc = Bun.spawn([resolveBunBinary(), 'test', '--timeout', '15000'], {
         cwd: this.config.rootDir,
-        stdout: "pipe", stderr: "pipe",
+        stdout: 'pipe',
+        stderr: 'pipe',
       })
-      const exit = await Promise.race([
+      const exit = (await Promise.race([
         proc.exited,
-        new Promise<number>((_, rej) => setTimeout(() => rej(new Error("test timeout")), 30_000)),
-      ]) as number
+        new Promise<number>((_, rej) => setTimeout(() => rej(new Error('test timeout')), 30_000)),
+      ])) as number
       if (exit !== 0) {
-        const stderr = await new Response(proc.stderr).text().catch(() => "")
-        return { verified: false, reason: `bun test failed (exit ${exit}): ${stderr.slice(0, 600)}` }
+        const stderr = await new Response(proc.stderr).text().catch(() => '')
+        return {
+          verified: false,
+          reason: `bun test failed (exit ${exit}): ${stderr.slice(0, 600)}`,
+        }
       }
-      return { verified: true, reason: "bun test passed" }
+      return { verified: true, reason: 'bun test passed' }
     } catch (err) {
       return { verified: false, reason: `test run error: ${String(err)}` }
     }
@@ -204,13 +239,21 @@ export class Verifier {
 
   private async runEval(): Promise<VerifyResult & { evalReport?: EvalReport | null }> {
     try {
-      const { EvalRunner } = await import("../eval/index.js")
+      const { EvalRunner } = await import('../eval/index.js')
       const runner = new EvalRunner()
-      const report = await runner.run("pr")
+      const report = await runner.run('pr')
       if (!report.passed) {
-        return { verified: false, reason: `eval pr tier FAILED: ${report.tiers.filter(t => !t.passed).map(t => t.summary).join("; ").slice(0, 400)}`, evalReport: report }
+        return {
+          verified: false,
+          reason: `eval pr tier FAILED: ${report.tiers
+            .filter((t) => !t.passed)
+            .map((t) => t.summary)
+            .join('; ')
+            .slice(0, 400)}`,
+          evalReport: report,
+        }
       }
-      return { verified: true, reason: "eval pr tier passed", evalReport: report }
+      return { verified: true, reason: 'eval pr tier passed', evalReport: report }
     } catch (err) {
       return { verified: false, reason: `eval error: ${String(err)}` }
     }
@@ -219,23 +262,16 @@ export class Verifier {
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function applyChange(original: string, change: string, targetFile: string): string {
-  const isMD = targetFile.endsWith(".md")
-  const note = isMD
-    ? `\n\n<!-- Mira Patch (${new Date().toISOString().slice(0, 10)}): ${change.slice(0, 300)} -->\n`
-    : `\n\n// Mira Patch (${new Date().toISOString().slice(0, 10)}): ${change.slice(0, 300)}\n`
-  if (original.includes(change.slice(0, 80))) return original
-  return original + note
-}
-
 async function syntaxCheck(path: string): Promise<boolean> {
   try {
     const content = await Bun.file(path).text()
     if (content.length < 1) return false
-    if (path.endsWith(".ts") || path.endsWith(".js")) {
-      const t = new Bun.Transpiler({ loader: "ts" })
+    if (path.endsWith('.ts') || path.endsWith('.js')) {
+      const t = new Bun.Transpiler({ loader: 'ts' })
       t.transformSync(content)
     }
     return true
-  } catch { return false }
+  } catch {
+    return false
+  }
 }
