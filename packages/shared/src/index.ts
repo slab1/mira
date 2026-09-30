@@ -42,6 +42,7 @@ export type { ToolName, ToolCategory } from './schemas/tools.js'
 
 export * from './schemas/session.js'
 export * from './schemas/config.js'
+export * from './schemas/protocol.js'
 
 // Agents (AGENTS.md + Skills) — keep skill definition distinct
 export {
@@ -67,7 +68,14 @@ export { createLogger } from './utils/logger.js'
 export { createClient, ApiError } from './utils/client.js'
 export { apiFetch } from './utils/fetch.js'
 export type { ApiFetchOpts } from './utils/fetch.js'
-export { resolveBunBinary, safeTempFile, normalizeDbPath, serverCwd, isSafeWritePath, safeSpawnArgs } from './utils/paths.js'
+export {
+  resolveBunBinary,
+  safeTempFile,
+  normalizeDbPath,
+  serverCwd,
+  isSafeWritePath,
+  safeSpawnArgs,
+} from './utils/paths.js'
 export type { Logger, LogLevel } from './utils/logger.js'
 export type { ClientOptions, ReqInit } from './utils/client.js'
 

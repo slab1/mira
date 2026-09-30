@@ -4,43 +4,52 @@
  * Mirrors server/src/types + storage/schema.ts
  * Used for runtime validation on WS/REST boundaries and for shared TS inference.
  */
-import { z } from "zod"
-import type { JsonValue } from "../types/index.js"
+import { z } from 'zod'
+import type { JsonValue } from '../types/index.js'
 
 const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
-  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValueSchema), z.record(z.string(), jsonValueSchema)])
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(jsonValueSchema),
+    z.record(z.string(), jsonValueSchema),
+  ]),
 )
 
 // ── Enums ──────────────────────────────────────────────────────────
-export const roleSchema = z.enum(["user", "assistant", "system"])
+export const roleSchema = z.enum(['user', 'assistant', 'system'])
 export type Role = z.infer<typeof roleSchema>
 
-export const partTypeSchema = z.enum(["text", "tool-call", "tool-result", "reasoning", "file"])
+export const partTypeSchema = z.enum(['text', 'tool-call', 'tool-result', 'reasoning', 'file'])
 export type PartType = z.infer<typeof partTypeSchema>
 
-export const todoStatusSchema = z.enum(["pending", "in_progress", "completed", "cancelled"])
+export const todoStatusSchema = z.enum(['pending', 'in_progress', 'completed', 'cancelled'])
 export type TodoStatus = z.infer<typeof todoStatusSchema>
 
-export const todoPrioritySchema = z.enum(["high", "medium", "low"])
+export const todoPrioritySchema = z.enum(['high', 'medium', 'low'])
 export type TodoPriority = z.infer<typeof todoPrioritySchema>
 
 // ── Session ────────────────────────────────────────────────────────
 export const sessionSchema = z.object({
-  id: z.string().min(1).describe("Session ID (ulid/uuid)"),
-  title: z.string().min(1).describe("Session title"),
-  model: z.string().min(1).describe("Model ref, e.g. openrouter/anthropic/claude-sonnet-4"),
-  provider: z.string().min(1).describe("Provider key, e.g. openrouter"),
-  createdAt: z.number().int().describe("Unix ms"),
-  updatedAt: z.number().int().describe("Unix ms"),
-  parentID: z.string().optional().describe("Parent session ID for forks"),
+  id: z.string().min(1).describe('Session ID (ulid/uuid)'),
+  title: z.string().min(1).describe('Session title'),
+  model: z.string().min(1).describe('Model ref, e.g. openrouter/anthropic/claude-sonnet-4'),
+  provider: z.string().min(1).describe('Provider key, e.g. openrouter'),
+  createdAt: z.number().int().describe('Unix ms'),
+  updatedAt: z.number().int().describe('Unix ms'),
+  parentID: z.string().optional().describe('Parent session ID for forks'),
 })
 export type Session = z.infer<typeof sessionSchema>
 
-export const createSessionSchema = sessionSchema.pick({ title: true, model: true, provider: true }).partial({
-  title: true,
-  model: true,
-  provider: true,
-})
+export const createSessionSchema = sessionSchema
+  .pick({ title: true, model: true, provider: true })
+  .partial({
+    title: true,
+    model: true,
+    provider: true,
+  })
 
 export const updateSessionSchema = z.object({
   title: z.string().optional(),
@@ -68,7 +77,7 @@ export const partSchema = z.object({
   sessionID: z.string().min(1),
   type: partTypeSchema,
   text: z.string().optional(),
-  tool: z.string().optional().describe("Tool name for tool-call/result"),
+  tool: z.string().optional().describe('Tool name for tool-call/result'),
   toolCallID: z.string().optional(),
   args: jsonValueSchema.optional(),
   result: jsonValueSchema.optional(),
@@ -86,7 +95,7 @@ export const createPartSchema = partSchema.omit({ id: true, createdAt: true }).e
 export const todoSchema = z.object({
   id: z.string().min(1),
   sessionID: z.string().min(1),
-  content: z.string().min(1).describe("Task description"),
+  content: z.string().min(1).describe('Task description'),
   status: todoStatusSchema,
   priority: todoPrioritySchema,
   createdAt: z.number().int(),
@@ -102,18 +111,33 @@ export const todoListSchema = z.array(todoSchema)
 
 // ── BusEvent ───────────────────────────────────────────────────────
 export const busEventTypeSchema = z.enum([
-  "session.created",
-  "session.updated",
-  "session.deleted",
-  "message.created",
-  "message.updated",
-  "part.created",
-  "part.updated",
-  "todo.updated",
-  "permission.ask",
-  "permission.reply",
-  "server.heartbeat",
-  "server.error",
+  'session.created',
+  'session.updated',
+  'session.deleted',
+  'message.created',
+  'message.updated',
+  'part.created',
+  'part.updated',
+  'todo.updated',
+  'permission.ask',
+  'permission.reply',
+  'server.heartbeat',
+  'server.error',
+  'tool.executed',
+  'tool.denied',
+  'agent.tool.denied',
+  'gateway.fallback',
+  'gateway.error',
+  'evolution.proposed',
+  'evolution.verified',
+  'evolution.applied',
+  'evolution.rejected',
+  'governance.promoted',
+  'governance.rolled_back',
+  'sandbox.started',
+  'sandbox.exited',
+  'memory.evicted',
+  'codegraph.built',
 ])
 export type BusEventType = z.infer<typeof busEventTypeSchema>
 
