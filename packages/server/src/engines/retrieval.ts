@@ -35,26 +35,59 @@ export class RetrievalEngine implements MiraEngine {
     try {
       const { MemoryController } = await import('../memory/memory_controller.js')
       const mc = new MemoryController()
-      const hits = mc.retrieve_similar_experiences('health probe', 1)
+      const hits = await mc.retrieve_similar_experiences('health probe', 1)
       details = { probeHits: hits.length, memoryDir: mc.memoryDir } as unknown as JsonValue
     } catch (e) {
       status = 'degraded'
       message = String(e).slice(0, 200)
       details = { error: message } as unknown as JsonValue
     }
-    return { id: this.id, version: this.version, status, latencyMs: Date.now() - t0, message, details, timestamp: Date.now(), capabilities: this.capabilities }
+    return {
+      id: this.id,
+      version: this.version,
+      status,
+      latencyMs: Date.now() - t0,
+      message,
+      details,
+      timestamp: Date.now(),
+      capabilities: this.capabilities,
+    }
   }
 
   async benchmark(): Promise<BenchmarkReport> {
     const t0 = Date.now()
     const h = await this.health()
-    return { id: this.id, version: this.version, latencyMs: Date.now() - t0, successRate: h.status === 'healthy' ? 1 : 0.6, costDelta: 0, timestamp: Date.now(), details: { status: h.status } as unknown as JsonValue }
+    return {
+      id: this.id,
+      version: this.version,
+      latencyMs: Date.now() - t0,
+      successRate: h.status === 'healthy' ? 1 : 0.6,
+      costDelta: 0,
+      timestamp: Date.now(),
+      details: { status: h.status } as unknown as JsonValue,
+    }
   }
 
   async upgrade(): Promise<UpgradeResult> {
-    const from = this.version; this.prior = from; const p = from.split('.').map(Number); p[2]=(p[2]??0)+1; this.version = p.join('.')
-    return { id: this.id, fromVersion: from, toVersion: this.version, upgraded: true, reason: 'mock patch bump', timestamp: Date.now() }
+    const from = this.version
+    this.prior = from
+    const p = from.split('.').map(Number)
+    p[2] = (p[2] ?? 0) + 1
+    this.version = p.join('.')
+    return {
+      id: this.id,
+      fromVersion: from,
+      toVersion: this.version,
+      upgraded: true,
+      reason: 'mock patch bump',
+      timestamp: Date.now(),
+    }
   }
 
-  async rollback(): Promise<void> { if (this.prior) { this.version = this.prior; this.prior = null } }
+  async rollback(): Promise<void> {
+    if (this.prior) {
+      this.version = this.prior
+      this.prior = null
+    }
+  }
 }

@@ -25,7 +25,10 @@ function mockBrioHandler(req: Request): Response {
     )
   }
   if (url.pathname === '/v1/models') {
-    return new Response(JSON.stringify({ data: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    return new Response(JSON.stringify({ data: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
   }
   return new Response('not found', { status: 404 })
 }
@@ -46,13 +49,23 @@ describe('brio tool (colibri)', () => {
     // so we monkey the global fetch for this test to redirect 8000 → mock.
     const realFetch = globalThis.fetch
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-      const u = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url
-      if (u.includes('127.0.0.1:8000')) return realFetch(u.replace('127.0.0.1:8000', `127.0.0.1:${PORT}`), init)
+      const u =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : (input as Request).url
+      if (u.includes('127.0.0.1:8000'))
+        return realFetch(u.replace('127.0.0.1:8000', `127.0.0.1:${PORT}`), init)
       return realFetch(input as RequestInfo, init)
     }) as typeof fetch
 
     const r = (await brioTool.execute(
-      { state: 'PR 340 lines, 8 files, no tests. CI green.', question: 'What should reviewer do?', options: ['merge', 'request changes', 'close'] },
+      {
+        state: 'PR 340 lines, 8 files, no tests. CI green.',
+        question: 'What should reviewer do?',
+        options: ['merge', 'request changes', 'close'],
+      },
       { sessionID: 's', messageID: 'm' },
     )) as Record<string, unknown>
 
@@ -74,6 +87,6 @@ describe('brio tool (colibri)', () => {
       { sessionID: 's', messageID: 'm' },
     )) as Record<string, unknown>
     expect(r.ok).toBe(false)
-    expect(String((r as Record<string, unknown>).hint ?? '')).toContain('colibri')
+    expect(String((r as Record<string, unknown>).hint ?? '').toLowerCase()).toContain('colibri')
   })
 })

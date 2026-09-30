@@ -15,7 +15,7 @@
  * For replay, TUI fetches REST /session/:id/message on connect, then subscribes for live deltas.
  */
 
-import type { BusEvent, BusEventType, SessionID, JsonValue } from "../types/index.js"
+import type { BusEvent, BusEventType, SessionID, JsonValue } from '../types/index.js'
 
 type Handler<T = JsonValue> = (event: BusEvent<T>) => void
 type Unsubscribe = () => void
@@ -29,8 +29,11 @@ export class Bus {
   private history: BusEvent[] = []
   private readonly maxHistory = 1000
 
-  // Pending permission waiters: toolCallID → resolver
-  private waiters = new Map<string, (decision: "allow" | "deny") => void>()
+  // Pending permission waiters: toolCallID → { resolver, nonce }
+  private waiters = new Map<
+    string,
+    { resolve: (decision: 'allow' | 'deny') => void; nonce: string }
+  >()
 
   // ── Publish ──────────────────────────────────────────────────────
 
@@ -40,28 +43,50 @@ export class Bus {
     this.history.push(event as BusEvent)
     if (this.history.length > this.maxHistory) this.history.shift()
 
-    // Handle permission.reply specially — resolve waiter
-    if (event.type === "permission.reply") {
-      const payload = event.payload as { toolCallID?: string; id?: string; decision?: "allow" | "deny"; action?: "allow" | "deny" }
-      const waiter = this.waiters.get(payload.toolCallID ?? payload.id ?? "")
-      if (waiter) {
-        waiter(payload.decision ?? payload.action ?? "deny")
-        this.waiters.delete(payload.toolCallID ?? payload.id ?? "")
+    // Handle permission.reply specially — resolve waiter only if nonce matches
+    if (event.type === 'permission.reply') {
+      const payload = event.payload as {
+        toolCallID?: string
+        id?: string
+        decision?: 'allow' | 'deny'
+        action?: 'allow' | 'deny'
+        nonce?: string
+      }
+      const key = payload.toolCallID ?? payload.id ?? ''
+      const waiter = this.waiters.get(key)
+      // Verify nonce — prevents spoofed replies from attacker who knows toolCallID
+      if (waiter && payload.nonce === waiter.nonce) {
+        waiter.resolve(payload.decision ?? payload.action ?? 'deny')
+        this.waiters.delete(key)
       }
     }
 
     // Fan-out: global handlers
     for (const h of this.handlers) {
-      try { h(event as BusEvent) } catch (e) { console.error("[bus] handler error:", e) }
+      try {
+        h(event as BusEvent)
+      } catch (e) {
+        console.error('[bus] handler error:', e)
+      }
     }
     // Typed handlers
     const typed = this.typedHandlers.get(event.type)
-    if (typed) for (const h of typed) try { h(event as BusEvent) } catch (e) { console.error("[bus] typed handler error:", e) }
+    if (typed)
+      for (const h of typed)
+        try {
+          h(event as BusEvent)
+        } catch (e) {
+          console.error('[bus] typed handler error:', e)
+        }
 
     // Session-scoped handlers
     if (event.sessionID) {
       const sess = this.sessionHandlers.get(event.sessionID)
-      if (sess) for (const h of sess) try { h(event as BusEvent) } catch {}
+      if (sess)
+        for (const h of sess)
+          try {
+            h(event as BusEvent)
+          } catch {}
     }
   }
 
@@ -70,35 +95,52 @@ export class Bus {
   /** Subscribe to ALL events */
   subscribeAll(handler: Handler): Unsubscribe {
     this.handlers.add(handler as Handler)
-    return () => { this.handlers.delete(handler as Handler) }
+    return () => {
+      this.handlers.delete(handler as Handler)
+    }
   }
 
   /** Subscribe to a specific event type */
   subscribe<T>(type: BusEventType, handler: Handler<T>): Unsubscribe {
     if (!this.typedHandlers.has(type)) this.typedHandlers.set(type, new Set())
     this.typedHandlers.get(type)!.add(handler as Handler)
-    return () => { this.typedHandlers.get(type)?.delete(handler as Handler) }
+    return () => {
+      this.typedHandlers.get(type)?.delete(handler as Handler)
+    }
   }
 
   /** Subscribe to events for a single session */
   subscribeSession(sessionID: SessionID, handler: Handler): Unsubscribe {
     if (!this.sessionHandlers.has(sessionID)) this.sessionHandlers.set(sessionID, new Set())
     this.sessionHandlers.get(sessionID)!.add(handler)
-    return () => { this.sessionHandlers.get(sessionID)?.delete(handler) }
+    return () => {
+      this.sessionHandlers.get(sessionID)?.delete(handler)
+    }
   }
 
   // ── Helpers ──────────────────────────────────────────────────────
 
-  /** Wait for a permission.reply matching toolCallID (used by SessionPrompt.loop) */
-  waitForPermissionReply(toolCallID: string, timeoutMs = 60_000): Promise<"allow" | "deny"> {
+  /**
+   * Wait for a permission.reply matching toolCallID with nonce verification.
+   * The nonce must be included in the permission.ask event and echoed back
+   * in the reply — prevents spoofing by anyone who knows the toolCallID.
+   */
+  waitForPermissionReply(
+    toolCallID: string,
+    nonce: string,
+    timeoutMs = 60_000,
+  ): Promise<'allow' | 'deny'> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.waiters.delete(toolCallID)
         reject(new Error(`Permission timeout for ${toolCallID} after ${timeoutMs}ms`))
       }, timeoutMs)
-      this.waiters.set(toolCallID, (decision) => {
-        clearTimeout(timer)
-        resolve(decision)
+      this.waiters.set(toolCallID, {
+        resolve: (decision) => {
+          clearTimeout(timer)
+          resolve(decision)
+        },
+        nonce,
       })
     })
   }
@@ -108,9 +150,9 @@ export class Bus {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         unsub()
-        reject(new Error("waitFor timeout"))
+        reject(new Error('waitFor timeout'))
       }, timeoutMs)
-      const unsub = this.subscribeAll(event => {
+      const unsub = this.subscribeAll((event) => {
         if (predicate(event)) {
           clearTimeout(timer)
           unsub()
@@ -123,7 +165,7 @@ export class Bus {
   /** Recent history (for debugging / new WS clients that want catch-up) */
   recent(limit = 50, filter?: BusEventType): BusEvent[] {
     let h = this.history
-    if (filter) h = h.filter(e => e.type === filter)
+    if (filter) h = h.filter((e) => e.type === filter)
     return h.slice(-limit)
   }
 

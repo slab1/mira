@@ -23,9 +23,9 @@
  * | 10 | Known limitations | Implemented | colibri probe opportunistic 800ms, no shadow/canary yet, evidence truncated 4k, local hardware not required |
  */
 
-import type { Bus } from "../bus/index.js"
-import type { JsonValue } from "../types/index.js"
-import { appendActiveWork } from "../memory/memory_controller.js"
+import type { Bus } from '../bus/index.js'
+import type { JsonValue } from '../types/index.js'
+import { appendActiveWork } from '../memory/memory_controller.js'
 
 export interface ObservedFailure {
   failure: string
@@ -39,7 +39,10 @@ export interface ObserverDeps {
   bus: Bus
   // optional gateway/registry for hasKey snapshot — opportunistic, not required
   gateway?: { hasKey?: (provider: string) => boolean } | null
-  registry?: { hasKey?: (provider: string) => boolean; getAllHealth?: () => Map<string, unknown> } | null
+  registry?: {
+    hasKey?: (provider: string) => boolean
+    getAllHealth?: () => Map<string, unknown>
+  } | null
 }
 
 export class EvolutionObserver {
@@ -62,7 +65,7 @@ export class EvolutionObserver {
       evidence: ev,
       sessionID: sessionID ? String(sessionID).slice(0, 100) : undefined,
       timestamp: Date.now(),
-      source: "observer",
+      source: 'observer',
     }
     this.recent.push(entry)
     if (this.recent.length > this.maxRecent) this.recent.shift()
@@ -70,7 +73,7 @@ export class EvolutionObserver {
     // Emit via Bus — cast type to allow evolution.observed (BusEventType is open via string)
     try {
       this.bus.publish({
-        type: "evolution.observed" as unknown as import("../types/index.js").BusEventType,
+        type: 'evolution.observed' as unknown as import('../types/index.js').BusEventType,
         sessionID: entry.sessionID,
         payload: {
           failure: entry.failure,
@@ -80,14 +83,14 @@ export class EvolutionObserver {
           source: entry.source,
         } as JsonValue,
         timestamp: entry.timestamp,
-      } as unknown as import("../types/index.js").BusEvent)
+      } as unknown as import('../types/index.js').BusEvent)
     } catch {}
 
     // opportunistic memory append — never blocks, never requires hardware
     try {
-      appendActiveWork({
-        tool: "evolution.observe",
-        path: "observed",
+      void appendActiveWork({
+        tool: 'evolution.observe',
+        path: 'observed',
         summary: `observed: ${entry.failure.slice(0, 120)}`,
         cwd: process.cwd(),
       })
@@ -98,10 +101,15 @@ export class EvolutionObserver {
 
   /** Passive watch: subscribe to Bus + metrics + gateway hasKey signals */
   watchBus(): void {
-    const handler = (event: { type: string; sessionID?: string; payload: unknown; timestamp: number }) => {
+    const handler = (event: {
+      type: string
+      sessionID?: string
+      payload: unknown
+      timestamp: number
+    }) => {
       const t = String(event.type)
       // Only watch error-like streams
-      if (t === "server.error" || t === "cost.warning" || t === "gateway.fallback") {
+      if (t === 'server.error' || t === 'cost.warning' || t === 'gateway.fallback') {
         const payload = event.payload as Record<string, unknown> | null
         const failure = (payload?.error as string) ?? (payload?.reason as string) ?? t
         const evidence: JsonValue = {
@@ -114,16 +122,22 @@ export class EvolutionObserver {
       }
     }
     // Subscribe to known error types — keep nvidia primary, colibri probe inside snapshotHasKey
-    for (const type of ["server.error", "cost.warning", "gateway.fallback"] as const) {
+    for (const type of ['server.error', 'cost.warning', 'gateway.fallback'] as const) {
       try {
-        const unsub = this.bus.subscribe(type as import("../types/index.js").BusEventType, handler as unknown as (e: import("../types/index.js").BusEvent) => void)
+        const unsub = this.bus.subscribe(
+          type as import('../types/index.js').BusEventType,
+          handler as unknown as (e: import('../types/index.js').BusEvent) => void,
+        )
         this.unsubs.push(unsub)
       } catch {}
     }
   }
 
   stop(): void {
-    for (const u of this.unsubs) try { u() } catch {}
+    for (const u of this.unsubs)
+      try {
+        u()
+      } catch {}
     this.unsubs = []
   }
 
@@ -133,24 +147,31 @@ export class EvolutionObserver {
 
   snapshotHasKey(): Record<string, boolean> {
     const out: Record<string, boolean> = {}
-    const providers = ["nvidia", "colibri", "anthropic", "openai"]
+    const providers = ['nvidia', 'colibri', 'anthropic', 'openai']
     for (const p of providers) {
       try {
         let has: boolean | undefined
         if (this.deps.registry?.hasKey) has = this.deps.registry.hasKey(p)
-        else if (this.deps.gateway && typeof (this.deps.gateway as { hasKey?: unknown }).hasKey === "function") {
+        else if (
+          this.deps.gateway &&
+          typeof (this.deps.gateway as { hasKey?: unknown }).hasKey === 'function'
+        ) {
           has = (this.deps.gateway as { hasKey: (k: string) => boolean }).hasKey(p)
         }
         if (has !== undefined) out[p] = !!has
       } catch {}
     }
     // always report primary nvidia if unknown
-    if (!("nvidia" in out)) out.nvidia = true
+    if (!('nvidia' in out)) out.nvidia = true
     return out
   }
 
   health(): { watching: boolean; recent: number; hasKey: Record<string, boolean> } {
-    return { watching: this.unsubs.length > 0, recent: this.recent.length, hasKey: this.snapshotHasKey() }
+    return {
+      watching: this.unsubs.length > 0,
+      recent: this.recent.length,
+      hasKey: this.snapshotHasKey(),
+    }
   }
 }
 

@@ -371,9 +371,19 @@ export class ToolRegistry {
 
     try {
       const timeoutMs = metadata?.timeoutMs ?? 30_000
+      // Create an AbortController for the timeout — when it fires, we abort
+      // the signal so tools (like bash) can kill their underlying processes.
+      const timeoutController = new AbortController()
+      const callerSignal = fullCtx.signal
+      const timeoutSignal = callerSignal
+        ? AbortSignal.any([timeoutController.signal, callerSignal])
+        : timeoutController.signal
+      // Inject the combined signal into the execution context
+      fullCtx.signal = timeoutSignal
       const execPromise = tool.execute(parsedArgs, fullCtx)
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
+          timeoutController.abort()
           const err = new Error(`Tool ${name} timed out after ${timeoutMs}ms`)
           ;(err as any).code = 'TOOL_TIMEOUT'
           reject(err)

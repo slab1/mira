@@ -185,9 +185,15 @@ export type BusEvent = {
 
 export type ProposalState =
   | 'PROPOSED'
-  | 'BENCHMARK_PENDING' | 'BENCHMARK_PASSED' | 'BENCHMARK_FAILED'
-  | 'SECURITY_PENDING' | 'SECURITY_PASSED' | 'SECURITY_FAILED'
-  | 'CANARY_PENDING' | 'CANARY_PASSED' | 'CANARY_FAILED'
+  | 'BENCHMARK_PENDING'
+  | 'BENCHMARK_PASSED'
+  | 'BENCHMARK_FAILED'
+  | 'SECURITY_PENDING'
+  | 'SECURITY_PASSED'
+  | 'SECURITY_FAILED'
+  | 'CANARY_PENDING'
+  | 'CANARY_PASSED'
+  | 'CANARY_FAILED'
   | 'PROMOTED'
   | 'ROLLED_BACK'
   | 'REJECTED'
@@ -521,8 +527,9 @@ function baseUrlCandidates(): string[] {
 
 // ── Auth (bearer token; servers with MIRA_TOKEN/MIRA_API_KEYS require it) ──
 // Token sources (in priority order):
-//  1. localStorage `mira_token` — written by AuthGate via setToken(), survives reload,
-//     dispatched as `mira:token-change` (same-tab) + `storage` event (cross-tab).
+//  1. sessionStorage `mira_token` — written by AuthGate via setToken(), survives reload,
+//     dispatched as `mira:token-change` (same-tab). sessionStorage is tab-scoped,
+//     so cross-tab `storage` events do NOT fire — same-tab CustomEvent sync only.
 //  2. Vite env `VITE_MIRA_TOKEN` — explicit override, else vite dev auto-injects
 //     MIRA_TOKEN from ~/.mira/mira.env (respects $MIRA_DIR; auto-created on first server boot).
 // Server side: ~/.mira/mira.env  →  MIRA_TOKEN=…  (auto-created 64-hex on first boot in dev;
@@ -548,14 +555,14 @@ export class ApiError extends Error {
 
 export function getToken(): string {
   try {
-    const stored = localStorage.getItem(TOKEN_KEY)
+    const stored = sessionStorage.getItem(TOKEN_KEY)
     if (stored) return stored
     // Explicitly cleared (empty submit or 401) — don't resurrect the baked fallback.
     // BUT: if VITE_MIRA_TOKEN is explicitly set (dev env), it takes precedence
     // over the cleared flag — the user configured a token, so clear the flag.
     const envToken = (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
     try {
-      if (localStorage.getItem(TOKEN_CLEARED_KEY) === '1' && !envToken) return ''
+      if (sessionStorage.getItem(TOKEN_CLEARED_KEY) === '1' && !envToken) return ''
     } catch {}
     return envToken
   } catch {
@@ -566,14 +573,14 @@ export function getToken(): string {
 export function setToken(token: string): void {
   try {
     if (token) {
-      localStorage.setItem(TOKEN_KEY, token)
+      sessionStorage.setItem(TOKEN_KEY, token)
       try {
-        localStorage.removeItem(TOKEN_CLEARED_KEY)
+        sessionStorage.removeItem(TOKEN_CLEARED_KEY)
       } catch {}
     } else {
-      localStorage.removeItem(TOKEN_KEY)
+      sessionStorage.removeItem(TOKEN_KEY)
       try {
-        localStorage.setItem(TOKEN_CLEARED_KEY, '1')
+        sessionStorage.setItem(TOKEN_CLEARED_KEY, '1')
       } catch {}
     }
     // notify same-tab listeners (storage event only fires cross-tab)
@@ -585,12 +592,12 @@ export function setToken(token: string): void {
 
 export function clearTokenOn401(): void {
   try {
-    localStorage.removeItem(TOKEN_KEY)
+    sessionStorage.removeItem(TOKEN_KEY)
     // Mark cleared so a stale baked VITE_MIRA_TOKEN isn't silently retried —
     // the user must paste the current token (fixes the "Invalid token" loop
     // after server token rotation).
     try {
-      localStorage.setItem(TOKEN_CLEARED_KEY, '1')
+      sessionStorage.setItem(TOKEN_CLEARED_KEY, '1')
     } catch {}
   } catch {}
   try {
@@ -632,7 +639,11 @@ export async function validateToken(): Promise<boolean> {
   }
 }
 
-// cross-tab token sync — storage event only fires in other tabs
+// cross-tab token sync — storage event only fires in other tabs.
+// Note: sessionStorage is tab-scoped, so the storage event does NOT fire
+// for sessionStorage changes in other tabs. Cross-tab token sync is lost
+// with sessionStorage, but same-tab sync via mira:token-change CustomEvent
+// still works. This is an accepted tradeoff for XSS resistance.
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (e) => {
     if (e.key === TOKEN_KEY) {
@@ -821,8 +832,7 @@ export const api = {
   listSnapshots: (id: string) => req<Snapshot[]>(`/session/${id}/snapshots`),
 
   /** GET /session/:id/cost — tokens/cost for one session (live + persisted totals) */
-  getSessionCost: (id: string) =>
-    req<SessionCost>(`/session/${encodeURIComponent(id)}/cost`),
+  getSessionCost: (id: string) => req<SessionCost>(`/session/${encodeURIComponent(id)}/cost`),
 
   getSnapshot: (id: string, snapshotId: string) =>
     req<{
@@ -950,7 +960,14 @@ export const api = {
   getGatewayHealth: () =>
     req<{
       ok: boolean
-      gateway: { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number; byModel: Record<string, unknown> }
+      gateway: {
+        requests: number
+        inputTokens: number
+        outputTokens: number
+        costUSD: number
+        avgLatencyMs: number
+        byModel: Record<string, unknown>
+      }
       costCap?: { perTask?: number; perSession?: number }
       lanes: Record<
         string,
@@ -963,7 +980,14 @@ export const api = {
           latencyMs: number
           cooldownUntil: number | null
           rateLimit: { rps: number; burst: number; available: number }
-          stats: { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number; byModel: Record<string, unknown> }
+          stats: {
+            requests: number
+            inputTokens: number
+            outputTokens: number
+            costUSD: number
+            avgLatencyMs: number
+            byModel: Record<string, unknown>
+          }
           costCap?: { perTask?: number; perSession?: number }
         }
       >
@@ -980,16 +1004,54 @@ export const api = {
           cooldownUntil: number | null
         }
       >
-      laneStats: Record<string, { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number }>
+      laneStats: Record<
+        string,
+        {
+          requests: number
+          inputTokens: number
+          outputTokens: number
+          costUSD: number
+          avgLatencyMs: number
+        }
+      >
       timestamp: number
     }>('/gateway/health'),
   getProviderHealth: () =>
     req<{
       ok: boolean
-      gateway: { requests: number; inputTokens: number; outputTokens: number; costUSD: number; avgLatencyMs: number; byModel: Record<string, unknown> }
+      gateway: {
+        requests: number
+        inputTokens: number
+        outputTokens: number
+        costUSD: number
+        avgLatencyMs: number
+        byModel: Record<string, unknown>
+      }
       costCap?: { perTask?: number; perSession?: number }
-      lanes: Record<string, { lane: string; circuit: 'closed' | 'open' | 'half-open'; state: string; failureCount: number; latencyMs: number; cooldownUntil: number | null; stats: { avgLatencyMs: number; costUSD: number } }>
-      providers: Record<string, { providerKey: string; state: string; status: string; latencyMs: number; failureCount: number; consecutiveFailures: number; cooldownUntil: number | null }>
+      lanes: Record<
+        string,
+        {
+          lane: string
+          circuit: 'closed' | 'open' | 'half-open'
+          state: string
+          failureCount: number
+          latencyMs: number
+          cooldownUntil: number | null
+          stats: { avgLatencyMs: number; costUSD: number }
+        }
+      >
+      providers: Record<
+        string,
+        {
+          providerKey: string
+          state: string
+          status: string
+          latencyMs: number
+          failureCount: number
+          consecutiveFailures: number
+          cooldownUntil: number | null
+        }
+      >
       laneStats: Record<string, unknown>
       timestamp: number
     }>('/provider/health'),
@@ -1360,7 +1422,10 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
       return `${proto}//${window.location.host}/`
     }
     const u = new URL(base)
-    const proto = u.protocol === 'https:' ? 'wss:' : 'ws:'
+    // If the page is served over HTTPS, the WS connection must also be WSS —
+    // browsers block mixed content (ws:// on https:// pages). Upgrade ws:// → wss://
+    // when the page protocol is HTTPS, regardless of the base URL protocol.
+    const proto = window.location.protocol === 'https:' || u.protocol === 'https:' ? 'wss:' : 'ws:'
     return `${proto}//${u.host}/`
   }
 

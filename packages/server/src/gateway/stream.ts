@@ -12,6 +12,7 @@ import type { JsonValue } from '../types/index.js'
 import type { GatewayChunk, StreamOptions } from './types.js'
 import { createSSEParser } from './sse.js'
 import { ProviderError } from './errors.js'
+import { isBlockedFetchUrl } from '../guardrails/index.js'
 
 interface ChatRequestMessage {
   role: string
@@ -102,9 +103,21 @@ export async function liveOpenAIStream(ctx: {
   const timeoutSignal = AbortSignal.timeout(timeout ?? 120_000)
   const combinedSignal = opts.signal ? AbortSignal.any([timeoutSignal, opts.signal]) : timeoutSignal
 
+  // SSRF protection: validate the full URL against private ranges before fetch
+  const fetchUrl = `${baseURL.replace(/\/$/, '')}/chat/completions`
+  const ssrfBlock = isBlockedFetchUrl(fetchUrl)
+  if (ssrfBlock) {
+    throw new ProviderError({
+      message: `Gateway SSRF blocked: ${ssrfBlock}`,
+      code: 'PROVIDER_ERROR',
+      provider: modelID,
+      status: 403,
+    })
+  }
+
   let res: Response
   try {
-    res = await fetch(`${baseURL.replace(/\/$/, '')}/chat/completions`, {
+    res = await fetch(fetchUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -38,7 +38,7 @@ describe('active_work.md auto-append (P0-2)', () => {
       rmSync(join(tmpDir, 'data'), { recursive: true, force: true })
     } catch {}
     // Simulate what prompt.ts does after successful write
-    appendActiveWork({
+    await appendActiveWork({
       tool: 'write',
       path: 'notes.md',
       summary: 'hello world content for active work',
@@ -55,7 +55,7 @@ describe('active_work.md auto-append (P0-2)', () => {
     try {
       rmSync(join(tmpDir, 'data'), { recursive: true, force: true })
     } catch {}
-    appendActiveWork({
+    await appendActiveWork({
       tool: 'edit',
       path: 'edit-target.txt',
       summary: 'updated content for active work test',
@@ -72,7 +72,7 @@ describe('active_work.md auto-append (P0-2)', () => {
     try {
       rmSync(join(tmpDir, 'data'), { recursive: true, force: true })
     } catch {}
-    appendActiveWork({
+    await appendActiveWork({
       tool: 'finding_write',
       path: 'Test finding',
       summary: 'Test finding — evidence details here',
@@ -94,7 +94,7 @@ describe('active_work.md auto-append (P0-2)', () => {
     // This tests the hook's guard: if isError, don't append
     const shouldAppend = false // isError = true, so don't append
     if (shouldAppend) {
-      appendActiveWork({
+      await appendActiveWork({
         tool: 'write',
         path: '/nonexistent_dir_forbidden/file.txt',
         summary: 'should fail',
@@ -112,7 +112,7 @@ describe('active_work.md auto-append (P0-2)', () => {
     expect(existsSync(file)).toBe(false)
   })
 
-  test('appendActiveWork helper is non-blocking and creates file if missing', () => {
+  test('appendActiveWork helper is non-blocking and creates file if missing', async () => {
     const testCwd = mkdtempSync(join(tmpdir(), 'mira-helper-'))
     const orig = process.cwd()
     const origDb = process.env.MIRA_DB
@@ -121,7 +121,7 @@ describe('active_work.md auto-append (P0-2)', () => {
       process.env.MIRA_DB = join(testCwd, 'data', 'helper.db')
       const file = join(testCwd, 'data', 'memory_bank', 'active_work.md')
       expect(existsSync(file)).toBe(false)
-      appendActiveWork({
+      await appendActiveWork({
         tool: 'write',
         path: 'test.md',
         summary: 'helper test summary',
@@ -133,7 +133,12 @@ describe('active_work.md auto-append (P0-2)', () => {
       expect(content).toContain('test.md')
       expect(content).toContain('helper test summary')
       // Second call should append, not overwrite
-      appendActiveWork({ tool: 'edit', path: 'other.md', summary: 'second entry', cwd: testCwd })
+      await appendActiveWork({
+        tool: 'edit',
+        path: 'other.md',
+        summary: 'second entry',
+        cwd: testCwd,
+      })
       const content2 = readFileSync(file, 'utf-8')
       expect(content2).toContain('second entry')
       expect(
@@ -149,7 +154,7 @@ describe('active_work.md auto-append (P0-2)', () => {
     }
   })
 
-  test('ensureMemoryBank creates file if missing', () => {
+  test('ensureMemoryBank creates file if missing', async () => {
     const testCwd = mkdtempSync(join(tmpdir(), 'mira-ensure-'))
     const orig = process.cwd()
     const origDb = process.env.MIRA_DB
@@ -158,7 +163,7 @@ describe('active_work.md auto-append (P0-2)', () => {
       process.env.MIRA_DB = join(testCwd, 'data', 'ensure.db')
       const file = join(testCwd, 'data', 'memory_bank', 'active_work.md')
       expect(existsSync(file)).toBe(false)
-      ensureMemoryBank(testCwd)
+      await ensureMemoryBank(testCwd)
       expect(existsSync(file)).toBe(true)
       const content = readFileSync(file, 'utf-8')
       expect(content).toContain('# Active Work')
@@ -176,7 +181,9 @@ describe('active_work.md auto-append (P0-2)', () => {
     // Resolve relative to this test file (import.meta.dir), not process.cwd()
     // — beforeEach chdir's to a temp dir, and CI checks out elsewhere.
     const promptPath = join(import.meta.dir, '..', 'session', 'prompt.ts')
-    const file = existsSync(promptPath) ? promptPath : join('/tmp/aether', 'packages', 'server', 'src', 'session', 'prompt.ts')
+    const file = existsSync(promptPath)
+      ? promptPath
+      : join('/tmp/aether', 'packages', 'server', 'src', 'session', 'prompt.ts')
     const content = readFileSync(file, 'utf-8')
     expect(content).toContain('appendActiveWork')
     expect(content).toContain("tc.name === 'write'")

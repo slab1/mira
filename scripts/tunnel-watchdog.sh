@@ -61,24 +61,19 @@ start_tunnel() {
 sync_pages() {
   local url="$1"
   echo "[watchdog $(date -u +%H:%M:%S)] syncing VITE_API_URL + redeploy Pages"
-  # Run git ops from the repo root regardless of where the watchdog was started
+  # Run from the repo root regardless of where the watchdog was started
   cd "${REPO_ROOT}" || { echo "[watchdog] cannot cd to ${REPO_ROOT}"; return 1; }
   local current
   current=$(grep -oP 'VITE_API_URL: \K.*' .github/workflows/pages.yml 2>/dev/null | tr -d '"' | tr -d "'" | xargs)
   if [ "$current" = "$url" ]; then
-    echo "[watchdog $(date -u +%H:%M:%S)] URL unchanged (${url}), skipping commit"
+    echo "[watchdog $(date -u +%H:%M:%S)] URL unchanged (${url}), nothing to do"
     return 0
   fi
-  git config user.email "watchdog@mira.local" 2>/dev/null || true
-  git config user.name "Mira Watchdog" 2>/dev/null || true
-  if sed -i "s|VITE_API_URL: .*|VITE_API_URL: ${url}|" .github/workflows/pages.yml \
-     && git add .github/workflows/pages.yml \
-     && git commit -m "ci: update VITE_API_URL to ${url}" --quiet \
-     && git push origin main --quiet 2>/dev/null; then
-    echo "[watchdog $(date -u +%H:%M:%S)] Pages redeploy triggered via git push"
-  else
-    echo "[watchdog $(date -u +%H:%M:%S)] git sync failed (check auth / push access)"
-  fi
+  # SECURITY: auto-commit/push to main removed (Task 8).
+  # Committing an untrusted, machine-generated URL straight to main could push
+  # bad code. Instead, surface the change so a human reviews/merges it (e.g. PR).
+  echo "[watchdog $(date -u +%H:%M:%S)] ⚠️  Tunnel URL changed to ${url}"
+  echo "[watchdog $(date -u +%H:%M:%S)] ⚠️  ACTION REQUIRED: update VITE_API_URL in .github/workflows/pages.yml and redeploy Pages manually — no auto-commit performed"
 }
 
 check_public_exposure() {

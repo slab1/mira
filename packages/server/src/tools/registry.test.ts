@@ -14,7 +14,7 @@ import { ToolRegistry, type ToolDef, type ToolContext, type RegistryDeps } from 
 function makeRegistry(): ToolRegistry {
   const deps = {
     db: {} as RegistryDeps['db'],
-    bus: {} as RegistryDeps['bus'],
+    bus: { subscribe: () => {} } as unknown as RegistryDeps['bus'],
     permissions: {} as RegistryDeps['permissions'],
     gateway: {} as RegistryDeps['gateway'],
     // guardrails intentionally omitted
@@ -103,13 +103,14 @@ describe('ToolRegistry.execute — timeout wrapper', () => {
       reg.execute(
         'slow_bus_tool',
         {},
-        ctx({ bus: { emit: (t: string, p: Record<string, unknown>) => void events.push(p) } as never }),
+        ctx({ bus: { publish: (e: Record<string, unknown>) => void events.push(e) } as never }),
       ),
     ).rejects.toThrow('timed out')
     expect(events).toHaveLength(1)
-    expect(events[0].tool).toBe('slow_bus_tool')
-    expect(events[0].success).toBe(false)
-    expect(events[0].errorCode).toBe('TOOL_TIMEOUT')
+    const payload = events[0].payload as Record<string, unknown>
+    expect(payload.tool).toBe('slow_bus_tool')
+    expect(payload.success).toBe(false)
+    expect(payload.errorCode).toBe('TOOL_TIMEOUT')
   })
 })
 
@@ -181,14 +182,15 @@ describe('ToolRegistry.execute — result normalization', () => {
         },
       }),
     )
-    const bus = { emit: (_t: string, p: Record<string, unknown>) => void events.push(p) }
-    await expect(
-      reg.execute('throwing_tool', {}, ctx({ bus: bus as never })),
-    ).rejects.toThrow('boom')
+    const bus = { publish: (e: Record<string, unknown>) => void events.push(e) }
+    await expect(reg.execute('throwing_tool', {}, ctx({ bus: bus as never }))).rejects.toThrow(
+      'boom',
+    )
     expect(events).toHaveLength(1)
-    expect(events[0].success).toBe(false)
-    expect(String(events[0].error)).toContain('boom')
-    expect(events[0].errorCode).toBeUndefined() // plain Error has no .code
+    const payload = events[0].payload as Record<string, unknown>
+    expect(payload.success).toBe(false)
+    expect(String(payload.error)).toContain('boom')
+    expect(payload.errorCode).toBeUndefined() // plain Error has no .code
   })
 
   test('Error-like with .code surfaces the code on the bus event', async () => {
@@ -208,10 +210,10 @@ describe('ToolRegistry.execute — result normalization', () => {
       reg.execute(
         'coded_tool',
         {},
-        ctx({ bus: { emit: (_t: string, p: Record<string, unknown>) => void events.push(p) } as never }),
+        ctx({ bus: { publish: (e: Record<string, unknown>) => void events.push(e) } as never }),
       ),
     ).rejects.toThrow('nope')
-    expect(events[0].errorCode).toBe('E_CUSTOM')
+    expect((events[0].payload as Record<string, unknown>).errorCode).toBe('E_CUSTOM')
   })
 
   test('successful call emits tool.executed with success:true', async () => {
@@ -224,11 +226,15 @@ describe('ToolRegistry.execute — result normalization', () => {
       ctx({
         sessionID: 'sess-x',
         messageID: 'msg-x',
-        bus: { emit: (_t: string, p: Record<string, unknown>) => void events.push(p) } as never,
+        bus: { publish: (e: Record<string, unknown>) => void events.push(e) } as never,
       }),
     )
     expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({ sessionID: 'sess-x', messageID: 'msg-x', tool: 'ok_tool', success: true })
+    expect(events[0].payload as Record<string, unknown>).toMatchObject({
+      messageID: 'msg-x',
+      tool: 'ok_tool',
+      success: true,
+    })
   })
 })
 

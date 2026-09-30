@@ -137,12 +137,18 @@ const DEFAULT_GUARDRAILS: Required<GuardrailConfig> = {
 export function sanitizePath(path: string): { ok: boolean; reason?: string; sanitized?: string } {
   if (typeof path !== 'string') return { ok: false, reason: 'path not string' }
   if (path.includes('\0')) return { ok: false, reason: 'null byte in path' }
-  // Decode percent-encoded traversal attempts (e.g. %2e%2e%2f == ../)
-  let decoded: string
-  try {
-    decoded = decodeURIComponent(path)
-  } catch {
-    decoded = path
+  // Decode percent-encoded traversal attempts repeatedly until stable.
+  // Single decode is bypassable via double-encoding (e.g. %252e%252e%252f).
+  let decoded: string = path
+  for (let i = 0; i < 10; i++) {
+    let next: string
+    try {
+      next = decodeURIComponent(decoded)
+    } catch {
+      break
+    }
+    if (next === decoded) break
+    decoded = next
   }
   // If decoding changed traversal patterns, reject
   if (decoded.includes('\0')) return { ok: false, reason: 'null byte after decode' }
@@ -245,6 +251,12 @@ export function sanitizeCommand(cmd: string): { ok: boolean; reason?: string; sa
   for (const rx of dangerPatterns) {
     if (rx.test(cmd)) return { ok: false, reason: 'dangerous bash pattern detected' }
   }
+  // Block eval/exec and command substitution (backticks and $())
+  if (/\beval\b/.test(cmd)) return { ok: false, reason: 'eval is not allowed' }
+  if (/\bexec\b/.test(cmd)) return { ok: false, reason: 'exec is not allowed' }
+  if (cmd.includes('`'))
+    return { ok: false, reason: 'backtick command substitution is not allowed' }
+  if (/\$\(/.test(cmd)) return { ok: false, reason: '$() command substitution is not allowed' }
   return { ok: true, sanitized: cmd }
 }
 

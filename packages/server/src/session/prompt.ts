@@ -673,24 +673,27 @@ export class SessionPrompt {
     })
 
     const now = Date.now()
-    for (const m of selected) {
-      const newMessageID = crypto.randomUUID()
-      await this.deps.db.insert(this.deps.db.schema.messages).values({
-        id: newMessageID,
-        sessionID: fork.id,
-        role: m.role,
-        createdAt: m.createdAt ?? now,
-      })
-      for (const p of m.parts ?? []) {
-        const { id: _old, ...rest } = p
-        await this.deps.db.insert(this.deps.db.schema.parts).values({
-          id: crypto.randomUUID(),
-          ...rest,
-          messageID: newMessageID,
+    // Wrap message + parts copy in a transaction: all-or-nothing on failure
+    await this.deps.db.transaction(async (tx) => {
+      for (const m of selected) {
+        const newMessageID = crypto.randomUUID()
+        await tx.insert(this.deps.db.schema.messages).values({
+          id: newMessageID,
           sessionID: fork.id,
+          role: m.role,
+          createdAt: m.createdAt ?? now,
         })
+        for (const p of m.parts ?? []) {
+          const { id: _old, ...rest } = p
+          await tx.insert(this.deps.db.schema.parts).values({
+            id: crypto.randomUUID(),
+            ...rest,
+            messageID: newMessageID,
+            sessionID: fork.id,
+          })
+        }
       }
-    }
+    })
 
     this.deps.bus.publish({
       type: 'session.created',
@@ -1098,11 +1101,33 @@ export class SessionPrompt {
           if (reg) return reg.getOrDefault('compaction')
           return this.deps.gateway
         })()
-        const result = await compactMessages(compactionGateway, messages, {
-          smallModel: limits.smallModel,
-          contextLimit,
-          threshold,
-        })
+        let result: Awaited<ReturnType<typeof compactMessages>>
+        try {
+          result = await compactMessages(compactionGateway, messages, {
+            smallModel: limits.smallModel,
+            contextLimit,
+            threshold,
+          })
+        } catch (compErr) {
+          // Compaction failed — log and stop the loop to avoid exceeding context window
+          const errMsg = compErr instanceof Error ? compErr.message : String(compErr)
+          console.error(
+            `[session] compaction failed at step ${step} (session ${sessionID}):`,
+            errMsg,
+          )
+          send('error', { error: `Compaction failed: ${errMsg}` })
+          this.deps.bus.publish({
+            type: 'server.error',
+            sessionID,
+            payload: {
+              error: `Compaction failed: ${errMsg}`,
+              source: 'compaction',
+              step,
+            } as JsonValue,
+            timestamp: Date.now(),
+          })
+          break loop
+        }
         // Preserve tool-call history — don't drop non-string contents (tool results) which are needed for correct summarization
         messages = result.messages
         compactionCount++
@@ -1297,8 +1322,10 @@ export class SessionPrompt {
         }
         if (perm.action === 'ask') {
           // Publish permission.ask → TUI shows prompt → user replies via WS → permission.reply
-          send('permission_ask', { toolCallID: tc.id, tool: tc.name, args: tc.args })
-          const decision = await this.deps.bus.waitForPermissionReply(tc.id, 120_000)
+          // Nonce prevents reply spoofing — must be echoed back in permission.reply
+          const nonce = crypto.randomUUID()
+          send('permission_ask', { toolCallID: tc.id, tool: tc.name, args: tc.args, nonce })
+          const decision = await this.deps.bus.waitForPermissionReply(tc.id, nonce, 120_000)
           if (decision !== 'allow') {
             const err = `User denied ${tc.name}`
             await this.persistToolResult(assistantMessageID, sessionID, tc, { error: err }, true)
@@ -1416,7 +1443,7 @@ export class SessionPrompt {
               summary = `${title}${evidence ? ` — ${evidence}` : ''}`.slice(0, 200)
               filePath = title || undefined
             }
-            appendActiveWork({
+            void appendActiveWork({
               tool: tc.name,
               path: filePath,
               summary,
@@ -1611,7 +1638,7 @@ export class SessionPrompt {
     const context: LoopMessage[] = [{ role: 'system', content: systemPrompt }]
     // Ensure memory_bank exists on boot (idempotent, non-blocking) — P0-2
     try {
-      ensureMemoryBank(sessionCwd)
+      void ensureMemoryBank(sessionCwd)
     } catch {}
     // Memory Bank (Kilo K3 parity) — flat file notes that survive restarts, injected before other memory
     try {

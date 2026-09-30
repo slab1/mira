@@ -34,7 +34,7 @@ function miraPortFallback(): string {
 // First-run token correspondence: the server auto-creates ~/.mira/mira.env
 // on first boot. Inject its MIRA_TOKEN as the web dev fallback so the
 // frontend authenticates without manual copy-paste. An explicit
-// VITE_MIRA_TOKEN and localStorage `mira_token` still take precedence
+// VITE_MIRA_TOKEN and sessionStorage `mira_token` still take precedence
 // (see client getToken order).
 function miraEnvToken(): string {
   const override = process.env.MIRA_DIR?.trim()

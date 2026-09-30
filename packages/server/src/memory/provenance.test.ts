@@ -115,7 +115,12 @@ describe('derived weakest-link cap (§3)', () => {
   test('level = min(parent levels), confidence = min(parent confidences)', () => {
     const p = normalizeProvenance(
       { sourceKind: 'derived' },
-      { parents: [{ provenance: 'human-verified', confidence: 1.0 }, { provenance: 'agent-generated', confidence: 0.5 }] },
+      {
+        parents: [
+          { provenance: 'human-verified', confidence: 1.0 },
+          { provenance: 'agent-generated', confidence: 0.5 },
+        ],
+      },
     )
     expect(p.provenance).toBe('agent-generated')
     expect(p.confidence).toBe(0.5)
@@ -188,16 +193,18 @@ describe('effectiveConfidence — read-time staleness cap (§3.2)', () => {
   })
 
   test('falls back to createdAt when lastVerifiedAt is missing', () => {
-    expect(effectiveConfidence({ confidence: 0.6, createdAt: NOW - STALE_AFTER_MS - DAY }, NOW)).toBe(
-      STALE_CONFIDENCE_CAP,
-    )
+    expect(
+      effectiveConfidence({ confidence: 0.6, createdAt: NOW - STALE_AFTER_MS - DAY }, NOW),
+    ).toBe(STALE_CONFIDENCE_CAP)
   })
 })
 
 describe('cautionFlag — flag, don’t hide (§4)', () => {
   const now = NOW
   test('unverified → caution even if scored', () => {
-    expect(cautionFlag({ provenance: 'unverified', confidence: 0.4, lastVerifiedAt: now }, now)).toBe(true)
+    expect(
+      cautionFlag({ provenance: 'unverified', confidence: 0.4, lastVerifiedAt: now }, now),
+    ).toBe(true)
   })
   test('agent-generated 0.5 fresh → no caution (safety memories stay visible)', () => {
     expect(
@@ -239,7 +246,9 @@ describe('backfillEvidence (§2.4)', () => {
   })
 
   test('no-op when evidence already present or no URLs', () => {
-    expect(backfillEvidence({ ...legacy, evidence: [{ kind: 'ci', ref: 'run:1', at: NOW }] })).toEqual({
+    expect(
+      backfillEvidence({ ...legacy, evidence: [{ kind: 'ci', ref: 'run:1', at: NOW }] }),
+    ).toEqual({
       ...legacy,
       evidence: [{ kind: 'ci', ref: 'run:1', at: NOW }],
     })
@@ -324,8 +333,8 @@ describe('MemoryController file stores carry provenance (§6.4)', () => {
     } catch {}
   })
 
-  test('store_experience writes provenance defaults into episodic_memory.jsonl', () => {
-    mc.store_experience('test task', 'ran suite', 'green', { k: 'v' })
+  test('store_experience writes provenance defaults into episodic_memory.jsonl', async () => {
+    await mc.store_experience('test task', 'ran suite', 'green', { k: 'v' })
     const lines = fs
       .readFileSync(path.join(dir, 'episodic_memory.jsonl'), 'utf-8')
       .split('\n')
@@ -344,11 +353,11 @@ describe('MemoryController file stores carry provenance (§6.4)', () => {
     expect(last.evidence).toEqual([])
   })
 
-  test('store_fact writes provenance defaults into semantic_memory.json', () => {
-    mc.store_fact('Mira', 'uses', 'SQLite')
-    const data = JSON.parse(
-      fs.readFileSync(path.join(dir, 'semantic_memory.json'), 'utf-8'),
-    ) as { relations: Array<{ s: string; provenance?: string; confidence?: number; sourceKind?: string }> }
+  test('store_fact writes provenance defaults into semantic_memory.json', async () => {
+    await mc.store_fact('Mira', 'uses', 'SQLite')
+    const data = JSON.parse(fs.readFileSync(path.join(dir, 'semantic_memory.json'), 'utf-8')) as {
+      relations: Array<{ s: string; provenance?: string; confidence?: number; sourceKind?: string }>
+    }
     const last = data.relations[data.relations.length - 1]!
     expect(last.s).toBe('Mira')
     expect(last.provenance).toBe('agent-generated')

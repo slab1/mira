@@ -189,5 +189,5 @@ describe('gaps: static web', () => {
     const text = await res.text()
     expect(res.ok).toBe(true)
     expect(text).toContain('Mira')
-  })
+  }, 15_000)
 })

@@ -23,10 +23,11 @@
  * | 10 | Known limitations | Implemented | Phase 1 single-file; Phase 6 handles deps/config/schema rollback |
  */
 
-import type { MiraDB } from "../storage/db.js"
-import { snapshotFile } from "../storage/snapshots.js"
-import { applyEditWithFallback } from "../tools/edit-fallback.js"
-import type { JsonValue } from "../types/index.js"
+import { createHash } from 'node:crypto'
+import type { MiraDB } from '../storage/db.js'
+import { snapshotFile } from '../storage/snapshots.js'
+import { applyEditWithFallback } from '../tools/edit-fallback.js'
+import type { JsonValue } from '../types/index.js'
 
 export interface PatchRequest {
   path: string
@@ -34,6 +35,8 @@ export interface PatchRequest {
   newString: string
   proposalId?: string
   sessionID?: string
+  /** Bearer token — required when MIRA_PATCH_TOKEN (or MIRA_TOKEN) is configured. */
+  authToken?: string
 }
 
 export interface PatchResult {
@@ -47,24 +50,47 @@ export interface PatchResult {
   notes?: string[]
 }
 
+/** Constant-time token comparison — hash then compare, no length leak (same pattern as index.ts tokenEquals). */
+function patchTokenEquals(a: string, b: string): boolean {
+  const ha = createHash('sha256').update(a).digest()
+  const hb = createHash('sha256').update(b).digest()
+  if (ha.length !== hb.length) return false
+  let diff = 0
+  for (let i = 0; i < ha.length; i++) diff |= ha[i] ^ hb[i]
+  return diff === 0
+}
+
+/** Verify patch auth — when MIRA_PATCH_TOKEN (or MIRA_TOKEN) is set, req.authToken must match. */
+function verifyPatchToken(req: PatchRequest): boolean {
+  const required = process.env.MIRA_PATCH_TOKEN ?? process.env.MIRA_TOKEN ?? ''
+  if (!required) return true // dev mode — no token configured, auth not enforced (same as middleware)
+  if (!req.authToken) return false
+  return patchTokenEquals(req.authToken, required)
+}
+
 /** Apply a hash-anchored patch with pre-mutation snapshot — per hash-anchored-edits skill (9 layers). */
-export async function applyPatch(
-  db: MiraDB,
-  req: PatchRequest,
-): Promise<PatchResult> {
-  const sessionID = req.sessionID ?? `evolution:${req.proposalId ?? "patch"}`
-  const abs = req.path.startsWith("/") ? req.path : `${process.cwd()}/${req.path}`
+export async function applyPatch(db: MiraDB, req: PatchRequest): Promise<PatchResult> {
+  if (!verifyPatchToken(req)) {
+    return { ok: false, path: req.path, error: 'unauthorized: valid authToken required' }
+  }
+  const sessionID = req.sessionID ?? `evolution:${req.proposalId ?? 'patch'}`
+  const abs = req.path.startsWith('/') ? req.path : `${process.cwd()}/${req.path}`
 
   // Ensure session exists for FK — snapshots need valid session_id on some DBs; skip if not
   // We store snapshot against the evolution session or fallback to first session
   let effectiveSessionID = sessionID
   try {
-    const row = db.sqlite.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string } | undefined
-    if (row && !db.sqlite.prepare("SELECT id FROM sessions WHERE id = ?").get(effectiveSessionID)) {
+    const row = db.sqlite.prepare('SELECT id FROM sessions LIMIT 1').get() as
+      { id: string } | undefined
+    if (row && !db.sqlite.prepare('SELECT id FROM sessions WHERE id = ?').get(effectiveSessionID)) {
       // create ephemeral evolution session for snapshot FK
       const now = Date.now()
       try {
-        db.sqlite.prepare("INSERT OR IGNORE INTO sessions (id, title, model, provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(effectiveSessionID, "evolution-patcher", "claude-sonnet-4", "anthropic", now, now)
+        db.sqlite
+          .prepare(
+            'INSERT OR IGNORE INTO sessions (id, title, model, provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+          )
+          .run(effectiveSessionID, 'evolution-patcher', 'claude-sonnet-4', 'anthropic', now, now)
       } catch {}
     }
   } catch {}
@@ -109,8 +135,8 @@ export async function dryRunPatch(
   db: MiraDB,
   req: PatchRequest,
 ): Promise<{ ok: boolean; wouldApply: boolean; snapshotId?: string }> {
-  const abs = req.path.startsWith("/") ? req.path : `${process.cwd()}/${req.path}`
-  const sid = req.sessionID ?? "evolution:dryrun"
+  const abs = req.path.startsWith('/') ? req.path : `${process.cwd()}/${req.path}`
+  const sid = req.sessionID ?? 'evolution:dryrun'
   let snapId: string | undefined
   try {
     const snap = snapshotFile(db, { sessionID: sid, path: abs })

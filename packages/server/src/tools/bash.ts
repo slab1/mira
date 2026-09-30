@@ -5,6 +5,7 @@
  */
 import { z } from 'zod'
 import type { ToolDef } from './registry.js'
+import { sanitizeCommand } from '../guardrails/index.js'
 
 const bashSchema = z.object({
   command: z.string().min(1).describe('Shell command to execute'),
@@ -21,6 +22,11 @@ export const bashTool = {
   needsPermission: true,
   schema: bashSchema,
   async execute({ command, timeout = 30_000, workdir }, ctx) {
+    // Sanitize command at the tool layer — defense in depth beyond guardrails
+    const sanitized = sanitizeCommand(command)
+    if (!sanitized.ok) {
+      return { stdout: '', stderr: `Command rejected: ${sanitized.reason}`, exitCode: 1, command }
+    }
     // Clamp caller-provided timeout: never allow more than 2 minutes to prevent
     // indefinite runs from LLM-supplied values (e.g. timeout: 9999999).
     const BASH_TIMEOUT_MAX_MS = 120_000
@@ -31,11 +37,28 @@ export const bashTool = {
       stderr: 'pipe',
       timeout: effectiveTimeout,
     })
+    // Kill the process when the abort signal fires (timeout or caller cancellation)
+    const onAbort = () => {
+      try {
+        proc.kill()
+      } catch {}
+    }
+    if (ctx.signal) {
+      if (ctx.signal.aborted) {
+        onAbort()
+      } else {
+        ctx.signal.addEventListener('abort', onAbort, { once: true })
+      }
+    }
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
       proc.exited,
     ])
+    // Clean up the abort listener if it wasn't triggered
+    if (ctx.signal) {
+      ctx.signal.removeEventListener('abort', onAbort)
+    }
     // Truncate huge outputs (LLM context protection)
     const MAX = 30_000
     const out =

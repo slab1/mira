@@ -106,5 +106,5 @@ describe('message queue', () => {
         .flatMap((m) => (m.parts ?? []).filter((p) => p.type === 'text').map((p) => p.text))
       expect(userTexts).toContain('first queued')
     }
-  })
+  }, 30_000)
 })

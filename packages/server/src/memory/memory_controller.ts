@@ -20,11 +20,18 @@
  */
 
 import * as fs from 'node:fs'
+import * as fsp from 'node:fs/promises'
 import * as path from 'node:path'
 import * as os from 'node:os'
 import { spawnSync } from 'node:child_process'
 import type { MemoryEntry, ProvenanceLevel } from '../learning/knowledge.js'
-import { normalizeProvenance, cautionFlag, effectiveConfidence, type EvidenceRef, type SourceKind } from './provenance.js'
+import {
+  normalizeProvenance,
+  cautionFlag,
+  effectiveConfidence,
+  type EvidenceRef,
+  type SourceKind,
+} from './provenance.js'
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -127,12 +134,12 @@ export class MemoryController {
 
   // ── L2: Episodic ───────────────────────────────────────────────────
 
-  store_experience(
+  async store_experience(
     task: string,
     action: string,
     outcome: string,
     metadata: Record<string, unknown> = {},
-  ): void {
+  ): Promise<void> {
     // §6.4 chokepoint 4: file-store writes get provenance defaults too
     const prov = normalizeProvenance({}, { now: Date.now() })
     const entry: EpisodicEntry = {
@@ -148,33 +155,33 @@ export class MemoryController {
       evidence: prov.evidence,
     }
     try {
-      fs.mkdirSync(this.memoryDir, { recursive: true })
+      await fsp.mkdir(this.memoryDir, { recursive: true })
       const line = JSON.stringify(entry) + '\n'
       // Append with fsync: open, write, fsync, close — anti-data-loss
-      const fd = fs.openSync(this.episodicPath, 'a')
+      const fh = await fsp.open(this.episodicPath, 'a')
       try {
-        fs.writeSync(fd, line, null, 'utf-8')
+        await fh.writeFile(line, 'utf-8')
         try {
-          fs.fsyncSync(fd)
+          await fh.sync()
         } catch {}
       } finally {
-        fs.closeSync(fd)
+        await fh.close()
       }
     } catch {}
   }
 
   /** Alias for camelCase callers */
-  storeExperience(
+  async storeExperience(
     task: string,
     action: string,
     outcome: string,
     metadata?: Record<string, unknown>,
-  ): void {
-    this.store_experience(task, action, outcome, metadata ?? {})
+  ): Promise<void> {
+    return this.store_experience(task, action, outcome, metadata ?? {})
   }
 
-  retrieve_similar_experiences(task_query: string, limit = 3): EpisodicEntry[] {
-    const experiences = this._load_experiences()
+  async retrieve_similar_experiences(task_query: string, limit = 3): Promise<EpisodicEntry[]> {
+    const experiences = await this._load_experiences()
     if (!experiences.length) return []
     const queryTokens = tokenize(task_query)
     if (!queryTokens.length) return []
@@ -183,14 +190,14 @@ export class MemoryController {
   }
 
   /** Alias */
-  retrieveSimilarExperiences(query: string, limit = 3): EpisodicEntry[] {
+  async retrieveSimilarExperiences(query: string, limit = 3): Promise<EpisodicEntry[]> {
     return this.retrieve_similar_experiences(query, limit)
   }
 
-  private _load_experiences(): EpisodicEntry[] {
+  private async _load_experiences(): Promise<EpisodicEntry[]> {
     try {
       if (!fs.existsSync(this.episodicPath)) return []
-      const raw = fs.readFileSync(this.episodicPath, 'utf-8')
+      const raw = await fsp.readFile(this.episodicPath, 'utf-8')
       const out: EpisodicEntry[] = []
       for (const line of raw.split('\n')) {
         const t = line.trim()
@@ -296,8 +303,8 @@ export class MemoryController {
 
   // ── L3: Semantic ───────────────────────────────────────────────────
 
-  store_fact(subject: string, predicate: string, object_: string): void {
-    const data = this._load_semantic()
+  async store_fact(subject: string, predicate: string, object_: string): Promise<void> {
+    const data = await this._load_semantic()
     // §6.4 chokepoint 4: semantic triples carry the same provenance defaults
     const prov = normalizeProvenance({}, { now: Date.now() })
     const relation: SemanticRelation = {
@@ -316,16 +323,16 @@ export class MemoryController {
       if (!data.entities[entity]) data.entities[entity] = { mentions: 0 }
       data.entities[entity].mentions++
     }
-    this._save_semantic(data)
+    await this._save_semantic(data)
   }
 
   /** Alias camelCase */
-  storeFact(subject: string, predicate: string, object_: string): void {
-    this.store_fact(subject, predicate, object_)
+  async storeFact(subject: string, predicate: string, object_: string): Promise<void> {
+    return this.store_fact(subject, predicate, object_)
   }
 
-  query_semantic(entity: string): SemanticRelation[] {
-    const data = this._load_semantic()
+  async query_semantic(entity: string): Promise<SemanticRelation[]> {
+    const data = await this._load_semantic()
     const hits = data.relations.filter((r) => r.s === entity || r.o === entity)
     if (hits.length) return hits
     const tokens = entity
@@ -343,23 +350,23 @@ export class MemoryController {
     return scored
   }
 
-  querySemantic(entity: string): SemanticRelation[] {
+  async querySemantic(entity: string): Promise<SemanticRelation[]> {
     return this.query_semantic(entity)
   }
 
-  private _load_semantic(): SemanticStore {
+  private async _load_semantic(): Promise<SemanticStore> {
     try {
       if (!fs.existsSync(this.semanticPath)) return { entities: {}, relations: [] }
-      return JSON.parse(fs.readFileSync(this.semanticPath, 'utf-8')) as SemanticStore
+      return JSON.parse(await fsp.readFile(this.semanticPath, 'utf-8')) as SemanticStore
     } catch {
       return { entities: {}, relations: [] }
     }
   }
 
-  private _save_semantic(data: SemanticStore): void {
+  private async _save_semantic(data: SemanticStore): Promise<void> {
     try {
-      fs.mkdirSync(this.memoryDir, { recursive: true })
-      fs.writeFileSync(this.semanticPath, JSON.stringify(data, null, 2), 'utf-8')
+      await fsp.mkdir(this.memoryDir, { recursive: true })
+      await fsp.writeFile(this.semanticPath, JSON.stringify(data, null, 2), 'utf-8')
     } catch {}
   }
 
@@ -459,17 +466,17 @@ export class MemoryController {
 
   // ── L1: Working — Cognitive Packet ─────────────────────────────────
 
-  generate_cognitive_packet(task_query: string): CognitivePacket {
+  async generate_cognitive_packet(task_query: string): Promise<CognitivePacket> {
     return {
-      episodic: this.retrieve_similar_experiences(task_query),
-      semantic: this.query_semantic(task_query),
+      episodic: await this.retrieve_similar_experiences(task_query),
+      semantic: await this.query_semantic(task_query),
       procedural: this.get_relevant_skills(task_query),
       timestamp: Date.now() / 1000,
     }
   }
 
   /** Alias camelCase */
-  generateCognitivePacket(query: string): CognitivePacket {
+  async generateCognitivePacket(query: string): Promise<CognitivePacket> {
     return this.generate_cognitive_packet(query)
   }
 
@@ -543,7 +550,7 @@ export async function generate_cognitive_packet(
     return { episodic, semantic, procedural, timestamp: Date.now() / 1000 }
   } catch {
     const mc = getMemoryController()
-    const pkt = mc.generate_cognitive_packet(query)
+    const pkt = await mc.generate_cognitive_packet(query)
     return pkt
   }
 }
@@ -552,12 +559,12 @@ export const generateCognitivePacketExport = generate_cognitive_packet
 // ── P0-2: active_work.md auto-append (exp-1 remainder) ─────────────────
 // Appends concise outcome after successful write/edit/finding_write.
 // Non-blocking: never throws, warns on failure. Idempotent mkdir + create.
-export function appendActiveWork(opts: {
+export async function appendActiveWork(opts: {
   tool: string
   path?: string
   summary: string
   cwd?: string
-}): void {
+}): Promise<void> {
   try {
     const cwd = opts.cwd ?? process.cwd()
     const dbPath = process.env.MIRA_DB
@@ -572,10 +579,10 @@ export function appendActiveWork(opts: {
     } else {
       bankDir = path.join(cwd, 'data', 'memory_bank')
     }
-    fs.mkdirSync(bankDir, { recursive: true })
+    await fsp.mkdir(bankDir, { recursive: true })
     const file = path.join(bankDir, 'active_work.md')
     if (!fs.existsSync(file)) {
-      fs.writeFileSync(
+      await fsp.writeFile(
         file,
         '# Active Work\n\nIn-progress branches, mid-migration notes, what the next session should resume.\n\n',
         'utf-8',
@@ -585,14 +592,14 @@ export function appendActiveWork(opts: {
     const cleanSummary = opts.summary.slice(0, 200).replace(/\r?\n/g, ' ').trim()
     const pathPart = opts.path ? ` ${opts.path}` : ''
     const line = `- ${timestamp} [${opts.tool}]${pathPart} — ${cleanSummary}\n`
-    fs.appendFileSync(file, line, 'utf-8')
+    await fsp.appendFile(file, line, 'utf-8')
   } catch (e) {
     console.warn('[memory] appendActiveWork failed:', String(e))
   }
 }
 
 // Ensure data/memory_bank/active_work.md exists on boot (idempotent)
-export function ensureMemoryBank(cwd?: string): void {
+export async function ensureMemoryBank(cwd?: string): Promise<void> {
   try {
     const cwdEff = cwd ?? process.cwd()
     const dbPath = process.env.MIRA_DB
@@ -605,7 +612,7 @@ export function ensureMemoryBank(cwd?: string): void {
     } else {
       bankDir = path.join(cwdEff, 'data', 'memory_bank')
     }
-    fs.mkdirSync(bankDir, { recursive: true })
+    await fsp.mkdir(bankDir, { recursive: true })
     const files: Record<string, string> = {
       'active_work.md':
         '# Active Work\n\nIn-progress branches, mid-migration notes, what the next session should resume.\n\n',
@@ -617,7 +624,7 @@ export function ensureMemoryBank(cwd?: string): void {
     for (const [name, content] of Object.entries(files)) {
       const file = path.join(bankDir, name)
       if (!fs.existsSync(file)) {
-        fs.writeFileSync(file, content, 'utf-8')
+        await fsp.writeFile(file, content, 'utf-8')
       }
     }
   } catch (e) {
