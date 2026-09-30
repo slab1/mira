@@ -1,9 +1,34 @@
 # Trust & Provenance System — Design (MIRA_GAP_PLAN.md P0 #2)
 
-**Status:** design only. Success criteria: *“provenance scores on ALL memories, evidence tracking.”*
+**Status:** design only. Success criteria: _“provenance scores on ALL memories, evidence tracking.”_
 **Scope note:** `learning/knowledge.ts` carries an **uncommitted parallel-lane diff** that already adds
 `ProvenanceLevel`, `PROVENANCE_CONFIDENCE`, `provenance TEXT` and `confidence REAL` columns. This design
 **extends** that work — never reverts or renames it. Re-read every file at implementation time.
+
+---
+
+## Implementation Status
+
+| Component                                                                                       | Status         | Notes                                                                                                     |
+| ----------------------------------------------------------------------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------- |
+| `ProvenanceLevel` enum + `PROVENANCE_CONFIDENCE` defaults                                       | Partial (lane) | Uncommitted parallel-lane diff in `learning/knowledge.ts`; 5-level enum, defaults `agent-generated/0.5`   |
+| `provenance` + `confidence` columns on `knowledge_entries`                                      | Partial (lane) | Nullable columns added by lane; design calls for `NOT NULL DEFAULT` + backfill                            |
+| `normalizeProvenance()` module                                                                  | Pending        | New `packages/server/src/memory/provenance.ts` — defaults, derived weakest-link, corroboration, staleness |
+| `sourceKind` / `sourceRef` / `createdBy` / `evidence` / `derivedFrom` / `lastVerifiedAt` fields | Pending        | 6 new columns + TypeScript interface extensions                                                           |
+| `EvidenceRef` type + `corroborate()` helper                                                     | Pending        | New module; cap 8 evidence refs, +0.05 per corroboration (cap 0.95)                                       |
+| Enforcement at `KnowledgeBase.store()`                                                          | Pending        | Normalization chokepoint — all KB writers funnel through here                                             |
+| Enforcement at `KnowledgeBase.persist()`                                                        | Pending        | Both INSERT variants must list provenance columns                                                         |
+| `memory_write` / `memory_search` provenance                                                     | Pending        | `memory_write` passes `sourceKind`/`sourceRef`/`createdBy`; `memory_search` returns provenance block      |
+| `MemoryController.store_experience()` / `store_fact()`                                          | Pending        | Fill defaults from `normalizeProvenance`                                                                  |
+| `POST /knowledge` → `user-stated` / `human-verified`                                            | Pending        | Route handler sets sourceKind and createdBy                                                               |
+| Finding promote → `derived` provenance                                                          | Pending        | Sets `sourceKind:'derived'`, `derivedFrom:['finding:'+id]`                                                |
+| `buildCognitivePacket` caution prefix                                                           | Pending        | One-line prefix with provenance level + confidence + caution flag                                         |
+| Backfill migration (8 columns + 6 UPDATEs)                                                      | Pending        | `storage/db.ts` addColumn block after line 254                                                            |
+| Enforcement test (sweep all write APIs)                                                         | Pending        | New `provenance.test.ts` — asserts zero NULL provenance columns                                           |
+
+**Summary:** The lane has partially implemented the schema (enum + 2 columns). The full design —
+normalization module, 6 additional fields, enforcement at all chokepoints, evidence tracking, and
+consumer visibility — is **pending implementation** per the plan in §6.
 
 ---
 
@@ -11,12 +36,12 @@
 
 There is not one memory store — there are four. “ALL memories” must enumerate them:
 
-| # | Store | Write chokepoint(s) | Provenance today |
-|---|-------|--------------------|------------------|
-| 1 | `knowledge_entries` (SQLite) — the main KB | `KnowledgeBase.store()` `learning/knowledge.ts:269` → `persist()` `:760` (only SQL writer, `INSERT OR REPLACE` `:770`) | **Partial (lane, uncommitted):** `provenance`+`confidence` columns, 5-level enum, defaults `agent-generated/0.5` (`:285-286`), read default `unverified/0.2` (`:246-247`) |
-| 2 | `evolution_memory` (SQLite) — failure/success memory | `EvolutionMemory.remember()` `memory-evolution/evolution-memory.ts:114` | **Compliant already:** `confidence REAL` + `evidence TEXT` with per-type defaults (`defaultConfidence()` `:297`); `MemoryProvenance.explain()` `memory-evolution/provenance.ts:128` exposes §8/§9 |
-| 3 | `episodic_memory.jsonl` + `semantic_memory.json` (files) | `MemoryController.store_experience()` `memory/memory_controller.ts:116`, `store_fact()` `:278` | **None** — no source/confidence fields at all |
-| 4 | `data/memory_bank/*.md` (markdown) | `appendActiveWork()` `memory_controller.ts:515` | Unstructured side-channel → **non-goal** (documented, not instrumented) |
+| #   | Store                                                    | Write chokepoint(s)                                                                                                    | Provenance today                                                                                                                                                                                  |
+| --- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `knowledge_entries` (SQLite) — the main KB               | `KnowledgeBase.store()` `learning/knowledge.ts:269` → `persist()` `:760` (only SQL writer, `INSERT OR REPLACE` `:770`) | **Partial (lane, uncommitted):** `provenance`+`confidence` columns, 5-level enum, defaults `agent-generated/0.5` (`:285-286`), read default `unverified/0.2` (`:246-247`)                         |
+| 2   | `evolution_memory` (SQLite) — failure/success memory     | `EvolutionMemory.remember()` `memory-evolution/evolution-memory.ts:114`                                                | **Compliant already:** `confidence REAL` + `evidence TEXT` with per-type defaults (`defaultConfidence()` `:297`); `MemoryProvenance.explain()` `memory-evolution/provenance.ts:128` exposes §8/§9 |
+| 3   | `episodic_memory.jsonl` + `semantic_memory.json` (files) | `MemoryController.store_experience()` `memory/memory_controller.ts:116`, `store_fact()` `:278`                         | **None** — no source/confidence fields at all                                                                                                                                                     |
+| 4   | `data/memory_bank/*.md` (markdown)                       | `appendActiveWork()` `memory_controller.ts:515`                                                                        | Unstructured side-channel → **non-goal** (documented, not instrumented)                                                                                                                           |
 
 **Agent-facing surface:** `memory_write` / `memory_search` tools → `sharedKnowledge().store()/retrieve()`
 (`tools/memory.ts:44-52`, `:22-27`). There is **no separate MCP server** exposing memory -- these are
@@ -30,10 +55,11 @@ list; consumer surfaces are `memory_search`, `buildCognitivePacket` (`knowledge.
 `POST /knowledge` (`:204`), `POST /finding/:id/promote` (`:248`).
 
 **Existing scoring that provenance must complement, not duplicate:**
+
 - Retrieval ranking: cosine + tags + entities + `temporalDecay` 30-day half-life (`knowledge.ts:834`) + access bonus + graph bonus + `metadata.utility` (±20, `bumpUtility` `:388`).
 - Aging/retirement: `sweepExpired()` 60-day tombstone (`:404`); `storage/db.ts:264-275` prunes >30d when table >5000 rows.
 - Outcome quality (parallel lane, untracked): `MemoryQualityTracker` `learning/quality.ts` — success/failure per memory → keep/review/retire.
-- **Division of labor:** *provenance = where it came from + what backs it (mostly static)*; *quality/utility = whether it helped (dynamic, already exists)*; *temporal decay = freshness (ranking)*. Provenance adds **none** of these three again.
+- **Division of labor:** _provenance = where it came from + what backs it (mostly static)_; _quality/utility = whether it helped (dynamic, already exists)_; _temporal decay = freshness (ranking)_. Provenance adds **none** of these three again.
 
 ---
 
@@ -44,20 +70,20 @@ list; consumer surfaces are `memory_search`, `buildCognitivePacket` (`knowledge.
 Lane-owned (keep as-is): `provenance: ProvenanceLevel`, `confidence: number`.
 New fields (optional on input, defaulted at the chokepoint — keeps `StoreInput` backward compatible so cast-site callers like `prompt.ts:437` `store(storeInput as never)` don’t break):
 
-| Field | Type | Meaning |
-|-------|------|---------|
-| `sourceKind` | `'agent-authored' \| 'tool-output' \| 'user-stated' \| 'imported' \| 'derived' \| 'unknown'` | origin class of the memory |
-| `sourceRef` | `string \| null` | primary origin pointer: `session:<id>`, `msg:<id>`, `tool:<name>#<callId>`, `finding:<id>`, or URL |
-| `createdBy` | `string` | actor: `agent:<name>`, `user`, `scheduler:online`, `system`, `legacy` |
-| `evidence` | `EvidenceRef[]` | links backing the claim (see §4) |
-| `derivedFrom` | `string[]` | parent memory ids for synthesized memories (chain, cap 5) |
-| `lastVerifiedAt` | `number` | `createdAt` unless corroborated/verified later (staleness input) |
+| Field            | Type                                                                                         | Meaning                                                                                            |
+| ---------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `sourceKind`     | `'agent-authored' \| 'tool-output' \| 'user-stated' \| 'imported' \| 'derived' \| 'unknown'` | origin class of the memory                                                                         |
+| `sourceRef`      | `string \| null`                                                                             | primary origin pointer: `session:<id>`, `msg:<id>`, `tool:<name>#<callId>`, `finding:<id>`, or URL |
+| `createdBy`      | `string`                                                                                     | actor: `agent:<name>`, `user`, `scheduler:online`, `system`, `legacy`                              |
+| `evidence`       | `EvidenceRef[]`                                                                              | links backing the claim (see §4)                                                                   |
+| `derivedFrom`    | `string[]`                                                                                   | parent memory ids for synthesized memories (chain, cap 5)                                          |
+| `lastVerifiedAt` | `number`                                                                                     | `createdAt` unless corroborated/verified later (staleness input)                                   |
 
 ```ts
 export interface EvidenceRef {
   kind: 'url' | 'ci' | 'benchmark' | 'session' | 'finding' | 'file' | 'message'
-  ref: string       // URL, run id, session id, finding id, "path:line"
-  at: number        // ms epoch
+  ref: string // URL, run id, session id, finding id, "path:line"
+  at: number // ms epoch
 }
 ```
 
@@ -90,15 +116,16 @@ UPDATE knowledge_entries SET derived_from='[]'       WHERE derived_from IS NULL;
 ### 2.3 TypeScript interface (extends lane’s `MemoryEntry`, `knowledge.ts:55-75`)
 
 ```ts
-export interface MemoryEntry {           // added fields only
-  provenance: ProvenanceLevel            // lane-owned, already present
-  confidence: number                     // lane-owned, already present
-  sourceKind: SourceKind                 // new
-  sourceRef: string | null               // new
-  createdBy: string                      // new
-  evidence: EvidenceRef[]                // new
-  derivedFrom: string[]                  // new
-  lastVerifiedAt: number                 // new
+export interface MemoryEntry {
+  // added fields only
+  provenance: ProvenanceLevel // lane-owned, already present
+  confidence: number // lane-owned, already present
+  sourceKind: SourceKind // new
+  sourceRef: string | null // new
+  createdBy: string // new
+  evidence: EvidenceRef[] // new
+  derivedFrom: string[] // new
+  lastVerifiedAt: number // new
 }
 ```
 
@@ -115,13 +142,13 @@ export interface MemoryEntry {           // added fields only
 
 Reuse the lane’s five-level enum verbatim — one vocabulary, no parallel taxonomy:
 
-| Level | Anchor | Meaning | Initial assignment |
-|-------|--------|---------|--------------------|
-| `human-verified` | 1.0 | A human explicitly asserted/confirmed it | `sourceKind='user-stated'` (`POST /knowledge`) |
-| `ci-verified` | 0.9 | Backed by a passing test/CI artifact | `tool-output` + evidence `kind:'ci'` |
-| `benchmark-verified` | 0.85 | Backed by a measured benchmark run | `tool-output` + `kind:'benchmark'`, or `derived` from benchmark parents |
-| `agent-generated` | 0.5 | Agent produced, no external artifact | `agent-authored` / `imported` (URL-backed insights) / default |
-| `unverified` | 0.2 | No evidence of correctness | backfill / explicit override |
+| Level                | Anchor | Meaning                                  | Initial assignment                                                      |
+| -------------------- | ------ | ---------------------------------------- | ----------------------------------------------------------------------- |
+| `human-verified`     | 1.0    | A human explicitly asserted/confirmed it | `sourceKind='user-stated'` (`POST /knowledge`)                          |
+| `ci-verified`        | 0.9    | Backed by a passing test/CI artifact     | `tool-output` + evidence `kind:'ci'`                                    |
+| `benchmark-verified` | 0.85   | Backed by a measured benchmark run       | `tool-output` + `kind:'benchmark'`, or `derived` from benchmark parents |
+| `agent-generated`    | 0.5    | Agent produced, no external artifact     | `agent-authored` / `imported` (URL-backed insights) / default           |
+| `unverified`         | 0.2    | No evidence of correctness               | backfill / explicit override                                            |
 
 **Default mapping in `normalizeProvenance()` (new module, §6):**
 
@@ -136,13 +163,14 @@ derived                        → level = min(parent levels) capped at benchmar
 unknown (backfill)             → unverified 0.2
 ```
 
-*Derived memories can never launder trust upward* (cap 0.7 / benchmark-verified) — a chain is only as
+_Derived memories can never launder trust upward_ (cap 0.7 / benchmark-verified) — a chain is only as
 strong as its weakest link.
 
 **Lifecycle (simple, explainable, no ML):**
-1. **Rise — corroboration only:** each *distinct* additional evidence ref ⇒ `confidence += 0.05`, hard cap `0.95` (never reaches human-verified). The `storeInsight` verifier merge (`verifiers` counter, `knowledge.ts:338-351`) is the existing precedent; `corroborate(entry, ref)` is the shared helper. Level changes only when new evidence *of that class* arrives (write-time), never from arithmetic.
+
+1. **Rise — corroboration only:** each _distinct_ additional evidence ref ⇒ `confidence += 0.05`, hard cap `0.95` (never reaches human-verified). The `storeInsight` verifier merge (`verifiers` counter, `knowledge.ts:338-351`) is the existing precedent; `corroborate(entry, ref)` is the shared helper. Level changes only when new evidence _of that class_ arrives (write-time), never from arithmetic.
 2. **Decay — read-time staleness, no write amplification:** `effective = confidence`; if `now - lastVerifiedAt > 90d` then `effective = min(effective, 0.4)`. Stored value untouched.
-3. **No time decay in the stored score** — `temporalDecay` already ages memories in *ranking*; decaying confidence too would double-penalize and contradict (1).
+3. **No time decay in the stored score** — `temporalDecay` already ages memories in _ranking_; decaying confidence too would double-penalize and contradict (1).
 
 ---
 
@@ -150,9 +178,10 @@ strong as its weakest link.
 
 **What counts as evidence:** URL (online insight source), CI run id/URL, benchmark run id, session/message/tool-call id, `finding:<id>` (the `findings` table already stores `evidence TEXT`, `db.ts:153`), `file:line` citation, parent memory id (derivation). **Not** evidence: the memory’s own text or bare agent assertion without an artifact.
 
-**Link shape:** `evidence TEXT` column = JSON array of `EvidenceRef`, capped at 8 at write (append via `corroborate()`; read-modify-write, last-writer-wins is acceptable — evidence is append-mostly). `sourceRef` holds the *primary* origin; `derivedFrom` holds parent memory ids separately so chains stay queryable without parsing evidence.
+**Link shape:** `evidence TEXT` column = JSON array of `EvidenceRef`, capped at 8 at write (append via `corroborate()`; read-modify-write, last-writer-wins is acceptable — evidence is append-mostly). `sourceRef` holds the _primary_ origin; `derivedFrom` holds parent memory ids separately so chains stay queryable without parsing evidence.
 
 **Consumer return shape (provenance becomes visible):**
+
 - `memory_search` results (`tools/memory.ts:26`) become
   `{ title, content, tags, tier, score, provenance: { level, confidence, caution, sourceKind, sourceRef, createdBy, evidence: EvidenceRef[] } }` — additive, nothing removed.
 - `buildCognitivePacket` (`knowledge.ts:594`) one-line prefix:
@@ -163,7 +192,7 @@ strong as its weakest link.
 never filtered, and confidence is **not** multiplied into rank. Justification:
 (a) `temporalDecay` already penalizes age in rank — multiplying confidence double-penalizes;
 (b) safety-relevant memories (doom-loop warnings, `prompt.ts:400-436`) are `agent-generated/0.5` and must stay visible — burying them defeats their purpose;
-(c) hiding = silent knowledge loss, while the gap plan asks for *scores on all memories*, not culling.
+(c) hiding = silent knowledge loss, while the gap plan asks for _scores on all memories_, not culling.
 Add `RetrieveOptions.minConfidence?: number` (default `undefined` = off) as a two-line knob for later strict consumers — P0 ships it **unset**.
 
 ---
@@ -171,12 +200,14 @@ Add `RetrieveOptions.minConfidence?: number` (default `undefined` = off) as a tw
 ## 5. Enforcement — “provenance on ALL memories”
 
 **Chokepoints (every write flows through these):**
+
 1. `KnowledgeBase.store()` `learning/knowledge.ts:269` — **THE** normalization point: spreads `normalizeProvenance(input, ctx)` so `provenance/confidence/sourceKind/sourceRef/createdBy/evidence/derivedFrom` are never `undefined`. All KB writers funnel here: `storeInsight` `:355`, `storeUsageAnalysis` `:426/:438`, `seedDefaultKnowledge` `:998`, `memory_write` `tools/memory.ts:45`, `POST /knowledge` `learning/index.ts:216`, finding promote `:261`, doom-loop `session/prompt.ts:440`, improvement `learning/improvement.ts:306`, patch applier `patching/applier.ts:94`.
 2. `KnowledgeBase.persist()` `knowledge.ts:760` — sole SQL writer; **both** INSERT variants must list the provenance columns.
 3. `EvolutionMemory.remember()` `evolution-memory.ts:114` — already compliant (confidence+evidence always set).
 4. `MemoryController.store_experience()` `memory_controller.ts:116` / `store_fact()` `:278` — fill defaults from `normalizeProvenance` (`memory_controller.ts` already imports from `learning/knowledge.js` at `:26`, so the import direction is fine).
 
 **Bypass paths to close:**
+
 - `persist()` **fallback INSERT** `knowledge.ts:799` omits provenance columns → add them (or delete the fallback — primary INSERT works once `storage/db.ts` added the columns).
 - `storage/db.ts` `addColumn` block `:244-254` lacks provenance/confidence → add all 8 columns + backfill UPDATEs there (authoritative boot migration; `migrate(db)` runs before routes).
 - Raw `INSERT INTO knowledge_entries …` in `memory-evolution.test.ts:148` → harmless **only if** column `DEFAULT`s are set: the DB-level `DEFAULT 'unverified'/0.2/'unknown'/…` backstop makes even uncontrolled inserts provenance-complete.
@@ -208,6 +239,7 @@ Add `RetrieveOptions.minConfidence?: number` (default `undefined` = off) as a tw
 7. **Tests** (below), then `bun test` + `tsc --noEmit`.
 
 **Test plan:**
+
 - **NEW `packages/server/src/memory/provenance.test.ts`**: normalize defaults per `sourceKind`; derived cap (≤0.7 / ≤benchmark); corroboration rise (+0.05×n, cap 0.95); staleness cap (90d → ≤0.4); caution rule; `memory_write`/`memory_search` round-trip shows provenance (call tool `execute` with a fake ctx); `MemoryController.store_experience`/`store_fact` defaults with a tmp `memoryDir`.
 - **EXTEND `packages/server/src/learning/knowledge.test.ts`**: (a) bare `store()` → all provenance columns non-null on the row; (b) §5 sweep assertion across write APIs + raw-SQL bypass inheriting DEFAULTs; (c) `POST /knowledge` sets `user-stated`/`human-verified` (route tests already live here, `:119`); (d) read-time evidence backfill from `metadata.sourceUrls`.
 - **RUN unchanged:** `memory-evolution/memory-evolution.test.ts` (raw INSERT `:148` must still pass — proves the DEFAULT backstop), `learning/utility.test.ts`, `learning/online.test.ts`.
@@ -227,4 +259,4 @@ Add `RetrieveOptions.minConfidence?: number` (default `undefined` = off) as a tw
 
 ---
 
-**Report-back summary:** chokepoints = `KnowledgeBase.store()` (`knowledge.ts:269`) for normalization + `KnowledgeBase.persist()` (`:760`) as sole SQL writer, with `EvolutionMemory.remember()` (`evolution-memory.ts:114`) and `MemoryController.store_experience/store_fact` (`memory_controller.ts:116/:278`) as secondary funnels. Migration policy = *unknown → `unverified`/0.2/`source_kind:'unknown'`/`created_by:'legacy'`*, evidence backfilled from `metadata.sourceUrls` at read time, enforced by column `DEFAULT`s so raw bypass inserts inherit safe values.
+**Report-back summary:** chokepoints = `KnowledgeBase.store()` (`knowledge.ts:269`) for normalization + `KnowledgeBase.persist()` (`:760`) as sole SQL writer, with `EvolutionMemory.remember()` (`evolution-memory.ts:114`) and `MemoryController.store_experience/store_fact` (`memory_controller.ts:116/:278`) as secondary funnels. Migration policy = _unknown → `unverified`/0.2/`source_kind:'unknown'`/`created_by:'legacy'`_, evidence backfilled from `metadata.sourceUrls` at read time, enforced by column `DEFAULT`s so raw bypass inserts inherit safe values.

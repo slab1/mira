@@ -36,7 +36,7 @@ jobs:
         # allowlist below are accepted risks with documented reasons; everything
         # else fails the build. Revisit the allowlist when upstreams move.
         run: |
-          bun audit --json > /tmp/bun-audit.json || true
+          bun audit --json > /tmp/bun-audit.json
           BLOCKING=$(jq '[. as $root
             | keys[] as $pkg
             | $root[$pkg][] as $f

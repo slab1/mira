@@ -1,13 +1,36 @@
 # Task Verification States — Design (strategy-doc §13)
 
-**Status:** design only. Success criteria (per brief): *a task/agent result must carry whether it was
+**Status:** design only. Success criteria (per brief): _a task/agent result must carry whether it was
 **actually** verified; an agent claiming VERIFIED without running tests is impossible (or clearly
-marked self-reported).* States: `UNVERIFIED → PARTIALLY_VERIFIED → VERIFIED` + `FAILED_VERIFICATION`.
+marked self-reported)._ States: `UNVERIFIED → PARTIALLY_VERIFIED → VERIFIED` + `FAILED_VERIFICATION`.
 
 **Scope note / §13 traceability:** the strategy doc's §13 text is **not in this repo** —
 `PARTIALLY_VERIFIED|FAILED_VERIFICATION` has zero matches repo-wide and in `~/.config/opencode`;
-`MIRA_WEAKNESSES_AND_OBSTACLES.md` §13 (line 621) is *Autonomous Cost Control*; `MIRA_SYSTEM_DOCUMENTATION.md`
+`MIRA_WEAKNESSES_AND_OBSTACLES.md` §13 (line 621) is _Autonomous Cost Control_; `MIRA_SYSTEM_DOCUMENTATION.md`
 ends at §12. This design implements the state names quoted in the brief. Flagged as a documentation gap.
+
+---
+
+## Implementation Status
+
+| Component                                                                                           | Status                | Notes                                                                                |
+| --------------------------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------ |
+| `VerificationState` enum (`UNVERIFIED` / `PARTIALLY_VERIFIED` / `VERIFIED` / `FAILED_VERIFICATION`) | Pending               | New module `packages/server/src/verification.ts`                                     |
+| `verification_state` / `verification_evidence` / `verification_updated_at` columns on `jobs`        | Pending               | 3 columns via `addColumn` in `storage/db.ts` after provenance block                  |
+| `computeVerification(parts)` — pure state computation                                               | Pending               | Classifies tool-result parts into `{typecheck, test, build}`; latest-per-class wins  |
+| `buildVerificationPatch(db, childSessionID)`                                                        | Pending               | SELECT parts → `{verificationState, verificationEvidence, verificationUpdatedAt}`    |
+| Enforcement at `finishJob()` (`task.ts:87-96`)                                                      | Pending               | Merge verification patch into terminal `WHERE status='running'` update               |
+| Enforcement at orchestrate inline updates (`orchestrate.ts:482-491`)                                | Pending               | Same compute-then-single-UPDATE pattern                                              |
+| `EvidenceRef` reuse from `memory/provenance.ts`                                                     | Depends on Provenance | `kind:'message'` + `{check, ok}` extras; cap 8                                       |
+| `verification` in `taskResponseSchema`                                                              | Pending               | Optional field on task response; foreground reads back after `finishJob`             |
+| `job.updated` bus event with `payload.kind = 'verification.state'`                                  | Pending               | Published from terminal settle only when state ≠ `UNVERIFIED`                        |
+| Backfill (`UNVERIFIED` for existing jobs)                                                           | Pending               | `UPDATE jobs SET verification_state = 'UNVERIFIED' WHERE verification_state IS NULL` |
+| Unit tests (`verification.test.ts`)                                                                 | Pending               | Table-driven `computeVerification` tests + e2e on `:memory:` DB                      |
+| Enforcement sweep test                                                                              | Pending               | Every terminal write path leaves `verification_state` non-null and in-enum           |
+
+**Summary:** All components are **pending implementation**. The design depends on the provenance
+module (`memory/provenance.ts`) for the `EvidenceRef` type. Implementation order: provenance P0 first,
+then verification states per the plan in §7.
 
 ---
 
@@ -15,16 +38,17 @@ ends at §12. This design implements the state names quoted in the brief. Flagge
 
 Every "work item" and its status today:
 
-| Work item | Table / location | Status today | Verification today |
-|---|---|---|---|
-| **Task (job)** | `jobs` `storage/schema.ts:117-140` | `running/completed/failed/cancelled` (`:128`) | **None** — `completed` is an assertion, not evidence |
-| Todo | `todos` `schema.ts:78-96` | `pending/in_progress/completed/cancelled` (`:86`) | n/a — plans, not results |
-| Session | `sessions` `schema.ts:11-36` | **no status column** (`parentID :20`) | n/a — carrier (P1: derive from child jobs) |
-| Message | `messages` `schema.ts:38-52` | `role` only | n/a — carrier |
-| Part | `parts` `schema.ts:54-76` | `isError :72`, `result :71` | **evidence storage** (raw tool output) |
-| Finding | `findings` `schema.ts:143-164` | `open/resolved :156`, `evidence TEXT :155` | free-text evidence (coexists) |
+| Work item      | Table / location                   | Status today                                      | Verification today                                   |
+| -------------- | ---------------------------------- | ------------------------------------------------- | ---------------------------------------------------- |
+| **Task (job)** | `jobs` `storage/schema.ts:117-140` | `running/completed/failed/cancelled` (`:128`)     | **None** — `completed` is an assertion, not evidence |
+| Todo           | `todos` `schema.ts:78-96`          | `pending/in_progress/completed/cancelled` (`:86`) | n/a — plans, not results                             |
+| Session        | `sessions` `schema.ts:11-36`       | **no status column** (`parentID :20`)             | n/a — carrier (P1: derive from child jobs)           |
+| Message        | `messages` `schema.ts:38-52`       | `role` only                                       | n/a — carrier                                        |
+| Part           | `parts` `schema.ts:54-76`          | `isError :72`, `result :71`                       | **evidence storage** (raw tool output)               |
+| Finding        | `findings` `schema.ts:143-164`     | `open/resolved :156`, `evidence TEXT :155`        | free-text evidence (coexists)                        |
 
 **Verification signals that already exist (sources of truth for evidence):**
+
 - `diagnose` (`tools/other.ts:189-239`): runs `tsc --noEmit` / `bun test` / `bun run build` (`:208-212`),
   per-check `ok = exit===0` (`:230`), returns `{ok, checks, results}` (`:237`) — **default is `['typecheck']`
   only** (`:204`), and it never throws, so `parts.isError` stays `false` even on failure → verdicts must
@@ -94,7 +118,7 @@ verificationUpdatedAt: integer('verification_updated_at'),
 `GET /session/:id/jobs`, `GET /jobs`, `GET /jobs/:id` (`routes/session.ts:409/:433/:464`) and
 `activeJobs` (`routes/session-extras.ts:258-278`) — **columns appear everywhere with zero route changes.**
 
-### 2.4 Backfill policy — *unknown → the lowest honest rung* (provenance §2.4 precedent)
+### 2.4 Backfill policy — _unknown → the lowest honest rung_ (provenance §2.4 precedent)
 
 All existing job rows → `UNVERIFIED`, `evidence=[]`. Never infer historical verification (parts may be
 compacted — `storage/snapshots.ts:105` deletes; `session/compaction.ts` trims — and inferring trust from
@@ -135,13 +159,14 @@ compaction — acceptable: `check/ok` are snapshotted **into the ref**, and prov
 opaque (`PROVENANCE_DESIGN.md` §7). Cap: `EVIDENCE_CAP = 8` (`provenance.ts:72`), newest-8 kept. Stored in
 `jobs.verification_evidence` as JSON. **No change to `memory/provenance.ts`** (shipped at HEAD `a12d574c`).
 
-## 5. Enforcement — *VERIFIED only from exit codes*
+## 5. Enforcement — _VERIFIED only from exit codes_
 
 **Single writer:** new module `packages/server/src/verification.ts` —
 `computeVerification(parts)` (pure) + `buildVerificationPatch(db, childSessionID)` (SELECT parts →
 `{verificationState, verificationEvidence, verificationUpdatedAt}`).
-**Chokepoints (compute-then-single-UPDATE):** every terminal job write merges the patch into its *existing*
+**Chokepoints (compute-then-single-UPDATE):** every terminal job write merges the patch into its _existing_
 `WHERE status='running'` update, so status and verification land atomically and settle exactly once:
+
 1. `finishJob()` `task.ts:87-96` (covers bg `:155/:169`, fg `:197/:208`) — only when `childSessionID` present.
 2. Orchestrate node terminal updates `orchestrate.ts:482-491` (completed branch `:484` has `res.sessionID`).
 3. `cancelJob` `task.ts:75-84`: **no change** (row lacks child link → stays `UNVERIFIED`; cancelled ≠ verified).
@@ -166,7 +191,7 @@ failure path → stays `UNVERIFIED` without crashing; (e) delete parts after set
   **No new `BusEventType` member.** Published from the terminal settle only when state ≠ `UNVERIFIED`.
 - **Parent visibility (the keystone's consumer):** `taskResponseSchema` (`task.ts:24-34`) gains optional
   `verification` — foreground reads it back after `finishJob` (`:197`); background includes it in the
-  `message.updated` payloads (`:161/:175`, additive) and via `getJob` polling. The parent sees *verified*,
+  `message.updated` payloads (`:161/:175`, additive) and via `getJob` polling. The parent sees _verified_,
   not the child's prose.
 - **UI:** nothing in P0 — the dirty web lane can read the fields off existing `GET /jobs*` responses later.
   Orchestrate node results / wave payloads: P1 (job rows already carry it).

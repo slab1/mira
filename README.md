@@ -2,7 +2,7 @@
 
 > **Openness + Claude's reasoning + Cursor's polish + Windsurf's autonomy + Cline's transparency, minus weaknesses, plus memory/eval/guardrails as first-class.**
 
-Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observability, tool-layer guardrails, file snapshots with undo, real LSP + MCP integration, HITL questions, and a cost-tracking model gateway — all verified by a 119-test suite (0 failing) including live-provider E2E gates and real-wire protocol tests.**
+Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observability, tool-layer guardrails, file snapshots with undo, real LSP + MCP integration, HITL questions, and a cost-tracking model gateway — all verified by a 705-test suite (0 failing) including live-provider E2E gates and real-wire protocol tests.**
 
 ## Why Mira?
 
@@ -84,10 +84,11 @@ mira complete --prefix "function add(a,b) {" --file src/math.ts
 Without keys the gateway serves a stub stream — the whole pipeline (tools, permissions, SSE, persistence) still runs.
 
 ### Machine setup & sync (multi-machine workflow)
+
 ```bash
-# 1. Pin the toolchain — ALL machines must use bun 1.3.14 (.tool-versions).
-#    bun 1.4.x has workspace-hoisting + drizzle-orm regressions; CI enforces 1.3.14.
-bun --version  # expect 1.3.14
+# 1. Pin the toolchain — ALL machines must use bun 1.4.0 (.tool-versions).
+#    CI enforces 1.4.0.
+bun --version  # expect 1.4.0
 
 # 2. Install ONLY via the guarded wrapper (never concurrent installs):
 scripts/install.sh
@@ -100,6 +101,7 @@ git pull origin main   # then scripts/install.sh if package.json/bun.lock change
 ```
 
 Rules learned the hard way (2026-09-20):
+
 - NEVER `git add -f node_modules` — committed symlinks dangle on the other
   OS and in CI, and `bun install` will not overwrite them.
 - NEVER run two `bun install` at once, and never kill one mid-extraction —
@@ -170,6 +172,7 @@ chat, server log, OpenCode itself, or other tools — usually on one machine onl
 an `OPENCODE_API_KEY` (Zen free-tier key) exported in that machine's environment
 poisons every tool that reads env. The key bypasses OpenCode's in-app OAuth flow,
 so even OpenCode itself rejects it. Fix on the affected machine:
+
 ```powershell
 # PowerShell: find the culprit
 Get-ChildItem Env: | Where-Object { $_.Name -like '*OPENCODE*' }
@@ -178,6 +181,7 @@ Get-ChildItem Env: | Where-Object { $_.Name -like '*OPENCODE*' }
 # In Mira: do NOT add an `opencode` provider block backed by a Zen free-tier key —
 # use direct anthropic/openai/google keys instead (mira.json is per-machine, gitignored).
 ```
+
 Verified clean on a healthy machine: OpenCode auth is OAuth (`google`, no env key),
 `mira.json` providers contain no `opencode` entry, and the server log shows no such error.
 
