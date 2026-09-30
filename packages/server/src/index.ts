@@ -37,7 +37,9 @@ import { createLearningSystem, mountLearningRoutes } from './learning/index.js'
 import { createRepoGraph } from './repo/graph.js'
 import { createSemanticGraph } from './repo/semantic.js'
 import { codeGraphFor } from './codegraph/index.js'
+import type { Database } from 'bun:sqlite'
 import { createSandbox } from './sandbox/isolation.js'
+import { evictStaleMemories } from './memory/eviction.js'
 import { setSharedKnowledge } from './learning/knowledge.js'
 import {
   GuardrailsManager,
@@ -612,6 +614,20 @@ async function main() {
       ),
     )
     .catch((e) => warn('code graph build failed:', String(e)))
+
+  // Memory eviction — opt-in via MIRA_EVICT_ON_STARTUP=1
+  if (process.env.MIRA_EVICT_ON_STARTUP === '1') {
+    try {
+      const report = evictStaleMemories(db.sqlite as unknown as Database, {
+        dryRun: process.env.MIRA_EVICT_DRY_RUN === '1',
+      })
+      log(
+        `memory eviction: scanned=${report.scanned}, evicted=${report.evicted}, kept=${report.kept}${report.dryRun ? ' (dry-run)' : ''}`,
+      )
+    } catch (e) {
+      warn('memory eviction failed:', String(e))
+    }
+  }
 
   const tools = new ToolRegistry({ db, bus, permissions, gateway, guardrails })
   await tools.registerAll()
