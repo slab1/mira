@@ -6,7 +6,7 @@
     "packages/*"
   ],
   "scripts": {
-    "prepare": "husky",
+    "prepare": "husky || true",
     "dev": "turbo dev --continue --filter=!@mira/slack",
     "dev:all": "turbo dev --continue",
     "build": "turbo build",
