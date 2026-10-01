@@ -111,4 +111,20 @@ describe('bash tool — ContainerSandbox wiring', () => {
     expect(res.exitCode).toBe(1)
     expect(res.stderr).toContain('Command rejected')
   })
+
+  test('timeout kills the underlying process (no zombie, review #9/#26)', async () => {
+    sandboxEnabled = false
+    const start = Date.now()
+    const res = (await bashTool.execute(
+      { command: 'sleep 10', timeout: 500 },
+      baseCtx({ cwd: dir }),
+    )) as BashResult
+    const elapsed = Date.now() - start
+    // Killed well before the 10s sleep would finish
+    expect(elapsed).toBeLessThan(3000)
+    // Non-zero exit = terminated by signal, not a clean exit
+    expect(res.exitCode).not.toBe(0)
+    // sleep produces no stdout
+    expect(res.stdout).toBe('')
+  }, 10_000)
 })
