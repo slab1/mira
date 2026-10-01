@@ -4,6 +4,33 @@
 **Scope:** Full codebase — server, web, shared, config, CI/CD, scripts, docs
 **Overall Grade:** B- (Strong foundation, needs hardening)
 
+## Treatment Status — 2026-10-01 (verified against current code)
+
+| #         | Finding                                                                                                                                             | Status                                                                  |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| 1–8       | P0 security: patcher auth, permission nonce, bash sanitize, path decode loop, gateway SSRF, sessionStorage token, wss upgrade, watchdog auto-commit | ✅ Treated                                                              |
+| 9–11, 13  | Timeout process kill, async memory I/O, fork transaction, compaction stops loop                                                                     | ✅ Treated                                                              |
+| 12        | Silent error swallowing                                                                                                                             | 🟡 Partial — logging added in hot paths; bare `catch {}` still numerous |
+| 14–15     | God files (prompt.ts ~1.8k lines, App.tsx 1857 — both grew since review)                                                                            | ❌ Open                                                                 |
+| 16–19     | Dead code, RealtimeLayer usage, applyChange dedup, MemoryGraph memoization                                                                          | ✅ Treated                                                              |
+| 20        | Gateway connection pooling                                                                                                                          | ❌ Open (no undici pool/dispatcher)                                     |
+| 21        | Streaming O(1) in-place update                                                                                                                      | ✅ Treated                                                              |
+| 22        | TF-IDF O(n·m) naive rebuild per query                                                                                                               | ❌ Open (confirmed in `memory_controller.ts:_tfidfRank`)                |
+| 23        | Guardrails check per tool call                                                                                                                      | ➖ By design (deliberate security/latency tradeoff)                     |
+| 24        | SSE backpressure                                                                                                                                    | ❌ Open (fire-and-forget writes)                                        |
+| 25, 30    | Evolution rollback + compaction boundary tests                                                                                                      | ✅ Treated                                                              |
+| 26–29     | Missing tests: timeout kill, guardrail bypasses, MCP reconnect, web components                                                                      | ❌ Open                                                                 |
+| 31–34, 36 | Bun 1.4 CI, prod Docker multi-stage, ESLint pre-commit, audit gate, secret regex                                                                    | ✅ Treated                                                              |
+| 35        | Staging environment                                                                                                                                 | ❌ Open (infra decision)                                                |
+| 37        | Test-count claim                                                                                                                                    | ✅ Treated — 783 tests, 775 passing (verified 2026-10-01)               |
+| 38–40     | API reference, deployment guide, design-doc status sections                                                                                         | ✅ Treated                                                              |
+
+Local test failures (2026-10-01 run: 775 pass / 1 skip / 7 fail): 2 known
+environment issues (gateway NVIDIA key, bash sandbox timeout) + 5 web
+`a11y.test.ts` failures — the static regex checks only the `<button>` opening tag,
+so text-content buttons false-positive; test needs fixing plus genuine `aria-label`s
+for icon-only buttons.
+
 ---
 
 ## Executive Summary

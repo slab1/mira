@@ -5,7 +5,7 @@
 Mira is a next-gen AI agent platform (server + multi-client monorepo).
 It ships hierarchical memory, eval-first observability, tool-layer guardrails,
 file snapshots with undo, real LSP + MCP integration, HITL questions, and a
-cost-tracking model gateway — all backed by a 119-test suite.
+cost-tracking model gateway — all backed by a 783-test suite (775 passing, verified 2026-10-01).
 
 ## Monorepo layout
 

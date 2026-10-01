@@ -2,7 +2,7 @@
 
 > **Openness + Claude's reasoning + Cursor's polish + Windsurf's autonomy + Cline's transparency, minus weaknesses, plus memory/eval/guardrails as first-class.**
 
-Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observability, tool-layer guardrails, file snapshots with undo, real LSP + MCP integration, HITL questions, and a cost-tracking model gateway — all verified by a 705-test suite (0 failing) including live-provider E2E gates and real-wire protocol tests.**
+Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observability, tool-layer guardrails, file snapshots with undo, real LSP + MCP integration, HITL questions, and a cost-tracking model gateway — all verified by a 783-test suite (775 passing, verified 2026-10-01) including live-provider E2E gates and real-wire protocol tests.**
 
 ## Why Mira?
 
