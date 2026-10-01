@@ -28,15 +28,15 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      - name: Bun audit
-        run: bun install --frozen-lockfile
       - name: Bun audit (fail on high/critical)
         # `bun audit` exits nonzero on ANY finding (including dev-only lows),
         # so this step gates the build on high/critical only. Entries in the
         # allowlist below are accepted risks with documented reasons; everything
         # else fails the build. Revisit the allowlist when upstreams move.
         run: |
-          bun audit --json > /tmp/bun-audit.json
+          # Tolerate bun audit's nonzero exit (fires on ANY finding, even
+          # dev-only lows) — the jq gate below enforces high/critical only.
+          bun audit --json > /tmp/bun-audit.json || true
           BLOCKING=$(jq '[. as $root
             | keys[] as $pkg
             | $root[$pkg][] as $f
