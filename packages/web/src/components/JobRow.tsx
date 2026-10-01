@@ -116,6 +116,14 @@ export function JobRow(props: Props) {
       }}
       onClick={handleRowClick}
       title={canOpen() ? 'Open child session' : undefined}
+      role="button"
+      tabindex="0"
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          handleRowClick()
+        }
+      }}
     >
       <span
         style={{

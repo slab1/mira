@@ -645,6 +645,7 @@ export function SessionList(props: { store: AppStore; open?: boolean; width?: nu
             type="checkbox"
             checked={groupByProject()}
             onChange={(e) => setGroupByProject(e.currentTarget.checked)}
+            aria-label="Group by project"
           />
           Group by project
         </label>

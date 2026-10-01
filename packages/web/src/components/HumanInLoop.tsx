@@ -9,7 +9,6 @@
  */
 
 import { createSignal, Show } from 'solid-js'
-import type { JSX } from 'solid-js'
 
 /* ── Teach Agent ────────────────────────────────────────────────────────── */
 
@@ -40,7 +39,15 @@ export function TeachAgent(props: {
         'border-radius': 'var(--r-md)',
       }}
     >
-      <div style={{ 'font-size': 'var(--fs-xs)', 'font-weight': '600', color: 'var(--fg-muted)', 'text-transform': 'uppercase', 'letter-spacing': '0.04em' }}>
+      <div
+        style={{
+          'font-size': 'var(--fs-xs)',
+          'font-weight': '600',
+          color: 'var(--fg-muted)',
+          'text-transform': 'uppercase',
+          'letter-spacing': '0.04em',
+        }}
+      >
         Teach Agent
       </div>
       <textarea
@@ -130,7 +137,9 @@ export function UndoRollback(props: {
         </span>
       </div>
       <Show when={props.description}>
-        <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-muted)', 'line-height': '1.5' }}>
+        <div
+          style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-muted)', 'line-height': '1.5' }}
+        >
           {props.description}
         </div>
       </Show>
@@ -241,7 +250,13 @@ export function EditableDraft(props: {
           }}
           role="button"
           tabindex="0"
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDraft(props.content); setEditing(true) } }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              setDraft(props.content)
+              setEditing(true)
+            }
+          }}
           style={{
             padding: '10px 12px',
             background: 'var(--bg-surface)',
@@ -255,7 +270,9 @@ export function EditableDraft(props: {
           }}
         >
           {props.content}
-          <div style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'margin-top': '4px' }}>
+          <div
+            style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'margin-top': '4px' }}
+          >
             Click to edit
           </div>
         </div>
@@ -344,12 +361,21 @@ export function BehaviorAdjust(props: {
         <span style={{ 'font-size': 'var(--fs-sm)', 'font-weight': '600', color: 'var(--fg)' }}>
           {props.label}
         </span>
-        <span style={{ 'font-size': 'var(--fs-sm)', color: 'var(--accent)', 'font-family': 'var(--font-mono)', 'font-weight': '700' }}>
+        <span
+          style={{
+            'font-size': 'var(--fs-sm)',
+            color: 'var(--accent)',
+            'font-family': 'var(--font-mono)',
+            'font-weight': '700',
+          }}
+        >
           {props.value}
         </span>
       </div>
       <Show when={props.description}>
-        <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-faint)', 'line-height': '1.4' }}>
+        <div
+          style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-faint)', 'line-height': '1.4' }}
+        >
           {props.description}
         </div>
       </Show>
@@ -359,6 +385,7 @@ export function BehaviorAdjust(props: {
         max={max()}
         step={step()}
         value={props.value}
+        aria-label={props.description ?? 'Value'}
         onInput={(e) => props.onChange(Number(e.currentTarget.value))}
         style={{
           width: '100%',

@@ -16,7 +16,6 @@
  */
 
 import { createSignal, onMount, onCleanup, Show, For } from 'solid-js'
-import type { JSX } from 'solid-js'
 
 export interface PreviewResource {
   name: string
@@ -65,7 +64,9 @@ export function PreviewModal(props: {
       }
     } else if (e.key === 'Tab') {
       // Focus trap: cycle between confirm and cancel buttons
-      const focusables = dialogRef?.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
+      const focusables = dialogRef?.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      )
       if (!focusables || focusables.length === 0) return
       const first = focusables[0]
       const last = focusables[focusables.length - 1]
@@ -87,6 +88,7 @@ export function PreviewModal(props: {
     <Show when={props.open}>
       <div
         class="modal-backdrop"
+        role="presentation"
         onClick={onBackdropClick}
         onKeyDown={onKeyDown}
         style={{
@@ -158,7 +160,8 @@ export function PreviewModal(props: {
                 cursor: 'pointer',
                 'font-size': '14px',
                 'line-height': '1',
-                transition: 'background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)',
+                transition:
+                  'background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)',
               }}
             >
               ✕
@@ -176,7 +179,13 @@ export function PreviewModal(props: {
               gap: 'var(--sp-3)',
             }}
           >
-            <div style={{ 'font-size': 'var(--fs-sm)', color: 'var(--fg-muted)', 'line-height': '1.55' }}>
+            <div
+              style={{
+                'font-size': 'var(--fs-sm)',
+                color: 'var(--fg-muted)',
+                'line-height': '1.55',
+              }}
+            >
               {props.description}
             </div>
 
@@ -212,10 +221,22 @@ export function PreviewModal(props: {
                         'font-size': 'var(--fs-sm)',
                       }}
                     >
-                      <span style={{ color: 'var(--fg-faint)', 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-xs)' }}>
+                      <span
+                        style={{
+                          color: 'var(--fg-faint)',
+                          'font-family': 'var(--font-mono)',
+                          'font-size': 'var(--fs-xs)',
+                        }}
+                      >
                         {r.type}
                       </span>
-                      <span style={{ color: 'var(--fg)', 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-sm)' }}>
+                      <span
+                        style={{
+                          color: 'var(--fg)',
+                          'font-family': 'var(--font-mono)',
+                          'font-size': 'var(--fs-sm)',
+                        }}
+                      >
                         {r.name}
                       </span>
                     </div>
@@ -255,6 +276,7 @@ export function PreviewModal(props: {
                     setDontShowAgain(e.currentTarget.checked)
                     props.onDontShowAgain?.(e.currentTarget.checked)
                   }}
+                  aria-label="Don't show again"
                   style={{ 'accent-color': 'var(--accent)' }}
                 />
                 Don't show again

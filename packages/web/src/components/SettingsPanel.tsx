@@ -19,201 +19,6 @@ type KnownModel = {
   capabilities: string[]
 }
 
-const KNOWN_MODELS: KnownModel[] = [
-  {
-    id: 'openrouter/anthropic/claude-sonnet-4',
-    provider: 'OpenRouter',
-    label: 'Claude Sonnet 4',
-    context: '200k',
-    pricing: '$3/$15',
-    capabilities: ['coding', 'reasoning', 'vision'],
-  },
-  {
-    id: 'openrouter/anthropic/claude-opus-4',
-    provider: 'OpenRouter',
-    label: 'Claude Opus 4',
-    context: '200k',
-    pricing: '$15/$75',
-    capabilities: ['coding', 'reasoning', 'vision'],
-  },
-  {
-    id: 'openrouter/anthropic/claude-haiku-4',
-    provider: 'OpenRouter',
-    label: 'Claude Haiku 4',
-    context: '200k',
-    pricing: '$0.25/$1.25',
-    capabilities: ['speed', 'vision'],
-  },
-  {
-    id: 'openrouter/deepseek/deepseek-v3.2-exp',
-    provider: 'OpenRouter',
-    label: 'DeepSeek V3.2 Exp',
-    context: '128k',
-    pricing: '$0.27/$1.10',
-    capabilities: ['coding', 'reasoning'],
-  },
-  {
-    id: 'openrouter/deepseek/deepseek-chat',
-    provider: 'OpenRouter',
-    label: 'DeepSeek Chat',
-    context: '128k',
-    pricing: '$0.27/$1.10',
-    capabilities: ['coding', 'reasoning'],
-  },
-  {
-    id: 'openrouter/deepseek/deepseek-reasoner',
-    provider: 'OpenRouter',
-    label: 'DeepSeek Reasoner',
-    context: '128k',
-    pricing: '$0.55/$2.19',
-    capabilities: ['reasoning', 'coding'],
-  },
-  {
-    id: 'openrouter/openai/gpt-4o',
-    provider: 'OpenRouter',
-    label: 'GPT-4o',
-    context: '128k',
-    pricing: '$2.50/$10',
-    capabilities: ['coding', 'vision', 'reasoning'],
-  },
-  {
-    id: 'openrouter/openai/gpt-4o-mini',
-    provider: 'OpenRouter',
-    label: 'GPT-4o Mini',
-    context: '128k',
-    pricing: '$0.15/$0.60',
-    capabilities: ['speed', 'vision'],
-  },
-  {
-    id: 'openrouter/google/gemini-2.0-flash',
-    provider: 'OpenRouter',
-    label: 'Gemini 2.0 Flash',
-    context: '1M',
-    pricing: '$0.10/$0.40',
-    capabilities: ['speed', 'vision'],
-  },
-  {
-    id: 'openrouter/google/gemini-2.0-pro',
-    provider: 'OpenRouter',
-    label: 'Gemini 2.0 Pro',
-    context: '2M',
-    pricing: '$1.25/$10',
-    capabilities: ['reasoning', 'vision'],
-  },
-  {
-    id: 'openai/gpt-4o',
-    provider: 'OpenAI',
-    label: 'GPT-4o',
-    context: '128k',
-    pricing: '$2.50/$10',
-    capabilities: ['coding', 'vision', 'reasoning'],
-  },
-  {
-    id: 'openai/gpt-4o-mini',
-    provider: 'OpenAI',
-    label: 'GPT-4o Mini',
-    context: '128k',
-    pricing: '$0.15/$0.60',
-    capabilities: ['speed', 'vision'],
-  },
-  {
-    id: 'openai/gpt-4-turbo',
-    provider: 'OpenAI',
-    label: 'GPT-4 Turbo',
-    context: '128k',
-    pricing: '$10/$30',
-    capabilities: ['coding', 'vision'],
-  },
-  {
-    id: 'openai/o1',
-    provider: 'OpenAI',
-    label: 'o1',
-    context: '200k',
-    pricing: '$15/$60',
-    capabilities: ['reasoning', 'coding'],
-  },
-  {
-    id: 'openai/o1-mini',
-    provider: 'OpenAI',
-    label: 'o1 Mini',
-    context: '128k',
-    pricing: '$3/$12',
-    capabilities: ['reasoning', 'speed'],
-  },
-  {
-    id: 'anthropic/claude-sonnet-4',
-    provider: 'Anthropic',
-    label: 'Claude Sonnet 4',
-    context: '200k',
-    pricing: '$3/$15',
-    capabilities: ['coding', 'reasoning', 'vision'],
-  },
-  {
-    id: 'anthropic/claude-opus-4',
-    provider: 'Anthropic',
-    label: 'Claude Opus 4',
-    context: '200k',
-    pricing: '$15/$75',
-    capabilities: ['coding', 'reasoning', 'vision'],
-  },
-  {
-    id: 'anthropic/claude-haiku-3.5',
-    provider: 'Anthropic',
-    label: 'Claude Haiku 3.5',
-    context: '200k',
-    pricing: '$0.80/$4',
-    capabilities: ['speed', 'vision'],
-  },
-  {
-    id: 'google/gemini-2.0-flash',
-    provider: 'Google',
-    label: 'Gemini 2.0 Flash',
-    context: '1M',
-    pricing: '$0.10/$0.40',
-    capabilities: ['speed', 'vision'],
-  },
-  {
-    id: 'google/gemini-2.0-pro',
-    provider: 'Google',
-    label: 'Gemini 2.0 Pro',
-    context: '2M',
-    pricing: '$1.25/$10',
-    capabilities: ['reasoning', 'vision'],
-  },
-  {
-    id: 'google/gemini-1.5-pro',
-    provider: 'Google',
-    label: 'Gemini 1.5 Pro',
-    context: '2M',
-    pricing: '$1.25/$5',
-    capabilities: ['reasoning', 'vision'],
-  },
-  {
-    id: 'deepseek/deepseek-chat',
-    provider: 'DeepSeek',
-    label: 'DeepSeek Chat',
-    context: '128k',
-    pricing: '$0.27/$1.10',
-    capabilities: ['coding', 'reasoning'],
-  },
-  {
-    id: 'deepseek/deepseek-reasoner',
-    provider: 'DeepSeek',
-    label: 'DeepSeek Reasoner',
-    context: '128k',
-    pricing: '$0.55/$2.19',
-    capabilities: ['reasoning', 'coding'],
-  },
-  {
-    id: 'deepseek/deepseek-coder',
-    provider: 'DeepSeek',
-    label: 'DeepSeek Coder',
-    context: '128k',
-    pricing: '$0.27/$1.10',
-    capabilities: ['coding'],
-  },
-]
-
 function providerDisplayName(raw: string): string {
   const m: Record<string, string> = {
     openrouter: 'OpenRouter',
@@ -1956,6 +1761,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                             type="checkbox"
                             checked={budgetCapEnabled()}
                             onChange={(e) => setBudgetCapEnabled(e.currentTarget.checked)}
+                            aria-label="Enable budget cap"
                           />
                           Enable budget cap
                         </label>
@@ -2006,6 +1812,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                             type="checkbox"
                             checked={guardEnforce()}
                             onChange={(e) => setGuardEnforce(e.currentTarget.checked)}
+                            aria-label="Enforce guardrails"
                           />
                           Enforce
                         </label>
@@ -2192,6 +1999,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                             type="checkbox"
                             checked={featInject()}
                             onChange={(e) => setFeatInject(e.currentTarget.checked)}
+                            aria-label="Inject todos into loadContext"
                           />
                           Inject todos into loadContext
                         </label>
@@ -2209,6 +2017,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                             type="checkbox"
                             checked={featLane()}
                             onChange={(e) => setFeatLane(e.currentTarget.checked)}
+                            aria-label="Enforce lane contracts"
                           />
                           Enforce lane contracts (tool allowlist)
                         </label>
@@ -2226,6 +2035,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                             type="checkbox"
                             checked={featPerAgent()}
                             onChange={(e) => setFeatPerAgent(e.currentTarget.checked)}
+                            aria-label="Per-agent permission profiles"
                           />
                           Per-agent permission profiles
                         </label>
@@ -3624,6 +3434,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                           type="checkbox"
                           checked={termEnabled()}
                           onChange={(e) => setTermEnabled(e.currentTarget.checked)}
+                          aria-label="Enable terminal"
                         />
                         Enabled
                       </label>
@@ -3641,6 +3452,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                           type="checkbox"
                           checked={termSandbox()}
                           onChange={(e) => setTermSandbox(e.currentTarget.checked)}
+                          aria-label="Sandbox terminal"
                         />
                         Sandbox (allowlist)
                       </label>
