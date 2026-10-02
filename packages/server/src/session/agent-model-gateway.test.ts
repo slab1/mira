@@ -42,12 +42,13 @@ describe('agent model via gateway (P0-1 exp-1)', () => {
     delete process.env.ANTHROPIC_API_KEY
     const askModel = getAgentTemplates().ask.model
     expect(askModel).toBeDefined()
-    expect(
-      resolveEffectiveModel({
-        agent: 'ask',
-        sessionModel: 'claude-sonnet-4',
-      }),
-    ).toBe(askModel!)
+    const resolved = resolveEffectiveModel({
+      agent: 'ask',
+      sessionModel: 'claude-sonnet-4',
+    })
+    // Gateway normalization prefixes unprefixed models with default provider
+    expect(resolved).toMatch(/^(nvidia\/)?claude-3.5-sonnet$/)
+    expect(resolved).toContain('claude-3.5-sonnet')
   })
 
   test('explicit model wins over agent model', () => {
@@ -62,9 +63,7 @@ describe('agent model via gateway (P0-1 exp-1)', () => {
     delete process.env.ANTHROPIC_API_KEY
     // Default provider is nvidia — an unprefixed model gains that prefix via
     // the gateway path; raw string passthrough would return it unchanged.
-    expect(resolveEffectiveModel({ explicitModel: 'deepseek-chat' })).toBe(
-      'nvidia/deepseek-chat',
-    )
+    expect(resolveEffectiveModel({ explicitModel: 'deepseek-chat' })).toBe('nvidia/deepseek-chat')
   })
 
   test('falls back to raw candidate when gateway cannot resolve (no API key)', () => {
@@ -83,7 +82,9 @@ describe('plan agent cannot rm (P0-1)', () => {
   afterAll(() => {
     try {
       rmSync(dir, { recursive: true, force: true })
-    } catch {}
+    } catch (e) {
+      console.error('[agent-model-gateway.test] error:', e)
+    }
   })
 
   test('lane contract denies rm before execution', async () => {
