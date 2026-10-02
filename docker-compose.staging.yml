@@ -1,0 +1,36 @@
+services:
+  mira-server:
+    build:
+      context: .
+      dockerfile: packages/server/Dockerfile
+    image: mira-server:staging
+    env_file:
+      - .env.staging
+    ports:
+      - '4096:4096'
+    environment:
+      NODE_ENV: staging
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:4096/healthz']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  mira-web:
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile
+    image: mira-web:staging
+    env_file:
+      - .env.staging
+    ports:
+      - '3000:3000'
+    environment:
+      NODE_ENV: staging
+      VITE_API_URL: https://staging-api.mira.example.com
+    depends_on:
+      - mira-server
+    restart: unless-stopped
