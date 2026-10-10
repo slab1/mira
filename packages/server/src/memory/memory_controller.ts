@@ -598,6 +598,72 @@ export async function appendActiveWork(opts: {
   }
 }
 
+// ── P2-3: team memory writers (decisions / conventions / tech_debt) ───
+// These memory_bank files are created by ensureMemoryBank and injected into
+// every prompt, but previously had NO writers — agents read empty templates.
+// appendTeamMemory is the deliberate write path; appendActiveWork is the model.
+
+export type TeamMemoryFile = 'decisions' | 'conventions' | 'tech_debt'
+
+const TEAM_MEMORY_HEADERS: Record<TeamMemoryFile, string> = {
+  decisions: '# Decisions\n\nArchitectural decisions and rationale.\n\n',
+  conventions: '# Conventions\n\nCode style, naming, repo patterns.\n\n',
+  tech_debt: '# Tech Debt\n\nKnown shortcuts, TODOs, and fragility.\n\n',
+}
+
+function resolveBankDir(cwd?: string): string {
+  // Test-hermeticity override: callers that pass an explicit cwd are trusted;
+  // incidental writers (decision-log mirror etc. without a cwd) redirect to
+  // the preload's temp dir so tests never pollute the repo's memory bank.
+  // Precedence + rationale: docs/TEST_HERMETICITY.md (§2)
+  const override = process.env.MIRA_MEMORY_BANK_DIR?.trim()
+  if (!cwd && override) return override
+  const eff = cwd ?? process.cwd()
+  const dbPath = process.env.MIRA_DB
+  if (dbPath) {
+    const slash = dbPath.lastIndexOf('/')
+    let bankDir: string =
+      slash >= 0 ? `${dbPath.slice(0, slash)}/memory_bank` : `${eff}/data/memory_bank`
+    if (!path.isAbsolute(bankDir) && !bankDir.startsWith(eff)) {
+      bankDir = path.join(eff, bankDir)
+    }
+    return bankDir
+  }
+  return path.join(eff, 'data', 'memory_bank')
+}
+
+/** Append one entry to a team memory file (decisions/conventions/tech_debt). */
+export async function appendTeamMemory(opts: {
+  file: TeamMemoryFile
+  /** one-line summary (required) */
+  summary: string
+  /** optional indented detail line (evidence, rationale, alternatives) */
+  detail?: string
+  /** who/what produced this entry, e.g. "governance", "agent:coder" */
+  source?: string
+  cwd?: string
+}): Promise<void> {
+  try {
+    const bankDir = resolveBankDir(opts.cwd)
+    await fsp.mkdir(bankDir, { recursive: true })
+    const file = path.join(bankDir, `${opts.file}.md`)
+    if (!fs.existsSync(file)) {
+      await fsp.writeFile(file, TEAM_MEMORY_HEADERS[opts.file], 'utf-8')
+    }
+    const timestamp = new Date().toISOString()
+    const clean = opts.summary.slice(0, 300).replace(/\r?\n/g, ' ').trim()
+    const srcPart = opts.source ? ` [${opts.source}]` : ''
+    let entry = `- ${timestamp}${srcPart} ${clean}\n`
+    if (opts.detail) {
+      const cleanDetail = opts.detail.slice(0, 500).replace(/\r?\n/g, ' ').trim()
+      entry += `  ${cleanDetail}\n`
+    }
+    await fsp.appendFile(file, entry, 'utf-8')
+  } catch (e) {
+    console.warn(`[memory] appendTeamMemory(${opts.file}) failed:`, String(e))
+  }
+}
+
 // Ensure data/memory_bank/active_work.md exists on boot (idempotent)
 export async function ensureMemoryBank(cwd?: string): Promise<void> {
   try {

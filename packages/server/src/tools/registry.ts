@@ -160,6 +160,8 @@ export class ToolRegistry {
       () => import('./mcp_marketplace.js'),
       () => import('./browser.js'),
       () => import('./findings.js'),
+      () => import('./goals.js'),
+      () => import('./team_memory.js'),
       () => import('./question.js'),
       () => import('./lsp.js'),
       () => import('./memory.js'),

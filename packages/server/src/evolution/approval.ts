@@ -18,11 +18,12 @@
  * | 10 | Known limitations | Implemented | mock human auto-approves low; real human UI Target Phase 6 |
  */
 
-import type { Bus } from "../bus/index.js"
-import type { JsonValue } from "../types/index.js"
-import type { ImprovementProposal } from "./proposal.js"
-import type { RiskAssessment } from "./risk.js"
-import { requiresApproval, AutonomyLevels } from "./autonomy.js"
+import type { Bus } from '../bus/index.js'
+import type { JsonValue } from '../types/index.js'
+import type { ImprovementProposal } from './proposal.js'
+import type { RiskAssessment } from './risk.js'
+import { requiresApproval, AutonomyLevels } from './autonomy.js'
+import { appendDecision } from '../learning/ledger.js'
 
 export interface ApprovalRequest {
   id: string // proposal.id
@@ -30,7 +31,7 @@ export interface ApprovalRequest {
   risk: RiskAssessment
   proposal: ImprovementProposal
   requestedAt: number
-  status: "pending" | "approved" | "denied"
+  status: 'pending' | 'approved' | 'denied'
   approver?: string
 }
 
@@ -44,9 +45,11 @@ export interface ApprovalResult {
 export class ApprovalGate {
   private bus?: Bus
   private pending = new Map<string, ApprovalRequest>()
+  private rootDir?: string
 
-  constructor(opts?: { bus?: Bus }) {
+  constructor(opts?: { bus?: Bus; rootDir?: string }) {
     this.bus = opts?.bus
+    this.rootDir = opts?.rootDir
   }
 
   requestApproval(
@@ -54,20 +57,24 @@ export class ApprovalGate {
     level: number,
     risk?: RiskAssessment,
   ): ApprovalResult {
-    const r: RiskAssessment = risk ?? { level: (proposal.risk as RiskAssessment["level"]) ?? "low", score: 0.3, reasons: ["proposal.risk fallback"] }
+    const r: RiskAssessment = risk ?? {
+      level: (proposal.risk as RiskAssessment['level']) ?? 'low',
+      score: 0.3,
+      reasons: ['proposal.risk fallback'],
+    }
     const needs = requiresApproval(level as AutonomyLevels, r)
 
     // low-risk not needing approval → auto-approved
     if (!needs) {
-      this.emit(proposal, level, r, "approved", "auto")
-      return { approved: true, approver: "auto", reason: "low-risk auto-approved" }
+      this.emit(proposal, level, r, 'approved', 'auto')
+      return { approved: true, approver: 'auto', reason: 'low-risk auto-approved' }
     }
 
     // For mock human: low/medium auto-approved, high stays pending
     // But per requiresApproval, high already needs approval → we keep it pending to exercise POST /evolution/approve/:id
     // For medium at canary, also pending
-    const isHigh = r.level === "high"
-    if (isHigh || (r.level === "medium" && level >= AutonomyLevels.Canary)) {
+    const isHigh = r.level === 'high'
+    if (isHigh || (r.level === 'medium' && level >= AutonomyLevels.Canary)) {
       // store pending, return not approved yet (caller should block verifier)
       const req: ApprovalRequest = {
         id: proposal.id,
@@ -75,39 +82,69 @@ export class ApprovalGate {
         risk: r,
         proposal,
         requestedAt: Date.now(),
-        status: "pending",
+        status: 'pending',
       }
       this.pending.set(proposal.id, req)
-      this.emit(proposal, level, r, "pending", undefined)
-      return { approved: false, pending: true, reason: "high-risk requires human approval (§18) — POST /evolution/approve/:id to approve" }
+      this.emit(proposal, level, r, 'pending', undefined)
+      return {
+        approved: false,
+        pending: true,
+        reason: 'high-risk requires human approval (§18) — POST /evolution/approve/:id to approve',
+      }
     }
 
     // other cases that need approval but not high: mock human approves immediately (but still emits)
-    this.emit(proposal, level, r, "approved", "mock-human")
-    return { approved: true, approver: "mock-human", reason: "mock human approved (non-high)" }
+    this.emit(proposal, level, r, 'approved', 'mock-human')
+    return { approved: true, approver: 'mock-human', reason: 'mock human approved (non-high)' }
   }
 
-  approve(id: string, approver = "human"): ApprovalResult {
+  approve(id: string, approver = 'human'): ApprovalResult {
     const req = this.pending.get(id)
     if (!req) {
       // idempotent: if not pending, treat as approved (ledger may have already)
-      return { approved: true, approver, reason: "no pending — already approved or unknown id" }
+      return { approved: true, approver, reason: 'no pending — already approved or unknown id' }
     }
-    req.status = "approved"
+    req.status = 'approved'
     req.approver = approver
-    this.emit(req.proposal, req.level, req.risk, "approved", approver)
+    this.emit(req.proposal, req.level, req.risk, 'approved', approver)
     this.pending.delete(id)
-    return { approved: true, approver, reason: "human approved" }
+    // Decision log — why approved, with risk evidence
+    try {
+      appendDecision(
+        {
+          decision: 'approval:approved',
+          context: `Proposal ${id} (level ${req.level}) approved by ${approver}`,
+          by: approver,
+          evidence: req.risk.reasons ?? [],
+          alternatives: ['deny', 'keep pending'],
+        },
+        this.rootDir,
+      )
+    } catch {}
+    return { approved: true, approver, reason: 'human approved' }
   }
 
-  deny(id: string, approver = "human"): ApprovalResult {
+  deny(id: string, approver = 'human'): ApprovalResult {
     const req = this.pending.get(id)
-    if (!req) return { approved: false, approver, reason: "no pending" }
-    req.status = "denied"
+    if (!req) return { approved: false, approver, reason: 'no pending' }
+    req.status = 'denied'
     req.approver = approver
-    this.emit(req.proposal, req.level, req.risk, "denied", approver)
+    this.emit(req.proposal, req.level, req.risk, 'denied', approver)
     this.pending.delete(id)
-    return { approved: false, approver, reason: "denied by human" }
+    // Decision log — why denied, with risk evidence
+    try {
+      appendDecision(
+        {
+          decision: 'approval:denied',
+          context: `Proposal ${id} (level ${req.level}) denied by ${approver}`,
+          by: approver,
+          evidence: req.risk.reasons ?? [],
+          alternatives: ['approve', 'keep pending'],
+        },
+        this.rootDir,
+      )
+    } catch {}
+    return { approved: false, approver, reason: 'denied by human' }
   }
 
   isPending(id: string): boolean {
@@ -122,10 +159,16 @@ export class ApprovalGate {
     return [...this.pending.values()]
   }
 
-  private emit(proposal: ImprovementProposal, level: number, risk: RiskAssessment, status: string, approver?: string) {
+  private emit(
+    proposal: ImprovementProposal,
+    level: number,
+    risk: RiskAssessment,
+    status: string,
+    approver?: string,
+  ) {
     try {
       this.bus?.publish({
-        type: "evolution.approval" as unknown as import("../types/index.js").BusEventType,
+        type: 'evolution.approval' as unknown as import('../types/index.js').BusEventType,
         payload: {
           proposalId: proposal.id,
           level,
@@ -135,7 +178,7 @@ export class ApprovalGate {
           timestamp: Date.now(),
         } as unknown as JsonValue,
         timestamp: Date.now(),
-      } as unknown as import("../types/index.js").BusEvent)
+      } as unknown as import('../types/index.js').BusEvent)
     } catch {}
   }
 }

@@ -43,7 +43,22 @@ import { createPatchingSystem, type PatchingEngine } from '../patching/index.js'
 import { createGovernanceGate } from '../patching/governance/index.js'
 import { createAgentMetrics } from '../agents/metrics.js'
 import { createMemoryQualityTracker } from './quality.js'
-import { createWorkspaceIntelligence } from '../workspace/intelligence.js'
+import {
+  createWorkspaceIntelligence,
+  setSharedWorkspace,
+  type WorkspaceItem,
+  type WorkspaceItemKind,
+} from '../workspace/intelligence.js'
+import {
+  createGoalStore,
+  setSharedGoals,
+  type GoalStore,
+  type GoalStatus,
+  type GoalPriority,
+} from '../strategic/goals.js'
+import { appendDecision, getWorkflowTrace } from './ledger.js'
+import { diagnose } from '../evolution/diagnosis.js'
+import { writeFinding } from '../tools/findings.js'
 import { createPolicyEngine } from '../policy/engine.js'
 import { mountEvolutionProposalRoutes } from '../routes/evolution.js'
 import type { Bus } from '../bus/index.js'
@@ -70,6 +85,7 @@ export interface LearningSystem {
   agentMetrics: ReturnType<typeof createAgentMetrics>
   memoryQuality: ReturnType<typeof createMemoryQualityTracker>
   workspace: ReturnType<typeof createWorkspaceIntelligence>
+  goals: GoalStore
   policyEngine: ReturnType<typeof createPolicyEngine>
   gateway?: Gateway
   db?: MiraDB
@@ -92,6 +108,14 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
     { rootDir: deps.rootDir ?? process.cwd() },
   )
 
+  const agentMetrics = createAgentMetrics({ db: deps.db })
+  const memoryQuality = createMemoryQualityTracker({ db: deps.db })
+  const workspace = createWorkspaceIntelligence({ db: deps.db })
+  setSharedWorkspace(workspace)
+  const goals = createGoalStore({ db: deps.db })
+  setSharedGoals(goals)
+  const policyEngine = createPolicyEngine({ db: deps.db, bus: deps.bus })
+
   const governance = createGovernanceGate({
     db: deps.db,
     bus: deps.bus,
@@ -99,19 +123,100 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
     onStagePass: (proposalId, stage) => {
       // Stamp related memories with elevated provenance when a stage passes
       const provenanceLevel = stage === 'benchmark' ? 'benchmark-verified' : 'ci-verified'
-      const related = knowledge.list({ limit: 200 }).filter(
-        (e) => e.metadata.proposalId === proposalId || e.title.includes(proposalId),
-      )
+      const related = knowledge
+        .list({ limit: 200 })
+        .filter((e) => e.metadata.proposalId === proposalId || e.title.includes(proposalId))
       for (const mem of related.slice(0, 5)) {
         void knowledge.stampProvenance(mem.id, provenanceLevel).catch(() => {})
+      }
+      // Mirror stage pass into workspace intelligence as a decision item
+      try {
+        workspace.upsert({
+          kind: 'decision',
+          title: `Governance: ${proposalId}`,
+          description: `Stage ${stage} passed`,
+          status: 'in-progress',
+          priority: 'medium',
+          metadata: { proposalId, stage },
+        })
+      } catch {
+        // best-effort — never break governance on workspace write failure
       }
     },
   })
 
-  const agentMetrics = createAgentMetrics({ db: deps.db })
-  const memoryQuality = createMemoryQualityTracker({ db: deps.db })
-  const workspace = createWorkspaceIntelligence({ db: deps.db })
-  const policyEngine = createPolicyEngine({ db: deps.db, bus: deps.bus })
+  // Mirror governance terminal transitions (promote/reject/rollback) into workspace items
+  // and the decision log (why / evidence / alternatives).
+  deps.bus?.subscribe('learning.updated', (e) => {
+    const p = e.payload as {
+      kind?: string
+      proposalId?: string
+      from?: string
+      to?: string
+      stage?: string
+      reason?: string
+    }
+    if (p?.kind !== 'governance.transition' || !p.proposalId || !p.to) return
+    try {
+      const status: 'open' | 'in-progress' | 'resolved' | 'wontfix' =
+        p.to === 'PROMOTED'
+          ? 'resolved'
+          : p.to === 'REJECTED' || p.to === 'ROLLED_BACK'
+            ? 'wontfix'
+            : 'in-progress'
+      workspace.upsert({
+        kind: 'decision',
+        title: `Governance: ${p.proposalId}`,
+        description: `${p.from ?? '?'} → ${p.to}${p.stage ? ` via ${p.stage}` : ''}${p.reason ? ` — ${p.reason}` : ''}`,
+        status,
+        priority: 'medium',
+        metadata: { proposalId: p.proposalId, from: p.from ?? '', to: p.to, stage: p.stage ?? '' },
+      })
+      // Decision log for terminal states — records why, evidence, and alternatives
+      if (p.to === 'PROMOTED' || p.to === 'REJECTED' || p.to === 'ROLLED_BACK') {
+        appendDecision(
+          {
+            decision: `governance:${p.to.toLowerCase()}`,
+            context: `Proposal ${p.proposalId} transitioned ${p.from ?? '?'} → ${p.to}${p.stage ? ` via ${p.stage}` : ''}${p.reason ? ` — ${p.reason}` : ''}`,
+            by: 'governance',
+            evidence: p.reason
+              ? [`stage=${p.stage ?? 'n/a'}`, `reason=${p.reason}`]
+              : [`stage=${p.stage ?? 'n/a'}`],
+            alternatives: [`remain in ${p.from ?? 'prior state'}`],
+          },
+          deps.rootDir,
+        )
+      }
+      // P1.4 — auto root-cause analysis on governance failures.
+      // A failed stage or regression-blocked promote runs the RCA heuristics and
+      // records a finding (which also lands in workspace intelligence as an issue).
+      if (p.to === 'REJECTED' || p.to === 'ROLLED_BACK') {
+        void (async () => {
+          try {
+            const diag = diagnose({
+              failure: `governance ${p.stage ?? 'unknown'}: ${p.reason ?? p.to}`,
+              evidence: { proposalId: p.proposalId, from: p.from, to: p.to },
+              timestamp: Date.now(),
+            } as Parameters<typeof diagnose>[0])
+            await writeFinding(deps.db, {
+              title: `Auto-RCA: ${diag.cause}`.slice(0, 200),
+              severity: diag.affectedEngine === 'guardrails' ? 'major' : 'minor',
+              evidence:
+                `proposal=${p.proposalId} stage=${p.stage ?? 'n/a'} confidence=${diag.confidence} ${p.reason ?? ''}`.slice(
+                  0,
+                  1000,
+                ),
+              source: 'tool',
+            })
+          } catch {
+            // best-effort — RCA must never block the governance pipeline
+          }
+        })()
+      }
+    } catch {
+      // best-effort
+    }
+  })
 
   const patching = createPatchingSystem(
     { bus: deps.bus, db: deps.db, knowledge, gateway: deps.gateway, governance },
@@ -140,6 +245,7 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
     agentMetrics,
     memoryQuality,
     workspace,
+    goals,
     policyEngine,
     gateway: deps.gateway,
     db: deps.db,
@@ -156,6 +262,163 @@ export function mountLearningRoutes(
   // GovernanceGate created in createLearningSystem(). Idempotent: no-ops if
   // mountEvolutionRoutes already mounted them on this app.
   mountEvolutionProposalRoutes(app, { governance: system.governance })
+
+  // Workspace items — persistent workspace awareness (issues, decisions, roadmap, tech-debt).
+  // Fed by findings (issues) and governance transitions (decisions); also writable manually.
+  app.get('/workspace/items', (c) => {
+    const kind = c.req.query('kind') as WorkspaceItemKind | undefined
+    const status = c.req.query('status') as WorkspaceItem['status'] | undefined
+    return c.json(system.workspace.query({ kind, status }))
+  })
+
+  app.get('/workspace/items/summary', (c) => {
+    return c.json(system.workspace.summary())
+  })
+
+  app.post('/workspace/items', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      kind?: string
+      title?: string
+      description?: string
+      status?: string
+      priority?: string
+      metadata?: Record<string, string | number | boolean>
+    }
+    const validKinds = ['roadmap', 'issue', 'tech-debt', 'ci-status', 'decision']
+    const validStatuses = ['open', 'in-progress', 'resolved', 'wontfix']
+    const validPriorities = ['low', 'medium', 'high']
+    if (!body.kind || !validKinds.includes(body.kind)) {
+      return c.json({ error: `kind must be one of: ${validKinds.join(', ')}` }, 400)
+    }
+    if (!body.title?.trim()) return c.json({ error: 'title required' }, 400)
+    if (body.status && !validStatuses.includes(body.status)) {
+      return c.json({ error: `status must be one of: ${validStatuses.join(', ')}` }, 400)
+    }
+    if (body.priority && !validPriorities.includes(body.priority)) {
+      return c.json({ error: `priority must be one of: ${validPriorities.join(', ')}` }, 400)
+    }
+    const item = system.workspace.upsert({
+      kind: body.kind as WorkspaceItemKind,
+      title: body.title.trim(),
+      description: body.description,
+      status: body.status as WorkspaceItem['status'],
+      priority: body.priority as WorkspaceItem['priority'],
+      metadata: body.metadata,
+    })
+    return c.json(item, 201)
+  })
+
+  app.patch('/workspace/items/:id/status', async (c) => {
+    const id = c.req.param('id')
+    const body = (await c.req.json().catch(() => ({}))) as { status?: string }
+    const valid = ['open', 'in-progress', 'resolved', 'wontfix']
+    if (!body.status || !valid.includes(body.status)) {
+      return c.json({ error: `status must be one of: ${valid.join(', ')}` }, 400)
+    }
+    const item = system.workspace.get(id)
+    if (!item) return c.json({ error: 'not found' }, 404)
+    system.workspace.setStatus(id, body.status as WorkspaceItem['status'])
+    return c.json(system.workspace.get(id))
+  })
+
+  // Decision log — why major actions were taken, with evidence and alternatives
+  app.get('/learning/decisions', (c) => {
+    const trace = getWorkflowTrace()
+    const limit = Math.min(Number(c.req.query('limit') ?? '50') || 50, 200)
+    return c.json(trace.decisions.slice(-limit).reverse())
+  })
+
+  // Strategic goals (P2.1) — long-term objectives; structured records + lifecycle.
+  app.get('/goal', (c) => {
+    const status = c.req.query('status') as GoalStatus | undefined
+    const limit = Math.min(Number(c.req.query('limit') ?? '50') || 50, 100)
+    return c.json(system.goals.list({ status, limit }))
+  })
+
+  app.post('/goal', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      title?: string
+      description?: string
+      rationale?: string
+      priority?: string
+    }
+    if (!body.title?.trim()) return c.json({ error: 'title required' }, 400)
+    const validPriorities = ['high', 'medium', 'low']
+    if (body.priority && !validPriorities.includes(body.priority)) {
+      return c.json({ error: `priority must be one of: ${validPriorities.join(', ')}` }, 400)
+    }
+    const goal = system.goals.create({
+      title: body.title.trim(),
+      description: body.description,
+      rationale: body.rationale,
+      priority: body.priority as GoalPriority,
+    })
+    system.bus?.publish({
+      type: 'job.updated',
+      payload: { goal: goal.id, action: 'created' },
+      timestamp: Date.now(),
+    })
+    return c.json(goal, 201)
+  })
+
+  app.patch('/goal/:id/status', async (c) => {
+    const id = c.req.param('id')
+    const body = (await c.req.json().catch(() => ({}))) as { status?: string }
+    const valid = ['active', 'achieved', 'abandoned']
+    if (!body.status || !valid.includes(body.status)) {
+      return c.json({ error: `status must be one of: ${valid.join(', ')}` }, 400)
+    }
+    const goal = system.goals.updateStatus(id, body.status as GoalStatus)
+    if (!goal) return c.json({ error: 'not found' }, 404)
+    return c.json(goal)
+  })
+
+  app.post('/goal/:id/milestone', async (c) => {
+    const id = c.req.param('id')
+    const body = (await c.req.json().catch(() => ({}))) as { label?: string; complete?: string }
+    if (body.complete) {
+      const goal = system.goals.completeMilestone(id, body.complete)
+      if (!goal) return c.json({ error: 'not found' }, 404)
+      return c.json(goal)
+    }
+    if (!body.label?.trim())
+      return c.json({ error: 'label required (or complete=<milestoneId>)' }, 400)
+    const goal = system.goals.addMilestone(id, body.label)
+    if (!goal) return c.json({ error: 'not found' }, 404)
+    return c.json(goal, 201)
+  })
+
+  // Project Health Score (P2.2) — composite over findings/audit/governance/debt.
+  // Distinct from /health (process) and /learning/score (session).
+  app.get('/workspace/health', async (c) => {
+    const { computeProjectHealth } = await import('../workspace/health.js')
+    const health = await computeProjectHealth({
+      db: system.db,
+      workspace: system.workspace,
+      governance: system.governance,
+    })
+    return c.json(health)
+  })
+
+  // Repo timeline (P1.5) — bounded git-history analysis; ?mirror=1 also writes
+  // hotspot tech-debt items into workspace intelligence.
+  app.get('/repo/timeline', async (c) => {
+    try {
+      const { analyzeTimelineToWorkspace } = await import('../repo/timeline.js')
+      const mirror = c.req.query('mirror') === '1' || c.req.query('mirror') === 'true'
+      const limit = Math.min(Number(c.req.query('limit') ?? '200') || 200, 500)
+      const since = c.req.query('since') ?? null
+      const result = analyzeTimelineToWorkspace(
+        process.cwd(),
+        mirror ? system.workspace : undefined,
+        { limit, since },
+      )
+      if (!result.ok) return c.json(result, 400)
+      return c.json(result)
+    } catch (err) {
+      return c.json({ ok: false, reason: String(err) }, 500)
+    }
+  })
 
   app.get('/learning/status', (c) => {
     const { top, bottom } = rankByUtility(system.knowledge)
@@ -288,6 +551,15 @@ export function mountLearningRoutes(
       sqlite
         .prepare('UPDATE findings SET status = ?, updated_at = ? WHERE id = ?')
         .run('resolved', Date.now(), id)
+      // Mirror resolution into workspace intelligence
+      try {
+        const item = system.workspace
+          .query({ kind: 'issue' })
+          .find((i) => i.metadata.findingId === id)
+        if (item) system.workspace.setStatus(item.id, 'resolved')
+      } catch {
+        // best-effort
+      }
       const entry = await system.knowledge.store({
         tier: 'procedural',
         source: 'improvement',

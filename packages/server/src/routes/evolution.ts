@@ -23,25 +23,30 @@
  * | 10 | Known limitations | Implemented | mock human approval; Phase 4 shadow/canary still Target |
  */
 
-import type { Hono } from "hono"
-import type { MiraDB } from "../storage/db.js"
-import type { Bus } from "../bus/index.js"
-import type { JsonValue } from "../types/index.js"
-import { EvolutionObserver } from "../evolution/observer.js"
-import { diagnose } from "../evolution/diagnosis.js"
-import { propose } from "../evolution/proposal.js"
-import { createExperiment } from "../evolution/experiment.js"
-import { verify } from "../evolution/verifier.js"
-import { evaluate } from "../evolution/evaluator.js"
-import { ImprovementLedger } from "../evolution/ledger.js"
-import { RiskEngine } from "../evolution/risk.js"
-import { selectLevel, requiresApproval, AutonomyLevels } from "../evolution/autonomy.js"
-import { ApprovalGate } from "../evolution/approval.js"
-import { ResourceLimits } from "../evolution/resources.js"
-import { SecurityValidator } from "../evolution/security.js"
-import { RollbackManager } from "../evolution/rollback.js"
-import { isProposalState, type ProposalState } from "../patching/governance/types.js"
-import type { GovernanceGateLike } from "../patching/governance/index.js"
+import type { Hono } from 'hono'
+import type { MiraDB } from '../storage/db.js'
+import type { Bus } from '../bus/index.js'
+import type { JsonValue } from '../types/index.js'
+import { EvolutionObserver } from '../evolution/observer.js'
+import { diagnose } from '../evolution/diagnosis.js'
+import { propose } from '../evolution/proposal.js'
+import { createExperiment } from '../evolution/experiment.js'
+import { verify } from '../evolution/verifier.js'
+import { evaluate } from '../evolution/evaluator.js'
+import { ImprovementLedger } from '../evolution/ledger.js'
+import { RiskEngine } from '../evolution/risk.js'
+import { selectLevel, requiresApproval, AutonomyLevels } from '../evolution/autonomy.js'
+import { ApprovalGate } from '../evolution/approval.js'
+import { ResourceLimits } from '../evolution/resources.js'
+import { SecurityValidator } from '../evolution/security.js'
+import { RollbackManager } from '../evolution/rollback.js'
+import {
+  checkSelfModificationGate,
+  gateByConfidence,
+  DEFAULT_CONFIDENCE_THRESHOLD,
+} from '../evolution/modification-gate.js'
+import { isProposalState, type ProposalState } from '../patching/governance/types.js'
+import type { GovernanceGateLike } from '../patching/governance/index.js'
 
 export interface EvolutionRouteDeps {
   db: MiraDB
@@ -72,43 +77,44 @@ export function mountEvolutionRoutes(
   const rollbackManager = deps.rollbackManager ?? new RollbackManager({ db, bus, ledger })
 
   // ── GET /evolution/health ────────────────────────────────────────
-  app.get("/evolution/health", (c) => {
+  app.get('/evolution/health', (c) => {
     return c.json({
       ok: true,
-      status: "Target→Implemented per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_EVOLUTION_SPEC.md Phase 2 + MIRA_SYSTEM_DOCUMENTATION.md:8",
-      phase: "Phase 2 Safety",
-      primary: "nvidia",
-      fallback: "colibri",
-      hardware: "no local hardware required (colibri opportunistic)",
+      status:
+        'Target→Implemented per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_EVOLUTION_SPEC.md Phase 2 + MIRA_SYSTEM_DOCUMENTATION.md:8',
+      phase: 'Phase 2 Safety',
+      primary: 'nvidia',
+      fallback: 'colibri',
+      hardware: 'no local hardware required (colibri opportunistic)',
       observer: observer.health(),
       ledger: ledger.health(),
-      risk: "RiskEngine wired",
-      autonomy: "AutonomyLevels 0-5 wired",
-      approval: "ApprovalGate wired (mock human, emits evolution.approval)",
-      resources: "ResourceLimits wired (per-task/per-agent/per-mission/daily)",
-      security: "SecurityValidator wired",
-      rollback: "RollbackManager wired",
+      risk: 'RiskEngine wired',
+      autonomy: 'AutonomyLevels 0-5 wired',
+      approval: 'ApprovalGate wired (mock human, emits evolution.approval)',
+      resources: 'ResourceLimits wired (per-task/per-agent/per-mission/daily)',
+      security: 'SecurityValidator wired',
+      rollback: 'RollbackManager wired',
       routes: [
-        "GET /evolution/health",
-        "POST /evolution/observe",
-        "GET /evolution/ledger",
-        "GET /evolution/risk/:id",
-        "POST /evolution/approve/:id",
-        "POST /evolution/rollback/:id",
-        "GET /evolution/proposals?state=",
-        "POST /evolution/proposals/:id/advance",
-        "POST /evolution/proposals/:id/promote",
-        "POST /evolution/proposals/:id/rollback",
+        'GET /evolution/health',
+        'POST /evolution/observe',
+        'GET /evolution/ledger',
+        'GET /evolution/risk/:id',
+        'POST /evolution/approve/:id',
+        'POST /evolution/rollback/:id',
+        'GET /evolution/proposals?state=',
+        'POST /evolution/proposals/:id/advance',
+        'POST /evolution/proposals/:id/promote',
+        'POST /evolution/proposals/:id/rollback',
       ],
-      canary: "Target (Phase 5)",
-      shadow: "Target (Phase 4)",
+      canary: 'Target (Phase 5)',
+      shadow: 'Target (Phase 4)',
       timestamp: Date.now(),
     })
   })
 
   // ── POST /evolution/observe ──────────────────────────────────────
   // Body: { failure: string, evidence?: JsonValue, sessionID?: string, changedFiles?: string[], patch?: string, permissionScope?: string, cost?: number }
-  app.post("/evolution/observe", async (c) => {
+  app.post('/evolution/observe', async (c) => {
     let body: {
       failure?: unknown
       evidence?: unknown
@@ -118,18 +124,37 @@ export function mountEvolutionRoutes(
       permissionScope?: unknown
       cost?: unknown
     } | null = null
-    try { body = (await c.req.json() as unknown) as typeof body } catch { body = null }
-    if (!body || typeof (body as { failure?: unknown }).failure !== "string" || !(body as { failure?: string }).failure!.trim()) {
-      return c.json({ error: "body.failure string required" }, 400)
+    try {
+      body = (await c.req.json()) as unknown as typeof body
+    } catch {
+      body = null
     }
-    const b = body as { failure: string; evidence?: unknown; sessionID?: unknown; changedFiles?: unknown; patch?: unknown; permissionScope?: unknown; cost?: unknown }
+    if (
+      !body ||
+      typeof (body as { failure?: unknown }).failure !== 'string' ||
+      !(body as { failure?: string }).failure!.trim()
+    ) {
+      return c.json({ error: 'body.failure string required' }, 400)
+    }
+    const b = body as {
+      failure: string
+      evidence?: unknown
+      sessionID?: unknown
+      changedFiles?: unknown
+      patch?: unknown
+      permissionScope?: unknown
+      cost?: unknown
+    }
     const failure = String(b.failure).slice(0, 500)
     const evidence = (b.evidence ?? null) as JsonValue
     const sessionID = b.sessionID ? String(b.sessionID).slice(0, 100) : undefined
-    const changedFiles = Array.isArray(b.changedFiles) ? (b.changedFiles as unknown[]).map(String).slice(0, 20) : undefined
-    const patch = typeof b.patch === "string" ? String(b.patch).slice(0, 10000) : undefined
-    const permissionScope = typeof b.permissionScope === "string" ? String(b.permissionScope).slice(0, 200) : undefined
-    const cost = typeof b.cost === "number" && Number.isFinite(b.cost) ? Number(b.cost) : undefined
+    const changedFiles = Array.isArray(b.changedFiles)
+      ? (b.changedFiles as unknown[]).map(String).slice(0, 20)
+      : undefined
+    const patch = typeof b.patch === 'string' ? String(b.patch).slice(0, 10000) : undefined
+    const permissionScope =
+      typeof b.permissionScope === 'string' ? String(b.permissionScope).slice(0, 200) : undefined
+    const cost = typeof b.cost === 'number' && Number.isFinite(b.cost) ? Number(b.cost) : undefined
 
     const observed = observer.observe(failure, evidence, sessionID)
 
@@ -150,11 +175,23 @@ export function mountEvolutionRoutes(
     const level = selectLevel(risk, proposal)
     const needsApproval = requiresApproval(level, risk)
 
-    // Approval gate — emits evolution.approval
-    const approval = approvalGate.requestApproval(proposal, level, risk)
+    // ── Unified self-modification gate (P1.1) — early confidence arm ──
+    // Low-confidence diagnoses may still be observed/experimented in the
+    // sandbox, but never reach autonomous execution. Fail-closed.
+    const confidenceGate = gateByConfidence(diagnosis.confidence, DEFAULT_CONFIDENCE_THRESHOLD)
+    let effectiveLevel = level
+    if (!confidenceGate.passed && effectiveLevel > AutonomyLevels.Suggest) {
+      effectiveLevel = AutonomyLevels.Suggest
+    }
+
+    // Approval gate — emits evolution.approval (uses effectiveLevel, confidence-capped)
+    const approval = approvalGate.requestApproval(proposal, effectiveLevel, risk)
 
     // Resource limits — per-task/per-agent/per-mission/daily (§13)
-    const budget = resourceLimits.checkBudget(proposal as unknown as unknown as Parameters<typeof resourceLimits.checkBudget>[0], cost ?? 0.05)
+    const budget = resourceLimits.checkBudget(
+      proposal as unknown as unknown as Parameters<typeof resourceLimits.checkBudget>[0],
+      cost ?? 0.05,
+    )
 
     // Security validation — no secrets / no permission escalation (§8)
     const securityPre = securityValidator.validate(patch ?? experiment.patch)
@@ -169,17 +206,17 @@ export function mountEvolutionRoutes(
 
     if (!securityPre.passed) {
       blocked = true
-      blockedBy = "security"
-      gatedReason.push(`security blocked: ${securityPre.findings.slice(0, 2).join("; ")}`)
+      blockedBy = 'security'
+      gatedReason.push(`security blocked: ${securityPre.findings.slice(0, 2).join('; ')}`)
     }
     if (!budget.allowed) {
       blocked = true
-      blockedBy = blockedBy ?? "budget"
+      blockedBy = blockedBy ?? 'budget'
       gatedReason.push(`budget blocked: ${budget.reason}`)
     }
     if (!approval.approved && approval.pending) {
       blocked = true
-      blockedBy = blockedBy ?? "approval"
+      blockedBy = blockedBy ?? 'approval'
       gatedReason.push(`approval pending: ${approval.reason} (level ${level}, risk ${risk.level})`)
     }
 
@@ -195,12 +232,20 @@ export function mountEvolutionRoutes(
         security: { passed: securityPre.passed, issues: securityPre.findings },
         static: { passed: false, issues: gatedReason },
         benchmark: { latencyMs: 0, successRate: 0, costDelta: 0 },
-        details: { blocked: true, blockedBy, gatedReason, risk, level, needsApproval } as unknown as JsonValue,
+        details: {
+          blocked: true,
+          blockedBy,
+          gatedReason,
+          risk,
+          level: effectiveLevel,
+          needsApproval,
+          confidenceGate,
+        } as unknown as JsonValue,
         timestamp: Date.now(),
       }
       evaluation = {
-        decision: "reject",
-        reason: `blocked by ${blockedBy}: ${gatedReason.join(" | ")}`,
+        decision: 'reject',
+        reason: `blocked by ${blockedBy}: ${gatedReason.join(' | ')}`,
         scores: {
           success: { baseline: 0.87, candidate: 0, delta: -0.87, pass: false },
           latency: { baseline: 12000, candidate: 0, deltaPct: 0, pass: true },
@@ -211,7 +256,12 @@ export function mountEvolutionRoutes(
         timestamp: Date.now(),
         details: { blocked: true, blockedBy } as unknown as JsonValue,
       }
-      verdict = blockedBy === "approval" ? "pending_approval" : blockedBy === "budget" ? "budget_blocked" : "security_blocked"
+      verdict =
+        blockedBy === 'approval'
+          ? 'pending_approval'
+          : blockedBy === 'budget'
+            ? 'budget_blocked'
+            : 'security_blocked'
     } else {
       verification = await verify(experiment)
       // merge pre-security result into verification security (fail-closed)
@@ -221,20 +271,54 @@ export function mountEvolutionRoutes(
         verification.verified = false
       }
       evaluation = evaluate(verification)
-      verdict = evaluation.decision === "accept" ? "verified" : "rejected"
+
+      // ── Unified self-modification gate (P1.1) — final arm ──
+      // Even when verification + evaluation pass, never mark "verified"
+      // unless confidence ∧ validation ∧ rollback all hold. Fail-closed.
+      const fullGate = checkSelfModificationGate(
+        {
+          confidence: diagnosis.confidence,
+          validationPassed: evaluation.decision === 'accept',
+          rollbackAvailable: !!rollbackPoint,
+          riskLevel: risk.level,
+        },
+        DEFAULT_CONFIDENCE_THRESHOLD,
+      )
+      if (fullGate.allowed) {
+        verdict = 'verified'
+      } else if (evaluation.decision === 'accept') {
+        // Evaluation accepted but the unified policy denied — downgrade.
+        verdict = 'gated'
+        evaluation = {
+          ...evaluation,
+          decision: 'reject',
+          reason: `unified gate denied: ${fullGate.reasons.join(' | ')}`,
+          details: {
+            ...(evaluation.details as object),
+            modificationGate: fullGate,
+          } as unknown as JsonValue,
+        }
+      } else {
+        verdict = 'rejected'
+      }
     }
 
     try {
       ledger.remember({
         id: proposal.id,
         proposal,
-        verdict: verdict as unknown as import("../evolution/ledger.js").LedgerVerdict,
+        verdict: verdict as unknown as import('../evolution/ledger.js').LedgerVerdict,
         evidence: {
           observed,
           diagnosis,
-          experiment: { id: experiment.simulationId, sandboxPath: experiment.sandboxPath, riskScore: experiment.riskScore },
+          experiment: {
+            id: experiment.simulationId,
+            sandboxPath: experiment.sandboxPath,
+            riskScore: experiment.riskScore,
+          },
           risk,
-          autonomy: { level, needsApproval },
+          autonomy: { level, effectiveLevel, needsApproval },
+          confidenceGate,
           approval,
           budget,
           security: securityPre,
@@ -250,23 +334,49 @@ export function mountEvolutionRoutes(
       observed,
       diagnosis,
       proposal,
-      experiment: { proposalId: experiment.proposalId, sandboxPath: experiment.sandboxPath, simulationId: experiment.simulationId, riskScore: experiment.riskScore },
+      experiment: {
+        proposalId: experiment.proposalId,
+        sandboxPath: experiment.sandboxPath,
+        simulationId: experiment.simulationId,
+        riskScore: experiment.riskScore,
+      },
       risk,
-      autonomy: { level, needsApproval, levels: "0:Observe 1:Suggest 2:Experiment 3:Execute 4:Canary 5:Autonomous (§18)" },
+      autonomy: {
+        level,
+        effectiveLevel,
+        needsApproval,
+        levels: '0:Observe 1:Suggest 2:Experiment 3:Execute 4:Canary 5:Autonomous (§18)',
+      },
+      modificationGate: {
+        threshold: DEFAULT_CONFIDENCE_THRESHOLD,
+        confidence: diagnosis.confidence,
+        confidencePassed: confidenceGate.passed,
+        rollbackAvailable: !!rollbackPoint,
+      },
       approval,
       budget,
       security: securityPre,
       rollbackPoint,
-      verification: verification ? { verified: verification.verified, regression: verification.regression, security: verification.security, static: verification.static, blocked: (verification.details as { blocked?: boolean })?.blocked ?? false } : null,
+      verification: verification
+        ? {
+            verified: verification.verified,
+            regression: verification.regression,
+            security: verification.security,
+            static: verification.static,
+            blocked: (verification.details as { blocked?: boolean })?.blocked ?? false,
+          }
+        : null,
       evaluation: evaluation ? { decision: evaluation.decision, reason: evaluation.reason } : null,
       ledger: { verdict, id: proposal.id },
-      note: blocked ? `blocked by ${blockedBy} — POST /evolution/approve/${proposal.id} or fix and retry` : "Phase 2 gated — Risk→Autonomy→Approval→Resources→Security before Verifier",
+      note: blocked
+        ? `blocked by ${blockedBy} — POST /evolution/approve/${proposal.id} or fix and retry`
+        : 'Phase 2 gated — Risk→Autonomy→Approval→Resources→Security before Verifier',
     })
   })
 
   // ── GET /evolution/ledger ────────────────────────────────────────
-  app.get("/evolution/ledger", (c) => {
-    const limitRaw = c.req.query("limit")
+  app.get('/evolution/ledger', (c) => {
+    const limitRaw = c.req.query('limit')
     const limit = limitRaw ? Math.min(100, Math.max(1, Number(limitRaw) || 50)) : 50
     const entries = ledger.list(limit)
     return c.json({
@@ -288,53 +398,98 @@ export function mountEvolutionRoutes(
   })
 
   // ── GET /evolution/risk/:id ──────────────────────────────────────
-  app.get("/evolution/risk/:id", (c) => {
-    const id = c.req.param("id")
+  app.get('/evolution/risk/:id', (c) => {
+    const id = c.req.param('id')
     const entry = ledger.get(id)
-    if (!entry) return c.json({ error: "not found", id }, 404)
-    const ev = entry.evidence as { risk?: import("../evolution/risk.js").RiskAssessment; autonomy?: { level: number; needsApproval: boolean }; approval?: unknown; budget?: unknown; security?: unknown } | null
+    if (!entry) return c.json({ error: 'not found', id }, 404)
+    const ev = entry.evidence as {
+      risk?: import('../evolution/risk.js').RiskAssessment
+      autonomy?: { level: number; needsApproval: boolean }
+      approval?: unknown
+      budget?: unknown
+      security?: unknown
+    } | null
     if (ev?.risk) {
-      return c.json({ ok: true, id, risk: ev.risk, autonomy: ev.autonomy, approval: ev.approval, budget: ev.budget, security: ev.security })
+      return c.json({
+        ok: true,
+        id,
+        risk: ev.risk,
+        autonomy: ev.autonomy,
+        approval: ev.approval,
+        budget: ev.budget,
+        security: ev.security,
+      })
     }
     // fallback: recompute risk from proposal
-    const risk = riskEngine.assess(entry.proposal as unknown as Parameters<typeof riskEngine.assess>[0])
+    const risk = riskEngine.assess(
+      entry.proposal as unknown as Parameters<typeof riskEngine.assess>[0],
+    )
     const level = selectLevel(risk, entry.proposal)
-    return c.json({ ok: true, id, risk, autonomy: { level, needsApproval: requiresApproval(level, risk) }, proposal: entry.proposal, fallback: true })
+    return c.json({
+      ok: true,
+      id,
+      risk,
+      autonomy: { level, needsApproval: requiresApproval(level, risk) },
+      proposal: entry.proposal,
+      fallback: true,
+    })
   })
 
   // ── POST /evolution/approve/:id ──────────────────────────────────
-  app.post("/evolution/approve/:id", async (c) => {
-    const id = c.req.param("id")
+  app.post('/evolution/approve/:id', async (c) => {
+    const id = c.req.param('id')
     const entry = ledger.get(id)
-    if (!entry) return c.json({ error: "not found", id }, 404)
+    if (!entry) return c.json({ error: 'not found', id }, 404)
     let body: { approver?: unknown } | null = null
-    try { body = (await c.req.json() as unknown) as unknown as typeof body } catch { body = null }
-    const approver = (body as unknown as { approver?: unknown } | null)?.approver ? String((body as unknown as { approver?: unknown }).approver).slice(0, 100) : "human"
+    try {
+      body = (await c.req.json()) as unknown as unknown as typeof body
+    } catch {
+      body = null
+    }
+    const approver = (body as unknown as { approver?: unknown } | null)?.approver
+      ? String((body as unknown as { approver?: unknown }).approver).slice(0, 100)
+      : 'human'
     const result = approvalGate.approve(id, approver)
     // also update ledger verdict to approved if it was pending
     try {
       const ev = entry.evidence as Record<string, unknown> | null
       const currentVerdict = String(entry.verdict)
-      if (currentVerdict.includes("pending")) {
+      if (currentVerdict.includes('pending')) {
         // mark as verified-pending-approved
-        ledger.remember({ id: entry.id, proposal: entry.proposal, verdict: "verified" as unknown as import("../evolution/ledger.js").LedgerVerdict, evidence: { ...(ev ?? {}), approval: result, approvedAt: Date.now(), approver } as unknown as JsonValue })
+        ledger.remember({
+          id: entry.id,
+          proposal: entry.proposal,
+          verdict: 'verified' as unknown as import('../evolution/ledger.js').LedgerVerdict,
+          evidence: {
+            ...(ev ?? {}),
+            approval: result,
+            approvedAt: Date.now(),
+            approver,
+          } as unknown as JsonValue,
+        })
       }
     } catch {}
-    return c.json({ ok: true, id, approved: result.approved, approver: result.approver, reason: result.reason })
+    return c.json({
+      ok: true,
+      id,
+      approved: result.approved,
+      approver: result.approver,
+      reason: result.reason,
+    })
   })
 
   // ── POST /evolution/rollback/:id ─────────────────────────────────
-  app.post("/evolution/rollback/:id", async (c) => {
-    const id = c.req.param("id")
+  app.post('/evolution/rollback/:id', async (c) => {
+    const id = c.req.param('id')
     const entry = ledger.get(id)
-    if (!entry) return c.json({ error: "not found", id }, 404)
+    if (!entry) return c.json({ error: 'not found', id }, 404)
     try {
       rollbackManager.rollback(id)
     } catch (e) {
       return c.json({ error: String(e).slice(0, 500), id }, 500)
     }
     const after = ledger.get(id)
-    return c.json({ ok: true, id, rolledBack: true, verdict: after?.verdict ?? "rolledback" })
+    return c.json({ ok: true, id, rolledBack: true, verdict: after?.verdict ?? 'rolledback' })
   })
 
   // Governance pipeline (patch proposals) — only when a gate was passed in;
@@ -359,9 +514,9 @@ export function mountEvolutionProposalRoutes(
   const governance = deps.governance
 
   // ── GET /evolution/proposals?state=<s> ───────────────────────────
-  app.get("/evolution/proposals", async (c) => {
-    const state = c.req.query("state")
-    if (state !== undefined && state !== "" && !isProposalState(state)) {
+  app.get('/evolution/proposals', async (c) => {
+    const state = c.req.query('state')
+    if (state !== undefined && state !== '' && !isProposalState(state)) {
       return c.json({ error: `invalid state: ${state.slice(0, 40)}` }, 400)
     }
     const proposals = await governance.list(
@@ -372,33 +527,42 @@ export function mountEvolutionProposalRoutes(
 
   // ── POST /evolution/proposals/:id/advance ────────────────────────
   // Runs exactly one pipeline stage (benchmark → security → canary).
-  app.post("/evolution/proposals/:id/advance", async (c) => {
-    const id = c.req.param("id")
+  app.post('/evolution/proposals/:id/advance', async (c) => {
+    const id = c.req.param('id')
     const proposal = await governance.advance(id)
-    if (!proposal) return c.json({ error: "not found", id }, 404)
+    if (!proposal) return c.json({ error: 'not found', id }, 404)
     return c.json({ proposal })
   })
 
   // ── POST /evolution/proposals/:id/promote ────────────────────────
-  app.post("/evolution/proposals/:id/promote", async (c) => {
-    const id = c.req.param("id")
+  app.post('/evolution/proposals/:id/promote', async (c) => {
+    const id = c.req.param('id')
     const exists = await governance.get(id)
-    if (!exists) return c.json({ error: "not found", id }, 404)
+    if (!exists) return c.json({ error: 'not found', id }, 404)
     const result = await governance.promote(id)
     // backward compatible: prUrl/regressionBlocked/reason are omitted from the
     // JSON body when undefined; failure reasons must reach the client.
-    return c.json({ applied: result.applied, prUrl: result.prUrl, regressionBlocked: result.regressionBlocked, reason: result.reason })
+    return c.json({
+      applied: result.applied,
+      prUrl: result.prUrl,
+      regressionBlocked: result.regressionBlocked,
+      reason: result.reason,
+    })
   })
 
   // ── POST /evolution/proposals/:id/rollback  body: { reason } ─────
-  app.post("/evolution/proposals/:id/rollback", async (c) => {
-    const id = c.req.param("id")
+  app.post('/evolution/proposals/:id/rollback', async (c) => {
+    const id = c.req.param('id')
     let body: { reason?: unknown } | null = null
-    try { body = (await c.req.json() as unknown) as { reason?: unknown } | null } catch { body = null }
-    const reason = typeof body?.reason === "string" ? body.reason.trim().slice(0, 500) : ""
-    if (!reason) return c.json({ error: "body.reason string required" }, 400)
+    try {
+      body = (await c.req.json()) as unknown as { reason?: unknown } | null
+    } catch {
+      body = null
+    }
+    const reason = typeof body?.reason === 'string' ? body.reason.trim().slice(0, 500) : ''
+    if (!reason) return c.json({ error: 'body.reason string required' }, 400)
     const exists = await governance.get(id)
-    if (!exists) return c.json({ error: "not found", id }, 404)
+    if (!exists) return c.json({ error: 'not found', id }, 404)
     await governance.rollback(id, reason)
     return c.json({ ok: true })
   })

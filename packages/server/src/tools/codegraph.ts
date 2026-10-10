@@ -1,10 +1,10 @@
 /**
- * Tools: findCallers / findDependencies — AST call-graph queries.
+ * Tools: findCallers / findDependencies / findDependents — AST call-graph queries.
  *
  * Read-only introspection over the CodeGraph (codegraph/): find every call
- * site of a function, or list the files a file imports. The graph is built
- * once at startup (index.ts) and lazily on first tool use; both tools share
- * the per-db singleton from codeGraphFor(db).
+ * site of a function, list files a file imports, or list files that import it.
+ * The graph is built once at startup (index.ts) and lazily on first tool use;
+ * tools share the per-db singleton from codeGraphFor(db).
  */
 import { z } from 'zod'
 import type { ToolDef, ToolContext } from './registry.js'
@@ -100,5 +100,41 @@ const findDependenciesTool = {
   },
 } satisfies ToolDef<typeof findDependenciesSchema>
 
-export const tools = [findCallersTool, findDependenciesTool]
+// ── findDependents ──────────────────────────────────────────────────
+
+const findDependentsSchema = z.object({
+  filePath: z.string().describe('File to inspect (project-relative or absolute path)'),
+  limit: z.number().int().positive().max(500).optional().describe('Max results (default 100)'),
+})
+
+const findDependentsTool = {
+  name: 'findDependents',
+  description:
+    'List the files that import a given file (reverse dependency edges). ' +
+    'Returns project-relative paths. Use before changing or deleting a file to see what breaks — ' +
+    'the blast radius of a modification. Complements findDependencies (forward direction).',
+  category: 'file',
+  schema: findDependentsSchema,
+  metadata: {
+    riskLevel: 'low',
+    sideEffect: 'none',
+    isReadOnly: true,
+    isIdempotent: true,
+  },
+  async execute({ filePath, limit = 100 }, ctx: ToolContext) {
+    const graph = codeGraphFor(ctx.db)
+    if (!ctx.db)
+      return {
+        filePath,
+        count: 0,
+        dependents: [],
+        warning: 'code graph unavailable (no database)',
+      }
+    await ensureBuilt(graph, ctx.cwd)
+    const dependents = graph.findDependents(filePath, limit)
+    return { filePath, count: dependents.length, dependents }
+  },
+} satisfies ToolDef<typeof findDependentsSchema>
+
+export const tools = [findCallersTool, findDependenciesTool, findDependentsTool]
 export default tools

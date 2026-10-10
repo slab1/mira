@@ -205,10 +205,10 @@ const ctx = (db: ReturnType<typeof createDatabase>, cwd: string) => ({
   cwd,
 })
 
-describe('findCallers / findDependencies tools', () => {
+describe('findCallers / findDependencies / findDependents tools', () => {
   test('registered as read-only file tools', () => {
     const names = codeGraphTools.map((t) => t.name)
-    expect(names).toEqual(['findCallers', 'findDependencies'])
+    expect(names).toEqual(['findCallers', 'findDependencies', 'findDependents'])
     for (const t of codeGraphTools) {
       expect(t.category).toBe('file')
       expect(t.metadata?.isReadOnly).toBe(true)
@@ -239,6 +239,19 @@ describe('findCallers / findDependencies tools', () => {
     }
     expect(out.count).toBe(2)
     expect(out.dependencies).toEqual(['src/a.ts', 'src/b.ts'])
+  })
+
+  test('findDependents returns reverse dependency edges', async () => {
+    const db = createDatabase(':memory:')
+    const reg = makeRegistry(db)
+    const out = (await reg.execute('findDependents', { filePath: 'src/a.ts' }, ctx(db, dir))) as {
+      filePath: string
+      count: number
+      dependents: string[]
+    }
+    expect(out.filePath).toBe('src/a.ts')
+    expect(out.count).toBe(2)
+    expect(out.dependents).toEqual(['src/b.ts', 'src/c.ts'])
   })
 
   test('tools work without a db (graceful degradation)', async () => {

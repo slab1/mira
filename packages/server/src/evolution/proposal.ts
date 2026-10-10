@@ -23,12 +23,12 @@
  * | 10 | Known limitations | Implemented | heuristic expectedImpact; Phase 2 Risk Engine adds approval gates |
  */
 
-import type { JsonValue } from "../types/index.js"
-import type { Diagnosis } from "./diagnosis.js"
+import type { JsonValue } from '../types/index.js'
+import type { Diagnosis } from './diagnosis.js'
 
-export type ProposalType = "fix" | "improve" | "experiment"
-export type RiskLevel = "low" | "medium" | "high"
-export type Priority = "P0" | "P1"
+export type ProposalType = 'fix' | 'improve' | 'experiment'
+export type RiskLevel = 'low' | 'medium' | 'high'
+export type Priority = 'P0' | 'P1'
 
 export interface ImprovementProposal {
   id: string
@@ -43,35 +43,84 @@ export interface ImprovementProposal {
   confidence: number
   sessionID?: string
   createdAt: number
+  /**
+   * Co-emitted rollback plan (P1.3): how this change is reverted if wrong.
+   * Present on every proposal so the unified modification gate's rollback
+   * check is satisfiable, and so acceptance criteria include reversibility.
+   */
+  rollbackPlan: {
+    /** 'snapshot' | 'git-revert' | 'config-restore' | 'none' */
+    strategy: 'snapshot' | 'git-revert' | 'config-restore' | 'none'
+    /** Human-readable revert steps */
+    steps: string[]
+    /** Whether revert is lossless (false when data mutations involved) */
+    lossless: boolean
+  }
 }
 
 function riskFor(d: Diagnosis): RiskLevel {
   // High-risk engines per MIRA_WEAKNESSES §18 human approval boundaries
-  const high = new Set(["guardrails", "model"])
-  if (high.has(d.affectedEngine) && d.confidence > 0.7) return "high"
-  if (d.affectedEngine === "gateway" && /circuit|hasKey|rate/i.test(d.cause)) return "medium"
-  if (d.confidence < 0.55) return "medium"
-  return "low"
+  const high = new Set(['guardrails', 'model'])
+  if (high.has(d.affectedEngine) && d.confidence > 0.7) return 'high'
+  if (d.affectedEngine === 'gateway' && /circuit|hasKey|rate/i.test(d.cause)) return 'medium'
+  if (d.confidence < 0.55) return 'medium'
+  return 'low'
 }
 
 function priorityFor(risk: RiskLevel, d: Diagnosis): Priority {
   // P0 per MIRA_WEAKNESSES §21 matrix: controlled self-evolution, verification, shadow, cost etc.
-  if (d.affectedEngine === "gateway" || d.affectedEngine === "model" || d.affectedEngine === "guardrails") return "P0"
-  if (risk === "high") return "P0"
-  return "P1"
+  if (
+    d.affectedEngine === 'gateway' ||
+    d.affectedEngine === 'model' ||
+    d.affectedEngine === 'guardrails'
+  )
+    return 'P0'
+  if (risk === 'high') return 'P0'
+  return 'P1'
 }
 
 function titleFor(d: Diagnosis): string {
-  const base = d.cause.slice(0, 80).trim() || "unclassified"
+  const base = d.cause.slice(0, 80).trim() || 'unclassified'
   return `Improve ${d.affectedEngine}: ${base}`
 }
 
 function expectedImpactFor(d: Diagnosis, risk: RiskLevel): string {
-  if (d.affectedEngine === "gateway") return risk === "high" ? "reduce fallback errors, improve hasKey handling" : "stabilize lane latency/cost"
-  if (d.affectedEngine === "memory") return "improve recall/persistence"
-  if (d.affectedEngine === "guardrails") return "tighten security without breaking UX"
-  if (d.affectedEngine === "tool") return "raise edit success 7→68% via hash-anchored fallback"
-  return "measurable improvement per MIRA_WEAKNESSES §16 longitudinal benchmark (task 87→91%, regression 8→4%)"
+  if (d.affectedEngine === 'gateway')
+    return risk === 'high'
+      ? 'reduce fallback errors, improve hasKey handling'
+      : 'stabilize lane latency/cost'
+  if (d.affectedEngine === 'memory') return 'improve recall/persistence'
+  if (d.affectedEngine === 'guardrails') return 'tighten security without breaking UX'
+  if (d.affectedEngine === 'tool') return 'raise edit success 7→68% via hash-anchored fallback'
+  return 'measurable improvement per MIRA_WEAKNESSES §16 longitudinal benchmark (task 87→91%, regression 8→4%)'
+}
+
+function rollbackPlanFor(d: Diagnosis, risk: RiskLevel): ImprovementProposal['rollbackPlan'] {
+  // High-risk engine mutations get explicit git-revert; everything else
+  // reverts via file snapshots (the RollbackManager's default mechanism).
+  if (d.affectedEngine === 'gateway' || d.affectedEngine === 'model') {
+    return {
+      strategy: 'config-restore',
+      steps: ['restore prior gateway config from snapshot', 'restart affected lane'],
+      lossless: true,
+    }
+  }
+  if (risk === 'high') {
+    return {
+      strategy: 'git-revert',
+      steps: [
+        'git revert the change',
+        'run full verification suite',
+        'confirm metrics return to baseline',
+      ],
+      lossless: true,
+    }
+  }
+  return {
+    strategy: 'snapshot',
+    steps: ['restore file snapshots captured before mutation', 're-run failing checks'],
+    lossless: true,
+  }
 }
 
 export function propose(diagnosis: Diagnosis): ImprovementProposal {
@@ -81,7 +130,7 @@ export function propose(diagnosis: Diagnosis): ImprovementProposal {
   return {
     id,
     title: titleFor(diagnosis),
-    type: diagnosis.confidence > 0.75 ? "fix" : "experiment",
+    type: diagnosis.confidence > 0.75 ? 'fix' : 'experiment',
     risk,
     priority,
     affectedEngine: diagnosis.affectedEngine,
@@ -91,6 +140,7 @@ export function propose(diagnosis: Diagnosis): ImprovementProposal {
     confidence: diagnosis.confidence,
     sessionID: diagnosis.sessionID,
     createdAt: Date.now(),
+    rollbackPlan: rollbackPlanFor(diagnosis, risk),
   }
 }
 

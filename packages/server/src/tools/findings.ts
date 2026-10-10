@@ -6,15 +6,23 @@
  * queryable across sessions: an agent that discovers a bug, a failed strategy,
  * or a user correction writes a finding; later sessions retrieve open ones.
  */
-import { z } from "zod"
-import { and, desc, eq, type SQL } from "drizzle-orm"
-import type { ToolDef, ToolContext } from "./registry.js"
-import type { MiraDB } from "../storage/db.js"
-import { findings } from "../storage/schema.js"
+import { z } from 'zod'
+import { and, desc, eq, type SQL } from 'drizzle-orm'
+import type { ToolDef, ToolContext } from './registry.js'
+import type { MiraDB } from '../storage/db.js'
+import { findings } from '../storage/schema.js'
+import { sharedWorkspace } from '../workspace/intelligence.js'
 
 export type Finding = typeof findings.$inferSelect
-export type FindingSeverity = Finding["severity"]
-export type FindingStatus = Finding["status"]
+export type FindingSeverity = Finding['severity']
+export type FindingStatus = Finding['status']
+
+const SEVERITY_TO_PRIORITY: Record<FindingSeverity, 'low' | 'medium' | 'high'> = {
+  info: 'low',
+  minor: 'medium',
+  major: 'high',
+  critical: 'high',
+}
 
 // ── Handlers (usable from REST layer or other modules) ─────────────
 
@@ -27,22 +35,45 @@ function getCtxDB(ctx: ToolContext): MaybeDB {
 
 export async function writeFinding(
   db: MaybeDB,
-  input: { title: string; severity?: FindingSeverity; evidence?: string; source?: Finding["source"]; sessionID?: string | null },
+  input: {
+    title: string
+    severity?: FindingSeverity
+    evidence?: string
+    source?: Finding['source']
+    sessionID?: string | null
+  },
 ): Promise<Finding> {
   const now = Date.now()
   const row: Finding = {
     id: crypto.randomUUID(),
     sessionID: input.sessionID ?? null,
-    source: input.source ?? "agent",
-    severity: input.severity ?? "info",
+    source: input.source ?? 'agent',
+    severity: input.severity ?? 'info',
     title: input.title,
     evidence: input.evidence ?? null,
-    status: "open",
+    status: 'open',
     createdAt: now,
     updatedAt: now,
     resolvedAt: null,
   }
   if (db) await db.insert(findings).values(row)
+  // Mirror into workspace intelligence so issues are queryable as workspace items.
+  try {
+    sharedWorkspace()?.upsert({
+      kind: 'issue',
+      title: input.title.slice(0, 200),
+      description: (input.evidence ?? '').slice(0, 1000),
+      status: 'open',
+      priority: SEVERITY_TO_PRIORITY[input.severity ?? 'info'],
+      metadata: {
+        findingId: row.id,
+        severity: input.severity ?? 'info',
+        source: input.source ?? 'agent',
+      },
+    })
+  } catch {
+    // workspace intelligence is best-effort — never break finding persistence
+  }
   return row
 }
 
@@ -62,68 +93,99 @@ export async function listFindings(
 export async function resolveFinding(db: MaybeDB, id: string): Promise<Finding | undefined> {
   if (!db) return undefined
   const now = Date.now()
-  await db.update(findings)
-    .set({ status: "resolved", resolvedAt: now, updatedAt: now })
+  await db
+    .update(findings)
+    .set({ status: 'resolved', resolvedAt: now, updatedAt: now })
     .where(eq(findings.id, id))
   const rows = await db.select().from(findings).where(eq(findings.id, id)).limit(1)
+  // Mirror resolution into workspace intelligence.
+  try {
+    const ws = sharedWorkspace()
+    const item = ws?.query({ kind: 'issue' }).find((i) => i.metadata.findingId === id)
+    if (ws && item) ws.setStatus(item.id, 'resolved')
+  } catch {
+    // best-effort
+  }
   return rows[0]
 }
 
 /** Open findings rendered for loop-context injection ("" when none). */
 export async function openFindingsForContext(db: MaybeDB, limit = 10): Promise<string> {
-  const rows = await listFindings(db, { status: "open", limit })
-  if (!rows.length) return ""
+  const rows = await listFindings(db, { status: 'open', limit })
+  if (!rows.length) return ''
   return `Known findings (avoid repeating solved problems):\n${rows
-    .map(f => `- [${f.severity}] ${f.title}${f.evidence ? ` — ${String(f.evidence).slice(0, 200)}` : ""}`)
-    .join("\n")}`
+    .map(
+      (f) =>
+        `- [${f.severity}] ${f.title}${f.evidence ? ` — ${String(f.evidence).slice(0, 200)}` : ''}`,
+    )
+    .join('\n')}`
 }
 
 // ── Tools ──────────────────────────────────────────────────────────
 
 const findingWriteSchema = z.object({
-  title: z.string().describe("One-line summary of the finding"),
-  severity: z.enum(["info", "minor", "major", "critical"]).optional().describe("Impact level (default info)"),
-  evidence: z.string().optional().describe("Supporting detail: file:line, error text, what was tried"),
+  title: z.string().describe('One-line summary of the finding'),
+  severity: z
+    .enum(['info', 'minor', 'major', 'critical'])
+    .optional()
+    .describe('Impact level (default info)'),
+  evidence: z
+    .string()
+    .optional()
+    .describe('Supporting detail: file:line, error text, what was tried'),
 })
 
 const findingWrite = {
-  name: "finding_write",
-  description: "Persist a structured finding (bug discovered, failed approach, user constraint) so future sessions can retrieve it. Use instead of prose memory when the insight is reusable.",
-  category: "memory",
+  name: 'finding_write',
+  description:
+    'Persist a structured finding (bug discovered, failed approach, user constraint) so future sessions can retrieve it. Use instead of prose memory when the insight is reusable.',
+  category: 'memory',
   schema: findingWriteSchema,
   async execute({ title, severity, evidence }, ctx) {
     const f = await writeFinding(getCtxDB(ctx), {
-      title, severity, evidence,
-      source: "agent",
+      title,
+      severity,
+      evidence,
+      source: 'agent',
       sessionID: ctx.sessionID,
     })
-    ctx.bus?.publish({ type: "job.updated", sessionID: ctx.sessionID, payload: { finding: f.id, action: "created" }, timestamp: Date.now() })
+    ctx.bus?.publish({
+      type: 'job.updated',
+      sessionID: ctx.sessionID,
+      payload: { finding: f.id, action: 'created' },
+      timestamp: Date.now(),
+    })
     return { id: f.id, status: f.status, severity: f.severity }
   },
 } satisfies ToolDef<typeof findingWriteSchema>
 
 const findingListSchema = z.object({
-  status: z.enum(["open", "resolved"]).optional().describe("Filter by status (default: all)"),
-  severity: z.enum(["info", "minor", "major", "critical"]).optional().describe("Filter by severity"),
-  limit: z.number().int().positive().max(100).optional().describe("Max rows (default 50)"),
+  status: z.enum(['open', 'resolved']).optional().describe('Filter by status (default: all)'),
+  severity: z
+    .enum(['info', 'minor', 'major', 'critical'])
+    .optional()
+    .describe('Filter by severity'),
+  limit: z.number().int().positive().max(100).optional().describe('Max rows (default 50)'),
 })
 
 const findingList = {
-  name: "finding_list",
-  description: "List structured findings, newest first. Filter by status/severity to recall prior discoveries before redoing work.",
-  category: "memory",
+  name: 'finding_list',
+  description:
+    'List structured findings, newest first. Filter by status/severity to recall prior discoveries before redoing work.',
+  category: 'memory',
   schema: findingListSchema,
   async execute({ status, severity, limit }, ctx) {
     return listFindings(getCtxDB(ctx), { status, severity, limit })
   },
 } satisfies ToolDef<typeof findingListSchema>
 
-const findingResolveSchema = z.object({ id: z.string().describe("Finding ID to resolve") })
+const findingResolveSchema = z.object({ id: z.string().describe('Finding ID to resolve') })
 
 const findingResolve = {
-  name: "finding_resolve",
-  description: "Mark a finding resolved once its underlying problem is fixed or the lesson is no longer actionable.",
-  category: "memory",
+  name: 'finding_resolve',
+  description:
+    'Mark a finding resolved once its underlying problem is fixed or the lesson is no longer actionable.',
+  category: 'memory',
   schema: findingResolveSchema,
   async execute({ id }, ctx) {
     const f = await resolveFinding(getCtxDB(ctx), id)

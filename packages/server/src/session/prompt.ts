@@ -28,14 +28,14 @@ import type { PermissionManager } from '../permission/index.js'
 import type { Gateway } from '../gateway/index.js'
 import type { GatewayRouter } from '../gateway/router.js'
 import type { SubgatewayRegistry } from '../gateway/registry.js'
-import type { Subgateway } from '../gateway/subgateway.js'
 import { getSessionCost } from '../gateway/subgateway.js'
 import { buildSystemPrompt, getLoopLimits, getConfig } from '../config/index.js'
 import { appendActiveWork, ensureMemoryBank } from '../memory/memory_controller.js'
 import { DoomLoopDetector } from './doom-loop-detector.js'
-import { needsCompaction, compactMessages, estimateTokens } from './compaction.js'
+import { needsCompaction, compactMessages } from './compaction.js'
 import { searchKnowledge, sharedKnowledge } from '../learning/knowledge.js'
 import { openFindingsForContext } from '../tools/findings.js'
+import { sharedGoals } from '../strategic/goals.js'
 import type { Todo, JsonValue, MiraConfig } from '../types/index.js'
 import type { MiraDB } from '../storage/db.js'
 import { getUserNameForOwner } from '../storage/users.js'
@@ -124,7 +124,7 @@ function pruneReasoning(messages: LoopMessage[]): LoopMessage[] {
   return messages.map((m, i) => {
     const copy = { ...m } as LoopMessage & { reasoning_content?: unknown }
     if (copy.reasoning_content && !keep.has(i)) {
-      delete (copy as any).reasoning_content
+      delete copy.reasoning_content
     }
     return copy
   })
@@ -204,10 +204,8 @@ function laneCostCap(
 ): { perTask?: number; perSession?: number } | undefined {
   const registry = getRegistry(gateway)
   if (!registry) return undefined
-  const gw: Subgateway | undefined = registry.get(lane)
   // Subgateway exposes config via private subConfig; fallback to global
   try {
-    const sub: Subgateway | undefined = registry.get(lane)
     // Try to read costCap from subgateway's config via sync
     const cfg = (
       getConfig() as MiraConfig & {
@@ -684,7 +682,8 @@ export class SessionPrompt {
           createdAt: m.createdAt ?? now,
         })
         for (const p of m.parts ?? []) {
-          const { id: _old, ...rest } = p
+          const { id, ...rest } = p
+          void id
           await tx.insert(this.deps.db.schema.parts).values({
             id: crypto.randomUUID(),
             ...rest,
@@ -722,7 +721,7 @@ export class SessionPrompt {
     const agent = opts.agent
     if (agent && !isKnownAgent(agent)) {
       const err = new Error(`Unknown agent "${agent}"`)
-      ;(err as any).code = 'UNKNOWN_AGENT'
+      ;(err as { code?: string }).code = 'UNKNOWN_AGENT'
       throw err
     }
     // Per-agent model routing: explicit > agent.model > autoModel tier > default (Kilo K1+K8)
@@ -990,7 +989,7 @@ export class SessionPrompt {
     let accumulatedText = ''
     this.getDoomDetector(sessionID).reset()
     const lf = initLangfuse()
-    const trace = lf?.trace?.('session') ?? { update: (_data?: JsonValue) => {}, end: () => {} }
+    const trace = lf?.trace?.('session') ?? { update: () => {}, end: () => {} }
     // usage-learning counters for recordSession at finalize
     const t0 = Date.now()
     let toolCallCount = 0,
@@ -1680,6 +1679,11 @@ export class SessionPrompt {
     try {
       const fctx = await openFindingsForContext(this.deps.db)
       if (fctx) context.push({ role: 'system', content: fctx })
+    } catch {}
+    // Strategic memory: active long-term goals steer decisions toward stated objectives
+    try {
+      const gctx = sharedGoals()?.activeGoalsForContext()
+      if (gctx) context.push({ role: 'system', content: gctx })
     } catch {}
     // Memory retrieval: hierarchical knowledge (L3 semantic) — uses injected KB or shared helper
     const lastUserText = messages.length

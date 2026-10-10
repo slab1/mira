@@ -9,8 +9,8 @@
  * Minimal diff, fail-closed on I/O errors, respects MIRA_LEARNING_AUTOPILOT=1 gate elsewhere.
  */
 
-import { resolve, dirname, join } from "node:path"
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs"
+import { resolve, dirname, join } from 'node:path'
+import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 
 export const FAILURE_RATE_THRESHOLD = 0.6
 export const FAILURE_COUNT_THRESHOLD = 3
@@ -30,13 +30,17 @@ export interface DecisionEntry {
   context?: string
   at: string
   by?: string
+  /** Evidence supporting the decision (file:line, metric, observation) */
+  evidence?: string[]
+  /** Alternatives considered and why they were not chosen */
+  alternatives?: string[]
 }
 
 export interface ActiveTask {
   id: string
   task: string
-  status: "pending" | "in_progress" | "completed" | "cancelled"
-  priority?: "high" | "medium" | "low"
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+  priority?: 'high' | 'medium' | 'low'
   updatedAt: string
 }
 
@@ -56,7 +60,12 @@ export interface LedgerContext {
   version?: string
   last_updated?: string
   strategy_effectiveness?: Record<string, StrategyStats>
-  strategy_log?: Array<{ strategy_chosen?: string; agent_target?: string; outcome?: string; at?: string }>
+  strategy_log?: Array<{
+    strategy_chosen?: string
+    agent_target?: string
+    outcome?: string
+    at?: string
+  }>
   decisions?: DecisionEntry[]
   active_tasks?: ActiveTask[]
   artifacts?: Artifacts
@@ -69,18 +78,28 @@ export interface LedgerContext {
 // Tries candidates in order: rootDir/shared/context.json, cwd/shared/context.json,
 // ancestor search up to 3 levels, and finally process.cwd().
 // Also includes packages/shared/context.json as explicit candidate (gap map writer).
+// MIRA_CONTEXT_PATH (when set) wins outright — used by the test preload so the
+// suite never pollutes the repo's shared ledger. See docs/TEST_HERMETICITY.md
+// for precedence rules and manual uses.
 export function resolveContextPath(rootDir?: string): string {
+  const override = process.env.MIRA_CONTEXT_PATH?.trim()
+  if (override) return override
   const candidates: string[] = []
   const repoRoot = resolve(process.cwd())
   // Explicit package mirror candidate first (spec: packages/shared/context.json writer)
-  candidates.push(join(repoRoot, "packages", "shared", "context.json"))
-  candidates.push(join(repoRoot, "shared", "context.json"))
-  const bases = [rootDir, process.cwd(), resolve(process.cwd(), ".."), resolve(process.cwd(), "../..")].filter(Boolean) as string[]
+  candidates.push(join(repoRoot, 'packages', 'shared', 'context.json'))
+  candidates.push(join(repoRoot, 'shared', 'context.json'))
+  const bases = [
+    rootDir,
+    process.cwd(),
+    resolve(process.cwd(), '..'),
+    resolve(process.cwd(), '../..'),
+  ].filter(Boolean) as string[]
   for (const base of bases) {
-    candidates.push(join(resolve(base), "shared", "context.json"))
-    candidates.push(join(resolve(base, ".."), "shared", "context.json"))
-    candidates.push(join(resolve(base, "../.."), "shared", "context.json"))
-    candidates.push(join(resolve(base), "packages", "shared", "context.json"))
+    candidates.push(join(resolve(base), 'shared', 'context.json'))
+    candidates.push(join(resolve(base, '..'), 'shared', 'context.json'))
+    candidates.push(join(resolve(base, '../..'), 'shared', 'context.json'))
+    candidates.push(join(resolve(base), 'packages', 'shared', 'context.json'))
   }
   // Also try repo-root detection: walk up from this file's directory via rootDir fallback
   // Prefer the first candidate whose directory exists or file exists; otherwise first.
@@ -89,23 +108,25 @@ export function resolveContextPath(rootDir?: string): string {
       if (existsSync(p) || existsSync(dirname(p))) return p
     } catch {}
   }
-  return candidates[0] ?? join(process.cwd(), "shared", "context.json")
+  return candidates[0] ?? join(process.cwd(), 'shared', 'context.json')
 }
 
 export function resolveBaselinePath(rootDir?: string): string {
   const ctxPath = resolveContextPath(rootDir)
   const base = dirname(dirname(ctxPath)) // shared -> repo root
   // shared/eval/baseline.json is sibling to context.json
-  const direct = join(dirname(ctxPath), "eval", "baseline.json")
+  const direct = join(dirname(ctxPath), 'eval', 'baseline.json')
   // If direct doesn't exist, try alternative bases
   const alts = [
     direct,
-    join(base, "shared", "eval", "baseline.json"),
-    join(resolve(process.cwd(), "shared", "eval", "baseline.json")),
-    join(resolve(process.cwd(), "..", "shared", "eval", "baseline.json")),
+    join(base, 'shared', 'eval', 'baseline.json'),
+    join(resolve(process.cwd(), 'shared', 'eval', 'baseline.json')),
+    join(resolve(process.cwd(), '..', 'shared', 'eval', 'baseline.json')),
   ]
   for (const p of alts) {
-    try { if (existsSync(p)) return p } catch {}
+    try {
+      if (existsSync(p)) return p
+    } catch {}
   }
   return direct
 }
@@ -114,7 +135,7 @@ export function loadContext(rootDir?: string): LedgerContext {
   const p = resolveContextPath(rootDir)
   try {
     if (!existsSync(p)) return {}
-    const raw = readFileSync(p, "utf-8")
+    const raw = readFileSync(p, 'utf-8')
     return JSON.parse(raw) as LedgerContext
   } catch {
     return {}
@@ -126,22 +147,24 @@ export function saveContext(ctx: LedgerContext, rootDir?: string): void {
   try {
     mkdirSync(dirname(p), { recursive: true })
     // Preserve existing file's other keys if we only got a partial ctx; caller already merged
-    writeFileSync(p, JSON.stringify(ctx, null, 2) + "\n", "utf-8")
+    writeFileSync(p, JSON.stringify(ctx, null, 2) + '\n', 'utf-8')
   } catch {}
-  // Mirror to packages/shared/context.json when p is repo-root shared (gap map: packages/shared writer)
+  // Mirror to packages/shared/context.json when p is repo-root shared (gap map: packages/shared writer).
+  // Skipped entirely when MIRA_CONTEXT_PATH redirects the ledger (hermetic tests).
+  const mirrored = !!process.env.MIRA_CONTEXT_PATH?.trim()
   try {
     const repoRoot = resolve(process.cwd())
     // Derive packages/shared path regardless of p
-    const pkgShared = join(repoRoot, "packages", "shared", "context.json")
-    if (p !== pkgShared && existsSync(dirname(pkgShared))) {
+    const pkgShared = join(repoRoot, 'packages', 'shared', 'context.json')
+    if (!mirrored && p !== pkgShared && existsSync(dirname(pkgShared))) {
       // Avoid infinite recursion: write directly without re-resolving
-      writeFileSync(pkgShared, JSON.stringify(ctx, null, 2) + "\n", "utf-8")
+      writeFileSync(pkgShared, JSON.stringify(ctx, null, 2) + '\n', 'utf-8')
     }
     // Also ensure sibling shared/context.json stays in sync when p was packages/shared
-    const altShared = join(repoRoot, "shared", "context.json")
-    if (p !== altShared && existsSync(dirname(altShared))) {
+    const altShared = join(repoRoot, 'shared', 'context.json')
+    if (!mirrored && p !== altShared && existsSync(dirname(altShared))) {
       try {
-        writeFileSync(altShared, JSON.stringify(ctx, null, 2) + "\n", "utf-8")
+        writeFileSync(altShared, JSON.stringify(ctx, null, 2) + '\n', 'utf-8')
       } catch {}
     }
   } catch {}
@@ -156,7 +179,7 @@ export function recordOutcome(strategy: string, success: boolean, rootDir?: stri
   let prevSuccesses = prev.successes
   if (prevSuccesses === undefined || prevSuccesses === null) {
     // fallback from legacy success_rate * completed
-    const sr = typeof prev.success_rate === "number" ? prev.success_rate : 1.0
+    const sr = typeof prev.success_rate === 'number' ? prev.success_rate : 1.0
     prevSuccesses = Math.round(sr * prevCompleted)
   }
   const nextCompleted = prevCompleted + 1
@@ -180,18 +203,23 @@ export function recordOutcome(strategy: string, success: boolean, rootDir?: stri
 }
 
 /** Port of LogicEvolver.analyze_failures() — success_rate <0.6 over >=3 */
-export function analyzeFailures(rootDir?: string): Array<{ strategy: string; success_rate: number; count: number; agent?: string }> {
+export function analyzeFailures(
+  rootDir?: string,
+): Array<{ strategy: string; success_rate: number; count: number; agent?: string }> {
   const ctx = loadContext(rootDir)
   const se = (ctx.strategy_effectiveness ?? {}) as Record<string, StrategyStats>
   const log = (ctx.strategy_log ?? []) as Array<{ strategy_chosen?: string; agent_target?: string }>
   const out: Array<{ strategy: string; success_rate: number; count: number; agent?: string }> = []
   for (const [name, stats] of Object.entries(se)) {
-    const sr = typeof stats.success_rate === "number" ? stats.success_rate : 1.0
-    const cnt = typeof stats.count === "number" ? stats.count : (stats.completed ?? 0)
+    const sr = typeof stats.success_rate === 'number' ? stats.success_rate : 1.0
+    const cnt = typeof stats.count === 'number' ? stats.count : (stats.completed ?? 0)
     if (sr < FAILURE_RATE_THRESHOLD && cnt >= FAILURE_COUNT_THRESHOLD) {
       let agent: string | undefined
       for (let i = log.length - 1; i >= 0; i--) {
-        if (log[i]?.strategy_chosen === name && log[i]?.agent_target) { agent = log[i]!.agent_target; break }
+        if (log[i]?.strategy_chosen === name && log[i]?.agent_target) {
+          agent = log[i]!.agent_target
+          break
+        }
       }
       out.push({ strategy: name, success_rate: sr, count: cnt, ...(agent ? { agent } : {}) })
     }
@@ -203,15 +231,17 @@ export function baselinePassRate(rootDir?: string): number | null {
   const p = resolveBaselinePath(rootDir)
   try {
     if (!existsSync(p)) return null
-    const raw = readFileSync(p, "utf-8")
+    const raw = readFileSync(p, 'utf-8')
     const j = JSON.parse(raw) as Record<string, unknown>
     // Check per-agent omitted (Mira has no per-agent baseline); check top-level and eval
-    const direct = j["pass_rate"]
-    if (typeof direct === "number") return direct
-    const ev = j["eval"] as Record<string, unknown> | undefined
-    if (ev && typeof ev["pass_rate"] === "number") return ev["pass_rate"] as number
+    const direct = j['pass_rate']
+    if (typeof direct === 'number') return direct
+    const ev = j['eval'] as Record<string, unknown> | undefined
+    if (ev && typeof ev['pass_rate'] === 'number') return ev['pass_rate'] as number
     return null
-  } catch { return null }
+  } catch {
+    return null
+  }
 }
 
 // ── Workflow Trace Writer (391-line extended writer) ─────────────────
@@ -221,20 +251,24 @@ export function baselinePassRate(rootDir?: string): number | null {
 // file always contains the four required top-level keys, even after partial writes.
 
 function ensureContextDefaults(ctx: LedgerContext): LedgerContext {
-  if (!ctx.version) ctx.version = "1.0"
+  if (!ctx.version) ctx.version = '1.0'
   if (!ctx.decisions) ctx.decisions = []
   if (!ctx.strategy_log) ctx.strategy_log = []
   if (!ctx.active_tasks) ctx.active_tasks = []
   if (!ctx.artifacts) ctx.artifacts = { files_created: [], files_modified: [] }
   if (!ctx.artifacts.files_created) ctx.artifacts.files_created = []
   if (!ctx.artifacts.files_modified) ctx.artifacts.files_modified = []
-  if (!ctx.checkpoints) ctx.checkpoints = { enabled: true, dir: "shared/checkpoints", retentionHours: 168, keep: 5 }
+  if (!ctx.checkpoints)
+    ctx.checkpoints = { enabled: true, dir: 'shared/checkpoints', retentionHours: 168, keep: 5 }
   if (!ctx.strategy_effectiveness) ctx.strategy_effectiveness = {}
   return ctx
 }
 
 /** Append a decision entry to shared/context.json:decisions */
-export function appendDecision(entry: Omit<DecisionEntry, "at"> & { at?: string }, rootDir?: string): DecisionEntry {
+export function appendDecision(
+  entry: Omit<DecisionEntry, 'at' | 'id'> & { at?: string; id?: string },
+  rootDir?: string,
+): DecisionEntry {
   const ctx = ensureContextDefaults(loadContext(rootDir))
   const full: DecisionEntry = {
     id: entry.id ?? `dec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
@@ -242,17 +276,42 @@ export function appendDecision(entry: Omit<DecisionEntry, "at"> & { at?: string 
     context: entry.context,
     at: entry.at ?? new Date().toISOString(),
     by: entry.by,
+    evidence: entry.evidence,
+    alternatives: entry.alternatives,
   }
   ctx.decisions!.push(full)
   // cap to last 200
   if (ctx.decisions!.length > 200) ctx.decisions = ctx.decisions!.slice(-200)
   ctx.last_updated = new Date().toISOString()
   saveContext(ctx, rootDir)
+  // P2-3: mirror into the memory_bank decisions.md file (injected into every
+  // prompt) — fire-and-forget, never blocks or changes this sync contract.
+  try {
+    void import('../memory/memory_controller.js')
+      .then((m) =>
+        m.appendTeamMemory({
+          file: 'decisions',
+          summary: `${entry.decision} — ${entry.context ?? ''}`.trim(),
+          detail: [
+            entry.evidence?.length ? `evidence: ${entry.evidence.join('; ')}` : '',
+            entry.alternatives?.length ? `alternatives: ${entry.alternatives.join('; ')}` : '',
+          ]
+            .filter(Boolean)
+            .join(' | '),
+          source: entry.by ?? 'unknown',
+          cwd: rootDir,
+        }),
+      )
+      .catch(() => {})
+  } catch {}
   return full
 }
 
 /** Log a strategy choice into strategy_log (alias for RCSI but explicit writer) */
-export function logStrategy(entry: { strategy_chosen: string; agent_target?: string; outcome?: string }, rootDir?: string): void {
+export function logStrategy(
+  entry: { strategy_chosen: string; agent_target?: string; outcome?: string },
+  rootDir?: string,
+): void {
   const ctx = ensureContextDefaults(loadContext(rootDir))
   ctx.strategy_log!.push({ ...entry, at: new Date().toISOString() })
   if (ctx.strategy_log!.length > 500) ctx.strategy_log = ctx.strategy_log!.slice(-500)
@@ -261,10 +320,13 @@ export function logStrategy(entry: { strategy_chosen: string; agent_target?: str
 }
 
 /** Upsert an active task (kanban / workflow trace) */
-export function upsertActiveTask(task: Partial<ActiveTask> & { id: string; task: string }, rootDir?: string): ActiveTask {
+export function upsertActiveTask(
+  task: Partial<ActiveTask> & { id: string; task: string },
+  rootDir?: string,
+): ActiveTask {
   const ctx = ensureContextDefaults(loadContext(rootDir))
   const now = new Date().toISOString()
-  const existing = ctx.active_tasks!.find(t => t.id === task.id)
+  const existing = ctx.active_tasks!.find((t) => t.id === task.id)
   if (existing) {
     Object.assign(existing, { ...task, updatedAt: now })
     ctx.last_updated = now
@@ -274,7 +336,7 @@ export function upsertActiveTask(task: Partial<ActiveTask> & { id: string; task:
   const created: ActiveTask = {
     id: task.id,
     task: task.task,
-    status: task.status ?? "pending",
+    status: task.status ?? 'pending',
     priority: task.priority,
     updatedAt: now,
   }
@@ -286,9 +348,13 @@ export function upsertActiveTask(task: Partial<ActiveTask> & { id: string; task:
 }
 
 /** Mark a task status (pending → in_progress → completed/cancelled) */
-export function updateTaskStatus(id: string, status: ActiveTask["status"], rootDir?: string): ActiveTask | null {
+export function updateTaskStatus(
+  id: string,
+  status: ActiveTask['status'],
+  rootDir?: string,
+): ActiveTask | null {
   const ctx = ensureContextDefaults(loadContext(rootDir))
-  const t = ctx.active_tasks!.find(x => x.id === id)
+  const t = ctx.active_tasks!.find((x) => x.id === id)
   if (!t) return null
   t.status = status
   t.updatedAt = new Date().toISOString()
@@ -298,7 +364,11 @@ export function updateTaskStatus(id: string, status: ActiveTask["status"], rootD
 }
 
 /** Record an artifact file creation/modification (deduplicated) */
-export function recordArtifact(kind: "files_created" | "files_modified", filePath: string, rootDir?: string): Artifacts {
+export function recordArtifact(
+  kind: 'files_created' | 'files_modified',
+  filePath: string,
+  rootDir?: string,
+): Artifacts {
   const ctx = ensureContextDefaults(loadContext(rootDir))
   const list = ctx.artifacts![kind]!
   if (!list.includes(filePath)) list.push(filePath)
@@ -308,15 +378,21 @@ export function recordArtifact(kind: "files_created" | "files_modified", filePat
 }
 
 export function recordFileCreated(filePath: string, rootDir?: string): Artifacts {
-  return recordArtifact("files_created", filePath, rootDir)
+  return recordArtifact('files_created', filePath, rootDir)
 }
 
 export function recordFileModified(filePath: string, rootDir?: string): Artifacts {
-  return recordArtifact("files_modified", filePath, rootDir)
+  return recordArtifact('files_modified', filePath, rootDir)
 }
 
 /** Full workflow trace snapshot for UI / health */
-export function getWorkflowTrace(rootDir?: string): { decisions: DecisionEntry[]; strategy_log: LedgerContext["strategy_log"]; active_tasks: ActiveTask[]; artifacts: Artifacts; strategy_effectiveness: Record<string, StrategyStats> } {
+export function getWorkflowTrace(rootDir?: string): {
+  decisions: DecisionEntry[]
+  strategy_log: LedgerContext['strategy_log']
+  active_tasks: ActiveTask[]
+  artifacts: Artifacts
+  strategy_effectiveness: Record<string, StrategyStats>
+} {
   const ctx = ensureContextDefaults(loadContext(rootDir))
   return {
     decisions: ctx.decisions ?? [],
@@ -341,7 +417,10 @@ export function getCheckpointConfig(rootDir?: string): CheckpointConfig {
   return ctx.checkpoints!
 }
 
-export function setCheckpointConfig(patch: Partial<CheckpointConfig>, rootDir?: string): CheckpointConfig {
+export function setCheckpointConfig(
+  patch: Partial<CheckpointConfig>,
+  rootDir?: string,
+): CheckpointConfig {
   const ctx = ensureContextDefaults(loadContext(rootDir))
   ctx.checkpoints = { ...ctx.checkpoints!, ...patch }
   ctx.last_updated = new Date().toISOString()
@@ -357,7 +436,7 @@ export function setCheckpointConfig(patch: Partial<CheckpointConfig>, rootDir?: 
 export function removeActiveTask(id: string, rootDir?: string): boolean {
   const ctx = ensureContextDefaults(loadContext(rootDir))
   const before = ctx.active_tasks!.length
-  ctx.active_tasks = ctx.active_tasks!.filter(t => t.id !== id)
+  ctx.active_tasks = ctx.active_tasks!.filter((t) => t.id !== id)
   const changed = ctx.active_tasks.length !== before
   if (changed) {
     ctx.last_updated = new Date().toISOString()
@@ -367,12 +446,15 @@ export function removeActiveTask(id: string, rootDir?: string): boolean {
 }
 
 /** Clear tasks that have been completed/cancelled for >7 days (housekeeping) */
-export function pruneCompletedTasks(olderThanMs = 7 * 24 * 60 * 60 * 1000, rootDir?: string): number {
+export function pruneCompletedTasks(
+  olderThanMs = 7 * 24 * 60 * 60 * 1000,
+  rootDir?: string,
+): number {
   const ctx = ensureContextDefaults(loadContext(rootDir))
   const cutoff = Date.now() - olderThanMs
   const before = ctx.active_tasks!.length
-  ctx.active_tasks = ctx.active_tasks!.filter(t => {
-    if (t.status !== "completed" && t.status !== "cancelled") return true
+  ctx.active_tasks = ctx.active_tasks!.filter((t) => {
+    if (t.status !== 'completed' && t.status !== 'cancelled') return true
     const ts = Date.parse(t.updatedAt)
     return Number.isFinite(ts) ? ts >= cutoff : true
   })
@@ -385,9 +467,12 @@ export function pruneCompletedTasks(olderThanMs = 7 * 24 * 60 * 60 * 1000, rootD
 }
 
 /** Get tasks filtered by status */
-export function getActiveTasksByStatus(status: ActiveTask["status"], rootDir?: string): ActiveTask[] {
+export function getActiveTasksByStatus(
+  status: ActiveTask['status'],
+  rootDir?: string,
+): ActiveTask[] {
   const ctx = ensureContextDefaults(loadContext(rootDir))
-  return (ctx.active_tasks ?? []).filter(t => t.status === status)
+  return (ctx.active_tasks ?? []).filter((t) => t.status === status)
 }
 
 /** Archive decisions older than N (default 90 days) — keeps last 200 regardless */
@@ -395,7 +480,7 @@ export function pruneDecisions(olderThanMs = 90 * 24 * 60 * 60 * 1000, rootDir?:
   const ctx = ensureContextDefaults(loadContext(rootDir))
   const cutoff = Date.now() - olderThanMs
   const before = ctx.decisions!.length
-  ctx.decisions = ctx.decisions!.filter(d => Date.parse(d.at) >= cutoff)
+  ctx.decisions = ctx.decisions!.filter((d) => Date.parse(d.at) >= cutoff)
   const pruned = before - ctx.decisions!.length
   if (pruned > 0) {
     ctx.last_updated = new Date().toISOString()

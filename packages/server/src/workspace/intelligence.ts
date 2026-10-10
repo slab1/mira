@@ -170,3 +170,12 @@ export class WorkspaceIntelligence {
 export function createWorkspaceIntelligence(deps: { db?: MiraDB }): WorkspaceIntelligence {
   return new WorkspaceIntelligence(deps)
 }
+
+/** Singleton for cross-module wiring (findings, governance) — one instance per process */
+let _shared: WorkspaceIntelligence | undefined
+export function setSharedWorkspace(ws: WorkspaceIntelligence): void {
+  _shared = ws
+}
+export function sharedWorkspace(): WorkspaceIntelligence | undefined {
+  return _shared
+}

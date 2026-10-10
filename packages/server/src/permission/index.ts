@@ -14,6 +14,13 @@
  *   - level 2 (destructive): rm, git reset --hard, DROP, sudo, curl | bash
  *   Rules: level 0 → allow, level 1 → ask, level 2 → ask (with warning) or deny if global deny
  *
+ * Action Classes (L0–L3, master findings addendum):
+ *   - L0 read-only / L1 file-modification / L2 git-operation / L3 production-deploy
+ *   - Bash commands are classified by text: git state-changes → L2; deploy/publish
+ *     commands (kubectl apply, docker push, terraform apply, vercel --prod,
+ *     npm publish, …) → L3. L2/L3 always ask unless an explicit rule matched.
+ *     This fixes git ops sharing arity-1 with `mkdir`.
+ *
  * Config shape (mira.jsonc compatible):
  *   "permission": {
  *     "bash": "allow" | "deny" | "ask" | { "rm *": "deny", "git *": "allow" },
@@ -38,6 +45,8 @@ export interface ToolRisk {
   riskLevel: 'low' | 'medium' | 'high'
   sideEffect: 'none' | 'read' | 'write' | 'destructive'
   isReversible: boolean
+  /** Action class per master findings L0–L3 taxonomy (0=read-only … 3=deploy) */
+  actionClass: number
 }
 
 export interface PermissionDecision {
@@ -47,6 +56,78 @@ export interface PermissionDecision {
   arity?: number
   risk?: ToolRisk
   approvalPayload?: { whatWillChange?: string; blastRadius?: string; canUndo?: boolean }
+}
+
+// ── Action Classes (L0–L3) ─────────────────────────────────────────
+// Master findings taxonomy: an action's class determines its approval tier,
+// independent of command-level destructiveness (BashArity). A `git commit`
+// (write arity) is still L2 git-ops — not the same as `mkdir`.
+
+export const ACTION_CLASSES = {
+  0: 'read-only',
+  1: 'file-modification',
+  2: 'git-operation',
+  3: 'production-deploy',
+} as const
+
+const GIT_OP_RE =
+  /^\s*git\s+(commit|add|push|pull|checkout|merge|rebase|reset|clean|cherry-pick|revert|stash|tag|branch\s+-[dD]|fetch)\b/i
+const DEPLOY_RE =
+  /^\s*(kubectl\s+(apply|create|replace|delete)|helm\s+(install|upgrade|rollback)|docker\s+(push|logout)|terraform\s+(apply|destroy)|vercel\s+(--prod|deploy)|netlify\s+deploy|aws\s+deploy|flyctl\s+deploy|gcloud\s+app\s+deploy|serverless\s+deploy|sls\s+deploy|npm\s+publish|bun\s+publish|pnpm\s+publish|yarn\s+publish)\b/i
+
+/**
+ * Classify an action into L0–L3.
+ * Bash commands are inspected by command text; tools by name + args.
+ */
+export function classifyActionClass(
+  tool: string,
+  args: JsonValue,
+): { level: number; label: string } {
+  const lower = tool.toLowerCase()
+  if (lower === 'bash') {
+    const command = argStr(args, 'command') ?? ''
+    if (DEPLOY_RE.test(command)) return { level: 3, label: ACTION_CLASSES[3] }
+    if (GIT_OP_RE.test(command)) return { level: 2, label: ACTION_CLASSES[2] }
+    const arity = classifyBashArity(command)
+    if (arity.level === 0) return { level: 0, label: ACTION_CLASSES[0] }
+    return { level: 1, label: ACTION_CLASSES[1] }
+  }
+  if (
+    [
+      'read',
+      'glob',
+      'grep',
+      'findcallers',
+      'finddependencies',
+      'finddependents',
+      'memory_search',
+      'finding_list',
+      'question',
+      'webfetch',
+      'websearch',
+      'lsp',
+    ].includes(lower)
+  ) {
+    return { level: 0, label: ACTION_CLASSES[0] }
+  }
+  if (['apply_patch'].includes(lower)) {
+    // patch application is file modification unless it deploys (not expressible here)
+    return { level: 1, label: ACTION_CLASSES[1] }
+  }
+  if (
+    [
+      'write',
+      'edit',
+      'patch',
+      'memory_write',
+      'finding_write',
+      'finding_resolve',
+      'todowrite',
+    ].includes(lower)
+  ) {
+    return { level: 1, label: ACTION_CLASSES[1] }
+  }
+  return { level: 1, label: ACTION_CLASSES[1] }
 }
 
 // ── BashArity ──────────────────────────────────────────────────────
@@ -99,21 +180,48 @@ export function bashArityDecision(command: string): PermissionDecision {
 }
 
 export function classifyToolRisk(toolName: string, args: JsonValue): ToolRisk {
+  const actionClass = classifyActionClass(toolName, args).level
   const lower = toolName.toLowerCase()
   if (lower === 'bash') {
     const command = argStr(args, 'command') ?? ''
-    if (/rm|sudo|drop/i.test(command)) {
-      return { riskLevel: 'high', sideEffect: 'destructive', isReversible: false }
+    if (actionClass === 3) {
+      return { riskLevel: 'high', sideEffect: 'destructive', isReversible: false, actionClass }
     }
-    return { riskLevel: 'medium', sideEffect: 'none', isReversible: true }
+    if (/rm|sudo|drop/i.test(command)) {
+      return { riskLevel: 'high', sideEffect: 'destructive', isReversible: false, actionClass }
+    }
+    return { riskLevel: 'medium', sideEffect: 'none', isReversible: true, actionClass }
   }
   if (['write', 'edit', 'patch'].includes(lower)) {
-    return { riskLevel: 'medium', sideEffect: 'write', isReversible: true }
+    return { riskLevel: 'medium', sideEffect: 'write', isReversible: true, actionClass }
   }
   if (['read', 'glob', 'grep'].includes(lower)) {
-    return { riskLevel: 'low', sideEffect: 'read', isReversible: true }
+    return { riskLevel: 'low', sideEffect: 'read', isReversible: true, actionClass }
   }
-  return { riskLevel: 'medium', sideEffect: 'none', isReversible: true }
+  return { riskLevel: 'medium', sideEffect: 'none', isReversible: true, actionClass }
+}
+
+/**
+ * Approval tier per action class:
+ *   L0 read-only          → allow
+ *   L1 file modification  → allow under standard posture, ask in readonly
+ *   L2 git operation      → ask (reviewable history, but state-changing)
+ *   L3 production deploy  → ask with explicit warning, always
+ */
+export function actionClassApproval(actionClass: number): {
+  action: PermissionAction
+  reason: string
+} {
+  switch (actionClass) {
+    case 0:
+      return { action: 'allow', reason: 'L0 read-only — auto-allow' }
+    case 3:
+      return { action: 'ask', reason: 'L3 production deploy — always requires confirmation' }
+    case 2:
+      return { action: 'ask', reason: 'L2 git operation — requires confirmation' }
+    default:
+      return { action: 'ask', reason: 'L1 file modification — requires confirmation' }
+  }
 }
 
 // ── Pattern matching (glob-like, Mira-compatible) ──────────────
@@ -185,12 +293,36 @@ function augmentDecision(
   decision.risk = risk
   if (
     decision.action === 'ask' &&
-    (risk.riskLevel === 'high' || risk.sideEffect === 'destructive')
+    (risk.riskLevel === 'high' || risk.sideEffect === 'destructive' || risk.actionClass >= 2)
   ) {
     decision.approvalPayload = {
       whatWillChange: summarizeArgs(tool, args),
-      blastRadius: tool,
+      blastRadius: `${tool} (L${risk.actionClass} ${ACTION_CLASSES[risk.actionClass as keyof typeof ACTION_CLASSES] ?? 'unknown'})`,
       canUndo: risk.isReversible,
+    }
+  }
+  return decision
+}
+
+/**
+ * Layer-4b (after BashArity): enforce L2/L3 action classes as always-ask
+ * unless an explicit allow pattern matched earlier. This is the approval-
+ * level arm of the L0–L3 taxonomy — read-only still auto-allows at arity 0.
+ */
+function applyActionClassGate(
+  decision: PermissionDecision,
+  tool: string,
+  args: JsonValue,
+): PermissionDecision {
+  if (decision.action === 'deny') return decision
+  if (tool !== 'bash') return decision
+  const ac = classifyActionClass(tool, args)
+  if (ac.level >= 2 && decision.action === 'allow') {
+    return {
+      ...decision,
+      action: 'ask',
+      reason: `${decision.reason} → escalated: ${ac.label} (L${ac.level}) always asks without explicit rule`,
+      arity: decision.arity ?? ac.level,
     }
   }
   return decision
@@ -229,7 +361,7 @@ export class PermissionManager {
       if (command !== undefined) {
         // Only if no explicit rule matched above
         const d = bashArityDecision(command)
-        return augmentDecision(d, tool, args)
+        return applyActionClassGate(augmentDecision(d, tool, args), tool, args)
       }
     }
 

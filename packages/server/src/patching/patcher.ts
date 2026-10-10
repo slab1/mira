@@ -9,11 +9,14 @@
  *  - Target-specific patches use minimal diffs that pass shadow tests
  */
 
-import type { PainPoint, PainPointId } from "./detector.js"
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import type { PainPoint, PainPointId } from './detector.js'
+import { synthesizeAppendDiff } from './diff.js'
 
 // ── Types ──────────────────────────────────────────────────────────
 
-export type PatchKind = "agent-prompt" | "tool" | "engine" | "config" | "security" | "latency"
+export type PatchKind = 'agent-prompt' | 'tool' | 'engine' | 'config' | 'security' | 'latency'
 export type PatchTarget = string // relative path from server root, e.g. "src/tools/bash.ts"
 
 export interface Patch {
@@ -22,11 +25,22 @@ export interface Patch {
   kind: PatchKind
   targetFile: PatchTarget | null
   reason: string
-  change: string        // applied by applier (append note or structured diff)
-  verification: string  // expected verification command
-  severity: PainPoint["severity"]
+  change: string // applied by applier (append note or structured diff)
+  verification: string // expected verification command
+  severity: PainPoint['severity']
   score: number
   createdAt: number
+  /**
+   * Anchored unified diff (P1.3) — machine-appliable form of `change`.
+   * Present when the target file was readable at generation time.
+   * Absent (never fabricated) when the file could not be read.
+   */
+  diff?: string
+  rollbackPlan?: {
+    strategy: 'snapshot' | 'git-revert' | 'config-restore' | 'none'
+    steps: string[]
+    lossless: boolean
+  }
 }
 
 export interface PatcherConfig {
@@ -44,63 +58,84 @@ interface PatchRecipe {
 }
 
 const RECIPES: Record<PainPointId, PatchRecipe> = {
-  "over-eager": {
-    kind: "agent-prompt",
-    targetFile: "AGENTS.md",
-    verification: "markdown non-empty",
-    changeFor: p => `Guard over-eager: cap tool calls per turn to 4; require plan before edit/write. Evidence: ${p.evidence.join("; ").slice(0, 180)}`,
+  'over-eager': {
+    kind: 'agent-prompt',
+    targetFile: 'AGENTS.md',
+    verification: 'markdown non-empty',
+    changeFor: (p) =>
+      `Guard over-eager: cap tool calls per turn to 4; require plan before edit/write. Evidence: ${p.evidence.join('; ').slice(0, 180)}`,
   },
-  "token-cost": {
-    kind: "engine",
-    targetFile: "src/session/prompt.ts",
-    verification: "tsc --noEmit",
-    changeFor: p => `Reduce token cost: summarize tool results >500 chars, compact at 60% window, batch reads. Evidence: ${p.evidence.join("; ").slice(0, 180)}`,
+  'token-cost': {
+    kind: 'engine',
+    targetFile: 'src/session/prompt.ts',
+    verification: 'tsc --noEmit',
+    changeFor: (p) =>
+      `Reduce token cost: summarize tool results >500 chars, compact at 60% window, batch reads. Evidence: ${p.evidence.join('; ').slice(0, 180)}`,
   },
-  "unpredictable": {
-    kind: "agent-prompt",
-    targetFile: "AGENTS.md",
-    verification: "markdown non-empty",
-    changeFor: p => `Make behavior predictable: enforce plan-first workflow; add decision log per step. Evidence: ${p.evidence.join("; ").slice(0, 180)}`,
+  unpredictable: {
+    kind: 'agent-prompt',
+    targetFile: 'AGENTS.md',
+    verification: 'markdown non-empty',
+    changeFor: (p) =>
+      `Make behavior predictable: enforce plan-first workflow; add decision log per step. Evidence: ${p.evidence.join('; ').slice(0, 180)}`,
   },
-  "context-overload": {
-    kind: "engine",
-    targetFile: "src/session/prompt.ts",
-    verification: "tsc --noEmit",
-    changeFor: p => `Fix context overload: retrieve relevant memory instead of loading all context; token-budget reads. Evidence: ${p.evidence.join("; ").slice(0, 180)}`,
+  'context-overload': {
+    kind: 'engine',
+    targetFile: 'src/session/prompt.ts',
+    verification: 'tsc --noEmit',
+    changeFor: (p) =>
+      `Fix context overload: retrieve relevant memory instead of loading all context; token-budget reads. Evidence: ${p.evidence.join('; ').slice(0, 180)}`,
   },
-  "false-positives": {
-    kind: "config",
-    targetFile: "src/patching/detector.ts",
-    verification: "tsc --noEmit",
-    changeFor: p => `Tune false positives: raise detector thresholds by 0.1; require 2 corroborating signals before flagging. Evidence: ${p.evidence.join("; ").slice(0, 180)}`,
+  'false-positives': {
+    kind: 'config',
+    targetFile: 'src/patching/detector.ts',
+    verification: 'tsc --noEmit',
+    changeFor: (p) =>
+      `Tune false positives: raise detector thresholds by 0.1; require 2 corroborating signals before flagging. Evidence: ${p.evidence.join('; ').slice(0, 180)}`,
   },
-  "debugging-harder": {
-    kind: "engine",
-    targetFile: "src/eval/tracing.ts",
-    verification: "tsc --noEmit",
-    changeFor: p => `Improve debuggability: add trace IDs to every tool-call; log patch decisions with reason. Evidence: ${p.evidence.join("; ").slice(0, 180)}`,
+  'debugging-harder': {
+    kind: 'engine',
+    targetFile: 'src/eval/tracing.ts',
+    verification: 'tsc --noEmit',
+    changeFor: (p) =>
+      `Improve debuggability: add trace IDs to every tool-call; log patch decisions with reason. Evidence: ${p.evidence.join('; ').slice(0, 180)}`,
   },
-  "eval-risk": {
-    kind: "config",
-    targetFile: "src/eval/tiers.ts",
-    verification: "tsc --noEmit",
-    changeFor: p => `Reduce eval risk: require PR tier to pass before applying patches; gate on evalReport.passed. Evidence: ${p.evidence.join("; ").slice(0, 180)}`,
+  'eval-risk': {
+    kind: 'config',
+    targetFile: 'src/eval/tiers.ts',
+    verification: 'tsc --noEmit',
+    changeFor: (p) =>
+      `Reduce eval risk: require PR tier to pass before applying patches; gate on evalReport.passed. Evidence: ${p.evidence.join('; ').slice(0, 180)}`,
   },
-  "latency": {
-    kind: "latency",
-    targetFile: "src/patching/latency.ts",
-    verification: "tsc --noEmit",
-    changeFor: p => `Optimize latency: ${p.evidence.join("; ").slice(0, 180)} — suggestions: parallelize tool calls, stream early, add per-tool timeout 15s`,
+  latency: {
+    kind: 'latency',
+    targetFile: 'src/patching/latency.ts',
+    verification: 'tsc --noEmit',
+    changeFor: (p) =>
+      `Optimize latency: ${p.evidence.join('; ').slice(0, 180)} — suggestions: parallelize tool calls, stream early, add per-tool timeout 15s`,
   },
-  "security": {
-    kind: "security",
-    targetFile: "src/patching/security.ts",
-    verification: "tsc --noEmit",
-    changeFor: p => `Harden security: ${p.evidence.join("; ").slice(0, 180)} — add injection guard + secrets scan + path sandbox`,
+  security: {
+    kind: 'security',
+    targetFile: 'src/patching/security.ts',
+    verification: 'tsc --noEmit',
+    changeFor: (p) =>
+      `Harden security: ${p.evidence.join('; ').slice(0, 180)} — add injection guard + secrets scan + path sandbox`,
   },
 }
 
 // ── Patcher ────────────────────────────────────────────────────────
+
+/** Read a repo-relative target for diff anchoring; null when unreadable. */
+function readTarget(rootDir: string, targetFile: PatchTarget | null): string | null {
+  if (!targetFile) return null
+  try {
+    const abs = join(rootDir, targetFile)
+    if (!existsSync(abs)) return null
+    return readFileSync(abs, 'utf-8')
+  } catch {
+    return null
+  }
+}
 
 export class Patcher {
   private config: Required<PatcherConfig>
@@ -113,10 +148,10 @@ export class Patcher {
   }
 
   generate(painPoints: PainPoint[]): Patch[] {
-    const active = painPoints.filter(p => p.score >= p.threshold)
+    const active = painPoints.filter((p) => p.score >= p.threshold)
     // Sort by severity then score (critical/high first)
     const order: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 }
-    active.sort((a, b) => (order[b.severity] - order[a.severity]) || (b.score - a.score))
+    active.sort((a, b) => order[b.severity] - order[a.severity] || b.score - a.score)
 
     const out: Patch[] = []
     const seenTarget = new Set<string>()
@@ -128,17 +163,27 @@ export class Patcher {
       if (seenTarget.has(recipe.targetFile)) continue
       seenTarget.add(recipe.targetFile)
 
+      const change = recipe.changeFor(pp)
+      const oldContent = readTarget(this.config.rootDir, recipe.targetFile)
+      const synthesized = synthesizeAppendDiff(recipe.targetFile, oldContent, change)
+
       out.push({
         id: `patch_${pp.id}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 4)}`,
         painPointId: pp.id,
         kind: recipe.kind,
         targetFile: recipe.targetFile,
-        reason: `${pp.label} [${pp.severity}/${pp.score}] — ${pp.evidence.join("; ").slice(0, 200)}`,
-        change: recipe.changeFor(pp),
+        reason: `${pp.label} [${pp.severity}/${pp.score}] — ${pp.evidence.join('; ').slice(0, 200)}`,
+        change,
         verification: recipe.verification,
         severity: pp.severity,
         score: pp.score,
         createdAt: Date.now(),
+        ...(synthesized ? { diff: synthesized.diff } : {}),
+        rollbackPlan: {
+          strategy: 'snapshot',
+          steps: ['restore file snapshot captured before apply', `re-run ${recipe.verification}`],
+          lossless: true,
+        },
       })
       if (out.length >= this.config.maxPatchesPerCycle) break
     }
@@ -167,10 +212,18 @@ export class Patcher {
       targetFile: input.targetFile,
       reason: input.reason,
       change: input.change,
-      verification: input.verification ?? "tsc --noEmit",
-      severity: "medium",
+      verification: input.verification ?? 'tsc --noEmit',
+      severity: 'medium',
       score: 0.6,
       createdAt: Date.now(),
+      rollbackPlan: {
+        strategy: 'snapshot',
+        steps: [
+          'restore file snapshot captured before apply',
+          `re-run ${input.verification ?? 'tsc --noEmit'}`,
+        ],
+        lossless: true,
+      },
     }
   }
 }
