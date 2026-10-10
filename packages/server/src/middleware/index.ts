@@ -14,6 +14,8 @@ export interface MiddlewareDeps {
   REQUIRED_TOKEN: string
   API_KEY_OWNERS: Map<string, string>
   resolveOwner: (t: string) => string | undefined
+  /** RBAC (P3.1): role for a bearer token */
+  resolveRole?: (t: string) => import('../auth/roles.js').Role
   bearerOf: (h?: string) => string
   /** Mutable ref — set by Bun.serve fetch handler */
   getBunServer: () => ReturnType<typeof Bun.serve> | null
@@ -23,8 +25,15 @@ export function mountMiddleware(
   app: Hono<{ Variables: { requestId: string } }>,
   deps: MiddlewareDeps,
 ) {
-  const { CORS_ORIGIN_LIST, REQUIRED_TOKEN, API_KEY_OWNERS, resolveOwner, bearerOf, getBunServer } =
-    deps
+  const {
+    CORS_ORIGIN_LIST,
+    REQUIRED_TOKEN,
+    API_KEY_OWNERS,
+    resolveOwner,
+    resolveRole,
+    bearerOf,
+    getBunServer,
+  } = deps
 
   // Metrics collector — bounded cardinality (LRU-evicted) + real per-route histograms.
   const metrics = new MetricsCollector()
@@ -157,18 +166,18 @@ export function mountMiddleware(
       const decoded = decodeURIComponent(normalized)
       if (decoded !== normalized) normalized = new URL(`http://x${decoded}`).pathname
     } catch {}
-    if (normalized.includes("..")) return false
+    if (normalized.includes('..')) return false
     return (
-      normalized === "/" ||
-      normalized.startsWith("/assets/") ||
+      normalized === '/' ||
+      normalized.startsWith('/assets/') ||
       // Production web build is served under Vite `base: '/mira/'` — its
       // <script>/<link> tags cannot carry bearer tokens, so the whole
       // subtree must be public (2026-09-21: assets 401'd → black screen).
-      normalized === "/mira" ||
-      normalized.startsWith("/mira/") ||
-      normalized === "/favicon.ico" ||
-      normalized === "/robots.txt" ||
-      normalized === "/vite.svg"
+      normalized === '/mira' ||
+      normalized.startsWith('/mira/') ||
+      normalized === '/favicon.ico' ||
+      normalized === '/robots.txt' ||
+      normalized === '/vite.svg'
     )
   }
   if (REQUIRED_TOKEN || API_KEY_OWNERS.size > 0) {
@@ -179,8 +188,17 @@ export function mountMiddleware(
         normalizedPath = new URL(c.req.url).pathname
       } catch {}
       if (PUBLIC_PATHS.has(normalizedPath) || isPublicUiPath(normalizedPath)) return await next()
-      if (!resolveOwner(bearerOf(c.req.header('Authorization'))))
-        return c.json({ error: 'unauthorized' }, 401)
+      const bearer = bearerOf(c.req.header('Authorization'))
+      if (!resolveOwner(bearer)) return c.json({ error: 'unauthorized' }, 401)
+      // RBAC (P3.1): viewer is read-only — block mutating methods. GET/HEAD/
+      // OPTIONS pass so viewers can read everything; writes 403.
+      if (
+        resolveRole &&
+        resolveRole(bearer) === 'viewer' &&
+        !['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)
+      ) {
+        return c.json({ error: 'forbidden: viewer role is read-only' }, 403)
+      }
       await next()
     })
   }

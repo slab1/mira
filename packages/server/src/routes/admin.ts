@@ -3,6 +3,7 @@ import { randomBytes, createHash } from 'node:crypto'
 import { z } from 'zod'
 import type { MiraDB } from '../storage/db.js'
 import type { JsonValue } from '../types/index.js'
+import { isRole } from '../auth/roles.js'
 
 const ownerSchema = z
   .string()
@@ -18,16 +19,28 @@ export function mountAdminRoutes(
     db: MiraDB
     REQUIRED_TOKEN: string
     API_KEY_OWNERS: Map<string, string>
+    API_KEY_ROLES: Map<string, import('../auth/roles.js').Role>
     resolveOwner: (t: string) => string | undefined
+    resolveRole: (t: string) => import('../auth/roles.js').Role
     bearerOf: (h: string | undefined) => string
     sessionOwnerCache: Map<string, { owner: string | null; ts: number }>
   },
 ) {
-  const { db, REQUIRED_TOKEN, API_KEY_OWNERS, resolveOwner, bearerOf, sessionOwnerCache } = deps
+  const {
+    db,
+    REQUIRED_TOKEN,
+    API_KEY_OWNERS,
+    API_KEY_ROLES,
+    resolveRole,
+    bearerOf,
+    sessionOwnerCache,
+  } = deps
 
-  // Admin = the master MIRA_TOKEN (owner "default"). In open/dev mode (no
-  // REQUIRED_TOKEN) the endpoints are reachable without auth, matching the
-  // server's "auth disabled" posture — but gated to loopback (P3-2).
+  // Admin = any bearer whose RBAC role is 'admin' (P3.1: the master
+  // MIRA_TOKEN/owner "default" is always admin; explicitly-roled admin
+  // owners pass too). In open/dev mode (no REQUIRED_TOKEN) the endpoints are
+  // reachable without auth, matching the server's "auth disabled" posture —
+  // but gated to loopback (P3-2).
   let adminOpenWarned = false
   const isAdmin = (c: { req: { header: (n: string) => string | undefined } }): boolean => {
     if (!REQUIRED_TOKEN && API_KEY_OWNERS.size === 0) {
@@ -49,7 +62,7 @@ export function mountAdminRoutes(
       }
       return true
     }
-    return resolveOwner(bearerOf(c.req.header('Authorization'))) === 'default'
+    return resolveRole(bearerOf(c.req.header('Authorization'))) === 'admin'
   }
   const deny = (c: { json: (b: JsonValue, s: number) => Response }) =>
     c.json({ error: 'unauthorized' }, 401)
@@ -78,6 +91,13 @@ export function mountAdminRoutes(
       if (!String(e).includes('duplicate column name'))
         console.warn('[admin] addColumn key_prefix failed:', String(e))
     }
+    // RBAC (P3.1): role column for minted keys
+    try {
+      db.sqlite.exec(`ALTER TABLE api_keys ADD COLUMN role TEXT;`)
+    } catch (e) {
+      if (!String(e).includes('duplicate column name'))
+        console.warn('[admin] addColumn role failed:', String(e))
+    }
     tableEnsured = true
   }
 
@@ -86,9 +106,9 @@ export function mountAdminRoutes(
   // in the response — only key_prefix + key_hash presence (Gap 2).
   app.post('/admin/api-keys', async (c) => {
     if (!isAdmin(c)) return deny(c)
-    let body: { owner?: JsonValue } = {}
+    let body: { owner?: JsonValue; role?: JsonValue } = {}
     try {
-      body = (await c.req.json()) as { owner?: JsonValue }
+      body = (await c.req.json()) as { owner?: JsonValue; role?: JsonValue }
     } catch {}
     const parsed = ownerSchema.safeParse(typeof body.owner === 'string' ? body.owner : 'user')
     if (!parsed.success)
@@ -100,6 +120,11 @@ export function mountAdminRoutes(
         400,
       )
     const owner = parsed.data
+    // RBAC (P3.1): optional role on minted keys — default operator
+    const roleStr = typeof body.role === 'string' ? body.role : 'operator'
+    if (!isRole(roleStr))
+      return c.json({ error: `invalid role: must be one of viewer, operator, admin` }, 400)
+    const role = roleStr
     ensureTable()
     const count = (db.sqlite.prepare('SELECT COUNT(*) as n FROM api_keys').get() as { n: number }).n
     if (count >= MAX_KEYS)
@@ -110,12 +135,15 @@ export function mountAdminRoutes(
     // Option 1 safe: DB bearer column `key` stores hash-only (DB dump ≠ bearer); raw kept only for log preview
     db.sqlite
       .prepare(
-        'INSERT INTO api_keys (key, key_hash, key_prefix, owner, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)',
+        'INSERT INTO api_keys (key, key_hash, key_prefix, owner, role, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
       )
-      .run(keyHash, keyHash, keyPrefix, owner, Date.now(), 'default')
+      .run(keyHash, keyHash, keyPrefix, owner, role, Date.now(), 'default')
     API_KEY_OWNERS.set(keyHash, owner)
-    console.log(`[admin] mint key for owner="${owner}" preview=${key.slice(0, 6)}…${key.slice(-4)}`)
-    return c.json({ key_prefix: keyPrefix, key_hash: true, owner }, 201)
+    if (role !== 'operator') API_KEY_ROLES.set(owner, role)
+    console.log(
+      `[admin] mint key for owner="${owner}" role=${role} preview=${key.slice(0, 6)}…${key.slice(-4)}`,
+    )
+    return c.json({ key_prefix: keyPrefix, key_hash: true, owner, role }, 201)
   })
 
   // List issued keys (admin only). Raw keys are never selected or returned —
@@ -125,17 +153,19 @@ export function mountAdminRoutes(
     ensureTable()
     const rows = db.sqlite
       .prepare(
-        'SELECT key_prefix, key_hash, owner, created_at, created_by FROM api_keys ORDER BY created_at DESC',
+        'SELECT key_prefix, key_hash, owner, role, created_at, created_by FROM api_keys ORDER BY created_at DESC',
       )
       .all() as Array<{
       key_prefix: string | null
       key_hash: string | null
       owner: string
+      role: string | null
       created_at: number
       created_by: string
     }>
     const issued = rows.map((r) => ({
       owner: r.owner,
+      role: r.role && isRole(r.role) ? r.role : 'operator',
       created_at: r.created_at,
       created_by: r.created_by,
       key_prefix: r.key_prefix ?? null,
@@ -152,11 +182,18 @@ export function mountAdminRoutes(
     ensureTable()
     const hash = createHash('sha256').update(key).digest('hex')
     const existing = db.sqlite
-      .prepare('SELECT 1 FROM api_keys WHERE key_hash = ? OR key = ?')
-      .get(hash, key) as { '1': number } | undefined
+      .prepare('SELECT owner FROM api_keys WHERE key_hash = ? OR key = ?')
+      .get(hash, key) as { owner?: string } | undefined
     db.sqlite.prepare('DELETE FROM api_keys WHERE key_hash = ? OR key = ?').run(hash, key)
     API_KEY_OWNERS.delete(hash)
     API_KEY_OWNERS.delete(key)
+    // RBAC (P3.1): drop the owner's role when no remaining key carries one
+    if (existing?.owner) {
+      const remaining = db.sqlite
+        .prepare('SELECT COUNT(*) as n FROM api_keys WHERE owner = ? AND role IS NOT NULL')
+        .get(existing.owner) as { n: number }
+      if (!remaining.n) API_KEY_ROLES.delete(existing.owner)
+    }
     sessionOwnerCache.clear()
     if (existing) console.log(`[admin] revoke key preview=${key.slice(0, 6)}…${key.slice(-4)}`)
     return c.json({ ok: true, key: existing ? `${key.slice(0, 6)}…${key.slice(-4)}` : 'not found' })
@@ -216,5 +253,73 @@ export function mountAdminRoutes(
     } catch (e) {
       return c.json({ error: String(e) }, 500)
     }
+  })
+
+  // ── GET /admin/audit/export (P3.2) — CSV/JSON download of the audit trail.
+  // Same filters as GET /admin/audit; higher row cap for compliance exports.
+  app.get('/admin/audit/export', async (c) => {
+    if (!isAdmin(c)) return deny(c)
+    const tool = c.req.query('tool')
+    const decision = c.req.query('decision') as 'allow' | 'deny' | 'warn' | undefined
+    const sessionID = c.req.query('sessionID') ?? c.req.query('session_id')
+    const limit = Math.min(10000, Math.max(1, Number(c.req.query('limit') ?? '10000') || 10000))
+    const format = (c.req.query('format') ?? 'csv').toLowerCase()
+    try {
+      db.sqlite.exec(
+        'CREATE TABLE IF NOT EXISTS audit_entries (id TEXT PRIMARY KEY, session_id TEXT, tool TEXT NOT NULL, decision TEXT NOT NULL, reason TEXT, args TEXT, result TEXT, created_at INTEGER NOT NULL);',
+      )
+    } catch {}
+    let sql =
+      'SELECT id, session_id, tool, decision, reason, args, result, created_at FROM audit_entries WHERE 1=1'
+    const params: Array<string | number> = []
+    if (tool) {
+      sql += ' AND tool = ?'
+      params.push(tool)
+    }
+    if (decision && ['allow', 'deny', 'warn'].includes(decision)) {
+      sql += ' AND decision = ?'
+      params.push(decision)
+    }
+    if (sessionID) {
+      sql += ' AND session_id = ?'
+      params.push(sessionID)
+    }
+    sql += ' ORDER BY created_at DESC LIMIT ?'
+    params.push(limit)
+    const rows = db.sqlite.prepare(sql).all(...params) as Array<{
+      id: string
+      session_id: string | null
+      tool: string
+      decision: string
+      reason: string | null
+      args: string | null
+      result: string | null
+      created_at: number
+    }>
+    const iso = (t: number) => new Date(t).toISOString()
+    if (format === 'json') {
+      return c.json({ exportedAt: iso(Date.now()), count: rows.length, entries: rows }, 200, {
+        'Content-Disposition': `attachment; filename="mira-audit-${Date.now()}.json"`,
+      })
+    }
+    if (format !== 'csv') return c.json({ error: 'format must be csv or json' }, 400)
+    const esc = (v: unknown) => {
+      const s = v === null || v === undefined ? '' : String(v)
+      return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    }
+    const lines = ['timestamp,session_id,tool,decision,reason,result']
+    for (const r of rows) {
+      lines.push(
+        [iso(r.created_at), r.session_id ?? '', r.tool, r.decision, r.reason ?? '', r.result ?? '']
+          .map(esc)
+          .join(','),
+      )
+    }
+    return new Response(lines.join('\n') + '\n', {
+      headers: {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="mira-audit-${Date.now()}.csv"`,
+      },
+    })
   })
 }

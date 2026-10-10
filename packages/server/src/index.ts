@@ -24,6 +24,7 @@ import { timingSafeEqual, randomBytes, createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync } from 'node:fs'
+import { parseKeyPair, roleForOwner, isRole, type Role } from './auth/roles.js'
 import { Bus } from './bus/index.js'
 import { createDatabase, migrate } from './storage/db.js'
 import { SubgatewayRegistry } from './gateway/registry.js'
@@ -223,12 +224,14 @@ function hashKey(s: string): string {
   return createHash('sha256').update(s).digest('hex')
 }
 const API_KEY_OWNERS = new Map<string, string>()
+const API_KEY_ROLES = new Map<string, Role>()
 for (const pair of (process.env.MIRA_API_KEYS ?? '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)) {
-  const i = pair.indexOf(':')
-  if (i > 0) API_KEY_OWNERS.set(hashKey(pair.slice(0, i)), pair.slice(i + 1))
+  const { key, owner, role } = parseKeyPair(pair)
+  API_KEY_OWNERS.set(hashKey(key), owner)
+  if (role) API_KEY_ROLES.set(owner, role)
 }
 if (
   process.env.NODE_ENV === 'production' &&
@@ -245,6 +248,11 @@ function resolveOwner(token: string): string | undefined {
   if (REQUIRED_TOKEN && tokenEquals(token, REQUIRED_TOKEN)) return 'default'
   const h = hashKey(token)
   return API_KEY_OWNERS.get(h) ?? API_KEY_OWNERS.get(token)
+}
+/** RBAC (P3.1): role for a bearer — 'default' owner is always admin;
+ *  owners default to operator; explicit key roles override. */
+function resolveRole(token: string): Role {
+  return roleForOwner(resolveOwner(token), API_KEY_ROLES)
 }
 function bearerOf(authHeader: string | undefined): string {
   return authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : ''
@@ -525,15 +533,17 @@ async function main() {
 
   // Load runtime-issued API keys from db — hash-keyed (Option 1 safe, back-compat)
   try {
-    const rows = db.sqlite.prepare('SELECT key, key_hash, owner FROM api_keys').all() as {
+    const rows = db.sqlite.prepare('SELECT key, key_hash, owner, role FROM api_keys').all() as {
       key: string
       key_hash: string | null
       owner: string
+      role: string | null
     }[]
     for (const r of rows) {
       const hash = r.key_hash ?? (r.key ? createHash('sha256').update(r.key).digest('hex') : null)
       if (hash) API_KEY_OWNERS.set(hash, r.owner)
       else if (r.key) API_KEY_OWNERS.set(r.key, r.owner)
+      if (r.role && isRole(r.role)) API_KEY_ROLES.set(r.owner, r.role)
     }
     if (rows.length) log(`loaded ${rows.length} issued API key(s) from db`)
   } catch (e) {
@@ -669,6 +679,7 @@ async function main() {
     REQUIRED_TOKEN,
     API_KEY_OWNERS,
     resolveOwner,
+    resolveRole,
     bearerOf,
     getBunServer: () => bunServer,
   })
@@ -715,7 +726,9 @@ async function main() {
     db,
     REQUIRED_TOKEN,
     API_KEY_OWNERS,
+    API_KEY_ROLES,
     resolveOwner,
+    resolveRole,
     bearerOf,
     sessionOwnerCache,
   })
@@ -723,7 +736,7 @@ async function main() {
   mountFindingRoutes(app, { db, bus })
   mountWebhookRoutes(app, { bus })
 
-  mountMeRoutes(app, { db, resolveOwner, bearerOf })
+  mountMeRoutes(app, { db, resolveOwner, resolveRole, bearerOf })
 
   mountSessionExtrasRoutes(app, {
     db,

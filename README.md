@@ -163,6 +163,8 @@ Health checks:
 
 Set `MIRA_API_KEYS=key-alice:alice,key-bob:bob` to issue per-user credentials. Sessions are stamped with an owner; every session route (prompt, messages, export, todos, snapshots, jobs) and WebSocket event stream is owner-scoped — foreign resources return 404. Child sessions spawned by the `task` tool inherit the parent's owner.
 
+Optionally append a role per key — `MIRA_API_KEYS=key-a:alice:viewer,key-b:bob:operator,key-c:carol:admin`. Roles: `viewer` (read-only — all mutating requests 403), `operator` (default — full normal use), `admin` (also reaches `/admin/*` routes: key minting with `role`, audit trail, `GET /admin/audit/export?format=csv|json`). The master `MIRA_TOKEN` is always admin.
+
 Single-token mode (`MIRA_TOKEN` only) maps everything to an implicit `"default"` owner and behaves exactly as before.
 
 ### Troubleshooting

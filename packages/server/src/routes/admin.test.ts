@@ -24,6 +24,8 @@ let tokenBase!: string
 let tokenDb!: ReturnType<typeof createDatabase>
 
 const resolveOwner = (t: string): string | undefined => (t === TOKEN ? 'default' : undefined)
+const resolveRole = (t: string): import('../auth/roles.js').Role =>
+  resolveOwner(t) === 'default' ? 'admin' : 'operator'
 const bearerOf = (h?: string): string => (h?.startsWith('Bearer ') ? h.slice(7) : '')
 const AUTH = { Authorization: `Bearer ${TOKEN}` }
 
@@ -57,7 +59,9 @@ beforeAll(async () => {
     db: openDb,
     REQUIRED_TOKEN: '',
     API_KEY_OWNERS: new Map(),
+    API_KEY_ROLES: new Map(),
     resolveOwner,
+    resolveRole,
     bearerOf,
     sessionOwnerCache: new Map(),
   })
@@ -72,7 +76,9 @@ beforeAll(async () => {
     db: tokenDb,
     REQUIRED_TOKEN: TOKEN,
     API_KEY_OWNERS: new Map(),
+    API_KEY_ROLES: new Map(),
     resolveOwner,
+    resolveRole,
     bearerOf,
     sessionOwnerCache: new Map(),
   })
@@ -201,6 +207,75 @@ describe('Gap 2: raw API keys never appear in admin responses', () => {
 
   test('admin endpoints 401 without auth when token is required', async () => {
     const res = await fetch(`${tokenBase}/admin/api-keys`)
+    expect(res.status).toBe(401)
+  })
+})
+
+// ── RBAC (P3.1) + audit export (P3.2) ─────────────────────────────────
+
+describe('RBAC + audit export', () => {
+  test('mint accepts a role; role echoed and listed', async () => {
+    const mint = await fetch(`${tokenBase}/admin/api-keys`, {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ owner: 'dave', role: 'viewer' }),
+    })
+    expect(mint.status).toBe(201)
+    const body = (await mint.json()) as { role?: string; key_prefix?: string }
+    expect(body.role).toBe('viewer')
+
+    const list = await fetch(`${tokenBase}/admin/api-keys`, { headers: AUTH })
+    const listed = (await list.json()) as { issued: Array<{ owner: string; role: string }> }
+    const dave = listed.issued.find((k) => k.owner === 'dave')
+    expect(dave?.role).toBe('viewer')
+  })
+
+  test('mint rejects invalid roles', async () => {
+    const res = await fetch(`${tokenBase}/admin/api-keys`, {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ owner: 'eve', role: 'superuser' }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  test('audit export returns CSV with headers and rows', async () => {
+    // seed an audit row
+    tokenDb.sqlite
+      .prepare(
+        `INSERT INTO audit_entries (id, session_id, tool, decision, reason, args, result, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run('exp1', 'sess-1', 'bash', 'deny', 'blocked destructive', '{}', '{}', Date.now())
+
+    const res = await fetch(`${tokenBase}/admin/audit/export?format=csv`, { headers: AUTH })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toContain('text/csv')
+    expect(res.headers.get('Content-Disposition')).toContain('attachment')
+    const csv = await res.text()
+    expect(csv.split('\n')[0]).toBe('timestamp,session_id,tool,decision,reason,result')
+    expect(csv).toContain('bash')
+    expect(csv).toContain('deny')
+    expect(csv).toContain('blocked destructive')
+  })
+
+  test('audit export JSON shape + filters', async () => {
+    const res = await fetch(`${tokenBase}/admin/audit/export?format=json&tool=bash`, {
+      headers: AUTH,
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { count: number; entries: Array<{ tool: string }> }
+    expect(body.count).toBeGreaterThan(0)
+    expect(body.entries.every((e) => e.tool === 'bash')).toBe(true)
+  })
+
+  test('audit export rejects unknown formats', async () => {
+    const res = await fetch(`${tokenBase}/admin/audit/export?format=pdf`, { headers: AUTH })
+    expect(res.status).toBe(400)
+  })
+
+  test('audit export requires admin', async () => {
+    const res = await fetch(`${tokenBase}/admin/audit/export`)
     expect(res.status).toBe(401)
   })
 })

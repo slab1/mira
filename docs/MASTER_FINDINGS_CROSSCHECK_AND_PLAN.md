@@ -243,13 +243,16 @@ Aggregate: test coverage signal, guardrail deny rate, open findings by severity,
 
 Order within P3 assumes primary identity = engineering agent platform.
 
-### P3.1 RBAC
+### P3.1 RBAC — ✅ DONE
 
-Replace binary admin-vs-owner (`admin.ts:32-53`) with role primitives: viewer / operator / admin, org-scoped. Prerequisite for any multi-user story.
+- `auth/roles.ts`: viewer / operator / admin primitives; `MIRA_API_KEYS=key:owner[:role]` (backward compatible — 2-segment keys stay operator; non-role colons in owners preserved).
+- `resolveRole()` wired: middleware blocks viewer writes globally (403 on non-GET/HEAD/OPTIONS); `isAdmin` is role-backed (master token + explicitly-roled admins); mint accepts/stores role (idempotent `role` column), list shows it, revoke cleans it up; `GET /me` exposes the caller's role for UI adaptation.
+- Tests: `auth/roles.test.ts` (7), `middleware/rbac.test.ts` (6), admin route tests extended (5).
 
-### P3.2 Audit trail UI + export
+### P3.2 Audit trail UI + export — ✅ DONE (export; UI page pending)
 
-Backend exists (`GET /admin/audit`). Add a page and CSV/JSON export. Low effort, high enterprise credibility.
+- `GET /admin/audit/export?format=csv|json` — same filters as `/admin/audit`, 10k row cap, Content-Disposition attachment; CSV escapes per RFC 4180. Tests cover CSV shape, JSON filters, format validation, auth gate.
+- Remaining (optional): a dedicated web page. The System workspace can link the export once UX modes settle.
 
 ### P3.3 Org multi-tenancy
 

@@ -43,16 +43,20 @@ export function mountMeRoutes(
   deps: {
     db: MiraDB
     resolveOwner: (t: string) => string | undefined
+    /** RBAC (P3.1): exposed as `role` in GET /me so clients can adapt their UI */
+    resolveRole?: (t: string) => import('../auth/roles.js').Role
     bearerOf: (h?: string) => string
   },
 ) {
   const { db } = deps
 
   app.get('/me', async (c: Context) => {
-    const owner = deps.resolveOwner(deps.bearerOf(c.req.header('Authorization')))
+    const bearer = deps.bearerOf(c.req.header('Authorization'))
+    const owner = deps.resolveOwner(bearer)
     if (!owner) return c.json({ error: 'unauthorized' }, 401)
     const user = await getUserByOwner(db, owner)
     const safe = sanitizeUser(user)
+    if (deps.resolveRole) return c.json({ ...safe, role: deps.resolveRole(bearer) })
     return c.json(safe)
   })
 
