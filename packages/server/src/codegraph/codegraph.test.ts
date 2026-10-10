@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createDatabase } from '../storage/db.js'
 import { createCodeGraph, parseFile } from './index.js'
+import { analyzeRemovalSafety } from './analysis.js'
 import { ToolRegistry, type RegistryDeps, type ToolDef } from '../tools/registry.js'
 import { tools as codeGraphTools } from '../tools/codegraph.js'
 
@@ -208,7 +209,7 @@ const ctx = (db: ReturnType<typeof createDatabase>, cwd: string) => ({
 describe('findCallers / findDependencies / findDependents tools', () => {
   test('registered as read-only file tools', () => {
     const names = codeGraphTools.map((t) => t.name)
-    expect(names).toEqual(['findCallers', 'findDependencies', 'findDependents'])
+    expect(names).toEqual(['findCallers', 'findDependencies', 'findDependents', 'analyzeRemoval'])
     for (const t of codeGraphTools) {
       expect(t.category).toBe('file')
       expect(t.metadata?.isReadOnly).toBe(true)
@@ -269,5 +270,92 @@ describe('findCallers / findDependencies / findDependents tools', () => {
     const db = createDatabase(':memory:')
     const reg = makeRegistry(db)
     await expect(reg.execute('findCallers', {}, ctx(db, dir))).rejects.toThrow('Invalid args')
+  })
+})
+
+// ── Removal safety analysis (P2.6) ───────────────────────────────────
+
+describe('analyzeRemovalSafety', () => {
+  test('unsafe: production dependents and cross-file symbol references', async () => {
+    const { graph } = makeGraph()
+    await graph.buildGraph()
+    const r = analyzeRemovalSafety(graph, 'src/a.ts')
+    expect(r.verdict).toBe('unsafe')
+    expect(r.productionDependents).toEqual(['src/b.ts', 'src/c.ts'])
+    expect(r.reasons.some((x) => x.includes('production file'))).toBe(true)
+    const helperRefs = r.referencedSymbols.filter((x) => x.symbol === 'helper')
+    expect(helperRefs.length).toBeGreaterThan(0)
+    expect(helperRefs.every((x) => !x.isTest)).toBe(true)
+  })
+
+  test('safe: leaf file with no importers and unreferenced exports', async () => {
+    const { graph } = makeGraph()
+    await graph.buildGraph()
+    const r = analyzeRemovalSafety(graph, 'src/c.ts')
+    expect(r.verdict).toBe('safe')
+    expect(r.productionDependents).toEqual([])
+    expect(r.reasons.some((x) => x.includes('no importers'))).toBe(true)
+  })
+
+  test('caution: only test-file coupling', async () => {
+    // d.ts is imported only by d.test.ts
+    writeFileSync(
+      join(dir, 'src/d.ts'),
+      `export function donly(x: number): number {\n  return x\n}\n`,
+    )
+    writeFileSync(join(dir, 'src/d.test.ts'), `import { donly } from './d'\nconst v = donly(1)\n`)
+    try {
+      const { graph } = makeGraph()
+      await graph.buildGraph()
+      const r = analyzeRemovalSafety(graph, 'src/d.ts')
+      expect(r.verdict).toBe('caution')
+      expect(r.testDependents).toEqual(['src/d.test.ts'])
+      expect(r.productionDependents).toEqual([])
+      expect(r.referencedSymbols.every((x) => x.isTest)).toBe(true)
+    } finally {
+      rmSync(join(dir, 'src/d.ts'))
+      rmSync(join(dir, 'src/d.test.ts'))
+    }
+  })
+
+  test('caution: entry-point-shaped file with no importers', async () => {
+    writeFileSync(join(dir, 'src/index.ts'), `export function boot(): void {}\n`)
+    try {
+      const { graph } = makeGraph()
+      await graph.buildGraph()
+      const r = analyzeRemovalSafety(graph, 'src/index.ts')
+      expect(r.verdict).toBe('caution')
+      expect(r.entryPointShaped).toBe(true)
+      expect(r.reasons.some((x) => x.includes('entry point'))).toBe(true)
+    } finally {
+      rmSync(join(dir, 'src/index.ts'))
+    }
+  })
+
+  test('self-references do not block removal', async () => {
+    // c.ts calls its own main() — irrelevant to removal safety
+    const { graph } = makeGraph()
+    await graph.buildGraph()
+    const r = analyzeRemovalSafety(graph, 'src/c.ts')
+    expect(r.referencedSymbols).toEqual([])
+  })
+
+  test('tool wiring: analyzeRemoval via registry', async () => {
+    const db = createDatabase(':memory:')
+    const reg = makeRegistry(db)
+    const out = (await reg.execute('analyzeRemoval', { filePath: 'src/a.ts' }, ctx(db, dir))) as {
+      verdict: string
+      productionDependents: string[]
+    }
+    expect(out.verdict).toBe('unsafe')
+    expect(out.productionDependents).toContain('src/b.ts')
+  })
+
+  test('checked list documents what was (and was not) analyzed', async () => {
+    const { graph } = makeGraph()
+    await graph.buildGraph()
+    const r = analyzeRemovalSafety(graph, 'src/b.ts')
+    expect(r.checked).toContain('reverse imports (AST graph)')
+    expect(r.checked).toContain('entry-point naming heuristic')
   })
 })

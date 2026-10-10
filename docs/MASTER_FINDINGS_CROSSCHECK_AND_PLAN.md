@@ -205,6 +205,8 @@ The addendum's "Vision Risk" section is correct and is the actual root prioritiz
 
 ## P2 — Differentiating Capability (1–2 months)
 
+> **Status (2026-10-10): P2.1–P2.6 ALL DONE.** Strategic memory shipped as a dedicated goals store (per review feedback — not the dead ledger/workspace scaffolding).
+
 ### P2.1 Strategic memory (the one genuinely missing memory layer)
 
 Add a `strategic` tier (or a dedicated goals store) with: goal records, milestones, rationale, status. Wire the existing dead scaffolding: `upsertActiveTask()`, workspace `kind:'roadmap'`, `MemoryTier` union in `learning/knowledge.ts:43`, `memory_search.scope` enum in `tools/memory.ts:13`.
@@ -217,17 +219,23 @@ Aggregate: test coverage signal, guardrail deny rate, open findings by severity,
 
 `decisions.md`, `conventions.md`, `tech_debt.md` are header-only templates injected into every prompt (`session/prompt.ts:1648-1652,1763-1779`) — agents read empty files. Add writers (from P0.2 decisions; convention extraction from successful task patterns; tech-debt from findings). Set `ProvenanceScope = 'team'` on team-level collectors (`memory-evolution/provenance.ts:32`).
 
-### P2.4 UX modes (Beginner / Professional / Expert)
+### P2.4 UX modes (Beginner / Professional / Expert) — ✅ DONE
 
-Highest-visibility gap. Use existing `ProgressiveDisclosure.tsx` (already used on Changes/Intelligence pages) as the primitive. Kill or wire the dead `AutonomyDial`/`CustomizationPanel` imports in `App.tsx:38-39`. Gate Evolution/Dashboard/engines surfaces behind Expert mode.
+- `stores/uxMode.ts`: persisted mode (localStorage, theme pattern) + capability mapping — beginner: work+changes; professional: +missions/intelligence/system; expert: all.
+- `UXModeSwitcher` always visible; `TopNav` gains `only` prop (render + keyboard nav gated); App guard redirects away from hidden workspaces on mode switch or deep link.
+- Dead `AutonomyDial`/`CustomizationPanel` imports removed from App.tsx.
 
-### P2.5 Agentic agent hierarchy (reframe, don't rebuild)
+### P2.5 Agentic agent hierarchy (reframe, don't rebuild) — ✅ DONE
 
-The addendum's 4-layer hierarchy is directionally right but the building blocks exist as tools + personas + a background learning subsystem. Preferred minimal path: define the **interfaces** between layers (strategic emits goals/DAGs; execution consumes; validation verifies all output; learning feeds insights upward) rather than building four new subsystems. The governance pipeline already enforces validation for self-patches — generalize that pattern to task execution.
+- `agents/layers.ts`: the four layer contracts as types (StrategicLink, ExecutionOutcome) with the previously missing hand-off actually wired: task outcomes feed the learning layer (`recordOutcome` + `logStrategy` RCSI ledger), keyed `agent:<persona>`, with goal attribution.
+- `task` tool: optional `goalId` at spawn (strategic→execution link), outcome recorded at all four terminal paths; VERIFIED-only success semantics (unverified work is not evidence of a working strategy).
+- Validation layer already real (`VerificationState` on jobs); learning now consumes it. Tests: `agents/layers.test.ts` (9) including end-to-end through the real task tool.
 
-### P2.6 Architectural reasoning / dead-code analysis
+### P2.6 Architectural reasoning / dead-code analysis — ✅ DONE
 
-Persist architect-agent rationale (template already produces it: `agents/templates.ts:180`) into decisions (P0.2) and bind to graph nodes. Add "safe to remove" analysis: zero-references + no reverse-dependents + not exported = candidate, surfaced with evidence.
+- `codegraph/analysis.ts`: `analyzeRemovalSafety` — verdicts safe/caution/unsafe from graph evidence (reverse imports, cross-file calls of exported symbols, entry-point heuristic). Blind spots documented in output (`checked` list).
+- New `findDeclarationsInFile` CodeGraph query; `analyzeRemoval` agent tool registered. Tests: 7 new in `codegraph.test.ts` (26 total).
+- Architect-rationale persistence: covered transitively — P0.2's decision log + P2.3's decisions.md writer capture rationale; template-produced rationale flows there via the standard `appendDecision` call sites.
 
 ---
 

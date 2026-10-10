@@ -4,7 +4,6 @@ import {
   Show,
   onCleanup,
   createResource,
-  For,
   createEffect,
   Switch,
   Match,
@@ -35,182 +34,10 @@ import IntelligencePage from './pages/Intelligence'
 import ChangesPage from './pages/Changes'
 import SystemPage from './pages/System'
 import { TopNav, type WorkspaceId, type WorkSubTab } from './components/TopNav'
-import { AutonomyDial, type AutonomyMode } from './components/AutonomyDial'
-import { CustomizationPanel } from './components/CustomizationPanel'
+import { UXModeSwitcher } from './components/UXModeSwitcher'
+import { visibleWorkspaces } from './stores/uxMode'
 import { updateUrl, parseUrl } from './routing/deepLinks'
 
-// ── Workspace stubs (incremental per MIRA_UI_IMPLEMENTATION_ROADMAP.md) ──
-function StubCard(props: {
-  icon: string
-  title: string
-  desc: string
-  items: string[]
-  cta?: string
-}) {
-  return (
-    <div
-      style={{
-        flex: '1',
-        display: 'flex',
-        'flex-direction': 'column',
-        overflow: 'auto',
-        background: 'var(--bg-canvas)',
-        padding: '18px 14px 28px',
-      }}
-    >
-      <div
-        style={{
-          'max-width': '860px',
-          margin: '0 auto',
-          width: '100%',
-          display: 'flex',
-          'flex-direction': 'column',
-          gap: '14px',
-        }}
-      >
-        <div
-          class="card"
-          style={{
-            padding: '14px 16px',
-            display: 'flex',
-            'align-items': 'center',
-            gap: '10px',
-            background: 'var(--bg-surface)',
-          }}
-        >
-          <div
-            style={{
-              width: '28px',
-              height: '28px',
-              'border-radius': '8px',
-              background: 'var(--grad-brand)',
-              display: 'grid',
-              'place-items': 'center',
-              color: 'var(--on-accent)',
-              'font-weight': '800',
-              'font-size': '14px',
-            }}
-            aria-hidden="true"
-          >
-            {props.icon}
-          </div>
-          <div>
-            <div
-              style={{
-                'font-size': 'var(--fs-lg)',
-                'font-weight': '700',
-                'letter-spacing': '-0.02em',
-              }}
-            >
-              {props.title}
-            </div>
-            <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>
-              {props.desc}
-            </div>
-          </div>
-          <span
-            class="pill"
-            style={{
-              'margin-left': 'auto',
-              'font-family': 'var(--font-mono)',
-              'font-size': 'var(--fs-2xs)',
-            }}
-          >
-            Target → Implemented incrementally
-          </span>
-        </div>
-        <div
-          class="card"
-          style={{ padding: '16px', display: 'flex', 'flex-direction': 'column', gap: '10px' }}
-        >
-          <div
-            style={{
-              'font-size': 'var(--fs-xs)',
-              'font-weight': '700',
-              'letter-spacing': '0.04em',
-              'text-transform': 'uppercase',
-              color: 'var(--fg-muted)',
-            }}
-          >
-            Coming in this workspace
-          </div>
-          <ul
-            style={{
-              margin: '0',
-              padding: '0 0 0 18px',
-              display: 'flex',
-              'flex-direction': 'column',
-              gap: '6px',
-              'font-size': 'var(--fs-sm)',
-              color: 'var(--fg-muted)',
-              'line-height': '1.6',
-            }}
-          >
-            <For each={props.items}>{(it) => <li>{it}</li>}</For>
-          </ul>
-          <Show when={props.cta}>
-            <div
-              style={{
-                'font-size': 'var(--fs-xs)',
-                color: 'var(--fg-faint)',
-                'font-family': 'var(--font-mono)',
-                'margin-top': '4px',
-              }}
-            >
-              {props.cta}
-            </div>
-          </Show>
-        </div>
-      </div>
-    </div>
-  )
-}
-function IntelligenceStub() {
-  return (
-    <StubCard
-      icon="◎"
-      title="Intelligence"
-      desc="Memory & research — why Mira knows or chooses this"
-      items={[
-        'Source · Evidence · Confidence · Timestamp · Scope',
-        'Explainability · Forget · Correct · Promote',
-        'Project / Team / Org / Procedural / Failure memory',
-        'Research persistence & retrieval',
-      ]}
-      cta="Phase 4 — backs GET /memory + provenance + GET /knowledge/graph"
-    />
-  )
-}
-function ChangesStub() {
-  return (
-    <StubCard
-      icon="⟡"
-      title="Changes"
-      desc="Every autonomous mutation traceable — timeline / diff / rewind"
-      items={[
-        'Change timeline · Diff viewer · Snapshot viewer',
-        'Rewind · Rollback · Compare versions',
-        'Reversibility: Mutation → Snapshot → Experiment → Verify → Accept/Rollback',
-      ]}
-      cta="Phase 5 — backs GET /changes + POST /session/:id/revert"
-    />
-  )
-}
-function SystemStub() {
-  return (
-    <StubCard
-      icon="⬣"
-      title="System"
-      desc="Health, engines, lanes & config — nvidia primary · colibri opportunistic"
-      items={[
-        'System Health (9 engines) · Gateway lanes & cost',
-        'Provider health · Model routing · Guardrails enforce',
-        'Diagnostics · Evaluation · Tracing',
-      ]}
-      cta="Phase 6/7 — backs GET /health · GET /gateway/health · GET /engines/health"
-    />
-  )
-}
 import {
   api,
   getToken,
@@ -441,7 +268,6 @@ export default function App() {
   const settings = createSettingsStore()
   const [authorized, setAuthorized] = createSignal(false)
   const [settingsOpen, setSettingsOpen] = createSignal(false)
-  const [customizationOpen, setCustomizationOpen] = createSignal(false)
   const [paletteOpen, setPaletteOpen] = createSignal(false)
   // Mobile: session sidebar is an off-canvas drawer; toggled by the hamburger.
   const [sidebarOpen, setSidebarOpen] = createSignal(false)
@@ -526,6 +352,14 @@ export default function App() {
   createEffect(() => {
     const ws = workspace()
     updateUrl(ws)
+  })
+  // UX-mode guard (P2.4): if the current mode hides the active workspace
+  // (mode switch or a deep link), redirect to 'work' instead of showing a
+  // hidden surface.
+  createEffect(() => {
+    const ws = workspace()
+    const allowed = visibleWorkspaces()
+    if (!allowed.includes(ws)) setWorkspace('work')
   })
   // Deep linking: handle browser back/forward
   onMount(() => {
@@ -1507,10 +1341,15 @@ export default function App() {
             </div>
           </Show>
 
-          {/* Phase 1 IA: primary workspaces — responsive, aria, keyboard, tokens */}
+          {/* UX-mode switcher (P2.4) — Beginner/Pro/Expert interface tiers */}
+          <UXModeSwitcher />
+
+          {/* Phase 1 IA: primary workspaces — responsive, aria, keyboard, tokens.
+              `only` gates by UX mode; keyboard nav follows the filtered list. */}
           <TopNav
             workspace={workspace()}
             onChange={setWorkspace}
+            only={visibleWorkspaces()}
             workTab={workTab()}
             onWorkTab={(t) => {
               setWorkspace('work')
@@ -1728,8 +1567,8 @@ export default function App() {
                               class="mira-resize-handle"
                               aria-label="Resize chat and canvas"
                               onPointerDown={(e: PointerEvent) => {
-                                let sx = e.clientX
-                                let sw = splitP()
+                                const sx = e.clientX
+                                const sw = splitP()
                                 const onMove = (ev: PointerEvent) => {
                                   const dx = ev.clientX - sx
                                   // 10px ≈ 1% — tuned so drag feels 1:1 with layout

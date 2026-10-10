@@ -7,17 +7,18 @@
  * updated to completed/failed when the subagent settles. Background jobs can
  * be polled by jobID via getJob()/listJobs()/cancelJob() below.
  */
-import { z } from "zod"
-import { and, desc, eq } from "drizzle-orm"
-import type { ToolDef } from "./registry.js"
-import type { MiraDB } from "../storage/db.js"
-import type { Bus } from "../bus/index.js"
-import { isKnownAgent } from "../agents/templates.js"
-import { jobs } from "../storage/schema.js"
-import { buildVerificationPatch } from "../verification.js"
+import { z } from 'zod'
+import { and, desc, eq } from 'drizzle-orm'
+import type { ToolDef } from './registry.js'
+import type { MiraDB } from '../storage/db.js'
+import type { Bus } from '../bus/index.js'
+import { isKnownAgent } from '../agents/templates.js'
+import { jobs } from '../storage/schema.js'
+import { buildVerificationPatch } from '../verification.js'
+import { linkTaskGoal, recordTaskOutcome } from '../agents/layers.js'
 
 export type Job = typeof jobs.$inferSelect
-type JobStatus = Job["status"]
+type JobStatus = Job['status']
 
 /** DB may be absent in degraded/embedded contexts — handlers degrade gracefully. */
 type MaybeDB = MiraDB | null | undefined
@@ -26,7 +27,7 @@ type MaybeDB = MiraDB | null | undefined
 export const taskResponseSchema = z.object({
   taskID: z.string(),
   jobID: z.string().optional(),
-  status: z.enum(["background", "completed", "failed", "error"]),
+  status: z.enum(['background', 'completed', 'failed', 'error']),
   description: z.string().optional(),
   subagent_type: z.string().optional(),
   childSessionID: z.string().optional(),
@@ -36,7 +37,7 @@ export const taskResponseSchema = z.object({
   // Task Verification States (design §6): parent sees *verified*, not prose.
   verification: z
     .object({
-      state: z.enum(["UNVERIFIED", "PARTIALLY_VERIFIED", "VERIFIED", "FAILED_VERIFICATION"]),
+      state: z.enum(['UNVERIFIED', 'PARTIALLY_VERIFIED', 'VERIFIED', 'FAILED_VERIFICATION']),
       at: z.number().optional(),
     })
     .optional(),
@@ -51,10 +52,19 @@ function verificationView(row: Job | undefined) {
 }
 
 const taskSchema = z.object({
-  description: z.string().describe("Short task label (3-5 words)"),
-  prompt: z.string().describe("Full task instructions for subagent"),
-  subagent_type: z.string().optional().describe("Agent type: explore, plan, general, etc. (default general)"),
-  background: z.boolean().optional().describe("Run in background (return immediately)"),
+  description: z.string().describe('Short task label (3-5 words)'),
+  prompt: z.string().describe('Full task instructions for subagent'),
+  subagent_type: z
+    .string()
+    .optional()
+    .describe('Agent type: explore, plan, general, etc. (default general)'),
+  background: z.boolean().optional().describe('Run in background (return immediately)'),
+  goalId: z
+    .string()
+    .optional()
+    .describe(
+      'Strategic goal this task advances (id from goal_write) — links execution outcomes back to the goal in the learning ledger',
+    ),
 })
 
 // ── Job board handlers (for REST/tool layers) ──────────────────────
@@ -93,9 +103,10 @@ export async function cancelJob(db: MaybeDB, jobID: string): Promise<Job | undef
   jobAborts.get(jobID)?.abort()
   jobAborts.delete(jobID)
   if (!db) return undefined
-  await db.update(jobs)
-    .set({ status: "cancelled" as JobStatus, updatedAt: Date.now() })
-    .where(and(eq(jobs.id, jobID), eq(jobs.status, "running")))
+  await db
+    .update(jobs)
+    .set({ status: 'cancelled' as JobStatus, updatedAt: Date.now() })
+    .where(and(eq(jobs.id, jobID), eq(jobs.status, 'running')))
   return getJob(db, jobID)
 }
 
@@ -113,24 +124,30 @@ export async function cancelJob(db: MaybeDB, jobID: string): Promise<Job | undef
 async function finishJob(
   db: MaybeDB,
   jobID: string,
-  patch: { status: Exclude<JobStatus, "running">; result?: string; error?: string; childSessionID?: string },
+  patch: {
+    status: Exclude<JobStatus, 'running'>
+    result?: string
+    error?: string
+    childSessionID?: string
+  },
   publish?: { bus?: Bus; sessionID?: string; taskID?: string },
 ): Promise<Job | undefined> {
   if (!db) return undefined
   const verification = await buildVerificationPatch(db, patch.childSessionID)
-  const rows = await db.update(jobs)
+  const rows = await db
+    .update(jobs)
     .set({ ...patch, ...verification, updatedAt: Date.now() })
-    .where(and(eq(jobs.id, jobID), eq(jobs.status, "running")))
+    .where(and(eq(jobs.id, jobID), eq(jobs.status, 'running')))
     .returning()
   const row = rows[0]
-  if (row && verification && verification.verificationState !== "UNVERIFIED" && publish?.bus) {
+  if (row && verification && verification.verificationState !== 'UNVERIFIED' && publish?.bus) {
     publish.bus.publish({
-      type: "job.updated",
+      type: 'job.updated',
       sessionID: publish.sessionID,
       payload: {
         jobID,
         taskID: publish.taskID,
-        kind: "verification.state",
+        kind: 'verification.state',
         verification: verificationView(row),
       },
       timestamp: Date.now(),
@@ -142,34 +159,43 @@ async function finishJob(
 // ── Tool ───────────────────────────────────────────────────────────
 
 export const taskTool = {
-  name: "task",
-  description: "Delegate a task to a subagent (explore, plan, general, etc.). Subagent has isolated context and returns a summary. Use for parallel independent work. Background spawns are persisted and pollable via the returned jobID.",
-  category: "execution",
+  name: 'task',
+  description:
+    'Delegate a task to a subagent (explore, plan, general, etc.). Subagent has isolated context and returns a summary. Use for parallel independent work. Background spawns are persisted and pollable via the returned jobID.',
+  category: 'execution',
   schema: taskSchema,
-  async execute({ description, prompt, subagent_type = "general", background }, ctx): Promise<TaskResponse> {
+  async execute(
+    { description, prompt, subagent_type = 'general', background, goalId },
+    ctx,
+  ): Promise<TaskResponse> {
     const taskID = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     const bus = ctx.bus
     const db = ctx.db
 
+    // STRATEGIC → EXECUTION (P2.5): link this task to its goal so the
+    // learning layer can attribute outcomes.
+    if (goalId) linkTaskGoal(taskID, goalId)
+
     bus?.publish({
-      type: "message.created",
+      type: 'message.created',
       sessionID: ctx.sessionID,
-      payload: { taskID, description, subagent_type, background: !!background, prompt },
+      payload: { taskID, description, subagent_type, background: !!background, prompt, goalId },
       timestamp: Date.now(),
     })
 
     const runner = ctx.subagentRunner
     if (!runner) {
-      return { taskID, status: "error", error: "No subagentRunner wired into ToolRegistry" }
+      return { taskID, status: 'error', error: 'No subagentRunner wired into ToolRegistry' }
     }
 
     // Map requested subagent types onto Mira agent templates where they align;
     // unrecognized types run with the default persona instead of resolving to undefined.
-    const agent = subagent_type === "explore" || subagent_type === "research"
-      ? "researcher" as const
-      : isKnownAgent(subagent_type)
-        ? subagent_type
-        : undefined
+    const agent =
+      subagent_type === 'explore' || subagent_type === 'research'
+        ? ('researcher' as const)
+        : isKnownAgent(subagent_type)
+          ? subagent_type
+          : undefined
 
     // Persist the job BEFORE spawning so it is pollable immediately
     const jobID = crypto.randomUUID()
@@ -180,7 +206,7 @@ export const taskTool = {
         parentSessionID: ctx.sessionID,
         agent,
         prompt,
-        status: "running",
+        status: 'running',
         createdAt: now,
         updatedAt: now,
       })
@@ -192,44 +218,88 @@ export const taskTool = {
       const ac = new AbortController()
       jobAborts.set(jobID, ac)
       setImmediate(() => {
-        runner({ prompt: `[${description}] ${prompt}`, parentID: ctx.sessionID, agent, signal: ac.signal })
+        runner({
+          prompt: `[${description}] ${prompt}`,
+          parentID: ctx.sessionID,
+          agent,
+          signal: ac.signal,
+        })
           .then(({ sessionID, text }) => {
             const wasCancelled = ac.signal.aborted
             jobAborts.delete(jobID)
-            return finishJob(db, jobID, wasCancelled
-              ? { status: "cancelled", error: "Subagent cancelled", childSessionID: sessionID }
-              : { status: "completed", result: text, childSessionID: sessionID },
-              { bus, sessionID: ctx.sessionID, taskID })
-              .then((row) => {
-                bus?.publish({
-                  type: "message.updated", sessionID: ctx.sessionID,
-                  payload: { taskID, jobID, status: wasCancelled ? "cancelled" : "completed", childSessionID: sessionID, summary: text, verification: verificationView(row) },
-                  timestamp: Date.now(),
-                })
+            return finishJob(
+              db,
+              jobID,
+              wasCancelled
+                ? { status: 'cancelled', error: 'Subagent cancelled', childSessionID: sessionID }
+                : { status: 'completed', result: text, childSessionID: sessionID },
+              { bus, sessionID: ctx.sessionID, taskID },
+            ).then((row) => {
+              // LEARNING hand-off (P2.5): outcome → RCSI ledger, with goal linkage
+              recordTaskOutcome({
+                taskID,
+                agent,
+                goalId,
+                status: wasCancelled ? 'cancelled' : 'completed',
+                verificationState: row?.verificationState,
               })
+              bus?.publish({
+                type: 'message.updated',
+                sessionID: ctx.sessionID,
+                payload: {
+                  taskID,
+                  jobID,
+                  status: wasCancelled ? 'cancelled' : 'completed',
+                  childSessionID: sessionID,
+                  summary: text,
+                  verification: verificationView(row),
+                  goalId,
+                },
+                timestamp: Date.now(),
+              })
+            })
           })
           .catch((err) => {
             const wasCancelled = ac.signal.aborted
             jobAborts.delete(jobID)
-            return finishJob(db, jobID, wasCancelled
-              ? { status: "cancelled", error: "Subagent cancelled" }
-              : { status: "failed", error: String(err) },
-              { bus, sessionID: ctx.sessionID, taskID })
-              .then((row) => {
-                bus?.publish({
-                  type: "message.updated", sessionID: ctx.sessionID,
-                  payload: { taskID, jobID, status: wasCancelled ? "cancelled" : "failed", error: String(err), verification: verificationView(row) },
-                  timestamp: Date.now(),
-                })
+            return finishJob(
+              db,
+              jobID,
+              wasCancelled
+                ? { status: 'cancelled', error: 'Subagent cancelled' }
+                : { status: 'failed', error: String(err) },
+              { bus, sessionID: ctx.sessionID, taskID },
+            ).then((row) => {
+              recordTaskOutcome({
+                taskID,
+                agent,
+                goalId,
+                status: wasCancelled ? 'cancelled' : 'failed',
+                verificationState: row?.verificationState,
               })
+              bus?.publish({
+                type: 'message.updated',
+                sessionID: ctx.sessionID,
+                payload: {
+                  taskID,
+                  jobID,
+                  status: wasCancelled ? 'cancelled' : 'failed',
+                  error: String(err),
+                  verification: verificationView(row),
+                  goalId,
+                },
+                timestamp: Date.now(),
+              })
+            })
           })
       })
       return {
         taskID,
         jobID,
-        status: "background",
+        status: 'background',
         description,
-        message: "Subagent running in background — completion arrives via BusEvent; poll getJob(jobID) for status/result.",
+        message:
+          'Subagent running in background — completion arrives via BusEvent; poll getJob(jobID) for status/result.',
       }
     }
 
@@ -240,12 +310,23 @@ export const taskTool = {
         parentID: ctx.sessionID,
         agent,
       })
-      const row = await finishJob(db, jobID, { status: "completed", result: text, childSessionID },
-        { bus, sessionID: ctx.sessionID, taskID })
+      const row = await finishJob(
+        db,
+        jobID,
+        { status: 'completed', result: text, childSessionID },
+        { bus, sessionID: ctx.sessionID, taskID },
+      )
+      recordTaskOutcome({
+        taskID,
+        agent,
+        goalId,
+        status: 'completed',
+        verificationState: row?.verificationState,
+      })
       return {
         taskID,
         jobID,
-        status: "completed",
+        status: 'completed',
         description,
         subagent_type,
         childSessionID,
@@ -253,7 +334,8 @@ export const taskTool = {
         verification: verificationView(row),
       }
     } catch (err) {
-      await finishJob(db, jobID, { status: "failed", error: String(err) })
+      await finishJob(db, jobID, { status: 'failed', error: String(err) })
+      recordTaskOutcome({ taskID, agent, goalId, status: 'failed' })
       throw err
     }
   },

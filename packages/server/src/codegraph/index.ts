@@ -140,6 +140,11 @@ export class CodeGraph {
     return this.store.findSymbol(name, limit)
   }
 
+  /** All symbols declared in a file (removal-safety analysis input). */
+  findDeclarationsInFile(filePath: string, limit = 200) {
+    return this.store.findDeclarationsInFile(this.normalizePath(filePath), limit)
+  }
+
   stats(): CodeGraphStats {
     return this.store.stats()
   }

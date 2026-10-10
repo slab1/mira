@@ -181,14 +181,30 @@ export class CodeGraphStore {
          WHERE name = ? ORDER BY file, line LIMIT ?`,
       )
       .all(name, limit) as unknown[] | undefined
-    return (rows ?? []).map((r) => ({
-      file: (r as Record<string, unknown>).file as string,
-      name: (r as Record<string, unknown>).name as string,
-      kind: (r as Record<string, unknown>).kind as SymbolRow['kind'],
-      line: (r as Record<string, unknown>).line as number,
-      signature: ((r as Record<string, unknown>).signature as string) ?? '',
-      isExported: ((r as Record<string, unknown>).is_exported as number) === 1,
-    }))
+    return (rows ?? []).map((r) => this.rowToSymbol(r))
+  }
+
+  /** All symbols declared in a file (removal-safety analysis input). */
+  findDeclarationsInFile(filePath: string, limit = 200): SymbolRow[] {
+    const rows = this.sqlite
+      ?.prepare(
+        `SELECT file, name, kind, line, signature, is_exported FROM codegraph_symbols
+         WHERE file = ? ORDER BY line LIMIT ?`,
+      )
+      .all(filePath, limit) as unknown[] | undefined
+    return (rows ?? []).map((r) => this.rowToSymbol(r))
+  }
+
+  private rowToSymbol(r: unknown): SymbolRow {
+    const row = r as Record<string, unknown>
+    return {
+      file: row.file as string,
+      name: row.name as string,
+      kind: row.kind as SymbolRow['kind'],
+      line: row.line as number,
+      signature: (row.signature as string) ?? '',
+      isExported: (row.is_exported as number) === 1,
+    }
   }
 
   stats(): CodeGraphStats {

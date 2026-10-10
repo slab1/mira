@@ -1,17 +1,29 @@
 import { For } from 'solid-js'
 import type { JSX } from 'solid-js'
 
-export type WorkspaceId = 'work' | 'missions' | 'intelligence' | 'changes' | 'system' | 'evolution' | 'dashboard'
+export type WorkspaceId =
+  'work' | 'missions' | 'intelligence' | 'changes' | 'system' | 'evolution' | 'dashboard'
 export type WorkSubTab = 'chat' | 'brio'
 
-export const WORKSPACES: Array<{ id: WorkspaceId; label: string; shortLabel?: string; icon: string; desc: string }> = [
+export const WORKSPACES: Array<{
+  id: WorkspaceId
+  label: string
+  shortLabel?: string
+  icon: string
+  desc: string
+}> = [
   { id: 'work', label: 'Work', icon: '◈', desc: 'Chat, files & Brio scoring' },
   { id: 'missions', label: 'Missions', icon: '⬢', desc: 'Autonomous execution' },
   { id: 'intelligence', label: 'Intelligence', icon: '◎', desc: 'Memory & research' },
   { id: 'changes', label: 'Changes', icon: '⟡', desc: 'Diffs & snapshots' },
   { id: 'system', label: 'System', icon: '⬣', desc: 'Health & config' },
   { id: 'evolution', label: 'Evolution', icon: '✦', desc: 'Shadow → Canary → Promote' },
-  { id: 'dashboard', label: 'Dashboard', icon: '📊', desc: 'Agents · Governance · Learning · Cost' },
+  {
+    id: 'dashboard',
+    label: 'Dashboard',
+    icon: '📊',
+    desc: 'Agents · Governance · Learning · Cost',
+  },
 ]
 
 export function TopNav(props: {
@@ -19,25 +31,34 @@ export function TopNav(props: {
   onChange: (id: WorkspaceId) => void
   workTab?: WorkSubTab
   onWorkTab?: (t: WorkSubTab) => void
+  /** UX-mode gating (P2.4): render + keyboard nav restricted to these ids */
+  only?: WorkspaceId[]
 }) {
+  const visible = () =>
+    props.only ? WORKSPACES.filter((w) => props.only!.includes(w.id)) : WORKSPACES
+
   const onKeyDown = (e: KeyboardEvent) => {
-    const idx = WORKSPACES.findIndex((w) => w.id === props.workspace)
+    const idx = visible().findIndex((w) => w.id === props.workspace)
     if (e.key === 'ArrowRight') {
       e.preventDefault()
-      const next = WORKSPACES[(idx + 1) % WORKSPACES.length]
+      const next = visible()[(idx + 1) % visible().length]
       props.onChange(next.id)
-      queueMicrotask(() => (document.querySelector(`[data-workspace="${next.id}"]`) as HTMLElement)?.focus())
+      queueMicrotask(() =>
+        (document.querySelector(`[data-workspace="${next.id}"]`) as HTMLElement)?.focus(),
+      )
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault()
-      const prev = WORKSPACES[(idx - 1 + WORKSPACES.length) % WORKSPACES.length]
+      const prev = visible()[(idx - 1 + visible().length) % visible().length]
       props.onChange(prev.id)
-      queueMicrotask(() => (document.querySelector(`[data-workspace="${prev.id}"]`) as HTMLElement)?.focus())
+      queueMicrotask(() =>
+        (document.querySelector(`[data-workspace="${prev.id}"]`) as HTMLElement)?.focus(),
+      )
     } else if (e.key === 'Home') {
       e.preventDefault()
-      props.onChange(WORKSPACES[0].id)
+      props.onChange(visible()[0].id)
     } else if (e.key === 'End') {
       e.preventDefault()
-      props.onChange(WORKSPACES[WORKSPACES.length - 1].id)
+      props.onChange(visible()[visible().length - 1].id)
     }
   }
 
@@ -72,7 +93,16 @@ export function TopNav(props: {
         <div class="logo-tile" style={{ width: '22px', height: '22px', 'font-size': '11px' }}>
           M
         </div>
-        <span style={{ 'font-size': 'var(--fs-sm)', 'font-weight': '700', 'letter-spacing': '-0.02em', color: 'var(--fg)' }}>Mira</span>
+        <span
+          style={{
+            'font-size': 'var(--fs-sm)',
+            'font-weight': '700',
+            'letter-spacing': '-0.02em',
+            color: 'var(--fg)',
+          }}
+        >
+          Mira
+        </span>
         <span
           style={{
             'font-size': 'var(--fs-2xs)',
@@ -91,7 +121,7 @@ export function TopNav(props: {
         aria-label="Workspaces"
         style={{ display: 'flex', gap: '2px', 'flex-shrink': '0' }}
       >
-        <For each={WORKSPACES}>
+        <For each={visible()}>
           {(w) => {
             const active = () => props.workspace === w.id
             return (
@@ -121,7 +151,10 @@ export function TopNav(props: {
                     'background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)',
                 }}
               >
-                <span aria-hidden="true" style={{ 'font-size': '12px', opacity: active() ? '1' : '0.7' }}>
+                <span
+                  aria-hidden="true"
+                  style={{ 'font-size': '12px', opacity: active() ? '1' : '0.7' }}
+                >
                   {w.icon}
                 </span>
                 <span>{w.label}</span>
@@ -133,7 +166,11 @@ export function TopNav(props: {
       </div>
 
       {/* Work sub-tabs inline when on Work */}
-      <ShowWhenWork workspace={props.workspace} workTab={props.workTab} onWorkTab={props.onWorkTab} />
+      <ShowWhenWork
+        workspace={props.workspace}
+        workTab={props.workTab}
+        onWorkTab={props.onWorkTab}
+      />
     </nav>
   )
 }

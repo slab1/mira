@@ -8,7 +8,9 @@
  */
 import { z } from 'zod'
 import type { ToolDef, ToolContext } from './registry.js'
+import type { JsonValue } from '../types/index.js'
 import { codeGraphFor, type CodeGraph } from '../codegraph/index.js'
+import { analyzeRemovalSafety } from '../codegraph/analysis.js'
 
 // ── Lazy-build guard ────────────────────────────────────────────────
 // Startup normally builds the graph; if it hasn't run (tests, degraded
@@ -136,5 +138,39 @@ const findDependentsTool = {
   },
 } satisfies ToolDef<typeof findDependentsSchema>
 
-export const tools = [findCallersTool, findDependenciesTool, findDependentsTool]
+// ── analyzeRemoval ──────────────────────────────────────────────────
+
+const analyzeRemovalSchema = z.object({
+  filePath: z.string().describe('File to assess (project-relative or absolute path)'),
+})
+
+const analyzeRemovalTool = {
+  name: 'analyzeRemoval',
+  description:
+    'Assess whether a file can be safely removed, with graph evidence: who imports it, ' +
+    'which of its exported symbols are called from other files, and whether it looks like an ' +
+    'entry point. Verdicts: safe (no coupling found), caution (tests only / entry-point-shaped), ' +
+    'unsafe (production coupling). Blind spots: dynamic imports and non-TS consumers.',
+  category: 'file',
+  schema: analyzeRemovalSchema,
+  metadata: {
+    riskLevel: 'low',
+    sideEffect: 'none',
+    isReadOnly: true,
+    isIdempotent: true,
+  },
+  async execute({ filePath }, ctx: ToolContext) {
+    const graph = codeGraphFor(ctx.db)
+    if (!ctx.db)
+      return {
+        filePath,
+        verdict: 'unknown',
+        warning: 'code graph unavailable (no database)',
+      }
+    await ensureBuilt(graph, ctx.cwd)
+    return analyzeRemovalSafety(graph, filePath) as unknown as JsonValue
+  },
+} satisfies ToolDef<typeof analyzeRemovalSchema>
+
+export const tools = [findCallersTool, findDependenciesTool, findDependentsTool, analyzeRemovalTool]
 export default tools
