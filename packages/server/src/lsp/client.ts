@@ -358,12 +358,42 @@ export class LSPClient {
       return
     }
 
+    // Server→client request (has method AND id): must respond, or servers
+    // like gopls block features awaiting the answer — e.g. gopls v0.18
+    // stalls hover until workspace/configuration is answered.
+    if (msg.method !== undefined && id != null) {
+      this.respondToServer(String(msg.method), id as string | number, msg.params)
+      return
+    }
+
     if (msg.method === 'textDocument/publishDiagnostics') {
       const params = msg.params as { uri?: string; diagnostics?: LSPDiagnostic[] } | undefined
       this.diagnostics.set(params?.uri ?? '', params?.diagnostics ?? [])
       return
     }
     // window/logMessage & friends: ignored
+  }
+
+  /**
+   * Reply to a server→client request. Unknown/unimplemented methods get a
+   * spec-tolerant null result; workspace/configuration requires an array
+   * sized to the requested items.
+   */
+  private respondToServer(
+    method: string,
+    id: number | string,
+    params: JsonValue | undefined,
+  ): void {
+    let result: JsonValue = null
+    if (method === 'workspace/configuration') {
+      const items = (params as { items?: unknown[] } | undefined)?.items ?? []
+      result = items.map(() => ({}) as JsonValue)
+    }
+    try {
+      this.write({ jsonrpc: '2.0', id, result })
+    } catch {
+      // server died mid-request — nothing to do
+    }
   }
 
   private rejectAllPending(err: Error): void {
