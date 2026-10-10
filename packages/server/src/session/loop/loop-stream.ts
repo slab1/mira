@@ -1,4 +1,4 @@
-import type { JsonValue } from '../types/index.js'
+import type { JsonValue } from '../../types/index.js'
 
 export class LoopStream {
   private readonly encoder = new TextEncoder()

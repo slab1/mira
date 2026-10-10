@@ -282,7 +282,10 @@ export class SessionCrud {
           createdAt: m.createdAt ?? now,
         })
         for (const p of m.parts ?? []) {
-          const { ...rest } = p
+          // destructure the source id out — copied parts must get a FRESH id
+          // (...rest carrying the old id would clobber the randomUUID below)
+          const { id: sourceId, ...rest } = p
+          void sourceId
           await tx.insert(this.db.schema.parts).values({
             id: crypto.randomUUID(),
             ...rest,

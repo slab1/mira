@@ -97,11 +97,11 @@ describe('MCPManager end-to-end (stdio)', () => {
     }
     const client = internals.clients.get('mock')
     expect(client).toBeDefined()
-    expect(client.alive).toBe(true)
-    client.handle?.kill()
+    expect(client!.alive).toBe(true)
+    client!.handle?.kill()
     // Wait for the process to actually die
     await new Promise((r) => setTimeout(r, 300))
-    expect(client.alive).toBe(false)
+    expect(client!.alive).toBe(false)
 
     // healthCheck should detect the dead client and mark the server errored
     await mgr.healthCheck()
