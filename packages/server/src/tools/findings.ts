@@ -113,7 +113,16 @@ export async function resolveFinding(db: MaybeDB, id: string): Promise<Finding |
 export async function openFindingsForContext(db: MaybeDB, limit = 10): Promise<string> {
   const rows = await listFindings(db, { status: 'open', limit })
   if (!rows.length) return ''
-  return `Known findings (avoid repeating solved problems):\n${rows
+  // Critic feedback on recent edits gets an explicit instruction: it is not
+  // "a solved problem to avoid repeating" — it is an unresolved challenge to
+  // the change the agent just made, and it must act on it (verify or revert).
+  const criticFlagged = rows.some((f) => f.title.startsWith('Edit critic'))
+  const header = criticFlagged
+    ? 'Known findings — one or more are CRITIC FEEDBACK on your recent edits: ' +
+      're-read the flagged file, verify the change serves the task, and fix or revert it. ' +
+      'Do not stack more edits on top of an unverified one.'
+    : 'Known findings (avoid repeating solved problems):'
+  return `${header}\n${rows
     .map(
       (f) =>
         `- [${f.severity}] ${f.title}${f.evidence ? ` — ${String(f.evidence).slice(0, 200)}` : ''}`,
