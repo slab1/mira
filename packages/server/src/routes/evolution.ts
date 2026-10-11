@@ -197,6 +197,9 @@ export function mountEvolutionRoutes(
     const securityPre = securityValidator.validate(patch ?? experiment.patch)
 
     // Create rollback point before verifier (so we can revert even if verifier fails)
+    // Coarse safety point at observe time (patch is raw TEXT here — no id yet).
+    // The EXACT point (patchId-linked snapshots) is captured at promote time,
+    // after the applier records pre-images under the evolution marker session.
     const rollbackPoint = rollbackManager.createRollbackPoint(proposal.id)
 
     // Gate decisions — fail-closed: block verifier if any gate fails
@@ -507,7 +510,11 @@ const proposalRoutesMounted = new WeakSet<Hono<{ Variables: { requestId: string 
 
 export function mountEvolutionProposalRoutes(
   app: Hono<{ Variables: { requestId: string } }>,
-  deps: { governance: GovernanceGateLike },
+  deps: {
+    governance: GovernanceGateLike
+    /** Exact-point refresh after promote (snapshot linkage by patchId) */
+    rollbackManager?: RollbackManager
+  },
 ): void {
   if (proposalRoutesMounted.has(app)) return
   proposalRoutesMounted.add(app)
@@ -540,6 +547,14 @@ export function mountEvolutionProposalRoutes(
     const exists = await governance.get(id)
     if (!exists) return c.json({ error: 'not found', id }, 404)
     const result = await governance.promote(id)
+    // Exact rollback linkage: the applier snapshots pre-images with
+    // message_id = patchId under the evolution marker session; refresh the
+    // point so POST /evolution/rollback/:id restores exactly this patch.
+    if (result.applied && exists.patchId && deps.rollbackManager) {
+      try {
+        deps.rollbackManager.createRollbackPoint(id, [exists.patchId])
+      } catch {}
+    }
     // backward compatible: prUrl/regressionBlocked/reason are omitted from the
     // JSON body when undefined; failure reasons must reach the client.
     return c.json({

@@ -18,11 +18,12 @@
  * | 10 | Known limitations | Implemented | in-mem + file_snapshots; Phase 6 adds deps/config/schema migration revert |
  */
 
-import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs"
-import type { Bus } from "../bus/index.js"
-import type { JsonValue } from "../types/index.js"
-import type { MiraDB } from "../storage/db.js"
-import type { ImprovementLedger } from "./ledger.js"
+import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs'
+import type { Bus } from '../bus/index.js'
+import type { JsonValue } from '../types/index.js'
+import type { MiraDB } from '../storage/db.js'
+import type { ImprovementLedger } from './ledger.js'
+import { EVOLUTION_SNAPSHOT_SESSION } from '../patching/applier.js'
 
 export interface RollbackPoint {
   version: string // ledgerId + timestamp
@@ -59,21 +60,38 @@ export class RollbackManager {
     } catch {}
   }
 
-  createRollbackPoint(ledgerId: string): RollbackPoint {
+  /**
+   * Capture a rollback point for a proposal.
+   *
+   * `patchIds` (recommended): exact-match the snapshots the Applier recorded
+   * under the evolution marker session for those patches. Without it, falls
+   * back to the marker session's recent snapshots — still an EXACT session
+   * match; the old `session_id LIKE '%evolution%'` heuristic (which could
+   * capture unrelated sessions' snapshots and revert files no patch touched)
+   * is gone.
+   */
+  createRollbackPoint(ledgerId: string, patchIds?: string[]): RollbackPoint {
     this.ensureTable()
     const version = `${ledgerId}@${Date.now().toString(36)}`
-    // Collect snapshotIds for this ledger's proposal — for now, enumerate recent file_snapshots for evolution sessions
-    // We look for snapshots whose sessionID contains ledgerId or evolution prefix
     const snapshotIds: string[] = []
     try {
       const sqlite = this.db?.sqlite
       if (sqlite) {
-        // Try to find snapshots linked to this proposal via evolution session
-        const rows = sqlite.prepare(
-          `SELECT id FROM file_snapshots WHERE session_id LIKE ? OR session_id LIKE ? ORDER BY created_at DESC LIMIT 20`
-        ).all(`%${ledgerId}%`, `%evolution%`) as Array<{ id: string }>
+        const placeholders = (patchIds ?? []).map(() => '?').join(',')
+        const rows = (
+          patchIds?.length
+            ? sqlite
+                .prepare(
+                  `SELECT id FROM file_snapshots WHERE session_id = ? AND message_id IN (${placeholders}) ORDER BY created_at DESC LIMIT 20`,
+                )
+                .all(EVOLUTION_SNAPSHOT_SESSION, ...patchIds)
+            : sqlite
+                .prepare(
+                  `SELECT id FROM file_snapshots WHERE session_id = ? ORDER BY created_at DESC LIMIT 20`,
+                )
+                .all(EVOLUTION_SNAPSHOT_SESSION)
+        ) as Array<{ id: string }>
         for (const r of rows) snapshotIds.push(r.id)
-        // Also check evolution ledger's experiment snapshot path? For now we persist whatever we found.
       }
     } catch {}
 
@@ -83,17 +101,25 @@ export class RollbackManager {
 
     // persist
     try {
-      this.db?.sqlite.prepare(
-        `INSERT OR REPLACE INTO evolution_rollbacks (ledger_id, version, snapshot_ids, created_at) VALUES (?, ?, ?, ?)`
-      ).run(ledgerId, version, JSON.stringify(snapshotIds), point.createdAt)
+      this.db?.sqlite
+        .prepare(
+          `INSERT OR REPLACE INTO evolution_rollbacks (ledger_id, version, snapshot_ids, created_at) VALUES (?, ?, ?, ?)`,
+        )
+        .run(ledgerId, version, JSON.stringify(snapshotIds), point.createdAt)
     } catch {}
 
     try {
       this.bus?.publish({
-        type: "evolution.rollback" as unknown as import("../types/index.js").BusEventType,
-        payload: { action: "create", ledgerId, version, snapshotIds, timestamp: point.createdAt } as unknown as JsonValue,
+        type: 'evolution.rollback' as unknown as import('../types/index.js').BusEventType,
+        payload: {
+          action: 'create',
+          ledgerId,
+          version,
+          snapshotIds,
+          timestamp: point.createdAt,
+        } as unknown as JsonValue,
         timestamp: point.createdAt,
-      } as unknown as import("../types/index.js").BusEvent)
+      } as unknown as import('../types/index.js').BusEvent)
     } catch {}
 
     return point
@@ -113,15 +139,19 @@ export class RollbackManager {
     if (sqlite && point.snapshotIds.length > 0) {
       for (const snapId of point.snapshotIds) {
         try {
-          const row = sqlite.prepare(`SELECT path, content FROM file_snapshots WHERE id = ?`).get(snapId) as { path: string; content: string | null } | undefined
+          const row = sqlite
+            .prepare(`SELECT path, content FROM file_snapshots WHERE id = ?`)
+            .get(snapId) as { path: string; content: string | null } | undefined
           if (!row) continue
           if (row.content === null) {
-            try { unlinkSync(row.path) } catch {}
+            try {
+              unlinkSync(row.path)
+            } catch {}
           } else {
             try {
-              const dir = row.path.split("/").slice(0, -1).join("/") || "."
+              const dir = row.path.split('/').slice(0, -1).join('/') || '.'
               mkdirSync(dir, { recursive: true })
-              writeFileSync(row.path, row.content, "utf-8")
+              writeFileSync(row.path, row.content, 'utf-8')
             } catch {}
           }
         } catch {}
@@ -142,10 +172,15 @@ export class RollbackManager {
 
     try {
       this.bus?.publish({
-        type: "evolution.rollback" as unknown as import("../types/index.js").BusEventType,
-        payload: { action: "rollback", ledgerId, version: point.version, timestamp: Date.now() } as unknown as JsonValue,
+        type: 'evolution.rollback' as unknown as import('../types/index.js').BusEventType,
+        payload: {
+          action: 'rollback',
+          ledgerId,
+          version: point.version,
+          timestamp: Date.now(),
+        } as unknown as JsonValue,
         timestamp: Date.now(),
-      } as unknown as import("../types/index.js").BusEvent)
+      } as unknown as import('../types/index.js').BusEvent)
     } catch {}
   }
 
@@ -155,13 +190,24 @@ export class RollbackManager {
 
   private loadPoint(ledgerId: string): RollbackPoint | null {
     try {
-      const row = this.db?.sqlite.prepare(`SELECT version, snapshot_ids, created_at FROM evolution_rollbacks WHERE ledger_id = ?`).get(ledgerId) as { version: string; snapshot_ids: string; created_at: number } | undefined
+      const row = this.db?.sqlite
+        .prepare(
+          `SELECT version, snapshot_ids, created_at FROM evolution_rollbacks WHERE ledger_id = ?`,
+        )
+        .get(ledgerId) as { version: string; snapshot_ids: string; created_at: number } | undefined
       if (!row) return null
       const ids = JSON.parse(row.snapshot_ids) as string[]
-      const p: RollbackPoint = { version: row.version, snapshotIds: ids, ledgerId, createdAt: row.created_at }
+      const p: RollbackPoint = {
+        version: row.version,
+        snapshotIds: ids,
+        ledgerId,
+        createdAt: row.created_at,
+      }
       this.points.set(ledgerId, p)
       return p
-    } catch { return null }
+    } catch {
+      return null
+    }
   }
 
   private markLedgerRolledBack(ledgerId: string) {
@@ -169,12 +215,14 @@ export class RollbackManager {
       const sqlite = this.db?.sqlite
       if (!sqlite) return
       // update ledger verdict to rolledback if exists
-      const existing = sqlite.prepare(`SELECT id FROM evolution_ledger WHERE id = ?`).get(ledgerId) as { id: string } | undefined
+      const existing = sqlite
+        .prepare(`SELECT id FROM evolution_ledger WHERE id = ?`)
+        .get(ledgerId) as { id: string } | undefined
       if (existing) {
-        sqlite.prepare(`UPDATE evolution_ledger SET verdict = 'rolledback' WHERE id = ?`).run(ledgerId)
+        sqlite
+          .prepare(`UPDATE evolution_ledger SET verdict = 'rolledback' WHERE id = ?`)
+          .run(ledgerId)
       }
     } catch {}
   }
 }
-
-

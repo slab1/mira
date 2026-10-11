@@ -41,6 +41,7 @@ import { ImprovementEngine } from './improvement.js'
 import { LearningScheduler } from './scheduler.js'
 import { createPatchingSystem, type PatchingEngine } from '../patching/index.js'
 import { createGovernanceGate } from '../patching/governance/index.js'
+import { RollbackManager } from '../evolution/rollback.js'
 import { createAgentMetrics } from '../agents/metrics.js'
 import { createMemoryQualityTracker } from './quality.js'
 import {
@@ -261,7 +262,11 @@ export function mountLearningRoutes(
   // Governance proposal routes (/evolution/proposals*) — wired to the
   // GovernanceGate created in createLearningSystem(). Idempotent: no-ops if
   // mountEvolutionRoutes already mounted them on this app.
-  mountEvolutionProposalRoutes(app, { governance: system.governance })
+  mountEvolutionProposalRoutes(app, {
+    governance: system.governance,
+    // promote-time rollback points: exact snapshot linkage by patchId
+    rollbackManager: new RollbackManager({ db: system.db, bus: system.bus }),
+  })
 
   // Workspace items — persistent workspace awareness (issues, decisions, roadmap, tech-debt).
   // Fed by findings (issues) and governance transitions (decisions); also writable manually.

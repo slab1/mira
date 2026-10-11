@@ -26,6 +26,13 @@ export interface ApplierConfig {
   dryRun?: boolean
 }
 
+/**
+ * Deterministic session id under which every applied patch's pre-image is
+ * snapshotted. RollbackManager resolves rollback points with an EXACT match on
+ * this session (never a LIKE) — see evolution/rollback.ts.
+ */
+export const EVOLUTION_SNAPSHOT_SESSION = 'evolution'
+
 export interface ApplierDeps {
   bus?: Bus
   knowledge?: KnowledgeBase
@@ -85,6 +92,37 @@ export class Applier {
     }
 
     const original = await file.text()
+
+    // Snapshot the pre-image under the deterministic evolution marker session
+    // BEFORE writing, so rollback can restore exactly this patch. Previously no
+    // snapshot was taken here and RollbackManager had to guess via
+    // `session_id LIKE '%evolution%'` — which could capture unrelated sessions'
+    // snapshots and revert files no patch ever touched.
+    if (this.deps.db) {
+      try {
+        this.deps.db.sqlite
+          .prepare(
+            'INSERT OR IGNORE INTO sessions (id, title, model, provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+          )
+          .run(
+            EVOLUTION_SNAPSHOT_SESSION,
+            'evolution patch snapshots',
+            'm',
+            'p',
+            Date.now(),
+            Date.now(),
+          )
+        const { snapshotFile } = await import('../storage/snapshots.js')
+        snapshotFile(this.deps.db, {
+          sessionID: EVOLUTION_SNAPSHOT_SESSION,
+          messageID: patch.id,
+          path: abs,
+        })
+      } catch (e) {
+        console.warn(`[patching:applier] pre-apply snapshot failed: ${String(e)}`)
+      }
+    }
+
     const patched = applyChange(original, patch.change, patch.targetFile)
     await Bun.write(abs, patched)
     console.log(
