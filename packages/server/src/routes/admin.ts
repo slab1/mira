@@ -4,6 +4,9 @@ import { z } from 'zod'
 import type { MiraDB } from '../storage/db.js'
 import type { JsonValue } from '../types/index.js'
 import { isRole } from '../auth/roles.js'
+import { getConfig } from '../config/index.js'
+import { redactText, redactValue } from '../compliance/redact.js'
+import { applyRetention, buildViolationReport, resolveRetentionDays } from '../compliance/index.js'
 
 const ownerSchema = z
   .string()
@@ -24,6 +27,8 @@ export function mountAdminRoutes(
     resolveRole: (t: string) => import('../auth/roles.js').Role
     bearerOf: (h: string | undefined) => string
     sessionOwnerCache: Map<string, { owner: string | null; org: string | null; ts: number }>
+    /** Org of a session for per-org compliance reporting (P3.3/P3.5) */
+    orgOfSession?: (sessionID: string) => Promise<string | null>
   },
 ) {
   const {
@@ -231,28 +236,107 @@ export function mountAdminRoutes(
     params.push(limit)
     try {
       const rows = db.sqlite.prepare(sql).all(...params) as Array<Record<string, JsonValue>>
-      // Parse JSON fields for convenience
-      const entries = rows.map((r) => ({
-        ...r,
-        args: (() => {
-          try {
-            return r.args ? JSON.parse(r.args as string) : null
-          } catch {
-            return r.args
-          }
-        })(),
-        result: (() => {
-          try {
-            return r.result ? JSON.parse(r.result as string) : null
-          } catch {
-            return r.result
-          }
-        })(),
-      }))
+      // Parse JSON fields for convenience; redact on read as defense-in-depth
+      // for rows stored before P3.5 redaction existed.
+      const entries = rows.map((r) => {
+        const parsed = {
+          ...r,
+          args: (() => {
+            try {
+              return r.args ? JSON.parse(r.args as string) : null
+            } catch {
+              return r.args
+            }
+          })(),
+          result: (() => {
+            try {
+              return r.result ? JSON.parse(r.result as string) : null
+            } catch {
+              return r.result
+            }
+          })(),
+        } as Record<string, JsonValue>
+        return redactRowFields(parsed)
+      })
       return c.json({ count: entries.length, entries })
     } catch (e) {
       return c.json({ error: String(e) }, 500)
     }
+  })
+
+  // ── P3.5 compliance ──────────────────────────────────────────────────
+  // Violation report, retention sweep, and defense-in-depth redaction of the
+  // audit read paths (rows written before redaction existed still get masked).
+  //
+  // Counting caveat: every tool call logs twice (guardrail pre-check at
+  // guardrails.check + post-execution logResult in tools/registry.ts), so the
+  // report exposes `rows` AND distinct `events` rather than pretending rows are
+  // events.
+
+  /** Defense-in-depth: mask secrets in rows stored before redaction was wired. */
+  const redactMaybeJson = (v: JsonValue | undefined): JsonValue => {
+    if (v === null || v === undefined) return null
+    // Callers hand us either raw JSON text or an already-parsed value.
+    let parsed: unknown = v
+    if (typeof v === 'string') {
+      try {
+        parsed = JSON.parse(v)
+      } catch {
+        parsed = v
+      }
+    }
+    return redactValue(parsed) as JsonValue
+  }
+  const redactRowFields = (r: Record<string, JsonValue>) => ({
+    ...r,
+    args: redactMaybeJson(r.args),
+    result: redactMaybeJson(r.result),
+    reason: typeof r.reason === 'string' ? redactText(r.reason) : r.reason,
+  })
+
+  app.get('/admin/compliance/violations', async (c) => {
+    if (!isAdmin(c)) return deny(c)
+    const sinceDays = Number(c.req.query('days') ?? '30')
+    const orgID = c.req.query('org')
+    try {
+      const report = await buildViolationReport(db, {
+        sinceDays: Number.isFinite(sinceDays) ? Math.min(365, Math.max(1, sinceDays)) : 30,
+        orgID: orgID ?? undefined,
+        // Per-org scoping resolves each row's session → org (P3.3 tenancy).
+        sessionOrg:
+          orgID && deps.orgOfSession ? (sessionID) => deps.orgOfSession!(sessionID) : undefined,
+      })
+      return c.json({ report, orgID: orgID ?? null })
+    } catch (e) {
+      return c.json({ error: String(e) }, 500)
+    }
+  })
+
+  app.post('/admin/compliance/retention', async (c) => {
+    if (!isAdmin(c)) return deny(c)
+    const body = (await c.req.json().catch(() => ({}))) as {
+      retentionDays?: unknown
+      maxRows?: unknown
+    }
+    const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+    const retentionDays = num(body?.retentionDays)
+    const maxRows = num(body?.maxRows)
+    const result = await applyRetention(db, { retentionDays, maxRows })
+    return c.json({
+      result,
+      effectiveRetentionDays: resolveRetentionDays({ retentionDays }),
+    })
+  })
+
+  app.get('/admin/compliance/retention', async (c) => {
+    if (!isAdmin(c)) return deny(c)
+    const row = db.sqlite.prepare('SELECT COUNT(*) AS c FROM audit_entries').get() as
+      { c: number } | undefined
+    return c.json({
+      effectiveRetentionDays: resolveRetentionDays(),
+      totalRows: row?.c ?? 0,
+      auditLogPath: getConfig().guardrails?.auditLogPath ?? './data/audit.log',
+    })
   })
 
   // ── GET /admin/audit/export (P3.2) — CSV/JSON download of the audit trail.
@@ -298,9 +382,21 @@ export function mountAdminRoutes(
     }>
     const iso = (t: number) => new Date(t).toISOString()
     if (format === 'json') {
-      return c.json({ exportedAt: iso(Date.now()), count: rows.length, entries: rows }, 200, {
-        'Content-Disposition': `attachment; filename="mira-audit-${Date.now()}.json"`,
-      })
+      // Redact on export too — rows written before P3.5 may hold raw secrets.
+      const safeRows = rows.map((r) =>
+        redactRowFields({
+          ...(r as unknown as Record<string, JsonValue>),
+          args: r.args,
+          result: r.result,
+        }),
+      )
+      return c.json(
+        { exportedAt: iso(Date.now()), count: safeRows.length, entries: safeRows },
+        200,
+        {
+          'Content-Disposition': `attachment; filename="mira-audit-${Date.now()}.json"`,
+        },
+      )
     }
     if (format !== 'csv') return c.json({ error: 'format must be csv or json' }, 400)
     const esc = (v: unknown) => {

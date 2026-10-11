@@ -15,6 +15,7 @@
 import type { MiraConfig, JsonValue } from '../types/index.js'
 import type { Database } from 'bun:sqlite'
 import { getConfig } from '../config/store.js'
+import { redactAuditEntry } from '../compliance/redact.js'
 
 /** Narrow untyped tool args to a string-keyed record (JsonValue-tolerant). */
 function argStr(args: JsonValue, key: string): string | undefined {
@@ -266,7 +267,7 @@ export function extractPatchPaths(diff: string): string[] {
   for (const line of diff.split('\n')) {
     let m: RegExpMatchArray | null
     if ((m = line.match(/^(?:---|\+\+\+)\s+(\S+)/))) {
-      let p = m[1]
+      const p = m[1]
         .split('\t')[0]
         .trim()
         .replace(/^[ab]\//, '')
@@ -359,6 +360,9 @@ export class AuditLogger {
     this.db = db
   }
   async log(entry: AuditEntry) {
+    // P3.5 compliance: redact secrets/PII and cap payload size BEFORE either
+    // sink — the file mirror and the DB mirror are both evidence stores.
+    const safe = redactAuditEntry(entry)
     // Dual-write: file (rotation) + DB (queryable) — best-effort, never throw
     try {
       const { appendFile, mkdir, stat, rename, unlink } = await import('node:fs/promises')
@@ -372,7 +376,7 @@ export class AuditLogger {
           await rename(this.path, rotated).catch(() => {})
         }
       } catch {}
-      const line = JSON.stringify({ ...entry, ts: Date.now() }) + '\n'
+      const line = JSON.stringify({ ...safe, ts: Date.now() }) + '\n'
       await appendFile(this.path, line, 'utf-8')
     } catch (e) {
       console.warn('[audit] log failed', String(e))
@@ -387,12 +391,12 @@ export class AuditLogger {
           )
           .run(
             id,
-            entry.sessionID ?? null,
-            entry.tool,
-            entry.decision,
-            entry.reason ?? null,
-            entry.args ? JSON.stringify(entry.args) : null,
-            entry.result ? JSON.stringify(entry.result) : null,
+            safe.sessionID ?? null,
+            safe.tool,
+            safe.decision,
+            safe.reason ?? null,
+            safe.args !== undefined ? JSON.stringify(safe.args) : null,
+            safe.result !== undefined ? JSON.stringify(safe.result) : null,
             Date.now(),
           )
       } catch {}

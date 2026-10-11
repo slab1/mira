@@ -3,6 +3,7 @@ import type { MiraDB } from '../storage/db.js'
 import type { Todo, JsonValue, MiraConfig } from '../types/index.js'
 import { eq } from 'drizzle-orm'
 import { getConfig } from '../config/index.js'
+import { AUDIT_PAYLOAD_MAX_CHARS, redactValue } from '../compliance/redact.js'
 import { getAgentTemplates, isKnownAgent } from '../agents/templates.js'
 import { buildRegistry, resolveModel, resolveWithFallbacks } from '../gateway/provider.js'
 
@@ -336,6 +337,10 @@ export class SessionCrud {
     result: JsonValue,
     isError = false,
   ) {
+    // P3.5 compliance: tool args/results are persisted evidence — redact
+    // secrets/PII here too, otherwise the audit trail's redaction is trivially
+    // bypassed by reading GET /session/:id/message. Deliberately lossy: a
+    // redacted value cannot be recovered by the client.
     await this.db.insert(this.db.schema.parts).values({
       id: crypto.randomUUID(),
       messageID,
@@ -343,7 +348,10 @@ export class SessionCrud {
       type: 'tool-call',
       tool: tc.name,
       toolCallID: tc.id,
-      args: tc.args,
+      args: redactValue(tc.args, { maxChars: AUDIT_PAYLOAD_MAX_CHARS }) as Record<
+        string,
+        JsonValue
+      >,
       createdAt: Date.now(),
     })
     await this.db.insert(this.db.schema.parts).values({
@@ -353,7 +361,7 @@ export class SessionCrud {
       type: 'tool-result',
       tool: tc.name,
       toolCallID: tc.id,
-      result,
+      result: redactValue(result, { maxChars: AUDIT_PAYLOAD_MAX_CHARS }) as JsonValue,
       isError,
       createdAt: Date.now(),
     })
