@@ -18,7 +18,7 @@
  */
 
 import { createHash } from 'crypto'
-import { symbolIndex, getSymbolIndex } from '../symbols/index.js'
+import { getSymbolIndex } from '../symbols/index.js'
 import { guardEdit } from '../symbols/semantic.js'
 import { LSPError } from '../lsp/transport.js'
 
@@ -56,6 +56,19 @@ function collapseWhitespace(s: string): string {
     .split('\n')
     .map((line) => line.replace(/[ \t]+/g, ' ').trimEnd())
     .join('\n')
+}
+
+/**
+ * Does the span starting at `start` (length `len` lines) correspond to
+ * `oldString`? Compared line-wise, ignoring leading indentation and trailing
+ * whitespace so cosmetic drift still validates — but a genuinely different
+ * region does not.
+ */
+function spanMatches(lines: string[], start: number, len: number, oldString: string): boolean {
+  const actual = lines.slice(start, start + len)
+  const expected = normalizeLineEndings(oldString).split('\n')
+  if (actual.length !== expected.length) return false
+  return actual.every((line, i) => line.trim() === expected[i].trim())
 }
 
 function contextFuzzyFind(
@@ -109,7 +122,6 @@ function findSymbolPosition(
 
 async function applyWorkspaceEdit(
   edit: import('../lsp/protocol.js').WorkspaceEdit,
-  rootPath: string,
 ): Promise<{ count: number; files: string[] }> {
   let count = 0
   const files: string[] = []
@@ -118,7 +130,7 @@ async function applyWorkspaceEdit(
     for (const [uri, edits] of Object.entries(edit.changes)) {
       const filePath = uri.startsWith('file://') ? uri.slice(7) : uri
       try {
-        let content = await Bun.file(filePath).text()
+        const content = await Bun.file(filePath).text()
         // Apply edits in reverse order to preserve offsets
         const sorted = [...edits].sort(
           (a, b) =>
@@ -163,7 +175,7 @@ async function applyWorkspaceEdit(
       const edits = (change as { edits: import('../lsp/protocol.js').TextEdit[] }).edits
       if (!edits) continue
       try {
-        let content = await Bun.file(filePath).text()
+        const content = await Bun.file(filePath).text()
         const lines = content.split('\n')
         const sorted = [...edits].sort(
           (a, b) =>
@@ -216,13 +228,30 @@ export async function applyEditWithFallback(
   const preHash = hashContent(original)
   const notes: string[] = []
 
+  // ── Global ambiguity gate ────────────────────────────────────────────
+  // An oldString that occurs more than once cannot be edited safely without
+  // replaceAll: no layer may guess which occurrence was meant. Previously only
+  // Layer 1 refused, and a looser layer (e.g. Layer 2 trimmed) would then
+  // silently pick the FIRST occurrence and report success — the exact
+  // wrong-position edit this guards against. Fail fast and say why.
+  if (!replaceAll && oldString) {
+    const occurrences =
+      original.match(new RegExp(oldString.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))?.length ?? 0
+    if (occurrences > 1) {
+      throw new Error(
+        `Ambiguous edit: oldString matches ${occurrences} times in ${absPath}. ` +
+          `Add surrounding context to make it unique, or pass replaceAll=true to change every occurrence.`,
+      )
+    }
+  }
+
   // Layer 1: Exact Hash-Anchored
   if (original.includes(oldString)) {
     const count = (
       original.match(new RegExp(oldString.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []
     ).length
     if (count === 0 || (!replaceAll && count > 1)) {
-      // fall through
+      // fall through (count > 1 is already rejected by the gate above)
     } else {
       const updated = replaceAll
         ? original.replaceAll(oldString, newString)
@@ -272,7 +301,7 @@ export async function applyEditWithFallback(
     const normOld = normalizeLineEndings(oldString)
     if (normContent.includes(normOld)) {
       // Map back to original offsets approximately
-      const index = normContent.indexOf(normOld)
+      normContent.indexOf(normOld)
       const updatedNorm = normContent.replace(normOld, newString)
       // Preserve original line endings style
       const updated = original.includes('\r\n') ? updatedNorm.replace(/\n/g, '\r\n') : updatedNorm
@@ -339,14 +368,25 @@ export async function applyEditWithFallback(
   }
 
   // Layer 6: Line-Number Anchored (heuristic)
+  // Positions are derived from the first line of oldString, but the resolved
+  // span is VERIFIED against the rest of oldString before anything is written.
+  // Previously it took the first 20-char-prefix match blindly — a stale snippet
+  // whose opening line resembles an earlier constructor/import line silently
+  // landed the edit in the wrong place and reported `verified: true`.
   {
     const firstLine = oldString.split('\n')[0].trim()
     if (firstLine) {
       const lines = original.split('\n')
-      const idx = lines.findIndex((l) => l.trim().startsWith(firstLine.trim().slice(0, 20)))
-      if (idx !== -1) {
-        // Replace from idx to idx + oldString lines -1
-        const targetLines = oldString.split('\n').length
+      const prefix = firstLine.slice(0, 20)
+      const targetLines = oldString.split('\n').length
+      const candidates: number[] = []
+      lines.forEach((l, i) => {
+        if (l.trim().startsWith(prefix)) candidates.push(i)
+      })
+      // Keep only candidates whose span actually matches oldString.
+      const validated = candidates.filter((i) => spanMatches(lines, i, targetLines, oldString))
+      if (validated.length === 1) {
+        const idx = validated[0]
         const start = lines.slice(0, idx).join('\n')
         const end = lines.slice(idx + targetLines).join('\n')
         const updated = [start, newString, end].filter(Boolean).join('\n')
@@ -358,9 +398,21 @@ export async function applyEditWithFallback(
           replaced: 1,
           layer: 6,
           fallback: 'line-anchored',
-          verification: { preHash, postHash, verified: true },
-          notes: [...notes, `Layer6 line-anchored at line ${idx + 1}`],
+          verification: { preHash, postHash, verified: postHash !== preHash },
+          notes: [
+            ...notes,
+            `Layer6 line-anchored at line ${idx + 1} (span verified against oldString)`,
+          ],
         }
+      }
+      if (validated.length > 1) {
+        notes.push(
+          `Layer6 ambiguous: ${validated.length} prefix matches validate against oldString — refusing to guess`,
+        )
+      } else if (candidates.length > 0) {
+        notes.push(
+          `Layer6 rejected ${candidates.length} prefix match(es): span does not match oldString`,
+        )
       }
     }
   }
@@ -429,7 +481,7 @@ export async function applyEditWithFallback(
             } catch {}
 
             // Validate rename is possible
-            const prepare = await client.prepareRename(uri, pos).catch(() => null)
+            await client.prepareRename(uri, pos).catch(() => null)
             // If prepare returns null but server supports rename, still try rename
             // Some servers return null for prepare but succeed on rename
 
@@ -439,7 +491,7 @@ export async function applyEditWithFallback(
             }
 
             // Apply WorkspaceEdit — workspace-aware (P2-1: use session cwd)
-            const applied = await applyWorkspaceEdit(edit, cwdForLsp)
+            const applied = await applyWorkspaceEdit(edit)
             return applied
           },
           timeoutMs,
@@ -481,7 +533,9 @@ export async function applyEditWithFallback(
 
       // ── 8b: Heuristic fallback (symbolIndex.renameSymbol) — workspace-aware (P2-1) ──
       try {
-        const relPath = absPath.startsWith(cwdForLsp + '/') ? absPath.slice(cwdForLsp.length + 1) : absPath.replace(process.cwd() + '/', '')
+        const relPath = absPath.startsWith(cwdForLsp + '/')
+          ? absPath.slice(cwdForLsp.length + 1)
+          : absPath.replace(process.cwd() + '/', '')
         const guard = await guardEdit(relPath, oldString, newString, cwdForLsp)
         if (guard.allowed) {
           const renamed = await getSymbolIndex(cwdForLsp).renameSymbol(oldName, newName, cwdForLsp)
@@ -526,15 +580,20 @@ export async function applyEditWithFallback(
       `-${oldString.split('\n')[0]}`,
       `+${newString.split('\n')[0]}`,
     ].join('\n')
-    const { safeTempFile } = await import("../../../shared/src/utils/paths.js")
+    const { safeTempFile } = await import('../../../shared/src/utils/paths.js')
     const tmpDiff = safeTempFile(`mira-patch-${Date.now()}.diff`)
     await Bun.write(tmpDiff, diffLines)
     // Note: actual patch application requires proper context; this is graceful degradation
     // We'll attempt a simple replace as last resort
     try {
-      // Last resort: replace first occurrence of first line
-      const firstLine = oldString.split('\n')[0]
-      if (original.includes(firstLine)) {
+      // Last resort: replace the FIRST LINE only — but only when that is a
+      // faithful representation of the request. When oldString spans several
+      // lines this heuristic silently discards lines from BOTH strings, which
+      // corrupts the file; refuse instead of guessing.
+      const oldLines = normalizeLineEndings(oldString).split('\n')
+      const firstLine = oldLines[0]
+      const occurrences = firstLine ? original.split(firstLine).length - 1 : 0
+      if (oldLines.length === 1 && occurrences === 1) {
         const updated = original.replace(firstLine, newString.split('\n')[0])
         await Bun.write(absPath, updated)
         const postHash = hashContent(await Bun.file(absPath).text())
@@ -544,11 +603,20 @@ export async function applyEditWithFallback(
           replaced: 1,
           layer: 9,
           fallback: 'patch-last-resort',
-          verification: { preHash, postHash, verified: true },
-          notes: [...notes, 'Layer9 patch fallback (first-line heuristic) succeeded'],
+          verification: { preHash, postHash, verified: postHash !== preHash },
+          notes: [...notes, 'Layer9 single-line last-resort succeeded (unique match)'],
         }
       }
-    } catch (e) {
+      if (oldLines.length > 1) {
+        notes.push(
+          `Layer9 refused: oldString spans ${oldLines.length} lines — single-line heuristic would discard the rest`,
+        )
+      } else if (occurrences === 0) {
+        notes.push('Layer9 failed: first line not present in file')
+      } else {
+        notes.push(`Layer9 refused: first line is ambiguous (${occurrences} occurrences)`)
+      }
+    } catch {
       // fall through
     }
     notes.push('Layer9 patch fallback failed')
