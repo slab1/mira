@@ -248,8 +248,9 @@ Aggregate: test coverage signal, guardrail deny rate, open findings by severity,
 
 ## P3 — Platform & Enterprise
 
-> **Status (2026-10-11): P3.1, P3.2, P3.3, P3.4 DONE — under the recommended primary
-> identity (autonomous engineering agent platform). P3.5–P3.6 remain.**
+> **Status (2026-10-11): P3.1–P3.5 DONE — under the recommended primary identity
+> (autonomous engineering agent platform). P3.6 remains (explicitly deferred as a
+> deliberate second product per ADR 0001).**
 
 Order within P3 assumes primary identity = engineering agent platform.
 
@@ -301,9 +302,18 @@ Sequenced by existing substrate strength: skills (20 local packs, loader done) �
 - **Honest scope notes**: offline-curated only — no remote registry fetch (same posture as the MCP marketplace, which its own comment names as the extension point); knowledge modules are seed-only with no provenance gate beyond `user-stated`; there is no publish/upload path yet — entries are committed to the catalogs.
 - Tests: `community/registry.test.ts` (15), `routes/community.test.ts` (22) — install/uninstall lifecycles, traversal rejection on name and cwd, kind mismatches, agent registry read-back, temp-dir isolation so installs never touch the repo.
 
-### P3.5 Compliance layer
+### P3.5 Compliance layer — ✅ DONE
 
 Retention, redaction, policy-violation reporting. Only meaningful with P3.1–P3.3 in place.
+
+- **Redaction** (`compliance/redact.ts`, one shared redactor): two passes — secret-named keys replaced wholesale (camelCase/separator-normalized, so `apiKey`, `API-KEY` and `awsSecretAccessKey` all match while `keyword`/`author` don't) and high-signal token patterns (reusing the no-secrets PR scanner's list from `eval/secrets.ts`) plus bearer tokens, env-assignment form and email/phone PII. Size-capped per field.
+- **Applied at both evidence write chokepoints**: `AuditLogger.log()` (file mirror + DB mirror) and `SessionCrud.persistToolResult()` (the `parts` rows) — redacting only the audit trail would be trivially bypassed via `GET /session/:id/message`. **Also on read** (`/admin/audit`, JSON export) as defense-in-depth for rows written before this existed. Redaction is deliberately lossy.
+- **Retention** (`compliance/index.ts`): `audit_entries` was append-only and unbounded — no purge existed anywhere (`scripts/gc-db.ts` covers sessions/snapshots only). `applyRetention()` deletes past the window (default 90d) and trims to a row cap (default 100k, oldest first). Runs at boot and on demand via `POST /admin/compliance/retention`; configurable via `compliance.retentionDays` / `compliance.maxRows` or `MIRA_COMPLIANCE_RETENTION_DAYS`. The `compliance` config section required the 5 coordinated edits (KNOWN_TOP_KEYS, patch schema, shared zod schema, `MiraConfig`, both `mergeSection` lists).
+- **Violation reporting**: `GET /admin/compliance/violations` groups deny/warn rows by a category taxonomy derived from the producers' reason prefixes (`bash`/`patch`/`task`/`mcp`/`webfetch`/`guardrail error`), with per-tool counts and optional `?org=` scoping through the P3.3 session→org mapping.
+- **Honest caveats, surfaced in the report rather than hidden**: (a) each tool call audits **twice** (guardrail pre-check + post-execution `logResult`), so the report exposes `rows` AND distinct `events` rather than pretending rows are events; (b) org scoping resolves rows via `session_id`, so orphaned rows (no session, deleted session) are counted as `unscopedRows` instead of silently disappearing; (c) `audit_entries` still carries no owner/org column — denormalizing would put an org lookup on the hot write path; (d) `policy/engine.ts` (3-layer taxonomy) remains dead scaffolding; (e) `deleteSession()` still does not cascade to audit rows.
+- **Performance**: bounded every redaction quantifier — unbounded ones caused catastrophic backtracking (measured 6.5s per 50KB payload, i.e. minutes of CPU per hour of audit traffic). Now 11ms, with a regression test asserting the bound.
+- **UI**: the System audit panel gains a violations/retention strip (30d rows vs events, category badges, retention state, run-sweep button).
+- Tests: `compliance/redact.test.ts` (19), `compliance/compliance.test.ts` (12), `guardrails/audit-redact.test.ts` (7), `routes/compliance.test.ts` (12).
 
 ### P3.6 Vertical agents
 
