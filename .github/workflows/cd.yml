@@ -101,13 +101,24 @@ jobs:
       # Vars/secrets reach the script through the environment, never through
       # ${{ }} interpolation — direct interpolation into `run:` is the classic
       # template-injection surface, and quoting inside the script is fragile.
+      #
+      # TO ENABLE REAL DEPLOYS, set in Repo Settings → Secrets and variables → Actions:
+      #   Variable  DEPLOY_HOOK_URL  — your deploy webhook endpoint
+      #   Variable  DEPLOY_URL       — base URL for the post-deploy /health check (optional)
+      #   Secret    DEPLOY_TOKEN     — bearer token the webhook authenticates with
+      # Until the hook exists, the deploy step below is a graceful no-op.
       - name: Validate deploy variables
         env:
           DEPLOY_HOOK_URL: ${{ vars.DEPLOY_HOOK_URL }}
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
         run: |
+          if [ -z "$DEPLOY_HOOK_URL" ] && [ -z "$DEPLOY_TOKEN" ]; then
+            echo "::notice::Deploy hook not configured yet (set vars.DEPLOY_HOOK_URL + secret DEPLOY_TOKEN) — deploy will be a no-op"
+            exit 0
+          fi
+          # Partial config IS a mistake: a hook without its token would deploy unauthenticated.
           if [ -z "$DEPLOY_HOOK_URL" ] || [ -z "$DEPLOY_TOKEN" ]; then
-            echo "::error::Required deploy variables vars.DEPLOY_HOOK_URL and secrets.DEPLOY_TOKEN are missing or empty"
+            echo "::error::Partial deploy config — vars.DEPLOY_HOOK_URL and secret DEPLOY_TOKEN must BOTH be set"
             exit 1
           fi
       - name: Deploy
