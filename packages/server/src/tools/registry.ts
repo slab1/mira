@@ -109,11 +109,31 @@ export class ToolRegistry {
   /** sessionID -> tool name -> call count for maxCallsPerRun enforcement */
   private callCounts = new Map<string, Map<string, number>>()
 
+  /** Cap on tracked sessions per map — oldest-inserted evicted beyond this. */
+  private static MAX_TRACKED_SESSIONS = 200
+
   constructor(private deps: RegistryDeps) {
-    // Evict callCounts when a session is deleted to prevent unbounded memory growth
+    // Evict per-session state when a session is deleted (unbounded memory growth)
     deps.bus.subscribe('session.deleted', (event) => {
-      if (event.sessionID) this.callCounts.delete(event.sessionID)
+      if (!event.sessionID) return
+      this.callCounts.delete(event.sessionID)
+      this.readPaths.delete(event.sessionID)
+      this.touchPaths.delete(event.sessionID)
     })
+  }
+
+  /** Insert with a size cap: oldest-inserted session evicted beyond the cap. */
+  private trackSession<T>(map: Map<string, T>, sessionID: string, make: () => T): T {
+    let set = map.get(sessionID)
+    if (!set) {
+      if (map.size >= ToolRegistry.MAX_TRACKED_SESSIONS) {
+        const oldest = map.keys().next().value
+        if (oldest !== undefined) map.delete(oldest)
+      }
+      set = make()
+      map.set(sessionID, set)
+    }
+    return set
   }
 
   /** Wire a subagent runner (called at bootstrap after SessionPrompt exists) */
@@ -222,24 +242,14 @@ export class ToolRegistry {
   private static READ_GUARD_ON = process.env.MIRA_READ_GUARD !== '0'
 
   private recordRead(sessionID: string, absPath: string): void {
-    let set = this.readPaths.get(sessionID)
-    if (!set) {
-      set = new Set()
-      this.readPaths.set(sessionID, set)
-    }
-    set.add(absPath)
+    this.trackSession(this.readPaths, sessionID, () => new Set<string>()).add(absPath)
   }
 
   /** sessionID → absolute paths this session has mutated (used by target analysis) */
   private touchPaths = new Map<string, Set<string>>()
 
   private recordTouch(sessionID: string, absPath: string): void {
-    let set = this.touchPaths.get(sessionID)
-    if (!set) {
-      set = new Set()
-      this.touchPaths.set(sessionID, set)
-    }
-    set.add(absPath)
+    this.trackSession(this.touchPaths, sessionID, () => new Set<string>()).add(absPath)
   }
 
   /**
@@ -471,6 +481,27 @@ export class ToolRegistry {
           )
         }
         targetWarnings.push(...signal.warnings)
+        // Blast radius (edit only) — reverse deps from the already-built code
+        // graph. Never triggers a build: on a cold graph this is skipped so the
+        // edit path stays fast.
+        if (name === 'edit') {
+          try {
+            const { codeGraphFor } = await import('../codegraph/index.js')
+            const graph = codeGraphFor(this.deps.db)
+            if (graph.stats().files > 0) {
+              // findDependents indexes project-relative paths
+              const rel = abs.startsWith(base) ? abs.slice(base.length).replace(/^[/\\]/, '') : abs
+              const dependents = graph.findDependents(rel, 50)
+              if (dependents.length > 0) {
+                const shown = dependents.slice(0, 3)
+                targetWarnings.push(
+                  `Blast radius: ${dependents.length} file(s) import this file ` +
+                    `(${shown.join(', ')}${dependents.length > 3 ? ', …' : ''}) — verify they still compile.`,
+                )
+              }
+            }
+          } catch {}
+        }
         try {
           const { snapshotFile } = await import('../storage/snapshots.js')
           snapshotFile(this.deps.db, {
