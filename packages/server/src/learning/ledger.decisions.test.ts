@@ -1,8 +1,22 @@
-import { describe, test, expect } from 'bun:test'
+import { describe, test, expect, beforeAll } from 'bun:test'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { appendDecision, loadContext, getWorkflowTrace } from './ledger.js'
 import { ApprovalGate } from '../evolution/approval.js'
 import type { ImprovementProposal } from '../evolution/proposal.js'
 import type { RiskAssessment } from '../evolution/risk.js'
+
+// Belt and braces: the bunfig preload only applies when `bun test` runs from
+// the repo root. Running this file from packages/server (or via a direct
+// script) skips it — without this, appendDecision writes the REPO's
+// shared/context.json (observed: test entries leaked into git status).
+beforeAll(() => {
+  process.env.MIRA_CONTEXT_PATH ??= join(
+    mkdtempSync(join(tmpdir(), 'mira-ledger-decisions-test-')),
+    'context.json',
+  )
+})
 
 // Hermetic: the test preload (tests/preload.ts via bunfig.toml) redirects the
 // shared ledger to a temp file, so assertions can be exact and the repo's

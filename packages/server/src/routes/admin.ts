@@ -223,7 +223,7 @@ export function mountAdminRoutes(
       )
     } catch {}
     let sql =
-      'SELECT id, session_id as sessionID, tool, decision, reason, args, result, created_at as createdAt FROM audit_entries WHERE 1=1'
+      'SELECT id, session_id as sessionID, tool, decision, reason, args, result, error, created_at as createdAt FROM audit_entries WHERE 1=1'
     const params: Array<string | number> = []
     if (tool) {
       sql += ' AND tool = ?'
@@ -360,7 +360,7 @@ export function mountAdminRoutes(
       )
     } catch {}
     let sql =
-      'SELECT id, session_id, tool, decision, reason, args, result, created_at FROM audit_entries WHERE 1=1'
+      'SELECT id, session_id, tool, decision, reason, args, result, error, created_at FROM audit_entries WHERE 1=1'
     const params: Array<string | number> = []
     if (tool) {
       sql += ' AND tool = ?'
