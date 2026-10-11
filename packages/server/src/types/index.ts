@@ -175,6 +175,8 @@ export interface MiraConfig {
     retentionDays?: number
     /** Max audit rows kept (oldest trimmed first); 0 disables the cap */
     maxRows?: number
+    /** Revert a run's file edits automatically when verification FAILS */
+    autoRollback?: boolean
   }
   mcp: Record<string, MCPServerConfig>
   provider: Record<string, ProviderConfig>

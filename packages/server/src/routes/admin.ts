@@ -6,7 +6,12 @@ import type { JsonValue } from '../types/index.js'
 import { isRole } from '../auth/roles.js'
 import { getConfig } from '../config/index.js'
 import { redactText, redactValue } from '../compliance/redact.js'
-import { applyRetention, buildViolationReport, resolveRetentionDays } from '../compliance/index.js'
+import {
+  applyRetention,
+  autoRollbackEnabled,
+  buildViolationReport,
+  resolveRetentionDays,
+} from '../compliance/index.js'
 
 const ownerSchema = z
   .string()
@@ -334,6 +339,7 @@ export function mountAdminRoutes(
       { c: number } | undefined
     return c.json({
       effectiveRetentionDays: resolveRetentionDays(),
+      autoRollback: autoRollbackEnabled(),
       totalRows: row?.c ?? 0,
       auditLogPath: getConfig().guardrails?.auditLogPath ?? './data/audit.log',
     })

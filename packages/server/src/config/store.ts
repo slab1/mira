@@ -441,6 +441,10 @@ const miraConfigPatchSchema = z
         retentionDays: z.number().int().min(0).optional(),
         /** Max audit rows kept (oldest trimmed first); 0 disables the cap */
         maxRows: z.number().int().min(0).optional(),
+        /** Revert a run's file edits automatically when verification FAILS.
+         *  Default false: verification is evidence-based, so a false negative
+         *  would discard legitimate work. */
+        autoRollback: z.boolean().optional(),
       })
       .optional(),
     mcp: z

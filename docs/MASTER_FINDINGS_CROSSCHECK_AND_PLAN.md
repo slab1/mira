@@ -326,6 +326,22 @@ Three defects the plan flagged but left open, closed in a follow-up sweep:
 
 Tests: `compliance/audit-retention.test.ts` (4), `routes/tenancy-scope.test.ts` (12).
 
+### Wrong-edit protection (2026-10-11) — ✅ DONE
+
+Audit of "can Mira catch an agent editing the wrong file or the wrong position?" found the answer was **no** — recovery existed, detection and correction did not. Closed:
+
+1. **Ambiguous edits were resolved by the wrong occurrence.** Layer 1 correctly refused an ambiguous `oldString`, then Layer 2 (trimmed) silently edited the _first_ match and reported success. Ambiguity is now a **global gate** before any layer runs.
+2. **Wrong-position splices.** Layer 6 ("line-anchored") took the first line sharing a 20-char prefix and spliced without checking the rest of `oldString` matched. It now validates every candidate span, refuses when ambiguous, and no longer reports `verified: true` unconditionally (that flag only ever meant "bytes changed").
+3. **Lossy last-resort replacement.** Layer 9 replaced only the first line, silently discarding the remainder of both strings. It now refuses multi-line and ambiguous edits rather than corrupting the file.
+4. **`patch` bypassed the read-before-edit guard** (only the single-file branch called it); multi-file diffs are now held to the same discipline, and an unverifiable patch is refused rather than let through on error.
+5. **The `patch` tool was never registered at all.** `edit.ts` exports both `default` and `tools = [edit, patch]`, and `registerAll` preferred `default` — so `patch`, `memory_write`, `session_fork`, `config`, `diagnose`, `skill`, `analyze_image`, `parse_document`, `exit_plan` were all unregisterable. Tool count **30 → 41**.
+6. **New `revert` / `revert_list` tools** — an agent can now undo its own bad edit. Deliberately **file-scoped only**: unlike the user-facing undo it does not delete conversation messages, so a correcting agent keeps its context. Cross-session reverts refused.
+7. **Auto-rollback on `FAILED_VERIFICATION`** (`compliance/index.ts`), **toggle supports both modes**: `compliance.autoRollback: true` in mira.json or `MIRA_AUTO_ROLLBACK=1`; config wins over env so both on and off are reachable in every combination. **Default OFF** — verification is evidence-based (exit codes), so a false negative would discard legitimate work. Fires in `finishJob` _after_ the atomic status+verification settle, so the job row always records the failure and rollback happens exactly once. Files only, messages preserved; emits a `job.updated` / `kind:'auto-rollback'` event. Surfaced in `GET /admin/compliance/retention`.
+
+**Still open (unchanged)**: nothing decides _semantically_ whether a target file is the right one — no task-to-file relevance gate exists. `findDependents`/`analyzeRemoval`/the ownership graph remain advisory tools that no gate consults.
+
+Tests: `tools/edit-position.test.ts` (8), `tools/revert.test.ts` (10), `compliance/auto-rollback.test.ts` (15), `tools/auto-rollback.e2e.test.ts` (5, through the real task pipeline).
+
 ### P3.6 Vertical agents — DEFERRED (per ADR 0001)
 
 Runtime substrate exists (templates, custom agents from `mira.json`, subagents, engine registry). Domain agents (Luxora, research, business) are pure greenfield. Do not start until P0–P2 are solid and Phase 0 identity is settled — this is the addendum's "platform model" bet and should be a deliberate second product, not a distraction. **Status: P0–P3.5 are now complete and the ADR gate is met, but P3.6 remains an explicit owner decision, not an automatic continuation.**

@@ -178,6 +178,8 @@ export const complianceConfigSchema = z.object({
   retentionDays: z.number().int().min(0).optional(),
   /** Max audit rows kept (oldest trimmed first); 0 disables the cap */
   maxRows: z.number().int().min(0).optional(),
+  /** Revert a run's file edits automatically when verification FAILS (default off) */
+  autoRollback: z.boolean().optional(),
 })
 export type ComplianceConfig = z.infer<typeof complianceConfigSchema>
 
