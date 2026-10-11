@@ -122,6 +122,8 @@ export type BusEventType =
   | 'config.updated'
   | 'tool.executed'
   | 'edit.critic'
+  | 'canary.promoted'
+  | 'canary.rollback'
   | 'agent.tool.allowed'
   | 'agent.tool.denied'
 

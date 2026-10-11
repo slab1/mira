@@ -112,6 +112,7 @@ export class CanaryManager {
     candidateId: string,
     trafficPercent = 5,
     durationMs: number = 24 * 60 * 60 * 1000,
+    opts?: { auto?: boolean },
   ): {
     canaryId: string
     candidateVersion: string
@@ -130,7 +131,7 @@ export class CanaryManager {
     const canaryId = randomId('canary')
     const startedAt = Date.now()
     const traffic = Math.max(0, Math.min(100, trafficPercent))
-    const dur = Math.max(1000, durationMs)
+    const dur = Math.max(50, durationMs)
     const expiresAt = startedAt + dur
 
     // Baseline snapshot per §16: success 0.87, regression 0.04, latency 12000, cost 0.18
@@ -181,7 +182,11 @@ export class CanaryManager {
       } as unknown as import('../types/index.js').BusEvent)
     } catch {}
 
-    // Schedule completion/failed check at duration expiry (24h default, but tests use short)
+    // Schedule completion/failed check at duration expiry (24h default, but tests use short).
+    // Auto mode (MIRA_CANARY_AUTO=1): at expiry, ACT on the promoter's evaluate
+    // decision — promote or rollback automatically — closing the evolution loop
+    // (spec Phase 5: "rollback on circuit OPEN or costCap breach or entropy >0.8").
+    const auto = opts?.auto === true || process.env.MIRA_CANARY_AUTO === '1'
     const timer = setTimeout(() => {
       try {
         const status = this.monitor.getStatus(canaryId) ?? 'healthy'
@@ -210,6 +215,15 @@ export class CanaryManager {
               timestamp: Date.now(),
             } as unknown as import('../types/index.js').BusEvent)
           } catch {}
+        }
+        if (auto) {
+          // The expiry check set terminal status; promote/rollback act on the
+          // §16 evaluate decision and emit canary.promoted / canary.rollback.
+          const d = this.promoter.evaluate(canaryId)
+          const acted = d.decision === 'promote' ? this.promote(canaryId) : this.rollback(canaryId)
+          void Promise.resolve(acted).catch((e) =>
+            console.warn('[canary] auto decision failed:', String(e)),
+          )
         }
       } catch {}
     }, dur)
@@ -319,6 +333,10 @@ export class CanaryManager {
 
   // Delegated promote/rollback for routes
   async promote(id: string): Promise<ReturnType<CanaryPromoter['promote']>> {
+    // Manual decision — clear the expiry timer so auto mode cannot double-act.
+    const t = this.timers.get(id)
+    if (t) clearTimeout(t)
+    this.timers.delete(id)
     const res = await this.promoter.promote(id)
     const rec = this.canaries.get(id)
     if (rec) rec.status = 'promoted'
@@ -326,6 +344,10 @@ export class CanaryManager {
   }
 
   async rollback(id: string): Promise<ReturnType<CanaryPromoter['rollback']>> {
+    // Manual decision — clear the expiry timer so auto mode cannot double-act.
+    const t = this.timers.get(id)
+    if (t) clearTimeout(t)
+    this.timers.delete(id)
     const res = await this.promoter.rollback(id)
     const rec = this.canaries.get(id)
     if (rec) rec.status = 'rolledback'

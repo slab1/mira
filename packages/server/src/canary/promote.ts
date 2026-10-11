@@ -36,7 +36,17 @@ export interface PromoteOpts {
   bus?: Bus
   shadow?: ShadowMira
   monitor: CanaryMonitor
-  getCanary: (id: string) => { canaryId: string; candidateId: string; candidateVersion: string; traffic: number; baseline: import('./monitor.js').CanaryMetrics } | undefined
+  getCanary: (
+    id: string,
+  ) =>
+    | {
+        canaryId: string
+        candidateId: string
+        candidateVersion: string
+        traffic: number
+        baseline: import('./monitor.js').CanaryMetrics
+      }
+    | undefined
   rollbackManager?: RollbackManager
   gatewayRegistry?: unknown
 }
@@ -58,7 +68,12 @@ export class CanaryPromoter {
     this.shadow = opts.shadow
     this.monitor = opts.monitor
     this.getCanary = opts.getCanary
-    this.rollbackManager = opts.rollbackManager ?? new RollbackManagerClass({ bus: this.bus as unknown as import('../bus/index.js').Bus, ledger: this.ledger as unknown as import('../evolution/ledger.js').ImprovementLedger } as unknown as ConstructorParameters<typeof RollbackManagerClass>[0])
+    this.rollbackManager =
+      opts.rollbackManager ??
+      new RollbackManagerClass({
+        bus: this.bus as unknown as import('../bus/index.js').Bus,
+        ledger: this.ledger as unknown as import('../evolution/ledger.js').ImprovementLedger,
+      } as unknown as ConstructorParameters<typeof RollbackManagerClass>[0])
   }
 
   /**
@@ -75,7 +90,10 @@ export class CanaryPromoter {
 
     // circuit / health gate
     if (health === 'failed') {
-      return { decision: 'rollback', reason: `rollback: canary health failed (baseline success ${baseline.success}→${latest.success}, latency ${baseline.latency}→${latest.latency}ms, cost $${baseline.cost}→$${latest.cost}, regression ${baseline.regression}→${latest.regression}, errors ${latest.errors}) per monitor gates` }
+      return {
+        decision: 'rollback',
+        reason: `rollback: canary health failed (baseline success ${baseline.success}→${latest.success}, latency ${baseline.latency}→${latest.latency}ms, cost $${baseline.cost}→$${latest.cost}, regression ${baseline.regression}→${latest.regression}, errors ${latest.errors}) per monitor gates`,
+      }
     }
 
     // §16 comparison via ShadowComparison for parity
@@ -115,21 +133,41 @@ export class CanaryPromoter {
     } catch {}
 
     if (!cmp.allPass) {
-      return { decision: 'rollback', reason: `rollback: gates failed per §16 +20%/-0.5pp — ${cmp.reasoning} (shadow ${shadowVerdict ?? 'none'}, health ${health})` }
+      return {
+        decision: 'rollback',
+        reason: `rollback: gates failed per §16 +20%/-0.5pp — ${cmp.reasoning} (shadow ${shadowVerdict ?? 'none'}, health ${health})`,
+      }
     }
     if (health === 'degraded') {
-      return { decision: 'rollback', reason: `rollback: degraded health (1 gate failed) — ${cmp.reasoning}` }
+      return {
+        decision: 'rollback',
+        reason: `rollback: degraded health (1 gate failed) — ${cmp.reasoning}`,
+      }
     }
     // allPass + healthy + shadow better (or none) → promote
     if (cmp.verdict === 'better' || cmp.allPass) {
       const shadowNote = shadowVerdict ? ` shadow ${shadowVerdict}` : ' no shadow (direct promote)'
-      return { decision: 'promote', reason: `promote: ${cmp.reasoning}${shadowNote} — health ${health}, baseline→canary success ${baseline.success}→${latest.success} latency ${baseline.latency}→${latest.latency} cost $${baseline.cost}→$${latest.cost}` }
+      return {
+        decision: 'promote',
+        reason: `promote: ${cmp.reasoning}${shadowNote} — health ${health}, baseline→canary success ${baseline.success}→${latest.success} latency ${baseline.latency}→${latest.latency} cost $${baseline.cost}→$${latest.cost}`,
+      }
     }
-    return { decision: 'rollback', reason: `rollback: neutral but no improvement — ${cmp.reasoning}` }
+    return {
+      decision: 'rollback',
+      reason: `rollback: neutral but no improvement — ${cmp.reasoning}`,
+    }
   }
 
   /** promote(id) → swaps EngineRegistry version + updates ledger to promoted */
-  async promote(canaryId: string): Promise<{ promoted: boolean; candidateId: string; fromVersion: string; toVersion: string; reason: string }> {
+  async promote(
+    canaryId: string,
+  ): Promise<{
+    promoted: boolean
+    candidateId: string
+    fromVersion: string
+    toVersion: string
+    reason: string
+  }> {
     const rec = this.getCanary(canaryId)
     if (!rec) throw new Error(`Canary ${canaryId} not found`)
     const evalRes = this.evaluate(canaryId)
@@ -152,7 +190,12 @@ export class CanaryPromoter {
         risk: 'low' as const,
         priority: 'P1' as const,
         affectedEngine: rec.candidateId,
-        evidence: { canaryId, candidateId: rec.candidateId, fromVersion, toVersion } as unknown as JsonValue,
+        evidence: {
+          canaryId,
+          candidateId: rec.candidateId,
+          fromVersion,
+          toVersion,
+        } as unknown as JsonValue,
         expectedImpact: `canary promoted at 5% → 100%`,
         cause: `canary ${canaryId} evaluation better`,
         confidence: 0.9,
@@ -162,24 +205,45 @@ export class CanaryPromoter {
         id: ledgerId,
         proposal: proposal as unknown as import('../evolution/proposal.js').ImprovementProposal,
         verdict: 'promoted' as unknown as import('../evolution/ledger.js').LedgerVerdict,
-        evidence: { canaryId, candidateId: rec.candidateId, fromVersion, toVersion, evaluation: evalRes } as unknown as JsonValue,
+        evidence: {
+          canaryId,
+          candidateId: rec.candidateId,
+          fromVersion,
+          toVersion,
+          evaluation: evalRes,
+        } as unknown as JsonValue,
       })
       // also try to update if ledger already had canary entry
     } catch {}
 
     try {
       this.bus?.publish({
-        type: 'canary.completed' as unknown as BusEventType,
-        payload: { canaryId, candidateId: rec.candidateId, fromVersion, toVersion, decision: 'promote', reason: evalRes.reason } as unknown as JsonValue,
+        type: 'canary.promoted' as unknown as BusEventType,
+        payload: {
+          canaryId,
+          candidateId: rec.candidateId,
+          fromVersion,
+          toVersion,
+          decision: 'promote',
+          reason: evalRes.reason,
+        } as unknown as JsonValue,
         timestamp: Date.now(),
       } as unknown as import('../types/index.js').BusEvent)
     } catch {}
 
-    return { promoted: true, candidateId: rec.candidateId, fromVersion, toVersion, reason: evalRes.reason }
+    return {
+      promoted: true,
+      candidateId: rec.candidateId,
+      fromVersion,
+      toVersion,
+      reason: evalRes.reason,
+    }
   }
 
   /** rollback(id) → reverts via RollbackManager + registry.rollback */
-  async rollback(canaryId: string): Promise<{ rolledback: boolean; candidateId: string; reason: string }> {
+  async rollback(
+    canaryId: string,
+  ): Promise<{ rolledback: boolean; candidateId: string; reason: string }> {
     const rec = this.getCanary(canaryId)
     if (!rec) throw new Error(`Canary ${canaryId} not found`)
     const evalRes = this.evaluate(canaryId)
@@ -203,7 +267,11 @@ export class CanaryPromoter {
           id: canaryId,
           proposal: current.proposal,
           verdict: 'rolledback' as unknown as import('../evolution/ledger.js').LedgerVerdict,
-          evidence: { ...(current.evidence as object ?? {}), rolledbackAt: Date.now(), evaluation: evalRes } as unknown as JsonValue,
+          evidence: {
+            ...((current.evidence as object) ?? {}),
+            rolledbackAt: Date.now(),
+            evaluation: evalRes,
+          } as unknown as JsonValue,
         })
       } else {
         const proposal = {
@@ -223,15 +291,24 @@ export class CanaryPromoter {
           id: canaryId,
           proposal: proposal as unknown as import('../evolution/proposal.js').ImprovementProposal,
           verdict: 'rolledback' as unknown as import('../evolution/ledger.js').LedgerVerdict,
-          evidence: { canaryId, candidateId: rec.candidateId, evaluation: evalRes } as unknown as JsonValue,
+          evidence: {
+            canaryId,
+            candidateId: rec.candidateId,
+            evaluation: evalRes,
+          } as unknown as JsonValue,
         })
       }
     } catch {}
 
     try {
       this.bus?.publish({
-        type: 'canary.failed' as unknown as BusEventType,
-        payload: { canaryId, candidateId: rec.candidateId, decision: 'rollback', reason: evalRes.reason } as unknown as JsonValue,
+        type: 'canary.rollback' as unknown as BusEventType,
+        payload: {
+          canaryId,
+          candidateId: rec.candidateId,
+          decision: 'rollback',
+          reason: evalRes.reason,
+        } as unknown as JsonValue,
         timestamp: Date.now(),
       } as unknown as import('../types/index.js').BusEvent)
     } catch {}
