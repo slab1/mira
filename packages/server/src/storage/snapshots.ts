@@ -229,6 +229,61 @@ export function getSnapshotContent(
 
 export { listAll as listSnapshots }
 
+/**
+ * File-scoped revert (P3.6 groundwork / agent self-correction).
+ *
+ * Unlike revertLast(), this touches ONLY the filesystem: it restores one
+ * snapshot's pre-image (or deletes the file if the snapshot recorded it as
+ * newly created) and drops that snapshot row. Conversation messages are left
+ * alone — an agent correcting its own bad edit must not lose its context.
+ *
+ * Exactly one snapshot is restored; older snapshots for the same path stay put
+ * so the edit remains undoable in the normal way.
+ */
+export function revertSnapshot(
+  db: MiraDB,
+  sessionID: string,
+  opts: { snapshotID?: string; path?: string },
+): { reverted: Snapshot | null; reason?: string } {
+  const sqlite = db.sqlite
+  if (!sqlite) return { reverted: null, reason: 'database unavailable' }
+  if (!opts.snapshotID && !opts.path)
+    return { reverted: null, reason: 'snapshotID or path is required' }
+  const targetPath = opts.path ?? ''
+
+  const row = (
+    opts.snapshotID
+      ? sqlite
+          .prepare(`SELECT * FROM file_snapshots WHERE id = ? AND session_id = ?`)
+          .get(opts.snapshotID, sessionID)
+      : sqlite
+          .prepare(
+            `SELECT * FROM file_snapshots WHERE session_id = ? AND path = ?
+             ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+          )
+          .get(sessionID, targetPath)
+  ) as SnapshotRow | undefined
+
+  if (!row) return { reverted: null, reason: 'no matching snapshot in this session' }
+
+  restoreRow(row)
+  sqlite.prepare(`DELETE FROM file_snapshots WHERE id = ?`).run(row.id)
+  return { reverted: rowToSnapshot(row) }
+}
+
+/** Recent snapshots for a session — lets an agent see what it can undo. */
+export function listRecentSnapshots(db: MiraDB, sessionID: string, limit = 20): Snapshot[] {
+  const sqlite = db.sqlite
+  if (!sqlite) return []
+  const rows = sqlite
+    .prepare(
+      `SELECT * FROM file_snapshots WHERE session_id = ?
+       ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+    )
+    .all(sessionID, Math.max(1, Math.min(200, limit))) as SnapshotRow[]
+  return rows.map(rowToSnapshot)
+}
+
 // ── Internals ──────────────────────────────────────────────────────
 
 function restoreRow(row: SnapshotRow): void {
