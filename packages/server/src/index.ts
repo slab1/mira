@@ -78,6 +78,8 @@ import { ShadowMira } from './shadow/shadow.js'
 import { mountEngineRoutes } from './routes/engines.js'
 import { CanaryManager } from './canary/canary.js'
 import { mountCanaryRoutes } from './routes/canary.js'
+/** Auto-canary hook: set inside main() when MIRA_CANARY_AUTO_START=1 (Phase 5 automation) */
+let canaryStartAfterPromote: ((affectedEngine: string) => { canaryId: string } | null) | null = null
 import { EngineRegistry } from './engines/registry.js'
 import { AgentEngine } from './engines/agent.js'
 import { MemoryEngine } from './engines/memory.js'
@@ -876,7 +878,9 @@ async function main() {
       bus,
       ledger: evolutionLedger,
       observer: evolutionObserver,
+      canaryStart: (affectedEngine: string) => canaryStartAfterPromote?.(affectedEngine) ?? null,
     })
+
     log(
       `evolution ready — observer watching Bus, ledger=evolution_ledger, routes /evolution/* (Phase 1 read-only)`,
     )
@@ -1002,6 +1006,26 @@ async function main() {
         })
         mountCanaryRoutes(app, { manager: canaryManager })
         ;(globalThis as unknown as Record<string, unknown>).__miraCanary = canaryManager
+        // Auto-canary (opt-in, MIRA_CANARY_AUTO_START=1): a successful promote
+        // starts a canary for the patched engine — with auto:true so the
+        // expiry itself promotes/rolls back per the §16 gates.
+        if (process.env.MIRA_CANARY_AUTO_START === '1') {
+          canaryStartAfterPromote = (affectedEngine: string) => {
+            try {
+              const out = canaryManager.startCanary(
+                affectedEngine,
+                Number(process.env.MIRA_CANARY_TRAFFIC ?? '5'),
+                Number(process.env.MIRA_CANARY_DURATION_MS ?? 24 * 60 * 60 * 1000),
+                { auto: true },
+              )
+              log(`auto-canary started for ${affectedEngine}: ${out.canaryId}`)
+              return { canaryId: out.canaryId }
+            } catch (e) {
+              warn('auto-canary start failed:', String(e))
+              return null
+            }
+          }
+        }
         log(
           `canary ready — 5% traffic lane canary vs default, monitor 1m, gates +20%/-0.5pp, promote/rollback via EngineRegistry+ledger`,
         )

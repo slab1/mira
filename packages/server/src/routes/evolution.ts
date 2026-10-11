@@ -61,6 +61,8 @@ export interface EvolutionRouteDeps {
   /** Governance gate from learning/index.ts — when set, the
    *  /evolution/proposals* routes are mounted on this app too. */
   governance?: GovernanceGateLike
+  /** Auto-canary: forwarded to the proposal-routes promote handler */
+  canaryStart?: (affectedEngine: string) => { canaryId: string } | null
 }
 
 export function mountEvolutionRoutes(
@@ -497,7 +499,12 @@ export function mountEvolutionRoutes(
 
   // Governance pipeline (patch proposals) — only when a gate was passed in;
   // mountLearningRoutes mounts the same routes with learning's gate instance.
-  if (deps.governance) mountEvolutionProposalRoutes(app, { governance: deps.governance })
+  if (deps.governance)
+    mountEvolutionProposalRoutes(app, {
+      governance: deps.governance,
+      rollbackManager,
+      canaryStart: deps.canaryStart,
+    })
 }
 
 // ── Governance proposal routes (patching/governance) ────────────────────────
@@ -514,6 +521,9 @@ export function mountEvolutionProposalRoutes(
     governance: GovernanceGateLike
     /** Exact-point refresh after promote (snapshot linkage by patchId) */
     rollbackManager?: RollbackManager
+    /** Auto-canary (P3.6/Phase 5): start a canary for the patched engine after
+     *  a successful promote. Returns the canary id, or null when skipped. */
+    canaryStart?: (affectedEngine: string) => { canaryId: string } | null
   },
 ): void {
   if (proposalRoutesMounted.has(app)) return
@@ -555,6 +565,14 @@ export function mountEvolutionProposalRoutes(
         deps.rollbackManager.createRollbackPoint(id, [exists.patchId])
       } catch {}
     }
+    // Auto-canary (opt-in via canaryStart wiring): validate the change under
+    // real traffic instead of trusting the verifier alone.
+    let canary: { canaryId: string } | null = null
+    if (result.applied && deps.canaryStart && exists.kind) {
+      try {
+        canary = deps.canaryStart(exists.kind)
+      } catch {}
+    }
     // backward compatible: prUrl/regressionBlocked/reason are omitted from the
     // JSON body when undefined; failure reasons must reach the client.
     return c.json({
@@ -562,6 +580,7 @@ export function mountEvolutionProposalRoutes(
       prUrl: result.prUrl,
       regressionBlocked: result.regressionBlocked,
       reason: result.reason,
+      ...(canary ? { canary: canary.canaryId } : {}),
     })
   })
 
