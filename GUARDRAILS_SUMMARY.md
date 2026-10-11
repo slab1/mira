@@ -7,10 +7,12 @@ Implemented security guardrails for tool execution.
 ## Files Changed / Created
 
 ### New
+
 - `packages/server/src/guardrails/index.ts` — GuardrailsManager, AuditLogger, sanitization helpers, allowlist/sandbox checks
 - `packages/server/src/guardrails/README.md` — Documentation
 
 ### Modified
+
 - `packages/server/src/tools/registry.ts`
   - Added `guardrails` to `RegistryDeps`
   - `execute()` now runs pre-execution guardrail check, then post-execution audit log
@@ -36,26 +38,27 @@ Implemented security guardrails for tool execution.
 3. **Sandbox checks**
    - File tools (`read/write/edit/glob/grep`) checked against allowed roots
    - Bash `workdir` containment check
-   - Non-blocking by default (`enforce: false`); warnings logged
+   - Enforcement is environment-dependent (fail-open with warn in dev, **fail-closed/enforced by default in production**); explicit `MIRA_GUARDRAILS_ENFORCE` or `config.guardrails.enforce` always wins. A boot warning fires if enforcement is off in a production-looking environment
 
 4. **Audit logging**
-   - JSON-line audit log at `data/audit.log`
+   - Queryable SQLite table `audit_entries` (`storage/schema.ts`), with JSON-line fallback at `data/audit.log`
    - Logs pre-check decisions and post-execution results
    - Contains sessionID, tool, args, decision, reason, error/result, timestamp
+   - Query via `GET /admin/audit`; export via `GET /admin/audit/export?format=csv|json` (P3.2)
 
 ## Compatibility
 
 - Existing tools continue to work unchanged
-- Guardrails default to permissive mode (warn, not deny)
+- Dev (non-production, no override) stays permissive: warn, not deny
+- Production defaults to enforced (fail-closed) unless explicitly disabled
 - Permission layer (5-layer + BashArity) remains primary gate
-- Guardrails run *after* permission check, before tool execution
+- Guardrails run _after_ permission check, before tool execution
 
 ## Config Example
 
 ```json
 {
   "guardrails": {
-    "enforce": false,
     "allowedRoots": ["/home/user/projects"],
     "blockedPaths": ["/etc", "/root"],
     "blockedCommands": ["rm -rf /"],
@@ -64,8 +67,9 @@ Implemented security guardrails for tool execution.
 }
 ```
 
+Omit `enforce` to inherit the default (dev: warn-only, production: enforced). Set `MIRA_GUARDRAILS_ENFORCE=1|0` for an env-level override; config `guardrails.enforce` for a per-project override. Both beat the environment default.
+
 ## Next Steps
 
-- Enable `enforce: true` in production config when ready
 - Extend allowlists per project
-- Optionally migrate audit log to SQLite table for queryability
+- Dedicated audit-trail web UI (P3.2 remainder; export endpoints already shipped)

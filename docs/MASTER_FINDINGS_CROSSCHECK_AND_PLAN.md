@@ -124,7 +124,7 @@ These are bugs/landmines not mentioned in the addendum but which block multiple 
 
 ---
 
-## Phase 0 — Decide Core Identity (blocking, decision not code)
+## Phase 0 — Decide Core Identity (blocking, decision not code) — ✅ DONE
 
 The addendum's "Vision Risk" section is correct and is the actual root prioritization problem. The codebase is overwhelmingly a **coding/engineering agent platform** with agent-OS ambitions layered on top.
 
@@ -133,13 +133,13 @@ The addendum's "Vision Risk" section is correct and is the actual root prioritiz
 - **Primary:** Autonomous engineering agent platform (governed self-improvement + deep repo intelligence)
 - **Secondary:** Agent-OS substrate for verticals (defer marketplace/vertical work until primary is excellent)
 
-**Deliverable:** A short ADR in `data/memory_bank/decisions.md` (which currently has no writer — see P0.2) or a root-level doc. All subsequent priorities below assume this ordering.
+**Resolved (2026-10-11):** owner confirmed the recommendation. ADR recorded at `docs/ADR/0001-core-identity.md`. All subsequent priorities below follow this ordering.
 
 ---
 
 ## P0 — Unblock Existing Scaffolding (1–2 weeks each, high leverage)
 
-> **Status (2026-10-10): P0.1–P0.4 DONE** — 203/203 related tests pass.
+> **Status (2026-10-10): P0.1–P0.5 DONE.**
 
 ### P0.1 Wire `WorkspaceIntelligence` — ✅ DONE
 
@@ -162,9 +162,10 @@ The addendum's "Vision Risk" section is correct and is the actual root prioritiz
 
 - New `findDependents` tool (`tools/codegraph.ts`) → impact analysis direction now complete at the tool layer. Tests updated in `codegraph.test.ts`.
 
-### P0.5 Decide on guardrails enforce default
+### P0.5 Decide on guardrails enforce default — ✅ DONE
 
-- `GUARDRAILS_SUMMARY.md` confirms `enforce: false` default. Either flip for high-risk classes (path/command) or document the rationale. Security posture claim in the addendum assumes enforcement that is off.
+- `GUARDRAILS_SUMMARY.md` documented `enforce: false` default; the addendum assumed enforcement that is off. **Resolution:** `guardrails/index.ts` now resolves enforcement per call — explicit `MIRA_GUARDRAILS_ENFORCE` > per-project `config.guardrails.enforce` > **production default = fail-closed (enforced)** > dev fail-open-with-warn. A boot warning fires (`warnIfEnforcementOffInProduction`) if enforcement is disabled in a production-looking environment, so the fail-open state is never silent.
+- High-risk classes (path/command) are covered by the sandbox/allowlist checks themselves; the enforced-by-default-in-production posture closes the security gap without breaking local DX.
 
 ---
 
@@ -207,17 +208,23 @@ The addendum's "Vision Risk" section is correct and is the actual root prioritiz
 
 > **Status (2026-10-10): P2.1–P2.6 ALL DONE.** Strategic memory shipped as a dedicated goals store (per review feedback — not the dead ledger/workspace scaffolding).
 
-### P2.1 Strategic memory (the one genuinely missing memory layer)
+### P2.1 Strategic memory (the one genuinely missing memory layer) — ✅ DONE
 
 Add a `strategic` tier (or a dedicated goals store) with: goal records, milestones, rationale, status. Wire the existing dead scaffolding: `upsertActiveTask()`, workspace `kind:'roadmap'`, `MemoryTier` union in `learning/knowledge.ts:43`, `memory_search.scope` enum in `tools/memory.ts:13`.
 
-### P2.2 Project Health Score
+- Shipped as a dedicated goals store: `strategic/goals.ts` (`strategic_goals` table: goal records, rationale, milestones, status, priority), `tools/goals.ts` (`goal_write`/`goal_list`/`goal_update` agent tools), injected into every prompt via `sharedGoals` (`session/prompt.ts`), consumed by the agent layer (`agents/layers.ts` STRATEGIC→EXECUTION link, `learning/index.ts`).
+
+### P2.2 Project Health Score — ✅ DONE
 
 Aggregate: test coverage signal, guardrail deny rate, open findings by severity, governance regression count, technical-debt workspace items. Must consume P0.1 workspace items. Distinguish clearly from existing `/health` (process) and `/learning/score` (session).
 
-### P2.3 Team memory writers
+- `workspace/health.ts` `computeProjectHealth()`: components for guardrail deny rate (audit_entries), open findings by severity, governance regressions, tech-debt workspace items; exposed at `GET /workspace/health` (distinct from `/health` and `/learning/score`, `learning/index.ts:392`). Tests: `workspace/health.test.ts`.
+
+### P2.3 Team memory writers — ✅ DONE
 
 `decisions.md`, `conventions.md`, `tech_debt.md` are header-only templates injected into every prompt (`session/prompt.ts:1648-1652,1763-1779`) — agents read empty files. Add writers (from P0.2 decisions; convention extraction from successful task patterns; tech-debt from findings). Set `ProvenanceScope = 'team'` on team-level collectors (`memory-evolution/provenance.ts:32`).
+
+- `appendDecision()` mirrors human-readable entries into `decisions.md` (`learning/ledger.ts:287`); timeline hotspots mirror into `tech_debt.md` (`repo/timeline.ts:178`); `tools/team_memory.ts` covers conventions writes (manual + pattern capture). Tests: `memory/team_memory.test.ts`.
 
 ### P2.4 UX modes (Beginner / Professional / Expert) — ✅ DONE
 
@@ -239,9 +246,25 @@ Aggregate: test coverage signal, guardrail deny rate, open findings by severity,
 
 ---
 
-## P3 — Platform & Enterprise (defer until Phase 0 identity is settled)
+## P3 — Platform & Enterprise
+
+> **Status (2026-10-10): P3.1, P3.2 DONE — under the recommended primary identity
+> (autonomous engineering agent platform). P3.3–P3.6 remain.**
 
 Order within P3 assumes primary identity = engineering agent platform.
+
+**Operational note (GitHub Codespaces devcontainer):** this workspace has 8GB
+RAM, no swap. The VS Code remote stack + agent processes leave ~2GB headroom;
+full-suite test runs and multi-package eslint in the same command can OOM and
+get killed by the kernel (looks like an "abort"). Working rules that kept
+sessions healthy:
+
+- Run targeted test files (`bun test src/<area>/...`), not the full suite, in
+  the same command as builds or lint
+- Commit in small batches so lint-staged lints fewer files per invocation
+- On mysterious command kills: check `free -m` and `ps aux --sort=-%rss` — stale
+  VS Code extension-host zombies from reconnects can hold ~1GB; kill only
+  low-CPU-time ones and never the long-running active host
 
 ### P3.1 RBAC — ✅ DONE
 
