@@ -230,6 +230,42 @@ export class ToolRegistry {
     set.add(absPath)
   }
 
+  /** sessionID → absolute paths this session has mutated (used by target analysis) */
+  private touchPaths = new Map<string, Set<string>>()
+
+  private recordTouch(sessionID: string, absPath: string): void {
+    let set = this.touchPaths.get(sessionID)
+    if (!set) {
+      set = new Set()
+      this.touchPaths.set(sessionID, set)
+    }
+    set.add(absPath)
+  }
+
+  /**
+   * Wrong-file signals for a mutation target (see tools/edit-target.ts).
+   * Advisory by default — warnings ride along in the tool result so the agent
+   * can correct itself. Strict mode (MIRA_STRICT_EDIT_TARGET=1) blocks only on
+   * the high-confidence same-basename signal.
+   */
+  private async analyzeTarget(
+    sessionID: string,
+    cwd: string,
+    absPath: string,
+  ): Promise<{ warnings: string[]; blocking?: string }> {
+    const { analyzeEditTarget, strictEditTarget } = await import('./edit-target.js')
+    const signal = analyzeEditTarget({
+      target: absPath,
+      cwd,
+      sessionReads: this.readPaths.get(sessionID),
+      sessionTouches: this.touchPaths.get(sessionID),
+    })
+    const strict = strictEditTarget()
+    const blocking =
+      strict && signal.nearMiss?.kind === 'same-basename-read' ? signal.warnings[0] : undefined
+    return { warnings: blocking ? [] : signal.warnings, blocking }
+  }
+
   private assertReadBeforeMutation(sessionID: string, absPath: string): void {
     if (!ToolRegistry.READ_GUARD_ON) return
     let exists = false
@@ -365,6 +401,8 @@ export class ToolRegistry {
 
     // Snapshot target files BEFORE mutation (edit/write/patch) — enables /undo
     const MUTATING = ToolRegistry.MUTATING
+    /** Wrong-file advisories surfaced in the tool result (default: warn). */
+    const targetWarnings: string[] = []
     if (MUTATING.has(name)) {
       const rec = parsed.data as Record<string, string>
       const base = ctx.cwd ?? process.cwd()
@@ -398,6 +436,15 @@ export class ToolRegistry {
         }
       }
       for (const abs of [...new Set(targets)]) {
+        // Wrong-file analysis before the snapshot, so a blocked edit writes nothing.
+        const signal = await this.analyzeTarget(ctx.sessionID, base, abs)
+        if (signal.blocking) {
+          throw new Error(
+            `Edit-target guard: ${signal.blocking} ` +
+              `Strict mode — set MIRA_STRICT_EDIT_TARGET=0 to downgrade this to a warning.`,
+          )
+        }
+        targetWarnings.push(...signal.warnings)
         try {
           const { snapshotFile } = await import('../storage/snapshots.js')
           snapshotFile(this.deps.db, {
@@ -405,6 +452,7 @@ export class ToolRegistry {
             messageID: ctx.messageID,
             path: abs,
           })
+          this.recordTouch(ctx.sessionID, abs)
         } catch (e) {
           console.warn(`[tools] snapshot failed for ${abs}: ${String(e)}`)
         }
@@ -442,6 +490,18 @@ export class ToolRegistry {
       // Result normalization
       if (result !== null && typeof result !== 'object') {
         result = { ok: true, data: result } as JsonValue
+      }
+      // Surface wrong-file advisories so the agent can reconsider the target
+      if (
+        targetWarnings.length > 0 &&
+        result !== null &&
+        typeof result === 'object' &&
+        !Array.isArray(result)
+      ) {
+        result = {
+          ...(result as Record<string, JsonValue>),
+          editTargetWarnings: targetWarnings as unknown as JsonValue,
+        } as JsonValue
       }
       // Emit tool.executed on success
       ctx.bus?.publish({
