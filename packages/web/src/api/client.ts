@@ -362,6 +362,17 @@ export type SkillEntry = {
   description: string
 }
 
+/** Community registry entry (P3.4) — skills, agents and knowledge modules. */
+export type CommunityEntry = {
+  kind: 'skill' | 'agent' | 'knowledge'
+  name: string
+  description: string
+  category: string
+  stars?: number
+  version?: string
+  author?: string
+}
+
 export type WorkspaceEntry = {
   id: string
   path: string
@@ -1103,6 +1114,38 @@ export const api = {
     ),
   addMcpFromMarketplace: (name: string) =>
     req<MCPServerEntry>(`/mcp/marketplace/${encodeURIComponent(name)}`, { method: 'POST' }),
+
+  // ── Community registry (P3.4) — skills / agents / knowledge modules ──
+  listCommunityRegistry: (
+    opts: { kind?: 'skill' | 'agent' | 'knowledge'; q?: string; limit?: number } = {},
+  ) => {
+    const p = new URLSearchParams()
+    if (opts.kind) p.set('kind', opts.kind)
+    if (opts.q) p.set('q', opts.q)
+    p.set('limit', String(opts.limit ?? 20))
+    return req<{ query: string; count: number; entries: CommunityEntry[] }>(
+      `/community/registry?${p.toString()}`,
+    )
+  },
+  /** Install by kind + name — knowledge modules are seed-only (no uninstall). */
+  installCommunityEntry: (entry: CommunityEntry, cwd?: string) => {
+    const qs = cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''
+    const seg = entry.kind === 'knowledge' ? 'knowledge' : `${entry.kind}s`
+    return req<{ installed: string; kind: string }>(
+      `/community/${seg}/${encodeURIComponent(entry.name)}${qs}`,
+      { method: 'POST' },
+    )
+  },
+  uninstallCommunityEntry: (kind: 'skill' | 'agent', name: string, cwd?: string) => {
+    const qs = cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''
+    return req<{ removed: string }>(`/community/${kind}s/${encodeURIComponent(name)}${qs}`, {
+      method: 'DELETE',
+    })
+  },
+  listInstalledCommunitySkills: (cwd?: string) =>
+    req<{ cwd: string; installed: string[] }>(
+      `/community/skills${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`,
+    ),
   addMcp: (body: {
     name: string
     type: 'local' | 'remote'

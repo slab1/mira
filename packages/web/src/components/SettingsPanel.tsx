@@ -5,6 +5,7 @@ import type { MiraConfig, ThemeChoice, ProviderEntry, ProviderConfig } from '../
 import { getApiUrl, providerModelId } from '../api/client'
 import { ConfirmDialog } from './ConfirmDialog'
 import { McpMarketplace } from './McpMarketplace'
+import { CommunityPanel } from './CommunityPanel'
 import { toast } from './Toast'
 import { useFocusTrap } from '../hooks/useFocusTrap'
 
@@ -689,7 +690,14 @@ function ModelSelector(props: {
 }
 
 type TabId =
-  'general' | 'providers' | 'permissions' | 'connectors' | 'agents' | 'commands' | 'terminal'
+  | 'general'
+  | 'providers'
+  | 'permissions'
+  | 'connectors'
+  | 'agents'
+  | 'commands'
+  | 'community'
+  | 'terminal'
 
 const TABS: Array<{ id: TabId; label: string; icon: string; desc: string }> = [
   { id: 'general', label: 'General', icon: '⚙', desc: 'Model & appearance' },
@@ -698,6 +706,7 @@ const TABS: Array<{ id: TabId; label: string; icon: string; desc: string }> = [
   { id: 'connectors', label: 'Connectors', icon: '🔌', desc: 'MCP servers' },
   { id: 'agents', label: 'Agents', icon: '🤖', desc: 'Lane personas' },
   { id: 'commands', label: 'Commands', icon: '⌘', desc: 'Slash & skills' },
+  { id: 'community', label: 'Community', icon: '🌐', desc: 'Shareable packs' },
   { id: 'terminal', label: 'Terminal', icon: '▣', desc: 'PTY & sandbox' },
 ]
 
@@ -3392,6 +3401,22 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                       </For>
                     </div>
                   </Show>
+                </div>
+              </Show>
+
+              {/* ── Community (P3.4) ───────────────────────────────── */}
+              <Show when={tab() === 'community'}>
+                <div
+                  id="settings-panel-community"
+                  role="tabpanel"
+                  aria-labelledby="settings-tab-community"
+                >
+                  <div class="settings-section-title">Community</div>
+                  <div class="settings-hint" style={{ 'margin-bottom': '12px' }}>
+                    Install shareable artifacts from the curated registry — skill packs, custom
+                    agents and knowledge modules. Installs take effect without a restart.
+                  </div>
+                  <CommunityPanel onInstalled={() => void props.store.loadSkills()} />
                 </div>
               </Show>
 
