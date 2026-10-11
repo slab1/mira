@@ -338,9 +338,15 @@ Audit of "can Mira catch an agent editing the wrong file or the wrong position?"
 6. **New `revert` / `revert_list` tools** — an agent can now undo its own bad edit. Deliberately **file-scoped only**: unlike the user-facing undo it does not delete conversation messages, so a correcting agent keeps its context. Cross-session reverts refused.
 7. **Auto-rollback on `FAILED_VERIFICATION`** (`compliance/index.ts`), **toggle supports both modes**: `compliance.autoRollback: true` in mira.json or `MIRA_AUTO_ROLLBACK=1`; config wins over env so both on and off are reachable in every combination. **Default OFF** — verification is evidence-based (exit codes), so a false negative would discard legitimate work. Fires in `finishJob` _after_ the atomic status+verification settle, so the job row always records the failure and rollback happens exactly once. Files only, messages preserved; emits a `job.updated` / `kind:'auto-rollback'` event. Surfaced in `GET /admin/compliance/retention`.
 
-**Still open (unchanged)**: nothing decides _semantically_ whether a target file is the right one — no task-to-file relevance gate exists. `findDependents`/`analyzeRemoval`/the ownership graph remain advisory tools that no gate consults.
+8. **Edit-target relevance signals** (`tools/edit-target.ts`) — the wrong-file case, evidence-based:
+   - **Same basename, different file, already read this session** (`packages/server/src/foo.ts` read, `packages/web/src/foo.ts` about to be written). Fires only when the session saw **exactly one** other same-named file — otherwise `index.ts`-style names (which exist in every module) would make it noise.
+   - **Creating a file with exactly one live twin** elsewhere in the tree.
+   - **Outside session focus** (weak, advisory): the target shares no path segment with anything read. Sibling modules (`src/auth`, `src/db`) count as related.
+   - **Advisory by default**: warnings ride back in the tool result as `editTargetWarnings` so the agent can reconsider before the change compounds. `MIRA_STRICT_EDIT_TARGET=1` makes **only** the high-confidence same-basename signal blocking, and it runs _before_ the snapshot so a blocked edit writes nothing. The twin scan is bounded (≤400 directories; skips `node_modules`/`.git`/dist).
 
-Tests: `tools/edit-position.test.ts` (8), `tools/revert.test.ts` (10), `compliance/auto-rollback.test.ts` (15), `tools/auto-rollback.e2e.test.ts` (5, through the real task pipeline).
+**Still open**: a _semantic_ notion of "does this change belong to the task" is still out of scope — `findDependents`/`analyzeRemoval`/the ownership graph remain advisory tools no gate consults. The signals above are evidence-based (what the session actually touched), not intent-based.
+
+Tests: `tools/edit-position.test.ts` (8), `tools/revert.test.ts` (10), `compliance/auto-rollback.test.ts` (15), `tools/auto-rollback.e2e.test.ts` (5, through the real task pipeline), `tools/edit-target.test.ts` (11).
 
 ### P3.6 Vertical agents — DEFERRED (per ADR 0001)
 
