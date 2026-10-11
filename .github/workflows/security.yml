@@ -47,7 +47,11 @@ jobs:
               # - undici: only the nested 5.29.0 (via @ai-sdk/provider-utils) is
               #   in range; top-level 7.29.0 is clean. No upgrade path until the
               #   AI SDK moves off undici 5 (server never uses its websockets).
-              ([$pkg, $f.title] | join(" ") | test("pacote|sigstore|undici") | not)
+              # - braces: GHSA-vfj7-8cjw-p6xm (ReDoS) has NO patched release —
+              #   vulnerable <= 3.0.3 and 3.0.3 is the latest published. Dev-only
+              #   path (micromatch via semantic-release in packages/cli). Revisit
+              #   when upstream ships a fix.
+              ([$pkg, $f.title] | join(" ") | test("pacote|sigstore|undici|braces") | not)
             )] | length' /tmp/bun-audit.json)
           echo "blocking high/critical findings: $BLOCKING"
           if [ "$BLOCKING" != "0" ]; then
