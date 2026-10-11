@@ -281,15 +281,30 @@ export class ToolRegistry {
         fileContent = await Bun.file(absPath).text()
       } catch {}
     }
+    const recentPrompts = recentUserPrompts(this.deps.db, sessionID)
     const relevance = analyzeTaskRelevance({
       target: absPath,
       cwd,
       sessionID,
       sessionTouches,
-      recentPrompts: recentUserPrompts(this.deps.db, sessionID),
+      recentPrompts: recentPrompts,
       fileContent,
       oldString: editContext?.oldString,
     })
+    // Embedding relevance (P3.6 groundwork) — semantic distance between the
+    // task text and the file content. Only when an embedder exists (API key),
+    // only advisory, cached so each text embeds at most once.
+    if (recentPrompts.length > 0) {
+      try {
+        const { analyzeEmbeddingRelevance } = await import('./embed-relevance.js')
+        const emb = await analyzeEmbeddingRelevance({
+          taskText: recentPrompts.join('\n'),
+          fileContent: fileContent ?? '',
+          db: this.deps.db,
+        })
+        if (emb.warning) relevance.warnings.push(emb.warning)
+      } catch {}
+    }
     const strict = strictEditTarget()
     const blocking =
       strict && signal.nearMiss?.kind === 'same-basename-read' ? signal.warnings[0] : undefined
