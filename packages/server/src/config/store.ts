@@ -637,6 +637,27 @@ export async function removeProviderFromConfig(name: string, cwd = process.cwd()
   }
 }
 
+/**
+ * Remove a custom agent from the project config file (community uninstall).
+ * Writes the file directly rather than saveConfig() because the config merge is
+ * deep — a patch without the key would leave the existing agent in place.
+ */
+export async function removeAgentFromConfig(name: string, cwd = process.cwd()): Promise<boolean> {
+  const targetPath = `${cwd}/mira.json`
+  let existing: PartialMiraConfig = {}
+  try {
+    const f = Bun.file(targetPath)
+    if (await f.exists()) existing = (await f.json()) as PartialMiraConfig
+  } catch {}
+  if (!existing.agents || !existing.agents[name]) return false
+  delete existing.agents[name]
+  await Bun.write(targetPath, JSON.stringify(existing, null, 2) + '\n')
+  cached = null
+  configCache.delete(cwd)
+  await loadConfig(cwd)
+  return true
+}
+
 /** Return merged config + per-layer breakdown for debugging. */
 export async function getConfigLayers(cwd = process.cwd()): Promise<{
   merged: MiraConfig

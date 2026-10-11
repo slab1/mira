@@ -18,6 +18,7 @@ export {
   saveConfig,
   removeMcpFromConfig,
   removeProviderFromConfig,
+  removeAgentFromConfig,
   getConfigLayers,
 } from './store.js'
 export { getLoopLimits } from './loop.js'

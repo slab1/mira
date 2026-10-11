@@ -61,6 +61,7 @@ import { mountFindingRoutes } from './routes/finding.js'
 import { mountWebhookRoutes } from './routes/webhooks.js'
 import { mountMeRoutes } from './routes/me.js'
 import { mountSessionExtrasRoutes } from './routes/session-extras.js'
+import { mountCommunityRoutes } from './routes/community.js'
 import { mountOrgRoutes, type OrgMembership } from './routes/orgs.js'
 import { sessionVisibleTo } from './auth/session-access.js'
 import { mountToolsRoutes } from './routes/tools-routes.js'
@@ -822,6 +823,8 @@ async function main() {
   mountConfigRoutes(app, { bus, gateway })
   mountToolsRoutes(app, { tools, permissions, guardrails, gateway })
   mountLearningRoutes(app, learning)
+  // Community distribution (P3.4) — install skills/agents/knowledge modules
+  mountCommunityRoutes(app, { knowledge: learning.knowledge })
   mountWorkspaceRoutes(app)
   mountWorkspacesRoutes(app, { db })
   mountSymbolRoutes(app)

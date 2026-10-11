@@ -13,6 +13,7 @@ const API_ROUTE_PREFIXES = [
   '/tools',
   '/agents',
   '/skills',
+  '/community',
   '/commands',
   '/finding',
   '/job',
