@@ -15,15 +15,59 @@ const findingSchema = z.object({
 
 export function mountFindingRoutes(
   app: Hono<{ Variables: { requestId: string } }>,
-  deps: { db: MiraDB; bus: Bus },
+  deps: {
+    db: MiraDB
+    bus: Bus
+    /** Owner of a session, or null for legacy/unknown (P3.3 tenancy gate) */
+    ownerOfSession?: (id: string) => Promise<string | null>
+    /** Org of a session, or null when orgless (P3.3 tenancy gate) */
+    orgOfSession?: (id: string) => Promise<string | null>
+    /** Org of the calling owner, or undefined when orgless */
+    orgOfOwner?: (owner: string | null | undefined) => string | undefined
+    resolveOwner?: (t: string) => string | undefined
+    bearerOf?: (h?: string) => string
+    /** Ownership active only when API keys exist (same predicate as session routes) */
+    OWNERSHIP_ENABLED?: boolean | (() => boolean)
+  },
 ) {
   const { db, bus } = deps
+  const ownershipOn = () =>
+    typeof deps.OWNERSHIP_ENABLED === 'function'
+      ? (deps.OWNERSHIP_ENABLED as () => boolean)()
+      : !!deps.OWNERSHIP_ENABLED
+
+  const callerOf = (c: Context): string | undefined =>
+    ownershipOn()
+      ? deps.resolveOwner?.(deps.bearerOf?.(c.req.header('Authorization')) ?? '')
+      : undefined
+
+  /**
+   * A finding is visible when its session is (P3.3 rule): ownerless session →
+   * shared; owner match; else same-org. Findings with no session at all are
+   * caller-independent (they are not attributable) — kept visible as before.
+   */
+  const findingVisible = async (
+    f: { sessionID: string | null },
+    caller: string | undefined,
+  ): Promise<boolean> => {
+    if (!caller || !f.sessionID || !deps.ownerOfSession || !deps.orgOfSession) return true
+    const owner = await deps.ownerOfSession(f.sessionID)
+    if (owner === null) return true
+    if (owner === caller) return true
+    const org = await deps.orgOfSession(f.sessionID)
+    return org != null && deps.orgOfOwner?.(caller) === org
+  }
 
   app.get('/finding', async (c: Context) => {
     const status = c.req.query('status') as 'open' | 'resolved' | undefined
     const severity = c.req.query('severity') as FindingSeverity | undefined
     const limit = Number(c.req.query('limit') ?? '') || undefined
-    return c.json(await listFindings(db, { status, severity, limit }))
+    const caller = callerOf(c)
+    const all = await listFindings(db, { status, severity, limit })
+    if (!caller) return c.json(all)
+    const visible: Awaited<ReturnType<typeof listFindings>> = []
+    for (const f of all) if (await findingVisible(f, caller)) visible.push(f)
+    return c.json(visible)
   })
 
   app.post('/finding', async (c: Context) => {
@@ -38,6 +82,12 @@ export function mountFindingRoutes(
       )
     }
     const body = parsed.data
+    // A finding may only be attached to a session the caller can reach.
+    if (body.sessionID && callerOf(c)) {
+      const session = await deps.ownerOfSession?.(body.sessionID)
+      const visible = await findingVisible({ sessionID: body.sessionID }, callerOf(c))
+      if (!visible || session === undefined) return c.json({ error: 'not found' }, 404)
+    }
     const f = await writeFinding(db, {
       title: body.title.trim(),
       severity: body.severity,
@@ -56,6 +106,14 @@ export function mountFindingRoutes(
   app.post('/finding/:id/resolve', async (c: Context) => {
     const fid = c.req.param('id')
     if (!fid) return c.json({ error: 'not found' }, 404)
+    const caller = callerOf(c)
+    if (caller && deps.ownerOfSession) {
+      // Resolve-by-id needs a lookup, then the same visibility gate.
+      const existing = await listFindings(db, { limit: 1000 })
+      const target = existing.find((x) => x.id === fid)
+      if (target && !(await findingVisible(target, caller)))
+        return c.json({ error: 'not found' }, 404)
+    }
     const f = await resolveFinding(db, fid)
     if (!f) return c.json({ error: 'not found' }, 404)
     bus.publish({
