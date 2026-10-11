@@ -2,34 +2,34 @@
 
 ## 6-Layer 2026 Stack (O'Reilly)
 
-| Layer | 2026 Reality | Tech |
-|-------|--------------|------|
-| 1. Models & Inference | Reasoning models (o1/o3, R1, Claude thinking), open-weight close gap | API vs self-host |
-| 2. Protocols & Tools | MCP won (97M downloads, Linux Foundation), Browser Use 78K | MCP, Browser automation |
-| 3. Memory & Knowledge | 3 tiers: in-context → vector → persistent cross-session | Postgres+pgvector, Mem0, Zep |
-| 4. Frameworks & SDKs | 3 camps: Provider SDKs vs Graph (LangGraph) vs No-framework | Vercel AI SDK, LangGraph |
-| 5. Eval & Observability | 89% observability, 52% evals — biggest gap | Langfuse, Braintrust |
-| 6. Guardrails & Safety | Tool execution layer, not output | NeMo, custom policy |
+| Layer                   | 2026 Reality                                                         | Tech                         |
+| ----------------------- | -------------------------------------------------------------------- | ---------------------------- |
+| 1. Models & Inference   | Reasoning models (o1/o3, R1, Claude thinking), open-weight close gap | API vs self-host             |
+| 2. Protocols & Tools    | MCP won (97M downloads, Linux Foundation), Browser Use 78K           | MCP, Browser automation      |
+| 3. Memory & Knowledge   | 3 tiers: in-context → vector → persistent cross-session              | Postgres+pgvector, Mem0, Zep |
+| 4. Frameworks & SDKs    | 3 camps: Provider SDKs vs Graph (LangGraph) vs No-framework          | Vercel AI SDK, LangGraph     |
+| 5. Eval & Observability | 89% observability, 52% evals — biggest gap                           | Langfuse, Braintrust         |
+| 6. Guardrails & Safety  | Tool execution layer, not output                                     | NeMo, custom policy          |
 
 ## Detailed Blueprint
 
-| Layer | Recommendation | Why |
-|-------|---------------|-----|
-| Shell | Next.js 16.2 + TypeScript | One language |
-| Runtime | Bun (native SQLite) | proven, fast |
-| Monorepo | Turborepo | Multi-package |
-| UI | SolidJS + Tauri v2 | Fine-grained reactivity |
-| LLM | Model Gateway (OpenRouter) | 75% multi-model |
-| Orchestration | Vercel AI SDK v5 → LangGraph v1.0 | Thin by default |
-| Tools | Native + MCP | Neutral standard |
-| Memory | Postgres+Drizzle+pgvector → Zep/Mem0 | Keep vectors in DB |
-| Instructions | AGENTS.md + Skills | 29% faster |
-| Observability | OTel + Langfuse | 89% prod have it |
-| Eval | 3 tiers: PR → nightly → prod | 52% gap |
-| Guardrails | Tool-layer auth | Least mature |
-| Storage | SQLite (WAL) + Postgres | Pragmatic |
-| Auth | Clerk + Stripe | Commodity |
-| Validation | Zod v4 | Runtime schema |
+| Layer         | Recommendation                       | Why                     |
+| ------------- | ------------------------------------ | ----------------------- |
+| Shell         | Next.js 16.2 + TypeScript            | One language            |
+| Runtime       | Bun (native SQLite)                  | proven, fast            |
+| Monorepo      | Turborepo                            | Multi-package           |
+| UI            | SolidJS + Tauri v2                   | Fine-grained reactivity |
+| LLM           | Model Gateway (OpenRouter)           | 75% multi-model         |
+| Orchestration | Vercel AI SDK v5 → LangGraph v1.0    | Thin by default         |
+| Tools         | Native + MCP                         | Neutral standard        |
+| Memory        | Postgres+Drizzle+pgvector → Zep/Mem0 | Keep vectors in DB      |
+| Instructions  | AGENTS.md + Skills                   | 29% faster              |
+| Observability | OTel + Langfuse                      | 89% prod have it        |
+| Eval          | 3 tiers: PR → nightly → prod         | 52% gap                 |
+| Guardrails    | Tool-layer auth                      | Least mature            |
+| Storage       | SQLite (WAL) + Postgres              | Pragmatic               |
+| Auth          | Clerk + Stripe                       | Commodity               |
+| Validation    | Zod v4                               | Runtime schema          |
 
 ## Orchestration Patterns
 
@@ -61,14 +61,14 @@
 
 The blueprint above is now **built and verified** in this repo:
 
-| Layer | Implementation | Verified by |
-|-------|---------------|-------------|
-| Models & Inference | Gateway: OpenRouter + NVIDIA NIM, OpenAI-compatible wire, prompt caching for Claude, cost tracking per request + per session | Live LLM E2E (gated) |
-| Protocols & Tools | 24 native tools; **real MCP stdio client** (initialize/tools/list/tools/call); **real LSP 3.17 client** (gopls) with heuristic fallback | Mock-server protocol tests + live gopls test |
-| Memory & Knowledge | KnowledgeBase singleton: episodic/semantic/procedural, cosine+tag+graph retrieval, auto-injected into every turn; `memory_search`/`memory_write` tools | Unit tests + live roundtrip |
-| Frameworks | Thin custom loop (`SessionPrompt`): stream → tools → permission → snapshot → doom-loop → compaction → usage learning | E2E server tests |
-| Eval & Observability | 3-tier eval runner gating CI; gateway cost stats at `/dev/health` + UI headers; per-session spend columns | eval pr tier PASS |
-| Guardrails & Safety | Permission 5-layer + BashArity at tool layer; audit log; **file snapshots before every mutation** with undo/rewind REST | Snapshot unit + E2E tests |
+| Layer                | Implementation                                                                                                                                                               | Verified by                                  |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| Models & Inference   | Gateway: OpenRouter + NVIDIA NIM, OpenAI-compatible wire, prompt caching for Claude, cost tracking per request + per session                                                 | Live LLM E2E (gated)                         |
+| Protocols & Tools    | 42 native tools (incl. think/revert/goals/codegraph); **real MCP stdio client** (initialize/tools/list/tools/call); **real LSP 3.17 client** (gopls) with heuristic fallback | Mock-server protocol tests + live gopls test |
+| Memory & Knowledge   | KnowledgeBase singleton: episodic/semantic/procedural, cosine+tag+graph retrieval, auto-injected into every turn; `memory_search`/`memory_write` tools                       | Unit tests + live roundtrip                  |
+| Frameworks           | Thin custom loop (`SessionPrompt`): stream → tools → permission → snapshot → doom-loop → compaction → usage learning                                                         | E2E server tests                             |
+| Eval & Observability | 3-tier eval runner gating CI; gateway cost stats at `/dev/health` + UI headers; per-session spend columns                                                                    | eval pr tier PASS                            |
+| Guardrails & Safety  | Permission 5-layer + BashArity at tool layer; audit log; **file snapshots before every mutation** with undo/rewind REST                                                      | Snapshot unit + E2E tests                    |
 
 Additional shipped systems:
 

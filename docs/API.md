@@ -4,6 +4,12 @@ Base URL: `http://127.0.0.1:4096` (default; configure via `HOST`/`PORT`)
 
 All endpoints except `/healthz` require Bearer auth: `Authorization: Bearer <token>`
 
+> **Recently added (2026-10, see the master-findings plan):** `/orgs` + `/orgs/:id/members`
+> (org tenancy), `/community/{registry,skills,agents,knowledge,verticals}` (installable
+> bundles), `/admin/compliance/{violations,retention}` (policy-violation reports + retention
+> sweeps), `/workspace/health` (project health score), `/admin/audit/export?format=csv|json`,
+> and `GET /me` now returns `role` + `org`.
+
 ---
 
 ## Sessions

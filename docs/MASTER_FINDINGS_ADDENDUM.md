@@ -1,5 +1,10 @@
 # MIRA — MASTER FINDINGS ADDENDUM
 
+> **Status (2026-10-11): HISTORICAL SOURCE.** Every finding here was cross-checked against the
+> code and closed in `MASTER_FINDINGS_CROSSCHECK_AND_PLAN.md` (P0–P3.6 complete; ADR
+> `docs/ADR/0001-core-identity.md` records the identity decision this addendum's "Vision Risk"
+> raised). Kept as the original strategic input — read the crosscheck for current state.
+
 ## Purpose
 
 This document captures strategic findings, concerns, opportunities, and architectural recommendations identified across multiple independent reviews of Mira.

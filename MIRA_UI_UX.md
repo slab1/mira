@@ -1,8 +1,10 @@
 # Mira UI / UX
 
-**Status:** Implemented (chat + Brio) / Target (missions, evolution, memory provenance)  
-**Review Date:** 2026-09-23  
-**Stack:** Web `SolidJS + Vite + PWA` (`/mira/`), TUI `Bun`, `Tailwind` tokens `var(--*)`, `Brio.tsx` 1064 lines
+**Status:** Implemented (chat + Brio + missions + evolution dashboard + memory provenance panel, 2026-10-11)
+
+> Missions/evolution pages, the provenance panel (injected per turn in `SessionTurn`), and UX-mode gating have shipped since this review — see `MIRA_UI_EVOLUTION_SPEC.md` for the design and `packages/web/src/pages/` for the live pages.
+> **Review Date:** 2026-09-23  
+> **Stack:** Web `SolidJS + Vite + PWA` (`/mira/`), TUI `Bun`, `Tailwind` tokens `var(--*)`, `Brio.tsx` 1064 lines
 
 ## Information Architecture — Target
 
@@ -16,14 +18,14 @@ Header simplified, shared route `?view=` deep-link (`?view=brio`), `htmlFor`/`ar
 
 ## Workspaces
 
-| Workspace | Status | Route | Purpose |
-|-----------|--------|-------|---------|
-| Work (Chat/Files/Terminal) | Implemented | `/work` `?view=chat` | Chat + Files + Terminal (`xterm`), `message queue` |
-| Missions | Target | `/missions` | Parent/child agents, states, transcript (per Roadmap Phase 2) |
-| Intelligence | Target | `/intelligence` | Memory + Research + Planning |
-| Changes | Target | `/changes` | Timeline + Diff + Snapshot + Rewind/Rollback |
-| System | Implemented | `/health`, `/metrics` | Health, providers, terminal |
-| Evolution | Implemented (Phase 1-6) | `/evolution`, `/shadow`, `/canary`, `/engines`, `/memory/evolution` | Dashboard + candidates + shadow + canary + ledger |
+| Workspace                  | Status                  | Route                                                               | Purpose                                                       |
+| -------------------------- | ----------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Work (Chat/Files/Terminal) | Implemented             | `/work` `?view=chat`                                                | Chat + Files + Terminal (`xterm`), `message queue`            |
+| Missions                   | Target                  | `/missions`                                                         | Parent/child agents, states, transcript (per Roadmap Phase 2) |
+| Intelligence               | Target                  | `/intelligence`                                                     | Memory + Research + Planning                                  |
+| Changes                    | Target                  | `/changes`                                                          | Timeline + Diff + Snapshot + Rewind/Rollback                  |
+| System                     | Implemented             | `/health`, `/metrics`                                               | Health, providers, terminal                                   |
+| Evolution                  | Implemented (Phase 1-6) | `/evolution`, `/shadow`, `/canary`, `/engines`, `/memory/evolution` | Dashboard + candidates + shadow + canary + ledger             |
 
 ## Brio Scoring Page — Implemented
 
