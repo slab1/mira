@@ -22,6 +22,7 @@
  * default is warn-and-show.
  */
 import { existsSync, readdirSync, type Dirent } from 'node:fs'
+import type { MiraDB } from '../storage/db.js'
 import { basename, dirname, join, sep } from 'node:path'
 
 /** Directories never scanned for twins. */
@@ -174,4 +175,166 @@ export function analyzeEditTarget(input: EditTargetInput): EditTargetSignal {
 /** Strict mode: only the high-confidence signal blocks. */
 export function strictEditTarget(): boolean {
   return process.env.MIRA_STRICT_EDIT_TARGET === '1'
+}
+
+/**
+ * Module a path belongs to — the first segment under a workspace root.
+ * `packages/server/src/a.ts` → `packages/server`; `docs/x.md` → `docs`.
+ * Used to notice edits crossing a package/module boundary.
+ */
+export function moduleOf(absPath: string, cwd: string): string {
+  const rel = (absPath.startsWith(cwd) ? absPath.slice(cwd.length) : absPath)
+    .split(sep)
+    .filter(Boolean)
+  // A file sitting at the project root belongs to no module.
+  if (rel.length < 2) return ''
+  if (rel[0] === 'packages' || rel[0] === 'platforms' || rel[0] === 'apps')
+    return rel.slice(0, 2).join('/')
+  return rel[0]
+}
+
+/**
+ * Filename words too generic to count as a task mention. Without this,
+ * `index.ts` / `util.ts` / `thing.ts` match any prompt containing those words
+ * and the task-text signal turns into noise.
+ */
+const GENERIC_NAME_TOKENS = new Set([
+  'index',
+  'main',
+  'app',
+  'src',
+  'lib',
+  'bin',
+  'util',
+  'utils',
+  'utility',
+  'helper',
+  'helpers',
+  'common',
+  'shared',
+  'core',
+  'base',
+  'thing',
+  'things',
+  'stuff',
+  'file',
+  'files',
+  'code',
+  'test',
+  'tests',
+  'spec',
+  'specs',
+  'types',
+  'config',
+  'setup',
+  'build',
+  'dist',
+  'public',
+  'server',
+  'client',
+  'service',
+  'services',
+  'model',
+  'models',
+  'data',
+  'api',
+  'default',
+  'defaults',
+  'tmp',
+])
+
+/** Meaningful tokens from a file name: `authService.ts` → auth, service. */
+function fileNameTokens(absPath: string): string[] {
+  const base = basename(absPath).replace(/\.[^.]+$/, '')
+  return base
+    .split(/[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])/)
+    .map((t) => t.toLowerCase())
+    .filter((t) => t.length >= 3 && !GENERIC_NAME_TOKENS.has(t))
+}
+
+export interface TaskRelevanceInput {
+  target: string
+  cwd: string
+  sessionID: string
+  sessionTouches?: ReadonlySet<string>
+  /** Recent user prompts for the session, newest first. */
+  recentPrompts?: string[]
+}
+
+export interface TaskRelevanceSignal {
+  warnings: string[]
+}
+
+/**
+ * Task-intent signals — "does this edit belong to what was asked?"
+ *
+ * Two evidence-based checks, both advisory (they never block, because a
+ * lexical heuristic that blocks legitimate work is worse than none):
+ *
+ *  1. **Module-boundary crossing** — the session has only worked inside some
+ *     modules and this edit targets a different one. In a monorepo this is the
+ *     difference between touching `packages/server` and drifting into
+ *     `packages/web`.
+ *  2. **Task text does not mention this file** — the recent user prompts never
+ *     refer to this file by name, while another file the session did touch IS
+ *     named. Catches "asked to fix auth, edited logout".
+ */
+export function analyzeTaskRelevance(input: TaskRelevanceInput): TaskRelevanceSignal {
+  const { target, cwd } = input
+  const warnings: string[] = []
+  const touches = [...(input.sessionTouches ?? [])]
+  if (touches.length === 0) return { warnings }
+
+  // 1. Module boundary
+  const targetModule = moduleOf(target, cwd)
+  if (targetModule) {
+    const touchModules = new Set(touches.map((p) => moduleOf(p, cwd)).filter(Boolean))
+    if (touchModules.size > 0 && !touchModules.has(targetModule)) {
+      warnings.push(
+        `Crossing a module boundary: this session has only worked in ` +
+          `${[...touchModules].join(', ')}, but ${label(target, cwd)} is in ${targetModule}.`,
+      )
+    }
+  }
+
+  // 2. Task text vs file name
+  const promptText = (input.recentPrompts ?? []).join('\n').toLowerCase()
+  if (promptText) {
+    const targetTokens = fileNameTokens(target)
+    const mentionedHere = targetTokens.some((t) => promptText.includes(t))
+    if (!mentionedHere) {
+      // Only complain when the task DOES name some other file we have touched.
+      const namedElsewhere = touches.find((p) => {
+        if (p === target) return false
+        return fileNameTokens(p).some((t) => promptText.includes(t))
+      })
+      if (namedElsewhere) {
+        warnings.push(
+          `The task text mentions ${label(namedElsewhere, cwd)} but not ` +
+            `${label(target, cwd)}. Check this is the intended target.`,
+        )
+      }
+    }
+  }
+
+  return { warnings }
+}
+
+/** Recent user prompts for a session, newest first (bounded, indexed lookup). */
+export function recentUserPrompts(db: MiraDB, sessionID: string, limit = 5): string[] {
+  try {
+    const rows = db.sqlite
+      .prepare(
+        `SELECT p.text AS text
+         FROM parts p
+         JOIN messages m ON m.id = p.message_id
+         WHERE p.session_id = ? AND p.type = 'text' AND m.role = 'user'
+         ORDER BY m.created_at DESC, m.rowid DESC
+         LIMIT ?`,
+      )
+      .all(sessionID, Math.max(1, Math.min(20, limit))) as Array<{ text: string | null }>
+    return rows.map((r) => r.text ?? '').filter(Boolean)
+  } catch {
+    return []
+  }
 }

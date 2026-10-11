@@ -253,17 +253,30 @@ export class ToolRegistry {
     cwd: string,
     absPath: string,
   ): Promise<{ warnings: string[]; blocking?: string }> {
-    const { analyzeEditTarget, strictEditTarget } = await import('./edit-target.js')
+    const { analyzeEditTarget, analyzeTaskRelevance, recentUserPrompts, strictEditTarget } =
+      await import('./edit-target.js')
+    const sessionTouches = this.touchPaths.get(sessionID)
     const signal = analyzeEditTarget({
       target: absPath,
       cwd,
       sessionReads: this.readPaths.get(sessionID),
-      sessionTouches: this.touchPaths.get(sessionID),
+      sessionTouches,
+    })
+    // Task-intent signals (module boundary / task text). Advisory only.
+    const relevance = analyzeTaskRelevance({
+      target: absPath,
+      cwd,
+      sessionID,
+      sessionTouches,
+      recentPrompts: recentUserPrompts(this.deps.db, sessionID),
     })
     const strict = strictEditTarget()
     const blocking =
       strict && signal.nearMiss?.kind === 'same-basename-read' ? signal.warnings[0] : undefined
-    return { warnings: blocking ? [] : signal.warnings, blocking }
+    return {
+      warnings: blocking ? [] : [...signal.warnings, ...relevance.warnings],
+      blocking,
+    }
   }
 
   private assertReadBeforeMutation(sessionID: string, absPath: string): void {
