@@ -248,8 +248,8 @@ Aggregate: test coverage signal, guardrail deny rate, open findings by severity,
 
 ## P3 — Platform & Enterprise
 
-> **Status (2026-10-11): P3.1, P3.2, P3.3 DONE — under the recommended primary
-> identity (autonomous engineering agent platform). P3.4–P3.6 remain.**
+> **Status (2026-10-11): P3.1, P3.2, P3.3, P3.4 DONE — under the recommended primary
+> identity (autonomous engineering agent platform). P3.5–P3.6 remain.**
 
 Order within P3 assumes primary identity = engineering agent platform.
 
@@ -289,9 +289,17 @@ Extend per-user owner isolation (already solid) with org entities, org-scoped re
 - **Honest scope notes**: findings, file_snapshots, workspace_items and knowledge_entries remain owner-unscoped (pre-existing gap, orthogonal to orgs — flagged in §1.3 and still open); orgs are DB-managed via REST (like minted API keys) — env-only `MIRA_API_KEYS` deployments gain orgs only after an admin mints keys / uses the db.
 - Tests: `routes/orgs.test.ts` (21), `routes/session-org.test.ts` (16), `config/prompt.test.ts` presence cases (5).
 
-### P3.4 Community distribution (skills → agents → knowledge modules)
+### P3.4 Community distribution (skills → agents → knowledge modules) — ✅ DONE
 
 Sequenced by existing substrate strength: skills (20 local packs, loader done) → agents (templates + custom agents done) → knowledge modules (needs export format). Build a publish/install flow on top of the existing MCP marketplace pattern (`mcp/marketplace.ts`) rather than from scratch. Remote registry (currently offline-only, per its own comment) is the natural extension point.
+
+- **Generic registry** (`community/registry.ts`): one catalog loader over three kinds (skill/agent/knowledge) reusing the MCP marketplace shape — committed JSON + embedded fallback + module cache + `resetRegistryCache()` + search scoring. Catalogs: `community-{skill,agent,knowledge}-registry.json` (14 skill packs, 4 agent personas, 3 knowledge modules).
+- **Install targets are live-loaded — no restart**: skills → `<cwd>/.mira/skills/<name>.md` (the dir the skills loader already scans; same writer shape as learning promotion), agents → `mira.json → agents` (merged per call by `getAgentTemplates`), knowledge → `KnowledgeBase.store` entries.
+- **Routes** (`routes/community.ts`): `GET /community/registry?kind=&q=&limit=` (q validated with `sanitizePath`, limit 1–50), `POST|DELETE /community/skills/:name`, `POST|DELETE /community/agents/:name`, `POST /community/knowledge/:name` (seed-only — uninstalling memories is deliberately out of scope), `GET /community/skills` (installed list). All writes cwd-scoped via the same `resolveCwd` contract as `PATCH /config` (sanitize + allowedRoots 403).
+- **UI**: Settings → Community tab (`components/CommunityPanel.tsx`) — kind filter, search, install/remove, installed-skill state.
+- **Correctness fixes found while building** (each caught by a test): popularity alone must not count as a search match (the MCP marketplace has this flaw — noted, not changed); `saveConfig` deep-merges so removing a key silently keeps it → new `removeAgentFromConfig()` mirroring `removeMcpFromConfig`; unknown catalog kind returns `[]` instead of `undefined`.
+- **Honest scope notes**: offline-curated only — no remote registry fetch (same posture as the MCP marketplace, which its own comment names as the extension point); knowledge modules are seed-only with no provenance gate beyond `user-stated`; there is no publish/upload path yet — entries are committed to the catalogs.
+- Tests: `community/registry.test.ts` (15), `routes/community.test.ts` (22) — install/uninstall lifecycles, traversal rejection on name and cwd, kind mismatches, agent registry read-back, temp-dir isolation so installs never touch the repo.
 
 ### P3.5 Compliance layer
 
