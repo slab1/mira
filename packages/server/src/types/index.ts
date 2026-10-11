@@ -121,6 +121,7 @@ export type BusEventType =
   | 'github.webhook'
   | 'config.updated'
   | 'tool.executed'
+  | 'edit.critic'
   | 'agent.tool.allowed'
   | 'agent.tool.denied'
 
@@ -177,6 +178,8 @@ export interface MiraConfig {
     maxRows?: number
     /** Revert a run's file edits automatically when verification FAILS */
     autoRollback?: boolean
+    /** Second-model review of agent edits against the task text */
+    editCritic?: boolean
   }
   mcp: Record<string, MCPServerConfig>
   provider: Record<string, ProviderConfig>

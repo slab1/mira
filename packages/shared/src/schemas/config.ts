@@ -180,6 +180,8 @@ export const complianceConfigSchema = z.object({
   maxRows: z.number().int().min(0).optional(),
   /** Revert a run's file edits automatically when verification FAILS (default off) */
   autoRollback: z.boolean().optional(),
+  /** Second-model review of agent edits against the task text (default off) */
+  editCritic: z.boolean().optional(),
 })
 export type ComplianceConfig = z.infer<typeof complianceConfigSchema>
 

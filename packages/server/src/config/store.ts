@@ -445,6 +445,9 @@ const miraConfigPatchSchema = z
          *  Default false: verification is evidence-based, so a false negative
          *  would discard legitimate work. */
         autoRollback: z.boolean().optional(),
+        /** Second-model review of agent edits against the task text.
+         *  Default false: one model call per edit. */
+        editCritic: z.boolean().optional(),
       })
       .optional(),
     mcp: z
