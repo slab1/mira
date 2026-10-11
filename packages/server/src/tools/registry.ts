@@ -252,6 +252,7 @@ export class ToolRegistry {
     sessionID: string,
     cwd: string,
     absPath: string,
+    editContext?: { oldString?: string },
   ): Promise<{ warnings: string[]; blocking?: string }> {
     const { analyzeEditTarget, analyzeTaskRelevance, recentUserPrompts, strictEditTarget } =
       await import('./edit-target.js')
@@ -262,13 +263,21 @@ export class ToolRegistry {
       sessionReads: this.readPaths.get(sessionID),
       sessionTouches,
     })
-    // Task-intent signals (module boundary / task text). Advisory only.
+    // Task-intent signals (module boundary / task text / symbol binding). Advisory only.
+    let fileContent: string | undefined
+    if (editContext?.oldString) {
+      try {
+        fileContent = await Bun.file(absPath).text()
+      } catch {}
+    }
     const relevance = analyzeTaskRelevance({
       target: absPath,
       cwd,
       sessionID,
       sessionTouches,
       recentPrompts: recentUserPrompts(this.deps.db, sessionID),
+      fileContent,
+      oldString: editContext?.oldString,
     })
     const strict = strictEditTarget()
     const blocking =
@@ -416,11 +425,12 @@ export class ToolRegistry {
     const MUTATING = ToolRegistry.MUTATING
     /** Wrong-file advisories surfaced in the tool result (default: warn). */
     const targetWarnings: string[] = []
+    /** Absolute paths this call mutates — in scope for the post-execution critic. */
+    const targets: string[] = []
     if (MUTATING.has(name)) {
       const rec = parsed.data as Record<string, string>
       const base = ctx.cwd ?? process.cwd()
       const p = rec?.path ?? rec?.file
-      const targets: string[] = []
       if (typeof p === 'string' && p) {
         const abs = resolve(base, p)
         // Read-before-edit guard — throws OUTSIDE the snapshot try so it propagates
@@ -450,7 +460,10 @@ export class ToolRegistry {
       }
       for (const abs of [...new Set(targets)]) {
         // Wrong-file analysis before the snapshot, so a blocked edit writes nothing.
-        const signal = await this.analyzeTarget(ctx.sessionID, base, abs)
+        const signal = await this.analyzeTarget(ctx.sessionID, base, abs, {
+          oldString:
+            name === 'edit' && typeof rec?.oldString === 'string' ? rec.oldString : undefined,
+        })
         if (signal.blocking) {
           throw new Error(
             `Edit-target guard: ${signal.blocking} ` +
@@ -515,6 +528,41 @@ export class ToolRegistry {
           ...(result as Record<string, JsonValue>),
           editTargetWarnings: targetWarnings as unknown as JsonValue,
         } as JsonValue
+      }
+      // Edit critic (opt-in): a second model judges whether the change serves
+      // the task. Fire-and-forget — never blocks or fails the tool result.
+      if (MUTATING.has(name) && targets.length > 0 && this.deps.gateway) {
+        const criticTargets = [...new Set(targets)]
+        const criticSession = ctx.sessionID
+        const criticCwd = ctx.cwd ?? process.cwd()
+        const gateway = this.deps.gateway
+        const criticDb = this.deps.db
+        const criticBus = this.deps.bus
+        void (async () => {
+          const { reviewEdit } = await import('./edit-critic.js')
+          for (const t of criticTargets) {
+            try {
+              const review = await reviewEdit(criticDb, gateway, {
+                sessionID: criticSession,
+                path: t,
+                cwd: criticCwd,
+              })
+              if (review && review.verdict === 'unrelated') {
+                criticBus.publish({
+                  type: 'edit.critic',
+                  sessionID: criticSession,
+                  payload: {
+                    path: t,
+                    verdict: review.verdict,
+                    reason: review.reason ?? null,
+                    reverted: review.reverted ?? false,
+                  },
+                  timestamp: Date.now(),
+                })
+              }
+            } catch {}
+          }
+        })()
       }
       // Emit tool.executed on success
       ctx.bus?.publish({

@@ -259,6 +259,10 @@ export interface TaskRelevanceInput {
   sessionTouches?: ReadonlySet<string>
   /** Recent user prompts for the session, newest first. */
   recentPrompts?: string[]
+  /** Current file content — enables symbol-level binding (edit tool only). */
+  fileContent?: string
+  /** The text being replaced — locates the edited span inside the file. */
+  oldString?: string
 }
 
 export interface TaskRelevanceSignal {
@@ -283,11 +287,12 @@ export function analyzeTaskRelevance(input: TaskRelevanceInput): TaskRelevanceSi
   const { target, cwd } = input
   const warnings: string[] = []
   const touches = [...(input.sessionTouches ?? [])]
-  if (touches.length === 0) return { warnings }
+  // NOTE: no blanket early return — each signal below gates on what it needs
+  // (module boundary needs touches; symbol binding needs the file content).
 
-  // 1. Module boundary
+  // 1. Module boundary (needs prior touches to compare against)
   const targetModule = moduleOf(target, cwd)
-  if (targetModule) {
+  if (targetModule && touches.length > 0) {
     const touchModules = new Set(touches.map((p) => moduleOf(p, cwd)).filter(Boolean))
     if (touchModules.size > 0 && !touchModules.has(targetModule)) {
       warnings.push(
@@ -297,7 +302,7 @@ export function analyzeTaskRelevance(input: TaskRelevanceInput): TaskRelevanceSi
     }
   }
 
-  // 2. Task text vs file name
+  // 2/3. Task text vs file name, and vs the SYMBOL being edited
   const promptText = (input.recentPrompts ?? []).join('\n').toLowerCase()
   if (promptText) {
     const targetTokens = fileNameTokens(target)
@@ -315,9 +320,68 @@ export function analyzeTaskRelevance(input: TaskRelevanceInput): TaskRelevanceSi
         )
       }
     }
+
+    // 3. Symbol binding — the task names ONE symbol of this file, and the edit
+    // lands inside a DIFFERENT one. This is the undirected catch for the
+    // "stale snippet matched perfectly in the wrong function" case: the text
+    // is fine, the intent is not, and the prompt is the only intent evidence.
+    if (input.fileContent && input.oldString) {
+      const idx = input.fileContent.indexOf(input.oldString)
+      const unique = idx >= 0 && input.fileContent.indexOf(input.oldString, idx + 1) < 0
+      if (unique) {
+        const matchLine = input.fileContent.slice(0, idx).split('\n').length - 1
+        const enclosing = enclosingSymbol(input.fileContent, matchLine)
+        if (enclosing) {
+          const mentioned = declaredSymbols(input.fileContent).filter(
+            (n) =>
+              n.length >= 3 &&
+              // A mention must look like a CODE reference — `name`, name( or
+              // name. — not the bare word ("run the build" ≠ symbol build).
+              new RegExp(
+                '(`|\\b)' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[(.`]',
+                'i',
+              ).test(promptText),
+          )
+          // Precision rule as everywhere else: exactly one named symbol.
+          if (mentioned.length === 1 && mentioned[0] !== enclosing.name) {
+            warnings.push(
+              `The task mentions ${mentioned[0]}() but this edit lands inside ` +
+                `${enclosing.name}() (${label(target, cwd)}, line ${matchLine + 1}). ` +
+                `Check you are editing the right function — or pass near:"${enclosing.name}" if this is intended.`,
+            )
+          }
+        }
+      }
+    }
   }
 
   return { warnings }
+}
+
+const DECLARATION_RE =
+  /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+([A-Za-z0-9_$]+)/
+
+/** Symbols declared in a file (heuristic: function/class/const/let/var lines). */
+function declaredSymbols(content: string): string[] {
+  const out: string[] = []
+  for (const line of content.split('\n')) {
+    const m = DECLARATION_RE.exec(line)
+    if (m && !out.includes(m[1])) out.push(m[1])
+  }
+  return out
+}
+
+/** The symbol whose body contains the given line (last declaration at/before it). */
+function enclosingSymbol(content: string, line: number): { name: string; line: number } | null {
+  const lines = content.split('\n')
+  // Strictly BEFORE the edited line: a declaration ON that line is the thing
+  // being edited, not a scope containing it (a top-level `const` edit has no
+  // enclosing symbol).
+  for (let i = Math.min(line, lines.length - 1) - 1; i >= 0; i--) {
+    const m = DECLARATION_RE.exec(lines[i])
+    if (m) return { name: m[1], line: i }
+  }
+  return null
 }
 
 /** Recent user prompts for a session, newest first (bounded, indexed lookup). */
