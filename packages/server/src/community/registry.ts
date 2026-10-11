@@ -8,6 +8,8 @@
  *   kind 'skill'     → installs to <cwd>/.mira/skills/<name>.md  (skills loader reads it, no restart)
  *   kind 'agent'     → installs to mira.json `agents`             (agent registry reads it, no restart)
  *   kind 'knowledge' → seeds KnowledgeBase entries                (retrieval reads them immediately)
+ *   kind 'vertical'  → a BUNDLE composing the three above (P3.6) — one install applies
+ *                      an agent + its skills + a knowledge module, atomically
  *
  * Catalog entries are metadata only; content resolution is per-kind:
  *   source.kind 'packaged' → copy the shipped artifact (the bundled skill pack)
@@ -19,7 +21,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export type CommunityKind = 'skill' | 'agent' | 'knowledge'
+export type CommunityKind = 'skill' | 'agent' | 'knowledge' | 'vertical'
 
 /** Knowledge module entry — seeds KnowledgeBase (respects store caps: title ≤200, content ≤4000, tags ≤8). */
 export interface KnowledgeSeedEntry {
@@ -45,6 +47,28 @@ export interface CommunityEntry {
     | { kind: 'agent-def'; definition: AgentDefPayload }
     /** knowledge-only: the entries seeded into the KnowledgeBase */
     | { kind: 'knowledge'; entries: KnowledgeSeedEntry[] }
+    /** vertical-only (P3.6): a bundle of the kinds above */
+    | { kind: 'vertical'; vertical: VerticalSpec }
+}
+
+/**
+ * A vertical (P3.6) — a domain agent shipped as one installable bundle.
+ *
+ * Either carries its own persona (`agent.definition`) or references an existing
+ * agent-registry entry (`agent.agent`), plus the skills it should always carry
+ * and the knowledge module that gives it domain grounding. Components are
+ * resolved against the same catalogs, so a vertical can never reference
+ * something that does not exist.
+ */
+export interface VerticalSpec {
+  /** Self-contained persona (wins over `agent`) or a reference to a catalog agent. */
+  agent?: { definition: AgentDefPayload } | { agent: string }
+  /** Community skill names to install with it */
+  skills?: string[]
+  /** Community knowledge module names to seed with it */
+  knowledge?: string[]
+  /** Short usage note shown after install */
+  guidance?: string
 }
 
 export interface AgentDefPayload {
@@ -62,6 +86,7 @@ const CATALOG_FILES: Record<CommunityKind, string> = {
   skill: 'community-skill-registry.json',
   agent: 'community-agent-registry.json',
   knowledge: 'community-knowledge-registry.json',
+  vertical: 'community-vertical-registry.json',
 }
 
 const FALLBACK: Record<CommunityKind, CommunityEntry[]> = {
@@ -96,6 +121,7 @@ const FALLBACK: Record<CommunityKind, CommunityEntry[]> = {
   ],
   agent: [],
   knowledge: [],
+  vertical: [],
 }
 
 const cache: Partial<Record<CommunityKind, CommunityEntry[]>> = {}
@@ -110,7 +136,7 @@ function hereCandidates(file: string): string[] {
   ]
 }
 
-const KINDS: CommunityKind[] = ['skill', 'agent', 'knowledge']
+const KINDS: CommunityKind[] = ['skill', 'agent', 'knowledge', 'vertical']
 
 function isKind(kind: string): kind is CommunityKind {
   return (KINDS as string[]).includes(kind)

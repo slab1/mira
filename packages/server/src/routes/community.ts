@@ -21,7 +21,7 @@
  */
 import type { Hono, Context } from 'hono'
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { getConfig, removeAgentFromConfig, saveConfig } from '../config/index.js'
 import { isPathAllowed, sanitizePath } from '../guardrails/index.js'
 import {
@@ -30,16 +30,21 @@ import {
   searchRegistry,
   type CommunityKind,
 } from '../community/registry.js'
+import { planVertical } from '../community/verticals.js'
 import { SKILLS_DIR } from '../skills/loader.js'
 import type { StoreInput } from '../learning/knowledge.js'
 import type { MiraConfig } from '../types/index.js'
 
-const KINDS = ['skill', 'agent', 'knowledge'] as const
+const KINDS = ['skill', 'agent', 'knowledge', 'vertical'] as const
 
 /** Same contract as PATCH /config: sanitize + allowedRoots check, else 400/403. */
 function resolveCwd(c: Context): { cwd?: string; error?: string; status?: number } {
   const raw = c.req.query('cwd')
   if (!raw) return {}
+  // Must be absolute: install targets are file WRITES, and a relative cwd would
+  // be resolved against the server's own working directory (writing into the
+  // repo it happens to run from).
+  if (!isAbsolute(raw)) return { error: 'cwd must be an absolute path', status: 400 }
   const sanitized = sanitizePath(raw)
   if (!sanitized.ok) return { error: `invalid cwd: ${sanitized.reason}`, status: 400 }
   const cwd = sanitized.sanitized ?? raw
@@ -227,6 +232,159 @@ export function mountCommunityRoutes(
       return c.json({ error: `uninstall failed: ${String(e)}` }, 500)
     }
     return c.json({ removed: name })
+  })
+
+  // ── Verticals (P3.6) — install a domain bundle atomically ──────────
+  // Resolution happens first (planVertical): a vertical referencing a missing
+  // catalog entry fails before anything is written.
+  app.post('/community/verticals/:name', async (c: Context) => {
+    const name = c.req.param('name')
+    if (!name || !isValidArtifactName(name))
+      return c.json({ error: 'invalid vertical name (lowercase slug required)' }, 400)
+    const entry = getRegistryEntry('vertical', name)
+    if (!entry) return c.json({ error: `vertical not found in registry: ${name}` }, 404)
+    const plan = planVertical(entry)
+    if (!plan) return c.json({ error: 'entry is not a vertical bundle' }, 400)
+    if (plan.missing.length > 0)
+      return c.json(
+        { error: `vertical references missing catalog entries: ${plan.missing.join(', ')}` },
+        409,
+      )
+    const resolved = resolveCwd(c)
+    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status ?? 400) as 400)
+    const cwd = resolved.cwd ?? process.cwd()
+
+    const installed: { agent?: string; skills: string[]; knowledge: string[] } = {
+      skills: [],
+      knowledge: [],
+    }
+    const failed: string[] = []
+
+    // 1. agent persona — before the material it reasons over
+    if (plan.agent) {
+      const current = getConfig(cwd).agents ?? {}
+      try {
+        await saveConfig(
+          {
+            agents: {
+              ...current,
+              [plan.agent.name]: {
+                ...plan.agent.definition,
+                description: plan.agent.definition.description ?? plan.description,
+              },
+            },
+          },
+          'project',
+          cwd,
+        )
+        installed.agent = plan.agent.name
+      } catch (e) {
+        failed.push(`agent:${plan.agent.name} (${String(e)})`)
+      }
+    }
+
+    // 2. skills
+    for (const skill of plan.skills) {
+      const target = join(localSkillsDir(cwd), `${skill.name}.md`)
+      try {
+        await mkdir(localSkillsDir(cwd), { recursive: true })
+        const body =
+          skill.source.kind === 'packaged'
+            ? ((await readPackagedPack(skill.name)) ?? '')
+            : skill.source.kind === 'inline'
+              ? skill.source.content
+              : ''
+        if (!body) throw new Error('no installable content')
+        await writeFile(target, composeSkillPack(skill.name, skill.description, body), {
+          encoding: 'utf-8',
+        })
+        installed.skills.push(skill.name)
+      } catch (e) {
+        failed.push(`skill:${skill.name} (${String(e)})`)
+      }
+    }
+
+    // 3. knowledge module
+    if (plan.knowledge.length > 0) {
+      if (!deps.knowledge) failed.push('knowledge: (store unavailable)')
+      else {
+        const seeded: string[] = []
+        for (const mod of plan.knowledge) {
+          if (mod.source.kind !== 'knowledge') {
+            failed.push(`knowledge:${mod.name} (not a module)`)
+            continue
+          }
+          try {
+            for (const e of mod.source.entries) {
+              const stored = await deps.knowledge.store({
+                tier: e.tier,
+                source: 'user',
+                title: e.title,
+                content: e.content,
+                tags: e.tags ?? [mod.name],
+                metadata: { module: mod.name, vertical: name, installed: true },
+                sourceKind: 'user-stated',
+                createdBy: 'user',
+              })
+              seeded.push(stored.id)
+            }
+            installed.knowledge.push(`${mod.name} (${seeded.length})`)
+          } catch (e) {
+            failed.push(`knowledge:${mod.name} (${String(e)})`)
+          }
+        }
+      }
+    }
+
+    return c.json(
+      {
+        installed: name,
+        kind: 'vertical',
+        components: installed,
+        guidance: plan.guidance,
+        ...(failed.length ? { failed } : {}),
+      },
+      failed.length ? 207 : 201,
+    )
+  })
+
+  // ── DELETE /community/verticals/:name — remove the bundle's files ──
+  // Knowledge is NOT reverted (seeded memories have no uninstall; removing them
+  // would destroy user-retrieved context) — the response says so explicitly.
+  app.delete('/community/verticals/:name', async (c: Context) => {
+    const name = c.req.param('name')
+    if (!name || !isValidArtifactName(name)) return c.json({ error: 'invalid vertical name' }, 400)
+    const entry = getRegistryEntry('vertical', name)
+    if (!entry) return c.json({ error: `vertical not found in registry: ${name}` }, 404)
+    const plan = planVertical(entry)
+    if (!plan) return c.json({ error: 'entry is not a vertical bundle' }, 400)
+    const resolved = resolveCwd(c)
+    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status ?? 400) as 400)
+    const cwd = resolved.cwd ?? process.cwd()
+
+    const removed: string[] = []
+    if (plan.agent) {
+      try {
+        if (await removeAgentFromConfig(plan.agent.name, cwd))
+          removed.push(`agent:${plan.agent.name}`)
+      } catch (e) {
+        return c.json({ error: `uninstall failed: ${String(e)}` }, 500)
+      }
+    }
+    for (const skill of plan.skills) {
+      try {
+        await rm(join(localSkillsDir(cwd), `${skill.name}.md`), { force: true })
+        removed.push(`skill:${skill.name}`)
+      } catch (e) {
+        return c.json({ error: `uninstall failed: ${String(e)}` }, 500)
+      }
+    }
+    return c.json({
+      removed: name,
+      kind: 'vertical',
+      components: removed,
+      knowledgeKept: plan.knowledge.map((k) => k.name),
+    })
   })
 
   // ── POST /community/knowledge/:name — seed a knowledge module ───────

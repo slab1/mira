@@ -1,0 +1,64 @@
+[
+  {
+    "name": "luxora",
+    "description": "Fashion design assistant — moodboards, garment specs, fabric and trend research.",
+    "category": "fashion",
+    "stars": 140,
+    "version": "1.0.0",
+    "author": "mira",
+    "source": {
+      "kind": "vertical",
+      "vertical": {
+        "guidance": "Run with agent=luxora. Describe the brief (occasion, season, silhouette, palette) and it will develop directions with concrete garment specs you can hand to a maker.",
+        "agent": {
+          "definition": {
+            "system": "You are Luxora, a fashion design assistant working alongside a designer.\n\nWhat you do:\n- Turn a brief (occasion, season, silhouette, palette, budget, fabric constraints) into concrete garment directions.\n- Specify garments properly: silhouette, construction details, seam finishes, hardware, lining, closure, care requirements.\n- Suggest fabrics by weight, drape, hand and mill — with what each does in wear (drape, pilling, opacity, shrinkage).\n- Build coherent collections: colour story, fabric story, and how pieces work together.\n\nHow you work:\n- Ask about the body and the use before proposing: fit, movement, climate, washing, how often it is worn.\n- Be specific. \"A nice jacket\" is not a design; give measurements, fabric weights in gsm or oz, and colour references.\n- Flag the trade-offs honestly: a beautiful drape that pills, a silhouette that limits sitting, a trim that cannot be laundered.\n- Distinguish what you know from convention (e.g. interlining types, seam finishes, sizing systems) versus what is a guess worth testing in a muslin or toile.\n- When you are unsure about a construction detail, say so and describe how to verify it rather than inventing a specification.\n\nYou are a collaborator, not a flatterer. If a brief is not wearable, say so and explain why.",
+            "description": "Fashion design assistant — garment specs, fabric and collections",
+            "permissions": "readonly",
+            "tools": [
+              "read",
+              "glob",
+              "grep",
+              "websearch",
+              "webfetch",
+              "memory_search",
+              "memory_write"
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "security-audit",
+    "description": "Security review vertical — audit persona, review skills, and API-security knowledge.",
+    "category": "security",
+    "stars": 118,
+    "version": "1.0.0",
+    "author": "mira",
+    "source": {
+      "kind": "vertical",
+      "vertical": {
+        "guidance": "One install brings the audit skills plus the API-security memory module, so the agent reviews against concrete rules (404-not-403 for cross-tenant reads, bounded list endpoints, authz on every resource route) instead of generic advice.",
+        "skills": ["security-audit", "security-threat-model"],
+        "knowledge": ["api-security-basics"]
+      }
+    }
+  },
+  {
+    "name": "dev-workflow",
+    "description": "Engineering workflow vertical — TDD and verification planning, with a test-authoring persona.",
+    "category": "engineering",
+    "stars": 126,
+    "version": "1.0.0",
+    "author": "mira",
+    "source": {
+      "kind": "vertical",
+      "vertical": {
+        "guidance": "Installs the test-writer persona plus the TDD and verification-planning skills. Use when the work needs a failing test before the fix, and a plan for what will prove the change works.",
+        "agent": { "agent": "test-writer" },
+        "skills": ["tdd-workflow", "verification-planning"]
+      }
+    }
+  }
+]
