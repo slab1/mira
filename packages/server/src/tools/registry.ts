@@ -160,6 +160,7 @@ export class ToolRegistry {
       () => import('./mcp_marketplace.js'),
       () => import('./browser.js'),
       () => import('./findings.js'),
+      () => import('./revert.js'),
       () => import('./goals.js'),
       () => import('./team_memory.js'),
       () => import('./question.js'),
@@ -170,15 +171,29 @@ export class ToolRegistry {
       () => import('./other.js'),
     ]
     for (const load of modules) {
-      const mod = (await load()) as Record<string, ToolDef | ToolDef[]>
-      const raw =
-        (mod as Record<string, ToolDef | ToolDef[]>).default ??
-        (mod as Record<string, ToolDef[]>).tools ??
-        ((mod as Record<string, ToolDef>).tool
-          ? [(mod as Record<string, ToolDef>).tool as ToolDef]
-          : [])
-      const defs: ToolDef[] = Array.isArray(raw) ? raw : [raw].filter(Boolean)
-      for (const d of defs) if (d) this.register(d)
+      const mod = (await load()) as Record<string, unknown>
+      // Prefer the module's `tools` array — it is the COMPLETE set for that
+      // module. Several modules export `default = <one tool>` alongside a
+      // `tools` array with more (edit.ts: [edit, patch]; memory.ts adds
+      // memory_write; session.ts adds session_fork; other.ts has many). The old
+      // `default ?? tools` ordering silently dropped every one of those extras,
+      // so `patch` and friends were unregisterable. `tool` remains as a last
+      // resort for modules that only re-export a single tool (grep.ts).
+      const asDefs = (v: unknown): ToolDef[] => {
+        if (!v) return []
+        return (Array.isArray(v) ? v : [v]).filter(
+          (d): d is ToolDef =>
+            !!d &&
+            typeof (d as ToolDef).name === 'string' &&
+            typeof (d as ToolDef).execute === 'function',
+        )
+      }
+      const defs: ToolDef[] = [...asDefs(mod.tools), ...asDefs(mod.default), ...asDefs(mod.tool)]
+      for (const d of defs) {
+        // First definition wins (a module may re-export another's tool).
+        if (this.tools.has(d.name)) continue
+        this.register(d)
+      }
     }
   }
 
@@ -366,9 +381,20 @@ export class ToolRegistry {
         try {
           const { extractPatchPaths } = await import('../guardrails/index.js')
           const patchCwd = typeof rec.cwd === 'string' && rec.cwd ? rec.cwd : base
-          for (const rel of extractPatchPaths(rec.patch)) targets.push(resolve(patchCwd, rel))
+          for (const rel of extractPatchPaths(rec.patch)) {
+            const abs = resolve(patchCwd, rel)
+            // Same read-before-edit discipline as the single-file branch —
+            // a multi-file diff must not be a way around it.
+            this.assertReadBeforeMutation(ctx.sessionID, abs)
+            targets.push(abs)
+          }
         } catch (e) {
+          // extractPatchPaths/guard failures must not silently disable the check
           console.warn(`[tools] patch snapshot path extraction failed: ${String(e)}`)
+          throw new Error(
+            `Read-before-edit guard: cannot verify patch targets (${String(e)}). ` +
+              `Refusing an unverifiable multi-file patch.`,
+          )
         }
       }
       for (const abs of [...new Set(targets)]) {
