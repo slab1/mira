@@ -28,6 +28,7 @@ const KNOWN_TOP_KEYS = new Set([
   'tools',
   'theme',
   'debug',
+  'compliance',
 ])
 
 function validateConfig(raw: Record<string, unknown>, source: string): void {
@@ -277,6 +278,7 @@ export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
           loop: mergeSection(DEFAULT_CONFIG.loop, raw.loop),
           agents: mergeSection(DEFAULT_CONFIG.agents, raw.agents),
           guardrails: mergeSection(DEFAULT_CONFIG.guardrails, raw.guardrails),
+          compliance: mergeSection(DEFAULT_CONFIG.compliance, raw.compliance),
           features: mergeSection(DEFAULT_CONFIG.features, raw.features),
           tools: mergeSection(DEFAULT_CONFIG.tools, raw.tools),
         } as MiraConfig
@@ -345,6 +347,7 @@ export function getConfig(cwd?: string): MiraConfig {
             loop: mergeSection(DEFAULT_CONFIG.loop, raw.loop),
             agents: mergeSection(DEFAULT_CONFIG.agents, raw.agents),
             guardrails: mergeSection(DEFAULT_CONFIG.guardrails, raw.guardrails),
+            compliance: mergeSection(DEFAULT_CONFIG.compliance, raw.compliance),
             features: mergeSection(DEFAULT_CONFIG.features, raw.features),
             tools: mergeSection(DEFAULT_CONFIG.tools, raw.tools),
           } as MiraConfig
@@ -430,6 +433,14 @@ const miraConfigPatchSchema = z
         allowedCommands: z.array(z.string()).optional(),
         maxOutputBytes: z.number().int().positive().optional(),
         auditLogPath: z.string().optional(),
+      })
+      .optional(),
+    compliance: z
+      .object({
+        /** Days of audit evidence to keep; 0 disables age-based deletion (P3.5) */
+        retentionDays: z.number().int().min(0).optional(),
+        /** Max audit rows kept (oldest trimmed first); 0 disables the cap */
+        maxRows: z.number().int().min(0).optional(),
       })
       .optional(),
     mcp: z

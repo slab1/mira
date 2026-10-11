@@ -169,6 +169,13 @@ export interface MiraConfig {
     maxOutputBytes?: number
     auditLogPath?: string
   }
+  /** Compliance policy (P3.5) — audit evidence retention. */
+  compliance?: {
+    /** Days of audit evidence to keep; 0 disables age-based deletion */
+    retentionDays?: number
+    /** Max audit rows kept (oldest trimmed first); 0 disables the cap */
+    maxRows?: number
+  }
   mcp: Record<string, MCPServerConfig>
   provider: Record<string, ProviderConfig>
   routing?: RoutingConfig

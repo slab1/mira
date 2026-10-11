@@ -172,6 +172,15 @@ export const guardrailsConfigSchema = z.object({
 })
 export type GuardrailsConfig = z.infer<typeof guardrailsConfigSchema>
 
+/** Compliance policy (P3.5) — audit evidence retention. 0 disables a limit. */
+export const complianceConfigSchema = z.object({
+  /** Days of audit evidence to keep; 0 disables age-based deletion */
+  retentionDays: z.number().int().min(0).optional(),
+  /** Max audit rows kept (oldest trimmed first); 0 disables the cap */
+  maxRows: z.number().int().min(0).optional(),
+})
+export type ComplianceConfig = z.infer<typeof complianceConfigSchema>
+
 /** Feature flags — toggled via Settings → General. Consumed by SessionPrompt. */
 export const featuresConfigSchema = z.object({
   /** Inject open todos into the per-turn loadContext system message */
@@ -208,6 +217,8 @@ export const miraConfigSchema = z.object({
   permission: z.record(z.string(), permissionValueSchema).default({}),
   /** Guardrails */
   guardrails: guardrailsConfigSchema.optional(),
+  /** Compliance policy (P3.5) — audit evidence retention */
+  compliance: complianceConfigSchema.optional(),
   /** MCP servers */
   mcp: z.record(z.string(), mcpServerConfigSchema).default({}),
   /** Provider registry (OpenRouter by default) */

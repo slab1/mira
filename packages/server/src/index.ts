@@ -788,6 +788,8 @@ async function main() {
     resolveRole,
     bearerOf,
     sessionOwnerCache,
+    // P3.5: per-org compliance reporting resolves a row's session → org
+    orgOfSession,
   })
 
   mountFindingRoutes(app, { db, bus })

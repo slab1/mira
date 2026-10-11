@@ -332,6 +332,18 @@ export async function migrate(db: MiraDB) {
       )
     }
   } catch {}
+  // Retention (P3.5): trim audit evidence past the window / row cap. Bounded
+  // per boot; the admin endpoint can run it on demand (POST /admin/compliance/retention).
+  try {
+    const { applyRetention } = await import('../compliance/index.js')
+    const res = await applyRetention(db)
+    if (res.deletedByAge || res.deletedByCap)
+      console.warn(
+        `[storage] audit retention: -${res.deletedByAge} by age, -${res.deletedByCap} by cap, ${res.remaining} remain`,
+      )
+  } catch (e) {
+    console.warn('[storage] audit retention sweep failed:', String(e))
+  }
   if (process.env.MIRA_VACUUM === '1') {
     try {
       sqlite.exec('VACUUM;')
