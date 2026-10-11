@@ -153,6 +153,34 @@ async function finishJob(
       timestamp: Date.now(),
     })
   }
+  // Auto-rollback (P3.6 groundwork, opt-in): a run whose verification settled
+  // FAILED gets its file edits reverted. Runs after the atomic settle so the job
+  // row always records the failure, and only when `row` exists — i.e. exactly
+  // once per job. Files only; messages are preserved.
+  if (row && verification?.verificationState === 'FAILED_VERIFICATION' && patch.childSessionID) {
+    const { autoRollbackEnabled, rollbackSessionMutations } = await import('../compliance/index.js')
+    if (autoRollbackEnabled()) {
+      const res = await rollbackSessionMutations(db as never, patch.childSessionID)
+      if (res.files.length || res.deleted.length) {
+        console.warn(
+          `[tasks] auto-rollback: restored ${res.files.length} file(s), removed ${res.deleted.length} created file(s) after failed verification (job ${jobID})`,
+        )
+        publish?.bus?.publish({
+          type: 'job.updated',
+          sessionID: publish?.sessionID,
+          payload: {
+            jobID,
+            taskID: publish?.taskID,
+            kind: 'auto-rollback',
+            restored: res.files,
+            removed: res.deleted,
+            reason: 'verification failed',
+          },
+          timestamp: Date.now(),
+        })
+      }
+    }
+  }
   return row
 }
 

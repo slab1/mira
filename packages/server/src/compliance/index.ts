@@ -19,10 +19,82 @@
  *     therefore exposes both `rows` and distinct `events` (session+tool+reason).
  */
 import type { MiraDB } from '../storage/db.js'
+import { getConfig } from '../config/store.js'
 
 /** Default retention window. 0 disables age-based deletion. */
 export const DEFAULT_RETENTION_DAYS = 90
 export const DEFAULT_MAX_ROWS = 100_000
+
+/**
+ * Auto-rollback on FAILED_VERIFICATION — OFF by default.
+ *
+ * When on, a run whose verification state settles as FAILED has its file
+ * mutations reverted automatically. Default is off deliberately: verification
+ * is evidence-based (exit codes from diagnose/bash), so a false negative would
+ * discard legitimate work. Snapshots make the revert recoverable, but silently
+ * un-writing files behind the operator's back is not a safe default — opt in
+ * with `compliance.autoRollback: true` or MIRA_AUTO_ROLLBACK=1.
+ */
+export function autoRollbackEnabled(): boolean {
+  try {
+    const cfg = getConfig().compliance
+    if (typeof cfg?.autoRollback === 'boolean') return cfg.autoRollback
+  } catch {}
+  const env = process.env.MIRA_AUTO_ROLLBACK?.trim().toLowerCase()
+  if (env === '1' || env === 'true' || env === 'yes' || env === 'on') return true
+  if (env === '0' || env === 'false' || env === 'no' || env === 'off') return false
+  return false
+}
+
+/**
+ * Revert every file mutation recorded for a session, restoring each file to its
+ * pre-run state (or deleting it when it did not exist before).
+ *
+ * Files only — conversation messages are preserved, so a rolled-back agent run
+ * keeps the context that explains what it was attempting. Snapshot rows for the
+ * session are consumed as they are applied.
+ */
+export async function rollbackSessionMutations(
+  db: MiraDB,
+  sessionID: string,
+): Promise<{ files: string[]; deleted: string[] }> {
+  const sqlite = db.sqlite
+  const out = { files: [] as string[], deleted: [] as string[] }
+  if (!sqlite || !sessionID) return out
+  try {
+    const rows = sqlite
+      .prepare(
+        `SELECT path, content FROM file_snapshots WHERE session_id = ?
+         ORDER BY created_at DESC, rowid DESC`,
+      )
+      .all(sessionID) as Array<{ path: string; content: string | null }>
+    if (rows.length === 0) return out
+
+    const { mkdirSync, writeFileSync, unlinkSync, existsSync } = await import('node:fs')
+    const { dirname } = await import('node:path')
+    for (const row of rows) {
+      try {
+        if (row.content === null) {
+          // Created by the run → remove it again
+          if (row.path && existsSync(row.path)) {
+            unlinkSync(row.path)
+            out.deleted.push(row.path)
+          }
+        } else if (row.path) {
+          mkdirSync(dirname(row.path), { recursive: true })
+          writeFileSync(row.path, row.content, 'utf-8')
+          out.files.push(row.path)
+        }
+      } catch (e) {
+        console.warn(`[compliance] auto-rollback failed for ${row.path}:`, String(e))
+      }
+    }
+    sqlite.prepare('DELETE FROM file_snapshots WHERE session_id = ?').run(sessionID)
+  } catch (e) {
+    console.warn('[compliance] auto-rollback failed:', String(e))
+  }
+  return out
+}
 
 export interface RetentionOptions {
   retentionDays?: number
