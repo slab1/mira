@@ -16,9 +16,8 @@ permissions:
 # H3-C Fix 3 — Vercel Remote Cache passthrough (verdict §5.4 / §7.4).
 # Empty when secrets/vars are absent (forks) — turbo treats unset as
 # "no remote cache" and still uses the local .turbo cache. Never fails.
-env:
-  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+# NOTE: the token is scoped per-job (build/test/eval) — a top-level env would
+# inject it into jobs that never touch turbo (repo-hygiene, auth-guard, changes).
 
 jobs:
   # H3-C Fix 3 — path-filtered gating (verdict §5.5 / §7.4). Keeps one
@@ -33,8 +32,8 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       slack: ${{ steps.filter.outputs.slack }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         id: filter
         with:
           filters: |
@@ -70,7 +69,7 @@ jobs:
     name: repo-hygiene
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Fail if node_modules is tracked in git
         # 2026-09-20: 92 tracked node_modules symlinks broke cross-machine
         # sync (Windows↔Android) and CI with dangling links that
@@ -90,11 +89,11 @@ jobs:
     name: auth-guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Install dependencies
@@ -123,11 +122,11 @@ jobs:
     name: typecheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Install dependencies
@@ -144,16 +143,19 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     needs: [changes, typecheck]
+    env:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ vars.TURBO_TEAM }}
     # Docs-only PRs skip (status "skipped", never green-on-empty).
     if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.code == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0 # required for the ...[base...HEAD] affected filter
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Install dependencies
@@ -161,11 +163,15 @@ jobs:
       - name: Verify install integrity
         run: node scripts/verify-install.js
       - name: Turborepo remote cache
-        uses: actions/cache@v4
+        # Cache-integrity: PRs RESTORE but never SAVE (a poisoned PR cache must
+        # not leak into main builds), and the turbo-main- prefix is written only
+        # by main runs. Same contract in the test job.
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: turbo-cache
         with:
           path: .turbo
-          key: turbo-${{ github.sha }}
-          restore-keys: turbo-
+          key: turbo-main-${{ github.sha }}
+          restore-keys: turbo-main-
       - name: Turborepo remote cache login (optional)
         # `secrets.*` is NOT allowed in step-level `if:` — read the mapped env var
         # (top-level `env: TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}`) instead.
@@ -207,20 +213,29 @@ jobs:
         # Tri-state: blocking pkg failed → exit 1 (never); only non-blocking
         # failed → warning, exit 0 (dependencies-successful); none → exit 0 (always).
         run: node scripts/ci/turbo-tri-state.js --require=@mira/server,@mira/shared
+      - name: Save turbo cache (main only — PRs must never write the namespace)
+        if: github.event_name != 'pull_request' && steps.turbo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .turbo
+          key: turbo-main-${{ github.sha }}
 
   test:
     name: test
     runs-on: ubuntu-latest
     needs: [changes, build]
+    env:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ vars.TURBO_TEAM }}
     if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.code == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0 # required for the ...[base...HEAD] affected filter
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Install dependencies
@@ -228,11 +243,13 @@ jobs:
       - name: Verify install integrity
         run: node scripts/verify-install.js
       - name: Turborepo cache
-        uses: actions/cache@v4
+        # Restore-only — PR runs must never write the shared cache namespace.
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: turbo-cache
         with:
           path: .turbo
-          key: turbo-${{ github.sha }}
-          restore-keys: turbo-
+          key: turbo-main-${{ github.sha }}
+          restore-keys: turbo-main-
       - name: Test (affected on PRs, full otherwise)
         # Same affected + full-build-fallback contract as the build job above.
         run: |
@@ -260,18 +277,27 @@ jobs:
       - name: Check blocking failures (tri-state)
         if: always()
         run: node scripts/ci/turbo-tri-state.js --require=@mira/server,@mira/shared
+      - name: Save turbo cache (main only — PRs must never write the namespace)
+        if: github.event_name != 'pull_request' && steps.turbo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .turbo
+          key: turbo-main-${{ github.sha }}
 
   eval:
     name: eval (PR fast)
     runs-on: ubuntu-latest
     needs: build
+    env:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ vars.TURBO_TEAM }}
     # 3-tier: PR runs only fast checks; full suite is nightly (eval.yml)
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Install dependencies
@@ -279,11 +305,13 @@ jobs:
       - name: Verify install integrity
         run: node scripts/verify-install.js
       - name: Turborepo cache
-        uses: actions/cache@v4
+        # Restore-only — PR runs must never write the shared cache namespace.
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: turbo-cache
         with:
           path: .turbo
-          key: turbo-${{ github.sha }}
-          restore-keys: turbo-
+          key: turbo-main-${{ github.sha }}
+          restore-keys: turbo-main-
       - name: Eval — fast tier (PR)
         run: bunx turbo run eval --continue --cache-dir=.turbo -- --tier=fast
         env:
@@ -291,7 +319,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       - name: Upload eval results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: eval-results-pr
           path: |

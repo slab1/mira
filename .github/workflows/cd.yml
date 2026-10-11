@@ -9,36 +9,40 @@ concurrency:
   group: cd-${{ github.ref }}
   cancel-in-progress: false
 
+# Least privilege: read-only at the workflow level; each job escalates only
+# what it needs (docker → packages:write; release → contents:write + id-token
+# for npm provenance). `issues: write` was never used here and is gone.
 permissions:
-  contents: write
-  packages: write
-  issues: write
-  id-token: write
+  contents: read
 
 jobs:
   build:
     name: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Install dependencies
         run: bun install
       - name: Turborepo cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .turbo
-          key: turbo-${{ github.sha }}
-          restore-keys: turbo-
+          # main-only key namespace: PR runs never save (see ci.yml), and the
+          # restore prefix is turbo-main- — a poisoned PR cache can never leak in.
+          key: turbo-main-${{ github.sha }}
+          restore-keys: turbo-main-
       - name: Build
         run: bunx turbo run build --cache-dir=.turbo
       - name: Upload dist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist
           path: |
@@ -49,19 +53,22 @@ jobs:
     name: docker
     runs-on: ubuntu-latest
     needs: build
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
@@ -69,7 +76,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           push: true
@@ -83,35 +90,51 @@ jobs:
     name: deploy
     runs-on: ubuntu-latest
     needs: docker
+    permissions:
+      contents: read
     if: vars.DEPLOY_ENABLED == 'true'
     environment:
       name: production
       url: ${{ vars.DEPLOY_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Vars/secrets reach the script through the environment, never through
+      # ${{ }} interpolation — direct interpolation into `run:` is the classic
+      # template-injection surface, and quoting inside the script is fragile.
       - name: Validate deploy variables
+        env:
+          DEPLOY_HOOK_URL: ${{ vars.DEPLOY_HOOK_URL }}
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
         run: |
-          if [ -z "${{ vars.DEPLOY_HOOK_URL }}" ] || [ -z "${{ secrets.DEPLOY_TOKEN }}" ]; then
+          if [ -z "$DEPLOY_HOOK_URL" ] || [ -z "$DEPLOY_TOKEN" ]; then
             echo "::error::Required deploy variables vars.DEPLOY_HOOK_URL and secrets.DEPLOY_TOKEN are missing or empty"
             exit 1
           fi
       - name: Deploy
+        env:
+          DEPLOY_HOOK_URL: ${{ vars.DEPLOY_HOOK_URL }}
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+          IMAGE: ghcr.io/${{ github.repository }}:${{ github.sha }}
         run: |
-          echo "Deploying ghcr.io/${{ github.repository }}:${{ github.sha }} to ${{ vars.DEPLOY_URL }}"
+          echo "Deploying $IMAGE to $DEPLOY_URL"
           # Example: trigger deploy hook / helm upgrade / fly deploy
           if [ -n "${{ vars.DEPLOY_HOOK_URL }}" ]; then
-            curl -fsSL -X POST "${{ vars.DEPLOY_HOOK_URL }}" \
-              -H "Authorization: Bearer ${{ secrets.DEPLOY_TOKEN }}" \
+            # Deploy hook payload built with jq — no string-concatenated JSON.
+            curl -fsSL -X POST "$DEPLOY_HOOK_URL" \
+              -H "Authorization: Bearer $DEPLOY_TOKEN" \
               -H "Content-Type: application/json" \
-              -d "{\"image\":\"ghcr.io/${{ github.repository }}:${{ github.sha }}\"}"
+              --data-raw "$(jq -n --arg img "$IMAGE" '{image: $img}')"
           else
             echo "::notice::DEPLOY_HOOK_URL not set — skipping external deploy"
           fi
       - name: Health check
         if: vars.DEPLOY_URL != ''
+        env:
+          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
         run: |
           for i in 1 2 3 4 5; do
-            if curl -fsSL "${{ vars.DEPLOY_URL }}/health" | grep -q ok; then
+            if curl -fsSL "$DEPLOY_URL/health" | grep -q ok; then
               echo "Health check passed"
               exit 0
             fi
@@ -123,15 +146,20 @@ jobs:
     name: release
     runs-on: ubuntu-latest
     needs: [build, docker]
+    # npm provenance — semantic-release signs the publish with the job's OIDC
+    # token (paired with NPM_CONFIG_PROVENANCE in the step below).
+    permissions:
+      contents: write
+      id-token: write
     if: github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Install dependencies
@@ -140,6 +168,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # npm provenance — signed publish backed by the job's OIDC token
+          # (granted via the release job's id-token: write).
+          NPM_CONFIG_PROVENANCE: 'true'
         run: |
           # Publish mira-cli-ts from its package dir (has its own .releaserc.json,
           # toolchain pinned in packages/cli devDependencies).
