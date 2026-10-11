@@ -39,6 +39,7 @@ import { sharedGoals } from '../strategic/goals.js'
 import type { Todo, JsonValue, MiraConfig } from '../types/index.js'
 import type { MiraDB } from '../storage/db.js'
 import { getUserNameForOwner } from '../storage/users.js'
+import { maybeAutoTitle } from './title.js'
 import { loadSkills } from '../skills/loader.js'
 import { getAgentTemplates, isKnownAgent, isBashCommandAllowed } from '../agents/templates.js'
 import { buildRegistry, resolveModel, resolveWithFallbacks } from '../gateway/provider.js'
@@ -900,6 +901,11 @@ export class SessionPrompt {
       text: userText,
       createdAt: now,
     })
+    // Auto-title (once): a still-default session takes its name from the first
+    // user prompt. Fire-and-forget — titling must never delay or fail the turn.
+    void maybeAutoTitle(this.deps.db, this.deps.bus, sessionID, session.title, userText).catch(
+      () => {},
+    )
     this.deps.bus.publish({
       type: 'message.created',
       sessionID,
