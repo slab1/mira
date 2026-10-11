@@ -792,7 +792,17 @@ async function main() {
     orgOfSession,
   })
 
-  mountFindingRoutes(app, { db, bus })
+  // P3.3 tenancy: findings are scoped through their session's owner/org
+  mountFindingRoutes(app, {
+    db,
+    bus,
+    ownerOfSession,
+    orgOfSession,
+    orgOfOwner,
+    resolveOwner,
+    bearerOf,
+    OWNERSHIP_ENABLED: () => API_KEY_OWNERS.size > 0,
+  })
   mountWebhookRoutes(app, { bus })
 
   mountMeRoutes(app, { db, resolveOwner, resolveRole, bearerOf, ORG_NAMES, ORG_MEMBERS })
@@ -828,7 +838,16 @@ async function main() {
   // Community distribution (P3.4) — install skills/agents/knowledge modules
   mountCommunityRoutes(app, { knowledge: learning.knowledge })
   mountWorkspaceRoutes(app)
-  mountWorkspacesRoutes(app, { db })
+  mountWorkspacesRoutes(app, {
+    db,
+    // P3.3 tenancy: file snapshots are scoped to the caller's sessions
+    resolveOwner,
+    bearerOf,
+    ownerOfSession,
+    orgOfSession,
+    orgOfOwner,
+    OWNERSHIP_ENABLED: () => API_KEY_OWNERS.size > 0,
+  })
   mountSymbolRoutes(app)
   mountDashboardRoutes(app, {
     db,

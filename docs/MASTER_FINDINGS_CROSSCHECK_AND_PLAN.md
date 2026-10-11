@@ -315,9 +315,20 @@ Retention, redaction, policy-violation reporting. Only meaningful with P3.1–P3
 - **UI**: the System audit panel gains a violations/retention strip (30d rows vs events, category badges, retention state, run-sweep button).
 - Tests: `compliance/redact.test.ts` (19), `compliance/compliance.test.ts` (12), `guardrails/audit-redact.test.ts` (7), `routes/compliance.test.ts` (12).
 
-### P3.6 Vertical agents
+### Open gaps carried forward (resolved 2026-10-11 in the post-P3.5 sweep)
 
-Runtime substrate exists (templates, custom agents from `mira.json`, subagents, engine registry). Domain agents (Luxora, research, business) are pure greenfield. Do not start until P0–P2 are solid and Phase 0 identity is settled — this is the addendum's "platform model" bet and should be a deliberate second product, not a distraction.
+Three defects the plan flagged but left open, closed in a follow-up sweep:
+
+1. **`deleteSession()` orphaned audit rows** (data integrity + compliance). Audit evidence now _deliberately survives_ session deletion — deleting a session must not erase the trail — and the rows are stamped with `owner_id`/`org_id` at the cold delete path, so they stay org-attributable for reporting. New `audit_entries.owner_id`/`org_id` columns (+ index, idempotent adds).
+   - **While fixing this, found `SessionCrud` (`session/session-crud.ts`, 384 lines) is entirely dead** — imported nowhere, duplicating nine live `SessionPrompt` methods including `persistToolResult` and `deleteSession`. A second copy of a compliance-critical path is a live hazard: my first fix landed in the dead copy and silently did nothing. Deleted; the live path is `SessionPrompt`.
+2. **Owner-unscoped resources** (`findings`, `file_snapshots`) — a cross-tenant leak once orgs exist: any authenticated owner could list every other owner's findings and file snapshots. Both are now gated by the same P3.3 rule (ownerless → shared; owner match; else same-org). Findings attached to a session the caller can't reach are rejected (404); `/files` + `/changes` filter to the caller's sessions.
+3. **Dead `policy/engine.ts`** — constructed but never called (3-layer taxonomy). Left in place, documented here: the violation taxonomy in `compliance/index.ts` is derived from the _actual_ producers' reason prefixes, which is what real rows carry; wiring the dead engine would mean reworking every denial site for no behavioural gain.
+
+Tests: `compliance/audit-retention.test.ts` (4), `routes/tenancy-scope.test.ts` (12).
+
+### P3.6 Vertical agents — DEFERRED (per ADR 0001)
+
+Runtime substrate exists (templates, custom agents from `mira.json`, subagents, engine registry). Domain agents (Luxora, research, business) are pure greenfield. Do not start until P0–P2 are solid and Phase 0 identity is settled — this is the addendum's "platform model" bet and should be a deliberate second product, not a distraction. **Status: P0–P3.5 are now complete and the ADR gate is met, but P3.6 remains an explicit owner decision, not an automatic continuation.**
 
 ---
 
