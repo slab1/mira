@@ -249,8 +249,8 @@ Aggregate: test coverage signal, guardrail deny rate, open findings by severity,
 ## P3 — Platform & Enterprise
 
 > **Status (2026-10-11): P3.1–P3.5 DONE — under the recommended primary identity
-> (autonomous engineering agent platform). P3.6 remains (explicitly deferred as a
-> deliberate second product per ADR 0001).**
+> (autonomous engineering agent platform). P3.6 authorized (ADR 0001 amendment)
+> and DONE — the full P0–P3 sequence is complete.**
 
 Order within P3 assumes primary identity = engineering agent platform.
 
@@ -354,9 +354,21 @@ Audit of "can Mira catch an agent editing the wrong file or the wrong position?"
 
 Tests: `tools/edit-position.test.ts` (8), `tools/revert.test.ts` (10), `compliance/auto-rollback.test.ts` (15), `tools/auto-rollback.e2e.test.ts` (5, through the real task pipeline), `tools/edit-target.test.ts` (11), `tools/task-relevance.test.ts` (11).
 
-### P3.6 Vertical agents — DEFERRED (per ADR 0001)
+### P3.6 Vertical agents — ✅ DONE (authorized, see ADR 0001 amendment)
 
-Runtime substrate exists (templates, custom agents from `mira.json`, subagents, engine registry). Domain agents (Luxora, research, business) are pure greenfield. Do not start until P0–P2 are solid and Phase 0 identity is settled — this is the addendum's "platform model" bet and should be a deliberate second product, not a distraction. **Status: P0–P3.5 are now complete and the ADR gate is met, but P3.6 remains an explicit owner decision, not an automatic continuation.**
+Runtime substrate exists (templates, custom agents from `mira.json`, subagents, engine registry). Domain agents (Luxora, research, business) are pure greenfield. Do not start until P0–P2 are solid and Phase 0 identity is settled — this is the addendum's "platform model" bet and should be a deliberate second product, not a distraction. **The ADR gate was met (P0–P3.5 complete) and the owner explicitly authorized this work — see the ADR amendment.**
+
+- **A vertical is a bundle, not a fork** (`community/verticals.ts`): one installable unit composing the P3.4 kinds — an agent persona (inline, or a reference to a catalog agent), the skills it should always carry, and a knowledge module that grounds it in the domain. Added as a fourth kind (`vertical`) to the existing community registry, so browse/search/install are uniform.
+- **Resolution before any write** (`planVertical`): components resolve against their catalogs first; a vertical referencing something missing fails with `409` naming the missing entries and writes nothing. Install order is deliberate: agent → skills → knowledge (persona exists before the material it reasons over).
+- **Routes**: `POST /community/verticals/:name` (atomic install; per-component `failed` list with `207` on partial failure), `DELETE /community/verticals/:name` (removes agent + skills; **knowledge is kept** — seeded memories have no uninstall and the response says so explicitly).
+- **Shipped verticals** (`community-vertical-registry.json`):
+  - `luxora` — fashion design assistant (the addendum's flagship vertical): inline readonly persona covering garment specs, fabric behaviour (drape/pilling/shrinkage), collection coherence, and honest trade-offs ("a beautiful drape that pills"). Self-contained — installs today.
+  - `security-audit` — composes the existing `security-audit` + `security-threat-model` skills with the `api-security-basics` knowledge module, so reviews run against concrete rules rather than generic advice.
+  - `dev-workflow` — references the catalog `test-writer` agent plus `tdd-workflow` + `verification-planning` skills (exercises the by-reference composition path).
+- **Hardening the sweep exposed**: the tests wrote into a literal `packages/server/undefined/` directory because `resolveCwd` accepted the string `"undefined"` as a cwd and resolved it against the server's own working directory. Community installs now **require an absolute cwd** (`400` otherwise) — install targets are file writes, and a relative path would write into whatever directory the server happens to run from.
+- **Honest scope notes**: verticals are offline-curated (same posture as every other catalog); there is no publish/upload path; a vertical is a _behavior_ bundle, not an isolated runtime — it configures the one agent engine rather than shipping its own.
+
+Tests: `routes/verticals.test.ts` (16) — planning/resolution, atomic install (agent+skills+knowledge), idempotent re-install, missing-reference refusal, uninstall semantics (knowledge kept), registry search, temp-dir isolation.
 
 ---
 

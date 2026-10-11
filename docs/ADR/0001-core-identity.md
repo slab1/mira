@@ -36,3 +36,23 @@ roadmap serves.
 - Revisit when: primary-identity excellence criteria are verifiably met
   (project health score green, gate unified, oversight complete), or strategic
   input changes the bet.
+
+## Amendment (2026-10-11) — P3.6 authorized
+
+The gate above is **met**: P0–P2 shipped, the unified self-modification gate and
+approval levels are in place, the explainability dashboard and audit trail are
+live, and project health scoring exists.
+
+The owner has **explicitly authorized P3.6 (vertical agents)**, so the deferral is
+lifted for this item. Reading of the decision:
+
+- The primary identity is unchanged. Verticals ship as _packaged bundles_ on top
+  of the platform (agent persona + skills + knowledge module), using the existing
+  P3.4 community registry — not as a fork of the engine.
+- The risk this ADR warned about — platform work distracting from the core
+  product — is mitigated by making verticals **additive**: a vertical installs
+  into a project and can be uninstalled without touching platform code.
+- P3.5 (vertical compliance/enterprise work) stays out of scope.
+
+This amendment supersedes only the P3.6 deferral; the primary/secondary ordering
+and the "do not build" list in the master findings plan stand.
