@@ -2,7 +2,7 @@
 
 > **Openness + Claude's reasoning + Cursor's polish + Windsurf's autonomy + Cline's transparency, minus weaknesses, plus memory/eval/guardrails as first-class.**
 
-Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observability, tool-layer guardrails, file snapshots with undo, real LSP + MCP integration, HITL questions, and a cost-tracking model gateway — all verified by a 783-test suite (775 passing, verified 2026-10-01) including live-provider E2E gates and real-wire protocol tests.**
+Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observability, tool-layer guardrails, file snapshots with undo, real LSP + MCP integration, HITL questions, and a cost-tracking model gateway — plus a wrong-edit defense stack (ambiguity-gated edits, intent anchors, symbol binding, an edit critic, agent-callable revert, auto-rollback on failed verification), org multi-tenancy with RBAC, a compliance layer (redaction, retention, violation reports), an installable community registry with vertical agents, and session auto-titling — all verified by a 1,150+-test server suite (1,152 passing, verified 2026-10-11) plus web/shared suites, live-provider E2E gates and real-wire protocol tests.**
 
 ## Why Mira?
 
@@ -17,6 +17,8 @@ Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observab
 | Message queue while streaming | ✅             | ❌             | ❌         | ❌         | ❌         | ✅ **Durable (SQLite), chained-turn drain**                                                                                                                           |
 | Inspectable subagents         | ❌ (ephemeral) | ❌             | ❌         | ❌         | ❌         | ✅ **Persistent child sessions with full transcripts**                                                                                                                |
 | Self-improvement              | ❌             | ❌             | ❌         | ❌         | ❌         | ✅ **Pain-point detection → verified patches → autopilot PRs**                                                                                                        |
+| Wrong-edit protection         | ⚠️             | ⚠️             | ⚠️         | ⚠️         | ❌         | ✅ **Ambiguity-gated edits, intent anchors, symbol binding, edit critic, agent `revert`, auto-rollback on failed verification**                                       |
+| Vertical agents               | ❌             | ❌             | ❌         | ❌         | ❌         | ✅ **Installable domain bundles (agent + skills + knowledge) from the community registry**                                                                            |
 | Cost Control                  | ✅ Free        | $20-200        | $20-200    | $15-35     | Free       | ✅ **Free + local, live spend display, prompt caching, cost-cap per-task/session**                                                                                    |
 | Kilo Parity (2026-08)         | —              | —              | —          | —          | —          | ✅ **Agents (code/ask/plan, per-agent LLM) · Memory Bank · Orchestrator DAG · MCP Marketplace · Inline Autocomplete · Browser · Sessions Sync · Slack (Socket Mode)** |
 
@@ -30,7 +32,7 @@ Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observab
      context = system + skills + memory-retrieval + history
      LLM.stream → tool-call → permission → guardrail snapshot → execute
      → doom-loop detect → compaction → usage learning → SSE events
-   ├─ Tool Registry (24 native tools + dynamic mcp__* — Zod validated)
+   ├─ Tool Registry (42 native tools incl. think/revert/findDependents + dynamic mcp__* — Zod validated)
    ├─ Permission (5 layers + BashArity)
    ├─ File Snapshots (undo/rewind) + Message Queue (durable)
    ├─ GlobalBus → WS fan-out (no polling)
@@ -40,7 +42,9 @@ Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observab
    ├─ MCP: real stdio + remote HTTP (Streamable HTTP & legacy HTTP+SSE) clients
    ├─ Observability: Prometheus /metrics (bounded-cardinality + real histograms),
    │   OTel spans correlated with HTTP access logs via X-Request-Id
-   └─ Learning: online learner + usage analysis + knowledge graph
+   ├─ Learning: online learner + usage analysis + knowledge graph
+   ├─ Evolution: observe → diagnose → propose → verify → promote/rollback (eval-gated, fail-closed)
+   └─ Compliance: redacted audit trail (SQLite + export), retention sweeps, policy-violation reports
 ```
 
 ## Stack
@@ -61,6 +65,9 @@ Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observab
 - Bearer auth via `MIRA_TOKEN` in `~/.mira/mira.env` (0o600, respects `$MIRA_DIR`/`$XDG_CONFIG_HOME`) — canonical; do NOT set in `.env` (`.env` is HOST/PORT/CORS/PROVIDER keys only; `.env` MIRA_TOKEN triggers deprecation warn, drift vs `$MIRA_ENV` warns and `$MIRA_ENV` wins). Dev first boot with no token anywhere auto-creates `~/.mira/mira.env` with a generated 64-hex token; existing file adopted, never overwritten. `MIRA_NO_AUTOPROVISION=1` opts out. Prod must set `MIRA_TOKEN` via env/secret (fail-closed). `VITE_MIRA_TOKEN` is dev-only fallback (gated to `NODE_ENV !== 'production'`, never baked into prod bundle). Clients pass `Authorization: Bearer …` (query-param tokens rejected)
 - Rate limiting per real socket peer (Bun `requestIP`, unforgeable); proxy headers only honored under `MIRA_TRUST_PROXY=1`; per-route SSE bucket for streaming endpoints
 - Every mutating tool call is snapshotted; permission layer gates bash/edit/write/MCP
+- Guardrails: fail-open with warn in dev, **fail-closed by default in production** (`MIRA_GUARDRAILS_ENFORCE` / config override); every call audited to SQLite (queryable + CSV/JSON export)
+- Wrong-edit defense: ambiguous `oldString` refused (never "first match"), intent anchors (`near`), symbol/task-binding warnings, edit critic (opt-in second-model review), agent-callable `revert`, auto-rollback on `FAILED_VERIFICATION` (opt-in)
+- Compliance: stored args/results are redacted (secrets + PII) before persistence, retention sweeps bounded by config
 
 ## Quick Start
 
@@ -134,6 +141,11 @@ MIRA_API_URL=http://127.0.0.1:4096 MIRA_API_KEY=<key> SLACK_BOT_TOKEN=xoxb-... S
 | `MIRA_NO_AUTOPROVISION=1`              | Opt out of dev auto-provision (no `~/.mira/mira.env` created)                                              |
 | `VITE_MIRA_TOKEN`                      | Dev-only fallback for web (gated to `NODE_ENV !== 'production'`, never baked into prod bundle)             |
 | `HOST`                                 | Bind address (default `127.0.0.1`)                                                                         |
+| `MIRA_AUTO_ROLLBACK=1`                 | Revert a run's file edits automatically when verification FAILS (default off)                              |
+| `MIRA_EDIT_CRITIC=1`                   | Second-model review of agent edits against the task text (default off)                                     |
+| `MIRA_COMPLIANCE_RETENTION_DAYS`       | Audit evidence retention window (default 90; `compliance.retentionDays` in mira.json also works)           |
+| `MIRA_EMBEDDING_MODEL`                 | Embedding model for edit-relevance checks (default `text-embedding-3-small`; needs `OPENAI_API_KEY`)       |
+| `MIRA_STRICT_EDIT_TARGET=1`            | Block the high-confidence wrong-file signal instead of warning                                             |
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) and [packages/server/README.md](./packages/server/README.md).
 
@@ -166,6 +178,8 @@ Set `MIRA_API_KEYS=key-alice:alice,key-bob:bob` to issue per-user credentials. S
 Optionally append a role per key — `MIRA_API_KEYS=key-a:alice:viewer,key-b:bob:operator,key-c:carol:admin`. Roles: `viewer` (read-only — all mutating requests 403), `operator` (default — full normal use), `admin` (also reaches `/admin/*` routes: key minting with `role`, audit trail, `GET /admin/audit/export?format=csv|json`). The master `MIRA_TOKEN` is always admin.
 
 Single-token mode (`MIRA_TOKEN` only) maps everything to an implicit `"default"` owner and behaves exactly as before.
+
+**Orgs** (P3.3): platform admins create orgs (`POST /orgs`), org admins manage members (`POST/DELETE /orgs/:id/members`); sessions created under an org are readable by the owner _and_ same-org members (REST + WebSocket), with foreign resources 404ing (no existence leaks). `GET /me` reports the caller's `role` and `org`. One org per owner.
 
 ### Troubleshooting
 
@@ -204,9 +218,22 @@ Verified clean on a healthy machine: OpenCode auth is OAuth (`google`, no env ke
 | `GET /session/:id/jobs` · `GET /job/:id` · `POST /job/:id/cancel` | bearer                       | background subagent job board                  |
 | `WS /`                                                            | bearer or first-message auth | live bus events, owner-scoped                  |
 
-Agent tools include `finding_write` / `finding_list` / `finding_resolve` — structured cross-session team memory (open findings are auto-injected into every loop context).
+Agent tools include `think` (zero-side-effect reasoning scratchpad, persisted to traces), `revert`/`revert_list` (undo your own edits — file-scoped, context-preserving), `goal_write`/`goal_list`/`goal_update` (strategic memory), `finding_write`/`finding_list`/`finding_resolve` (structured team memory — open findings are auto-injected into every loop context, including critic feedback on recent edits), and codegraph queries (`findCallers`/`findDependencies`/`findDependents`/`analyzeRemoval`).
 
-CI/CD: `.github/workflows/cd.yml` builds multi-arch image to GHCR and deploys when `vars.DEPLOY_ENABLED=true`.
+### Community registry & verticals
+
+Curated, offline catalogs installable per project — everything takes effect without a restart:
+
+```bash
+POST /community/skills/tdd-workflow      # → .mira/skills/tdd-workflow.md
+POST /community/agents/api-designer      # → mira.json agents
+POST /community/knowledge/api-security-basics  # → knowledge store
+POST /community/verticals/luxora         # agent + skills + knowledge, atomically
+```
+
+Verticals are domain bundles: `luxora` (fashion design assistant), `security-audit` (audit skills + API-security knowledge), `dev-workflow` (test-writer persona + TDD/verification skills). Browse via `GET /community/registry?kind=…&q=…`; Settings → Community tab in the web UI.
+
+CI/CD: `.github/workflows/` — CI (typecheck/build/test with affected filtering + tri-state gates), security (CodeQL + Gitleaks + dependency audit with fail-on-high/critical), CD (multi-arch GHCR image + deploy hook), nightly evals. All third-party actions SHA-pinned; Dependabot keeps them current. Turbo caches are namespace-separated so PR runs can never poison main builds.
 
 ## License
 

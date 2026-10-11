@@ -80,26 +80,26 @@ Promotion OR Rollback
 
 Mira already contains important foundations:
 
-* Persistent sessions
-* Model gateway and model routing
-* Memory and knowledge systems
-* Tool registry
-* Permission and guardrail layers
-* MCP integration
-* LSP/code intelligence
-* Child sessions/subagents
-* Queue and job management
-* File snapshots
-* Revert/rewind capabilities
-* Doom-loop detection/recovery
-* Online research and learning
-* Diagnostics
-* Evaluation infrastructure
-* Runtime watchdog
-* Web UI
-* TUI
-* Token/cost/latency tracking
-* Agent and model selection
+- Persistent sessions
+- Model gateway and model routing
+- Memory and knowledge systems
+- Tool registry
+- Permission and guardrail layers
+- MCP integration
+- LSP/code intelligence
+- Child sessions/subagents
+- Queue and job management
+- File snapshots
+- Revert/rewind capabilities
+- Doom-loop detection/recovery
+- Online research and learning
+- Diagnostics
+- Evaluation infrastructure
+- Runtime watchdog
+- Web UI
+- TUI
+- Token/cost/latency tracking
+- Agent and model selection
 
 These foundations mean the remaining problems are primarily about **control, verification, evolution, scalability, and system-level safety**.
 
@@ -293,16 +293,16 @@ However, self-evolution can modify more than files.
 
 Potential changes include:
 
-* Dependencies
-* Models
-* Prompts
-* Configuration
-* Database schema
-* Agent definitions
-* Tool permissions
-* Engine versions
-* Memory policies
-* Retrieval strategies
+- Dependencies
+- Models
+- Prompts
+- Configuration
+- Database schema
+- Agent definitions
+- Tool permissions
+- Engine versions
+- Memory policies
+- Retrieval strategies
 
 Therefore:
 
@@ -389,15 +389,15 @@ Mira's memory system is powerful, but memory itself creates engineering risks.
 
 Potential problems:
 
-* Duplicate memories
-* Stale information
-* Incorrect memories
-* Conflicting memories
-* Low-value memories
-* Incorrect prioritization
-* Memory pollution
-* Research contamination
-* Failed strategies being forgotten
+- Duplicate memories
+- Stale information
+- Incorrect memories
+- Conflicting memories
+- Low-value memories
+- Incorrect prioritization
+- Memory pollution
+- Research contamination
+- Failed strategies being forgotten
 
 ## Required Model
 
@@ -476,13 +476,13 @@ This becomes especially important when Mira makes autonomous engineering decisio
 
 Mira's online learning system can discover:
 
-* Papers
-* GitHub repositories
-* Documentation
-* Articles
-* Agent techniques
-* MCP information
-* Evaluation methods
+- Papers
+- GitHub repositories
+- Documentation
+- Articles
+- Agent techniques
+- MCP information
+- Evaluation methods
 
 But:
 
@@ -603,14 +603,14 @@ Agent D modifies configuration
 
 Introduce:
 
-* Task ownership
-* File/resource locking
-* Shared mission state
-* Agent priorities
-* Conflict detection
-* Dependency graphs
-* Version-aware patches
-* Transaction boundaries
+- Task ownership
+- File/resource locking
+- Shared mission state
+- Agent priorities
+- Conflict detection
+- Dependency graphs
+- Version-aware patches
+- Transaction boundaries
 
 ### Priority
 
@@ -700,13 +700,13 @@ Object Storage
 
 The system will eventually need stronger distributed infrastructure for:
 
-* Multiple users
-* Multiple projects
-* Long-running jobs
-* Parallel agents
-* Sandboxed experiments
-* Large memory stores
-* High availability
+- Multiple users
+- Multiple projects
+- Long-running jobs
+- Parallel agents
+- Sandboxed experiments
+- Large memory stores
+- High availability
 
 ### Priority
 
@@ -718,13 +718,13 @@ The system will eventually need stronger distributed infrastructure for:
 
 Mira may eventually want to improve:
 
-* npm packages
-* Python packages
-* LLM models
-* Embedding models
-* MCP servers
-* Agent frameworks
-* Database libraries
+- npm packages
+- Python packages
+- LLM models
+- Embedding models
+- MCP servers
+- Agent frameworks
+- Database libraries
 
 But automatic upgrades can introduce breaking changes.
 
@@ -889,14 +889,14 @@ High-risk changes should not silently cross these boundaries.
 
 Examples requiring stronger approval:
 
-* Security policy changes
-* Permission changes
-* Production infrastructure changes
-* Destructive database changes
-* Authentication changes
-* Secret-management changes
-* Large dependency changes
-* Major architecture changes
+- Security policy changes
+- Permission changes
+- Production infrastructure changes
+- Destructive database changes
+- Authentication changes
+- Secret-management changes
+- Large dependency changes
+- Major architecture changes
 
 ### Priority
 
@@ -1229,28 +1229,28 @@ This is important because **failed improvements are also knowledge**.
 
 The self-improvement system should not be considered complete until Mira can:
 
-* Detect a real failure.
-* Preserve the evidence.
-* Diagnose the likely cause.
-* Research possible solutions.
-* Generate an improvement proposal.
-* Assign a risk level.
-* Select an appropriate autonomy level.
-* Create an isolated experiment.
-* Modify code safely.
-* Run tests.
-* Run regression checks.
-* Run security checks.
-* Run performance/evaluation benchmarks.
-* Compare against a baseline.
-* Explain the decision.
-* Reject bad candidates.
-* Roll back failed changes.
-* Run successful candidates in Shadow Mira.
-* Promote candidates through a controlled canary.
-* Record the entire evolution history.
-* Learn from both success and failure.
-* Prevent infinite recovery/evolution loops.
+- Detect a real failure.
+- Preserve the evidence.
+- Diagnose the likely cause.
+- Research possible solutions.
+- Generate an improvement proposal.
+- Assign a risk level.
+- Select an appropriate autonomy level.
+- Create an isolated experiment.
+- Modify code safely.
+- Run tests.
+- Run regression checks.
+- Run security checks.
+- Run performance/evaluation benchmarks.
+- Compare against a baseline.
+- Explain the decision.
+- Reject bad candidates.
+- Roll back failed changes.
+- Run successful candidates in Shadow Mira.
+- Promote candidates through a controlled canary.
+- Record the entire evolution history.
+- Learn from both success and failure.
+- Prevent infinite recovery/evolution loops.
 
 ---
 
@@ -1300,17 +1300,17 @@ This is the foundation for turning Mira from an autonomous engineering assistant
 
 ## Documentation Maintenance — 10 items
 
-> **Status:** `Implemented` (review 2026-09-23) / `Target` (roadmap gaps) — this review itself is evidence-backed (`git status`+`bun test`+`health`+`CI` per `MIRA_REVIEW_AND_ROADMAP.md` policy), not docs-alone.
+> **Status:** `Implemented` (review 2026-09-23) / `Target` (roadmap gaps) — this review itself is evidence-backed (`git status`+`bun test`+`health`+`CI` evidence-backed (git status + bun test + health + CI), not docs-alone), not docs-alone.
 
-| # | Item | Status | Evidence (path / interface) |
-|---|------|--------|------------------------------|
-| 1 | Implementation path | `Implemented` (review) / `Target` (evolution) | `Implemented`: review foundations `packages/server/src/config/defaults.ts` (6 providers), `packages/server/src/tools/brio.ts`+`brio.test.ts`, `packages/server/src/routes/health.ts` colibri probe, `shared/simulation_sandbox.py`, `shared/memory_controller.py`, `platforms/skill_synthesizer.py` scaffold; `Target`: `packages/server/src/evolution/` (`observer.ts`→`ledger.ts`) + `packages/server/src/engines/registry.ts` + Shadow/Canary (Phases 1-6 §23) |
-| 2 | Public interfaces | `Implemented` / `Target` | `Implemented`: `GET /health` (`colibri:{ok,latencyMs}` 800ms) + `GET /healthz` + `GET /providers` (6) + `GET /gateway/health` (lanes/`hasKey`/`cooldownUntil`) + `POST /tools/brio`/`POST /v1/brio` (22 tools via `registry.ts`) + `GET /mcp`; `Target`: `GET /evolution` + `POST /evolution/:id/{shadow,canary,promote}` + `GET /memory` provenance + `GET /changes` rollback (see `MIRA_UI_EVOLUTION_SPEC.md`) |
-| 3 | Events | `Implemented` / `Target` | `Implemented`: `BusEvent` (`packages/server/src/types/index.ts`): `session.*`, `message.*`, `part.*`, `todo.updated`, `job.created/updated/cancelled`, `learning.updated`, `permission.ask/reply`, `cost.warning`, `gateway.fallback`, `server.heartbeat/error`, plus `brio.choice` entropy; `Target`: `evolution.proposed/verified/shadowed/canary/promoted/rolledback` + `heal.started/healed` + `research.completed` ledger stream |
-| 4 | Configuration | `Implemented` | `mira.json`/`mira.json.example` (`model`, `loop`, `provider`, `routing`, `subgateways:{default,cheap,vision,local,compaction,agent:ask}`, `guardrails`), `~/.mira/mira.env` `MIRA_TOKEN` 0o600 + `COLI_API_KEY=local`/`NVIDIA_API_KEY`/`FIRECRAWL_API_KEY` via `{env:}`, `opencode.jsonc`, `bunfig.toml` `symlink` + `preserveSymlinks` 6 tsconfigs |
-| 5 | Tests | `Implemented` (foundations) / `Target` (longitudinal) | `Implemented`: `packages/server/src/tools/brio.test.ts` 2 pass (mock `:18080`), `gateway/registry.test.ts` 16 pass, full 523 pass/0 fail/2 skip (`MIRA_NO_AUTOPROVISION=1`), `typecheck`+`build`+`repo-hygiene`/`auth-guard` ✅, `slab1/colibri` `3619cf5` `docker` `1m2s`; `Target`: longitudinal benchmarks `task 87%→91%`, `regression 8%→4%`, `latency 12s→9s`, `cost $0.18→0.14` (§16) + `self_healing.test.ts` |
-| 6 | Security boundaries | `Implemented` / `Target` | `Implemented`: `MIRA_STRICT_AUTH` fail-closed (prod needs `MIRA_TOKEN`/`MIRA_API_KEYS`), `MIRA_TOKEN` 0o600, `guardrails.enforce` default ON in prod, `MIRA_NO_AUTOPROVISION=1` isolates tokens, web-research untrusted → `Validate→Compare→Proposal→Sandbox` never `Web→Instruction→Modify` (§10); `Target`: autonomy levels 0-5 + P0 Risk Engine + Approval Gates per §23 Phase 2 |
-| 7 | Operational procedures | `Implemented` | `scripts/serve-local.sh` `setsid nohup` + `SIGTERM` draining + `mira.log` `truncate -s 0` on 98% + logs `colibri: ready`, `packages/server/scripts/dev-watch.ts` watches `src`+`shared/src`, `scripts/watch-local.sh` watchdog + nightly `backup-db.sh` + weekly `gc-db.ts`, `shared/aether_core.py` hourly pulse, `docs/colibri.md` + `scripts/ci/turbo-tri-state.js` |
-| 8 | Migration strategy | `Target` | `Target` §23 Phases: Phase 1 Evolution Core (`observer.ts`→`ledger.ts` minimal `Failure→Ledger`), Phase 2 Safety (Risk/Approval/Resource/Security/Rollback), Phase 3 Engine Registry (9 engines), Phase 4 Shadow (`Telemetry→Candidate→Benchmark`), Phase 5 Canary (`Candidate→Monitor→Promote/Rollback`), Phase 6 Memory Evolution (remember successes+fails); `Implemented` fallback-add `colibri` to `local`/`compaction` |
-| 9 | Rollback strategy | `Implemented` (file) / `Target` (system) | `Implemented`: file snapshots `packages/server/src/tools/edit.ts` `snapshotFile`+`undo` + `git revert <sha>` + `mira.json` `saveConfig` fallback; triggers `circuit OPEN` (5→30s) or `costCap` breach or `brio` entropy `>0.8`; `Target`: system rollback `Candidate Version`+`Parent Version`+`Changed Components`+`Deps`+`Migration State`+`Rollback Metadata` per §6 |
-| 10 | Known limitations | `Implemented` | `1.3G 98%` disk after `ms-playwright` 270M prune → `headless_shell` only + `logrotate` (`mira.log` `truncate -s 0`); `symlink` vs `hardlink` proot EPERM (`bunfig.toml` `symlink` + `preserveSymlinks` + manual `ln -s picomatch`); `colibri` needs `:8000` else `ok:false` hint; `turbo` `linux-arm64` missing manual `ln -s` cache; `glm-5.2` 372GB needs NVMe streaming, 10-20k prefill slow — use `brio` |
+| #   | Item                   | Status                                                | Evidence (path / interface)                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| --- | ---------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Implementation path    | `Implemented` (review) / `Target` (evolution)         | `Implemented`: review foundations `packages/server/src/config/defaults.ts` (6 providers), `packages/server/src/tools/brio.ts`+`brio.test.ts`, `packages/server/src/routes/health.ts` colibri probe, `shared/simulation_sandbox.py`, `shared/memory_controller.py`, `platforms/skill_synthesizer.py` scaffold; `Target`: `packages/server/src/evolution/` (`observer.ts`→`ledger.ts`) + `packages/server/src/engines/registry.ts` + Shadow/Canary (Phases 1-6 §23) |
+| 2   | Public interfaces      | `Implemented` / `Target`                              | `Implemented`: `GET /health` (`colibri:{ok,latencyMs}` 800ms) + `GET /healthz` + `GET /providers` (6) + `GET /gateway/health` (lanes/`hasKey`/`cooldownUntil`) + `POST /tools/brio`/`POST /v1/brio` (22 tools via `registry.ts`) + `GET /mcp`; `Target`: `GET /evolution` + `POST /evolution/:id/{shadow,canary,promote}` + `GET /memory` provenance + `GET /changes` rollback (see `MIRA_UI_EVOLUTION_SPEC.md`)                                                  |
+| 3   | Events                 | `Implemented` / `Target`                              | `Implemented`: `BusEvent` (`packages/server/src/types/index.ts`): `session.*`, `message.*`, `part.*`, `todo.updated`, `job.created/updated/cancelled`, `learning.updated`, `permission.ask/reply`, `cost.warning`, `gateway.fallback`, `server.heartbeat/error`, plus `brio.choice` entropy; `Target`: `evolution.proposed/verified/shadowed/canary/promoted/rolledback` + `heal.started/healed` + `research.completed` ledger stream                             |
+| 4   | Configuration          | `Implemented`                                         | `mira.json`/`mira.json.example` (`model`, `loop`, `provider`, `routing`, `subgateways:{default,cheap,vision,local,compaction,agent:ask}`, `guardrails`), `~/.mira/mira.env` `MIRA_TOKEN` 0o600 + `COLI_API_KEY=local`/`NVIDIA_API_KEY`/`FIRECRAWL_API_KEY` via `{env:}`, `opencode.jsonc`, `bunfig.toml` `symlink` + `preserveSymlinks` 6 tsconfigs                                                                                                               |
+| 5   | Tests                  | `Implemented` (foundations) / `Target` (longitudinal) | `Implemented`: `packages/server/src/tools/brio.test.ts` 2 pass (mock `:18080`), `gateway/registry.test.ts` 16 pass, full 523 pass/0 fail/2 skip (`MIRA_NO_AUTOPROVISION=1`), `typecheck`+`build`+`repo-hygiene`/`auth-guard` ✅, `slab1/colibri` `3619cf5` `docker` `1m2s`; `Target`: longitudinal benchmarks `task 87%→91%`, `regression 8%→4%`, `latency 12s→9s`, `cost $0.18→0.14` (§16) + `self_healing.test.ts`                                              |
+| 6   | Security boundaries    | `Implemented` / `Target`                              | `Implemented`: `MIRA_STRICT_AUTH` fail-closed (prod needs `MIRA_TOKEN`/`MIRA_API_KEYS`), `MIRA_TOKEN` 0o600, `guardrails.enforce` default ON in prod, `MIRA_NO_AUTOPROVISION=1` isolates tokens, web-research untrusted → `Validate→Compare→Proposal→Sandbox` never `Web→Instruction→Modify` (§10); `Target`: autonomy levels 0-5 + P0 Risk Engine + Approval Gates per §23 Phase 2                                                                               |
+| 7   | Operational procedures | `Implemented`                                         | `scripts/serve-local.sh` `setsid nohup` + `SIGTERM` draining + `mira.log` `truncate -s 0` on 98% + logs `colibri: ready`, `packages/server/scripts/dev-watch.ts` watches `src`+`shared/src`, `scripts/watch-local.sh` watchdog + nightly `backup-db.sh` + weekly `gc-db.ts`, `shared/aether_core.py` hourly pulse, `docs/colibri.md` + `scripts/ci/turbo-tri-state.js`                                                                                            |
+| 8   | Migration strategy     | `Target`                                              | `Target` §23 Phases: Phase 1 Evolution Core (`observer.ts`→`ledger.ts` minimal `Failure→Ledger`), Phase 2 Safety (Risk/Approval/Resource/Security/Rollback), Phase 3 Engine Registry (9 engines), Phase 4 Shadow (`Telemetry→Candidate→Benchmark`), Phase 5 Canary (`Candidate→Monitor→Promote/Rollback`), Phase 6 Memory Evolution (remember successes+fails); `Implemented` fallback-add `colibri` to `local`/`compaction`                                      |
+| 9   | Rollback strategy      | `Implemented` (file) / `Target` (system)              | `Implemented`: file snapshots `packages/server/src/tools/edit.ts` `snapshotFile`+`undo` + `git revert <sha>` + `mira.json` `saveConfig` fallback; triggers `circuit OPEN` (5→30s) or `costCap` breach or `brio` entropy `>0.8`; `Target`: system rollback `Candidate Version`+`Parent Version`+`Changed Components`+`Deps`+`Migration State`+`Rollback Metadata` per §6                                                                                           |
+| 10  | Known limitations      | `Implemented`                                         | `1.3G 98%` disk after `ms-playwright` 270M prune → `headless_shell` only + `logrotate` (`mira.log` `truncate -s 0`); `symlink` vs `hardlink` proot EPERM (`bunfig.toml` `symlink` + `preserveSymlinks` + manual `ln -s picomatch`); `colibri` needs `:8000` else `ok:false` hint; `turbo` `linux-arm64` missing manual `ln -s` cache; `glm-5.2` 372GB needs NVMe streaming, 10-20k prefill slow — use `brio`                                                      |

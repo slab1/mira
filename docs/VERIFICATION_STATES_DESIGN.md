@@ -1,5 +1,10 @@
 # Task Verification States — Design (strategy-doc §13)
 
+> **Status (2026-10-11): implemented** — `packages/server/src/verification.ts` (`computeVerification`,
+> `buildVerificationPatch`), `verification_state`/`verification_evidence`/`verification_updated_at` on
+> `jobs`, settle point in `tools/task.ts finishJob` (single atomic UPDATE), evidence from
+> `diagnose`/`bash` exit codes with fail-closed classification. Table below = original design breakdown.
+
 **Status:** design only. Success criteria (per brief): _a task/agent result must carry whether it was
 **actually** verified; an agent claiming VERIFIED without running tests is impossible (or clearly
 marked self-reported)._ States: `UNVERIFIED → PARTIALLY_VERIFIED → VERIFIED` + `FAILED_VERIFICATION`.
@@ -15,18 +20,18 @@ ends at §12. This design implements the state names quoted in the brief. Flagge
 
 | Component                                                                                           | Status                | Notes                                                                                |
 | --------------------------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------ |
-| `VerificationState` enum (`UNVERIFIED` / `PARTIALLY_VERIFIED` / `VERIFIED` / `FAILED_VERIFICATION`) | Pending               | New module `packages/server/src/verification.ts`                                     |
-| `verification_state` / `verification_evidence` / `verification_updated_at` columns on `jobs`        | Pending               | 3 columns via `addColumn` in `storage/db.ts` after provenance block                  |
-| `computeVerification(parts)` — pure state computation                                               | Pending               | Classifies tool-result parts into `{typecheck, test, build}`; latest-per-class wins  |
-| `buildVerificationPatch(db, childSessionID)`                                                        | Pending               | SELECT parts → `{verificationState, verificationEvidence, verificationUpdatedAt}`    |
-| Enforcement at `finishJob()` (`task.ts:87-96`)                                                      | Pending               | Merge verification patch into terminal `WHERE status='running'` update               |
-| Enforcement at orchestrate inline updates (`orchestrate.ts:482-491`)                                | Pending               | Same compute-then-single-UPDATE pattern                                              |
+| `VerificationState` enum (`UNVERIFIED` / `PARTIALLY_VERIFIED` / `VERIFIED` / `FAILED_VERIFICATION`) | ✅ Implemented        | New module `packages/server/src/verification.ts`                                     |
+| `verification_state` / `verification_evidence` / `verification_updated_at` columns on `jobs`        | ✅ Implemented        | 3 columns via `addColumn` in `storage/db.ts` after provenance block                  |
+| `computeVerification(parts)` — pure state computation                                               | ✅ Implemented        | Classifies tool-result parts into `{typecheck, test, build}`; latest-per-class wins  |
+| `buildVerificationPatch(db, childSessionID)`                                                        | ✅ Implemented        | SELECT parts → `{verificationState, verificationEvidence, verificationUpdatedAt}`    |
+| Enforcement at `finishJob()` (`tools/task.ts` — atomic settle)                                      | ✅ Implemented        | Merge verification patch into terminal `WHERE status='running'` update               |
+| Enforcement at orchestrate inline updates (`orchestrate.ts`)                                        | ✅ Implemented        | Same compute-then-single-UPDATE pattern                                              |
 | `EvidenceRef` reuse from `memory/provenance.ts`                                                     | Depends on Provenance | `kind:'message'` + `{check, ok}` extras; cap 8                                       |
-| `verification` in `taskResponseSchema`                                                              | Pending               | Optional field on task response; foreground reads back after `finishJob`             |
-| `job.updated` bus event with `payload.kind = 'verification.state'`                                  | Pending               | Published from terminal settle only when state ≠ `UNVERIFIED`                        |
-| Backfill (`UNVERIFIED` for existing jobs)                                                           | Pending               | `UPDATE jobs SET verification_state = 'UNVERIFIED' WHERE verification_state IS NULL` |
-| Unit tests (`verification.test.ts`)                                                                 | Pending               | Table-driven `computeVerification` tests + e2e on `:memory:` DB                      |
-| Enforcement sweep test                                                                              | Pending               | Every terminal write path leaves `verification_state` non-null and in-enum           |
+| `verification` in `taskResponseSchema`                                                              | ✅ Implemented        | Optional field on task response; foreground reads back after `finishJob`             |
+| `job.updated` bus event with `payload.kind = 'verification.state'`                                  | ✅ Implemented        | Published from terminal settle only when state ≠ `UNVERIFIED`                        |
+| Backfill (`UNVERIFIED` for existing jobs)                                                           | ✅ Implemented        | `UPDATE jobs SET verification_state = 'UNVERIFIED' WHERE verification_state IS NULL` |
+| Unit tests (`verification.test.ts`)                                                                 | ✅ Implemented        | 22 table-driven `computeVerification` + route tests on `:memory:` DB                 |
+| Enforcement sweep test                                                                              | ✅ Implemented        | Every terminal write path leaves `verification_state` non-null and in-enum           |
 
 **Summary:** All components are **pending implementation**. The design depends on the provenance
 module (`memory/provenance.ts`) for the `EvidenceRef` type. Implementation order: provenance P0 first,

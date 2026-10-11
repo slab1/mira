@@ -1,4 +1,4 @@
-# Trust & Provenance System — Design (MIRA_GAP_PLAN.md P0 #2)
+# Trust & Provenance System — Design (provenance P0 #2 — shipped, see master-findings plan)
 
 **Status:** design only. Success criteria: _“provenance scores on ALL memories, evidence tracking.”_
 **Scope note:** `learning/knowledge.ts` carries an **uncommitted parallel-lane diff** that already adds
