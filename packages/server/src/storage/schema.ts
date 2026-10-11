@@ -254,6 +254,11 @@ export const auditEntries = sqliteTable(
     reason: text('reason'),
     args: text('args', { mode: 'json' }).$type<JsonValue>(),
     result: text('result', { mode: 'json' }).$type<JsonValue>(),
+    // P3.5: attribution stamped when the owning session is deleted, so audit
+    // evidence survives (evidence must not be erasable by deleting a session)
+    // while staying org-scopable for compliance reporting.
+    ownerID: text('owner_id'),
+    orgID: text('org_id'),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [
@@ -261,6 +266,7 @@ export const auditEntries = sqliteTable(
     index('audit_entries_tool_idx').on(t.tool),
     index('audit_entries_decision_idx').on(t.decision),
     index('audit_entries_created_idx').on(t.createdAt),
+    index('audit_entries_org_idx').on(t.orgID),
   ],
 )
 

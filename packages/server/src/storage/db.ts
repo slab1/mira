@@ -259,6 +259,13 @@ export async function migrate(db: MiraDB) {
   // `key` holds hash for new rows; `key_hash` authoritative; legacy rows backfilled on load
   addColumn('api_keys', 'key_hash', 'TEXT')
   addColumn('api_keys', 'key_prefix', 'TEXT')
+  // P3.5: audit attribution columns — stamped when a session is deleted so the
+  // evidence keeps its owner/org after the session row is gone.
+  addColumn('audit_entries', 'owner_id', 'TEXT')
+  addColumn('audit_entries', 'org_id', 'TEXT')
+  try {
+    sqlite.exec(`CREATE INDEX IF NOT EXISTS audit_entries_org_idx ON audit_entries(org_id);`)
+  } catch {}
   // H2-1 Memory v2: temporal decay + entity graph columns
   addColumn('knowledge_entries', 'tier', 'TEXT')
   addColumn('knowledge_entries', 'source', 'TEXT')

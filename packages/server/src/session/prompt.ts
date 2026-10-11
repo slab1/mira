@@ -588,6 +588,21 @@ export class SessionPrompt {
   }
 
   async deleteSession(id: string) {
+    // P3.5: audit evidence deliberately SURVIVES session deletion (deleting a
+    // session must not erase the compliance trail). Stamp its attribution onto
+    // the rows first so they stay owner/org-scopable once the session is gone.
+    try {
+      const session = await this.getSession(id)
+      if (session) {
+        this.deps.db.sqlite
+          .prepare(
+            'UPDATE audit_entries SET owner_id = ?, org_id = ? WHERE session_id = ? AND owner_id IS NULL',
+          )
+          .run(session.ownerID ?? null, session.orgID ?? null, id)
+      }
+    } catch (e) {
+      console.warn('[session] audit attribution on delete failed:', String(e))
+    }
     await this.deps.db
       .delete(this.deps.db.schema.messages)
       .where(eq(this.deps.db.schema.messages.sessionID, id))
