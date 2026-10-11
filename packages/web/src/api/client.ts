@@ -392,6 +392,17 @@ export type AuditEntry = {
   createdAt: number
 }
 
+/** Compliance violation report (P3.5) — deny/warn rows grouped by category. */
+export type ViolationReport = {
+  since: number
+  until: number
+  totalRows: number
+  totalEvents: number
+  byCategory: Array<{ category: string; rows: number; events: number; tools: string[] }>
+  byTool: Array<{ tool: string; rows: number }>
+  unscopedRows: number
+}
+
 /** Filters shared by GET /admin/audit and GET /admin/audit/export. */
 export type AuditTrailParams = {
   tool?: string
@@ -1146,6 +1157,21 @@ export const api = {
     req<{ cwd: string; installed: string[] }>(
       `/community/skills${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`,
     ),
+
+  // ── Compliance (P3.5) — violations, retention ────────────────────
+  getViolationReport: (opts: { days?: number; org?: string } = {}) =>
+    req<{ report: ViolationReport; orgID: string | null }>(
+      `/admin/compliance/violations?days=${opts.days ?? 30}${opts.org ? `&org=${encodeURIComponent(opts.org)}` : ''}`,
+    ),
+  getRetentionStatus: () =>
+    req<{ effectiveRetentionDays: number; totalRows: number; auditLogPath: string }>(
+      '/admin/compliance/retention',
+    ),
+  runRetentionSweep: (body: { retentionDays?: number; maxRows?: number } = {}) =>
+    req<{
+      result: { deletedByAge: number; deletedByCap: number; remaining: number }
+      effectiveRetentionDays: number
+    }>('/admin/compliance/retention', { method: 'POST', body: JSON.stringify(body) }),
   addMcp: (body: {
     name: string
     type: 'local' | 'remote'

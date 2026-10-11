@@ -8,7 +8,7 @@
  */
 
 import { createSignal, For, onMount, Show } from 'solid-js'
-import { api, ApiError } from '../api/client'
+import { api, ApiError, type ViolationReport } from '../api/client'
 import type { AuditEntry } from '../api/client'
 import { Card, SectionHeader, StatusBadge, type StatusTone } from './DesignSystem'
 
@@ -39,6 +39,13 @@ export function AuditTrail() {
   const [decision, setDecision] = createSignal<'' | 'allow' | 'deny' | 'warn'>('')
   const [sessionID, setSessionID] = createSignal('')
   const [limit, setLimit] = createSignal(50)
+  // P3.5 compliance
+  const [report, setReport] = createSignal<ViolationReport | null>(null)
+  const [retention, setRetention] = createSignal<{
+    effectiveRetentionDays: number
+    totalRows: number
+  } | null>(null)
+  const [sweeping, setSweeping] = createSignal(false)
 
   const params = () => ({
     tool: tool().trim() || undefined,
@@ -70,6 +77,40 @@ export function AuditTrail() {
     }
   }
 
+  /** P3.5: violations + retention status. Admin-only, like the trail itself. */
+  async function refreshCompliance() {
+    try {
+      const [r, ret] = await Promise.all([
+        api.getViolationReport({ days: 30 }),
+        api.getRetentionStatus(),
+      ])
+      setReport(r.report)
+      setRetention({ effectiveRetentionDays: ret.effectiveRetentionDays, totalRows: ret.totalRows })
+    } catch {
+      // Non-admin or older server: the trail below still works.
+      setReport(null)
+      setRetention(null)
+    }
+  }
+
+  async function runRetention() {
+    if (sweeping()) return
+    setSweeping(true)
+    setError(null)
+    try {
+      await api.runRetentionSweep()
+      await Promise.all([refresh(), refreshCompliance()])
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e))
+    } finally {
+      setSweeping(false)
+    }
+  }
+
+  onMount(async () => {
+    await Promise.all([refresh(), refreshCompliance()])
+  })
+
   async function exportTrail(format: 'csv' | 'json') {
     setError(null)
     try {
@@ -78,8 +119,6 @@ export function AuditTrail() {
       setError(String(e instanceof Error ? e.message : e))
     }
   }
-
-  onMount(refresh)
 
   return (
     <Card padding="16px">
@@ -95,6 +134,72 @@ export function AuditTrail() {
       </Show>
 
       <Show when={!denied()}>
+        {/* P3.5 compliance — violations summary + retention */}
+        <Show when={report()}>
+          {(r) => (
+            <div
+              style={{
+                display: 'flex',
+                'flex-wrap': 'wrap',
+                gap: '8px',
+                'align-items': 'center',
+                padding: '8px 10px',
+                margin: '0 0 10px',
+                border: '1px solid var(--border)',
+                'border-radius': '8px',
+                background: 'var(--bg-active)',
+              }}
+            >
+              <span
+                style={{ 'font-size': 'var(--fs-xs)', 'font-weight': '600', color: 'var(--fg)' }}
+              >
+                Policy violations (30d)
+              </span>
+              <span style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-muted)' }}>
+                {r().totalRows} rows / {r().totalEvents} events across {r().byCategory.length}{' '}
+                categories
+              </span>
+              <For each={r().byCategory.slice(0, 4)}>
+                {(b) => (
+                  <StatusBadge
+                    label={`${b.category} ${b.rows}`}
+                    tone={b.rows > 0 ? 'error' : 'muted'}
+                  />
+                )}
+              </For>
+              <Show when={retention()}>
+                {(ret) => (
+                  <span
+                    style={{
+                      'font-size': 'var(--fs-2xs)',
+                      color: 'var(--fg-faint)',
+                      'margin-left': 'auto',
+                    }}
+                  >
+                    {ret().totalRows} rows retained · {ret().effectiveRetentionDays}d policy
+                  </span>
+                )}
+              </Show>
+              <button
+                onClick={() => runRetention()}
+                disabled={sweeping()}
+                title="Delete audit rows past the retention window"
+                style={{
+                  padding: '2px 8px',
+                  'border-radius': '6px',
+                  border: '1px solid var(--border-strong)',
+                  background: 'var(--bg-canvas)',
+                  color: 'var(--fg)',
+                  'font-size': 'var(--fs-2xs)',
+                  cursor: sweeping() ? 'default' : 'pointer',
+                }}
+              >
+                {sweeping() ? 'Sweeping…' : 'Run retention'}
+              </button>
+            </div>
+          )}
+        </Show>
+
         {/* Filters */}
         <div
           style={{
