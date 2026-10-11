@@ -174,9 +174,18 @@ jobs:
         run: |
           # Publish mira-cli-ts from its package dir (has its own .releaserc.json,
           # toolchain pinned in packages/cli devDependencies).
-          # NOTE: publishing to npm requires secrets.NPM_TOKEN to be set.
-          # Without it, semantic-release's npm plugin fails auth, so use the
-          # GitHub-release-only fallback (tag scheme matches tagFormat).
+          # NOTE: publishing to npm requires a VALID secrets.NPM_TOKEN. Absent OR
+          # invalid → GitHub-release-only fallback (tag scheme matches tagFormat),
+          # with a loud warning so a broken publish stays visible.
+          if [ -n "$NPM_TOKEN" ]; then
+            # Pre-flight auth check — semantic-release aborts the whole job on an
+            # invalid token, so verify before handing the token over.
+            printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$RUNNER_TEMP/npmrc"
+            if ! npm whoami --userconfig "$RUNNER_TEMP/npmrc" --registry https://registry.npmjs.org/ >/dev/null 2>&1; then
+              echo "::warning::NPM_TOKEN is set but INVALID (npm whoami failed) — falling back to GitHub-release-only. Rotate the token to restore npm publishing."
+              NPM_TOKEN=""
+            fi
+          fi
           if [ -z "$NPM_TOKEN" ]; then
             echo "::warning::NPM_TOKEN is not set — creating GitHub release only (no npm publish)"
             VERSION=$(bun -e "console.log(require('./packages/cli/package.json').version)")
