@@ -26,7 +26,7 @@
 
 import type { Bus } from '../bus/index.js'
 import type { Insight } from './online.js'
-import type { UsageAnalysis, FailurePattern, SuccessPattern } from './usage.js'
+import type { UsageAnalysis } from './usage.js'
 import type { MiraDB } from '../storage/db.js'
 import type { JsonValue } from '../types/index.js'
 import {
@@ -45,11 +45,11 @@ export type MemorySource = 'online' | 'usage' | 'improvement' | 'user' | 'system
 
 /** Trust & Provenance: how strongly a memory can be relied on. */
 export type ProvenanceLevel =
-  | 'human-verified'    // human explicitly confirmed
-  | 'ci-verified'       // CI / automated test suite verified
-  | 'benchmark-verified'// verified via benchmark run
-  | 'agent-generated'   // agent produced, not externally verified
-  | 'unverified'        // no evidence of correctness
+  | 'human-verified' // human explicitly confirmed
+  | 'ci-verified' // CI / automated test suite verified
+  | 'benchmark-verified' // verified via benchmark run
+  | 'agent-generated' // agent produced, not externally verified
+  | 'unverified' // no evidence of correctness
 
 /** Confidence score ranges by provenance. */
 export const PROVENANCE_CONFIDENCE: Record<ProvenanceLevel, number> = {
@@ -57,7 +57,7 @@ export const PROVENANCE_CONFIDENCE: Record<ProvenanceLevel, number> = {
   'ci-verified': 0.9,
   'benchmark-verified': 0.85,
   'agent-generated': 0.5,
-  'unverified': 0.2,
+  unverified: 0.2,
 }
 
 export interface MemoryEntry {
@@ -290,7 +290,9 @@ export class KnowledgeBase {
             : undefined,
           metadata: safeJsonParse<Record<string, JsonValue>>(r.metadata, {}),
           provenance: (r.provenance as ProvenanceLevel | null) ?? 'unverified',
-          confidence: r.confidence ?? PROVENANCE_CONFIDENCE[(r.provenance as ProvenanceLevel | null) ?? 'unverified'],
+          confidence:
+            r.confidence ??
+            PROVENANCE_CONFIDENCE[(r.provenance as ProvenanceLevel | null) ?? 'unverified'],
           sourceKind: (r.source_kind as SourceKind | null) ?? 'unknown',
           sourceRef: r.source_ref ?? null,
           createdBy: r.created_by ?? 'legacy',
@@ -641,10 +643,29 @@ export class KnowledgeBase {
     }
 
     // 4. Assembly: return ranked entries (strip internal _score)
-    return top.map(({ _score, _rawScore, ...e }) => e)
+    return top.map((item) => {
+      const copy = { ...item } as Record<string, unknown>
+      delete copy._score
+      delete copy._rawScore
+      return copy as never
+    })
   }
 
   /** Direct lookup by id (also touches for temporal tracking) */
+  /**
+   * Remove an entry for real: tombstone (persisted, so it stays gone across
+   * restarts — retrieval/list paths skip tombstoned rows) and drop from the
+   * live index. Returns false when the id is unknown.
+   */
+  remove(id: string): boolean {
+    const e = this.entries.get(id)
+    if (!e) return false
+    e.metadata = { ...e.metadata, tombstone: 1 }
+    this.persist(e).catch(() => {})
+    this.entries.delete(id)
+    return true
+  }
+
   get(id: string): MemoryEntry | undefined {
     const e = this.entries.get(id)
     if (e) {
@@ -881,7 +902,7 @@ export class KnowledgeBase {
           JSON.stringify(entry.derivedFrom),
           entry.lastVerifiedAt,
         )
-    } catch (e) {
+    } catch {
       // Fallback for DBs where new columns don't exist yet (should not happen after migrate, but be safe)
       try {
         sqlite
@@ -922,10 +943,6 @@ export class KnowledgeBase {
 }
 
 // ── Temporal decay ─────────────────────────────────────────────────
-// Half-life 30 days: score *= 0.5^(ageDays/30)
-// Recent entries keep ~1.0, 30d old → 0.5, 60d → 0.25, 90d → 0.125
-const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000
-
 /** Phase 3 expiry sweep: entries unseen for 60 days are tombstoned. */
 export const KNOWLEDGE_EXPIRY_MS = 60 * 24 * 60 * 60 * 1000
 

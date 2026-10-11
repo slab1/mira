@@ -263,6 +263,7 @@ export async function migrate(db: MiraDB) {
   // evidence keeps its owner/org after the session row is gone.
   addColumn('audit_entries', 'owner_id', 'TEXT')
   addColumn('audit_entries', 'org_id', 'TEXT')
+  addColumn('audit_entries', 'error', 'TEXT')
   try {
     sqlite.exec(`CREATE INDEX IF NOT EXISTS audit_entries_org_idx ON audit_entries(org_id);`)
   } catch {}

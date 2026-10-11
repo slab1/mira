@@ -387,7 +387,7 @@ export class AuditLogger {
         const id = crypto.randomUUID()
         this.db.sqlite
           .prepare(
-            'INSERT INTO audit_entries (id, session_id, tool, decision, reason, args, result, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO audit_entries (id, session_id, tool, decision, reason, args, result, error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
           )
           .run(
             id,
@@ -397,6 +397,11 @@ export class AuditLogger {
             safe.reason ?? null,
             safe.args !== undefined ? JSON.stringify(safe.args) : null,
             safe.result !== undefined ? JSON.stringify(safe.result) : null,
+            safe.error !== undefined
+              ? typeof safe.error === 'string'
+                ? safe.error
+                : JSON.stringify(safe.error)
+              : null,
             Date.now(),
           )
       } catch {}

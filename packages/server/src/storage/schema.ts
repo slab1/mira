@@ -254,6 +254,8 @@ export const auditEntries = sqliteTable(
     reason: text('reason'),
     args: text('args', { mode: 'json' }).$type<JsonValue>(),
     result: text('result', { mode: 'json' }).$type<JsonValue>(),
+    // P3.5: post-execution failure text (file mirror had it; the DB was losing it)
+    error: text('error'),
     // P3.5: attribution stamped when the owning session is deleted, so audit
     // evidence survives (evidence must not be erasable by deleting a session)
     // while staying org-scopable for compliance reporting.

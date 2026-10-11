@@ -527,8 +527,9 @@ export function mountLearningRoutes(
     const id = c.req.param('id')
     const entry = system.knowledge.get(id)
     if (!entry) return c.json({ error: 'not found' }, 404)
-    // Remove from in-memory index (DB persistence will fade on restart)
-    system.knowledge['entries'].delete(id)
+    // Tombstone + persist — the old in-memory-only delete resurrected the row
+    // on every restart.
+    if (!system.knowledge.remove(id)) return c.json({ error: 'not found' }, 404)
     system.bus?.publish({
       type: 'job.updated',
       payload: { action: 'deleted', id },
