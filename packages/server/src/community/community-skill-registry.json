@@ -1,0 +1,114 @@
+[
+  {
+    "name": "tdd-workflow",
+    "description": "Red-green-refactor loop — write the failing test first, then make it pass, then clean up.",
+    "category": "testing",
+    "stars": 142,
+    "version": "1.0.0",
+    "source": { "kind": "packaged" }
+  },
+  {
+    "name": "systematic-debugging",
+    "description": "Root-cause debugging discipline — reproduce, isolate, explain before fixing.",
+    "category": "debugging",
+    "stars": 131,
+    "version": "1.0.0",
+    "source": { "kind": "packaged" }
+  },
+  {
+    "name": "code-review",
+    "description": "Structured review pass over correctness, test coverage, readability and blast radius.",
+    "category": "quality",
+    "stars": 128,
+    "version": "1.0.0",
+    "source": { "kind": "packaged" }
+  },
+  {
+    "name": "security-audit",
+    "description": "Security review sweep — injection, authz gaps, secret handling, unsafe defaults.",
+    "category": "security",
+    "stars": 124,
+    "version": "1.0.0",
+    "source": { "kind": "packaged" }
+  },
+  {
+    "name": "security-threat-model",
+    "description": "Threat modelling by trust boundary — assets, actors, abuse cases and mitigations.",
+    "category": "security",
+    "stars": 96,
+    "version": "1.0.0",
+    "source": { "kind": "packaged" }
+  },
+  {
+    "name": "refactor-safe",
+    "description": "Refactoring with safety rails — characterize first, small diffs, rollback points.",
+    "category": "refactoring",
+    "stars": 93,
+    "version": "1.0.0",
+    "source": { "kind": "packaged" }
+  },
+  {
+    "name": "verification-planning",
+    "description": "Plan verification before coding — what proves this change works, and what does not.",
+    "category": "process",
+    "stars": 88,
+    "version": "1.0.0",
+    "source": { "kind": "packaged" }
+  },
+  {
+    "name": "typescript-patterns",
+    "description": "Idiomatic TypeScript patterns — discriminated unions, narrowing, safe config typing.",
+    "category": "language",
+    "stars": 105,
+    "version": "1.0.0",
+    "source": { "kind": "packaged" }
+  },
+  {
+    "name": "testing-strategy",
+    "description": "Choose the right test level — unit vs integration vs e2e, and what each proves.",
+    "category": "testing",
+    "stars": 84,
+    "version": "1.0.0",
+    "source": { "kind": "packaged" }
+  },
+  {
+    "name": "git-commit-hygiene",
+    "description": "Conventional, reviewable commits — atomic staging, honest messages, small batches.",
+    "category": "process",
+    "stars": 79,
+    "version": "1.0.0",
+    "source": { "kind": "packaged" }
+  },
+  {
+    "name": "codebase-exploration",
+    "description": "Read an unfamiliar codebase efficiently — entry points, call graphs, change surface.",
+    "category": "exploration",
+    "stars": 97,
+    "version": "1.0.0",
+    "source": { "kind": "packaged" }
+  },
+  {
+    "name": "performance-optimization",
+    "description": "Optimize with evidence — measure, find the hot path, fix, re-measure.",
+    "category": "performance",
+    "stars": 91,
+    "version": "1.0.0",
+    "source": { "kind": "packaged" }
+  },
+  {
+    "name": "error-handling",
+    "description": "Error handling conventions — typed errors, boundaries, actionable messages, no silent failure.",
+    "category": "quality",
+    "stars": 90,
+    "version": "1.0.0",
+    "source": { "kind": "packaged" }
+  },
+  {
+    "name": "documentation-writing",
+    "description": "Write docs people read — lead with the decision, keep examples runnable.",
+    "category": "docs",
+    "stars": 68,
+    "version": "1.0.0",
+    "source": { "kind": "packaged" }
+  }
+]

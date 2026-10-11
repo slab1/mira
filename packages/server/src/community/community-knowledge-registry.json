@@ -1,0 +1,95 @@
+[
+  {
+    "name": "typescript-review-checklist",
+    "description": "TypeScript review knowledge — narrowing, discriminated unions, config typing traps.",
+    "category": "language",
+    "stars": 86,
+    "version": "1.0.0",
+    "author": "mira",
+    "source": {
+      "kind": "knowledge",
+      "entries": [
+        {
+          "tier": "semantic",
+          "title": "TS: narrowing is lost across async callbacks",
+          "content": "A property access narrowed by a guard (`if (!row.ownerID) return`) does not stay narrowed inside a closure or async callback for mutable objects. Re-capture the narrowed value into a const before the closure, or re-check inside it. This silently widens the type back to the declared union and produces `string | undefined` assignments where `string` was expected.",
+          "tags": ["typescript", "narrowing", "review"]
+        },
+        {
+          "tier": "semantic",
+          "title": "TS: prefer discriminated unions over optional booleans",
+          "content": "Optional booleans (`role?: string; active?: boolean`) admit invalid states that no single branch can describe. A union keyed by a literal discriminant (`{kind: 'admin'} | {kind: 'member'}`) makes illegal states unrepresentable and lets the compiler check exhaustive handling with a `never` default.",
+          "tags": ["typescript", "types", "design"]
+        },
+        {
+          "tier": "procedural",
+          "title": "Reviewing TypeScript config schemas",
+          "content": "When adding config fields, check the schema in BOTH the zod patch schema and the TypeScript interface — divergence means the field validates in the type system but is silently dropped (or throws) at write time. Confirm with a round-trip test: write the field, read it back, assert equality.",
+          "tags": ["typescript", "config", "review"]
+        }
+      ]
+    }
+  },
+  {
+    "name": "api-security-basics",
+    "description": "API security knowledge — authz on every route, unbounded queries, 404 vs 403 leaks.",
+    "category": "security",
+    "stars": 92,
+    "version": "1.0.0",
+    "author": "mira",
+    "source": {
+      "kind": "knowledge",
+      "entries": [
+        {
+          "tier": "semantic",
+          "title": "Prefer 404 over 403 for cross-tenant reads",
+          "content": "Returning 403 for a resource that exists but belongs to another tenant confirms its existence to an unauthorized caller. Return 404 when the caller cannot read the resource, and reserve 403 for cases where the resource is theirs but the action is forbidden (e.g. read-only role attempting a write).",
+          "tags": ["security", "api", "tenancy"]
+        },
+        {
+          "tier": "semantic",
+          "title": "Every resource route needs an ownership check",
+          "content": "Authenticating the request is not authorization. A route that loads by id must verify the loaded row belongs to the caller (owner or tenant) before returning it. Centralize this as one shared predicate so REST lists, per-resource gates, jobs and WebSocket delivery cannot drift apart.",
+          "tags": ["security", "authorization", "api"]
+        },
+        {
+          "tier": "procedural",
+          "title": "Bound every list endpoint",
+          "content": "Any endpoint returning collections must apply a hard row cap and accept an explicit limit parameter with a maximum. Unbounded reads are a denial-of-service primitive and a data-leak amplifier on shared instances. Default low (e.g. 50), cap high (e.g. 200), and validate the parameter instead of trusting it.",
+          "tags": ["security", "api", "dos"]
+        }
+      ]
+    }
+  },
+  {
+    "name": "deliberate-debugging",
+    "description": "Debugging knowledge — reproduce first, explain before fixing, keep the failing case.",
+    "category": "debugging",
+    "stars": 89,
+    "version": "1.0.0",
+    "author": "mira",
+    "source": {
+      "kind": "knowledge",
+      "entries": [
+        {
+          "tier": "procedural",
+          "title": "Debugging order: reproduce, localize, explain, fix, verify",
+          "content": "Fixing before explaining is guesswork. Reproduce the failure deterministically, localize it to the smallest failing unit, write one sentence explaining WHY it fails (mechanism, not symptom), then make the smallest change that removes the cause. Verify with the reproduction still failing before the fix and passing after.",
+          "tags": ["debugging", "process"]
+        },
+        {
+          "tier": "episodic",
+          "title": "Silent catch blocks mask real failures",
+          "content": "Repeated encounters: `catch (e) { /* ignore */ }` in loop/loader code hides malformed records and turns a data bug into missing data. Prefer an explicit narrow catch with a log or a skip-with-reason, and surface the count of skipped records so partial loading is visible.",
+          "tags": ["debugging", "error-handling"]
+        },
+        {
+          "tier": "semantic",
+          "title": "A green suite proves less than a targeted test",
+          "content": "Full-suite runs in constrained environments can be killed (OOM) and reported ambiguously. Target the files you changed, assert specific outcomes, and treat process kills as environment signals (free memory, RSS) rather than test failures.",
+          "tags": ["testing", "debugging", "process"]
+        }
+      ]
+    }
+  }
+]
