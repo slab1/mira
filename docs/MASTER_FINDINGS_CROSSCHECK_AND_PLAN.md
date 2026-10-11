@@ -344,9 +344,15 @@ Audit of "can Mira catch an agent editing the wrong file or the wrong position?"
    - **Outside session focus** (weak, advisory): the target shares no path segment with anything read. Sibling modules (`src/auth`, `src/db`) count as related.
    - **Advisory by default**: warnings ride back in the tool result as `editTargetWarnings` so the agent can reconsider before the change compounds. `MIRA_STRICT_EDIT_TARGET=1` makes **only** the high-confidence same-basename signal blocking, and it runs _before_ the snapshot so a blocked edit writes nothing. The twin scan is bounded (≤400 directories; skips `node_modules`/`.git`/dist).
 
-**Still open**: a _semantic_ notion of "does this change belong to the task" is still out of scope — `findDependents`/`analyzeRemoval`/the ownership graph remain advisory tools no gate consults. The signals above are evidence-based (what the session actually touched), not intent-based.
+9. **Task-intent relevance** (`analyzeTaskRelevance`) — the "does this edit belong to what was asked?" layer, evidence-based and advisory-only:
+   - **Module-boundary crossing**: the session has only worked inside `packages/server` and this edit targets `packages/web`. Reported with both sides named.
+   - **Task text never mentions this file** while it _does_ name another file the session touched ("fix the bug in login.ts" → editing `logout.ts`). Backed by `recentUserPrompts()` — a bounded, indexed lookup of recent user `text` parts.
+   - **False-positive control**: filename tokens shorter than 3 chars and a generic stoplist (`index`, `util`, `helper`, `test`, `common`, …) are excluded, so ordinary prose containing those words never counts as a "mention". Without this, `index.ts` matches any prompt containing "index" and the signal is pure noise — caught by a test written after the flaw, not before.
+   - Advisory only — never blocks, even in strict mode. A lexical heuristic that blocks legitimate work is worse than none.
 
-Tests: `tools/edit-position.test.ts` (8), `tools/revert.test.ts` (10), `compliance/auto-rollback.test.ts` (15), `tools/auto-rollback.e2e.test.ts` (5, through the real task pipeline), `tools/edit-target.test.ts` (11).
+**Still open**: true semantic intent modelling — reading the task and judging whether the change is _appropriate_ (as opposed to plausibly _related_). That needs a plan-binding/embedding layer, which is a larger piece of work than a gate. `findDependents`/`analyzeRemoval`/the ownership graph remain advisory tools no gate consults; wiring blast-radius into the edit path is the natural next increment.
+
+Tests: `tools/edit-position.test.ts` (8), `tools/revert.test.ts` (10), `compliance/auto-rollback.test.ts` (15), `tools/auto-rollback.e2e.test.ts` (5, through the real task pipeline), `tools/edit-target.test.ts` (11), `tools/task-relevance.test.ts` (11).
 
 ### P3.6 Vertical agents — DEFERRED (per ADR 0001)
 
