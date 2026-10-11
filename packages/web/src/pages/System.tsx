@@ -1,9 +1,7 @@
 import { createSignal, onMount, Show, For } from 'solid-js'
-import { req } from '../api/client'
 import { DataStateBadge, type OperationalState } from '../components/DataState'
-import { createSystemFeatureStore } from '../features/system'
+import { AuditTrail } from '../components/AuditTrail'
 import { Card, SectionHeader, StatusRow } from '../components/DesignSystem'
-import { ScopeTransparency } from '../components/ScopeTransparency'
 
 interface HealthStatus {
   status: string
@@ -39,7 +37,6 @@ export default function SystemPage() {
   const [dashboard, setDashboard] = createSignal<DashboardData | null>(null)
   const [error, setError] = createSignal<string | null>(null)
   const [state, setState] = createSignal<OperationalState>('loading')
-  const systemStore = createSystemFeatureStore()
 
   onMount(async () => {
     try {
@@ -59,13 +56,48 @@ export default function SystemPage() {
   })
 
   return (
-    <div style={{ flex: '1', display: 'flex', 'flex-direction': 'column', overflow: 'auto', background: 'var(--bg-canvas)', padding: '18px 14px 28px' }}>
-      <div style={{ 'max-width': '1100px', margin: '0 auto', width: '100%', display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
+    <div
+      style={{
+        flex: '1',
+        display: 'flex',
+        'flex-direction': 'column',
+        overflow: 'auto',
+        background: 'var(--bg-canvas)',
+        padding: '18px 14px 28px',
+      }}
+    >
+      <div
+        style={{
+          'max-width': '1100px',
+          margin: '0 auto',
+          width: '100%',
+          display: 'flex',
+          'flex-direction': 'column',
+          gap: '14px',
+        }}
+      >
         <Card padding="14px 16px" style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
-          <div style={{ width: '28px', height: '28px', 'border-radius': '8px', background: 'var(--grad-brand)', display: 'grid', 'place-items': 'center', color: 'var(--on-accent)', 'font-weight': '800', 'font-size': '14px' }} aria-hidden="true">S</div>
+          <div
+            style={{
+              width: '28px',
+              height: '28px',
+              'border-radius': '8px',
+              background: 'var(--grad-brand)',
+              display: 'grid',
+              'place-items': 'center',
+              color: 'var(--on-accent)',
+              'font-weight': '800',
+              'font-size': '14px',
+            }}
+            aria-hidden="true"
+          >
+            S
+          </div>
           <div>
             <div style={{ 'font-size': 'var(--fs-lg)', 'font-weight': '700' }}>System</div>
-            <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>Operational control center — health, config, resources</div>
+            <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>
+              Operational control center — health, config, resources
+            </div>
           </div>
           <div style={{ 'margin-left': 'auto' }}>
             <DataStateBadge state={state()} />
@@ -73,7 +105,9 @@ export default function SystemPage() {
         </Card>
 
         <Show when={error()}>
-          <div class="card" style={{ padding: '12px 16px', color: 'var(--danger)' }}>Error: {error()}</div>
+          <div class="card" style={{ padding: '12px 16px', color: 'var(--danger)' }}>
+            Error: {error()}
+          </div>
         </Show>
 
         {/* Health Category */}
@@ -105,7 +139,11 @@ export default function SystemPage() {
                 <StatusRow label="Context Limit" value={String(c().loop!.contextLimit)} />
               </Show>
               <Show when={c().guardrails?.enforce !== undefined}>
-                <StatusRow label="Guardrails" value={c().guardrails!.enforce ? 'Enforced' : 'Disabled'} ok={c().guardrails!.enforce} />
+                <StatusRow
+                  label="Guardrails"
+                  value={c().guardrails!.enforce ? 'Enforced' : 'Disabled'}
+                  ok={c().guardrails!.enforce}
+                />
               </Show>
             </Card>
           )}
@@ -121,10 +159,16 @@ export default function SystemPage() {
               <StatusRow label="Memories" value={String(d().learning.totalMemories)} />
               <StatusRow label="Open Items" value={String(d().workspace.openItems)} />
               <StatusRow label="Repo Nodes" value={String(d().repo.nodes)} />
-              <StatusRow label="Total Cost" value={`${(d().cost.totalTokens / 1000000).toFixed(1)}M tokens`} />
+              <StatusRow
+                label="Total Cost"
+                value={`${(d().cost.totalTokens / 1000000).toFixed(1)}M tokens`}
+              />
             </Card>
           )}
         </Show>
+
+        {/* Audit Trail Category (P3.2) — admin-gated server-side */}
+        <AuditTrail />
       </div>
     </div>
   )

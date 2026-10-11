@@ -369,6 +369,35 @@ export type WorkspaceEntry = {
   addedAt: number
 }
 
+/** One guardrail/audit decision row (GET /admin/audit). args/result are pre-parsed JSON when possible. */
+export type AuditEntry = {
+  id: string
+  sessionID: string | null
+  tool: string
+  decision: 'allow' | 'deny' | 'warn' | string
+  reason: string | null
+  args: JsonValue | null
+  result: JsonValue | null
+  createdAt: number
+}
+
+/** Filters shared by GET /admin/audit and GET /admin/audit/export. */
+export type AuditTrailParams = {
+  tool?: string
+  decision?: 'allow' | 'deny' | 'warn'
+  sessionID?: string
+  limit?: number
+}
+
+function auditTrailQuery(params: AuditTrailParams): string {
+  const q = new URLSearchParams()
+  if (params.tool) q.set('tool', params.tool)
+  if (params.decision) q.set('decision', params.decision)
+  if (params.sessionID) q.set('sessionID', params.sessionID)
+  if (params.limit) q.set('limit', String(params.limit))
+  return q.toString()
+}
+
 export type PermissionMatrix = Record<string, string | Record<string, string>>
 
 export type GraphNode = {
@@ -1113,6 +1142,43 @@ export const api = {
   listAgents: () => req<AgentEntry[]>('/agents'),
   listCommands: () => req<CommandEntry[] | string[]>('/commands'),
   listSkills: () => req<SkillEntry[] | string[]>('/skills'),
+
+  // ── Audit trail (P3.2) — admin-only query + export ───────────────
+  listAuditTrail: (params: AuditTrailParams = {}) => {
+    const qs = auditTrailQuery(params)
+    return req<{ count: number; entries: AuditEntry[] }>(`/admin/audit${qs ? `?${qs}` : ''}`)
+  },
+  /** Download the audit trail with the same filters as listAuditTrail. */
+  exportAuditTrail: async (
+    params: AuditTrailParams = {},
+    format: 'csv' | 'json' = 'csv',
+  ): Promise<void> => {
+    const qs = auditTrailQuery(params)
+    const res = await fetch(
+      `${baseUrl()}/admin/audit/export?format=${format}${qs ? `&${qs}` : ''}`,
+      { mode: 'cors', headers: authHeaders() },
+    )
+    if (res.status === 401) {
+      clearTokenOn401()
+      throw new ApiError(401, 'unauthorized')
+    }
+    if (!res.ok) {
+      const t = await res.text().catch(() => '')
+      throw new ApiError(res.status, `audit export failed ${res.status}: ${t}`)
+    }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    try {
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `mira-audit-${Date.now()}.${format}`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(url), 5000)
+    }
+  },
   getWorkspaceTree: (cwd?: string) =>
     req<{ files: Array<{ path: string; isDir: boolean; size: number; mtime: number }> | string[] }>(
       cwd ? `/workspace/tree?cwd=${encodeURIComponent(cwd)}` : '/workspace/tree',
@@ -1343,7 +1409,7 @@ export const api = {
   getLearningSchedulerStatus: () => Promise.resolve({ status: 'idle' }),
   getLearningLastEvalDelta: () => Promise.resolve({ delta: 0, sessionID: '' }),
   listPendingPatches: () => Promise.resolve([]),
-  approvePatch: (_id: string) => Promise.resolve({ ok: true }),
+  approvePatch: (id: string) => Promise.resolve({ ok: true, id }),
   getModelEval: (model: string) =>
     req<ModelEval>(`/eval/model/${encodeURIComponent(model)}`).then((d) => ({
       model: d.model,

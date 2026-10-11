@@ -272,10 +272,10 @@ sessions healthy:
 - `resolveRole()` wired: middleware blocks viewer writes globally (403 on non-GET/HEAD/OPTIONS); `isAdmin` is role-backed (master token + explicitly-roled admins); mint accepts/stores role (idempotent `role` column), list shows it, revoke cleans it up; `GET /me` exposes the caller's role for UI adaptation.
 - Tests: `auth/roles.test.ts` (7), `middleware/rbac.test.ts` (6), admin route tests extended (5).
 
-### P3.2 Audit trail UI + export — ✅ DONE (export; UI page pending)
+### P3.2 Audit trail UI + export — ✅ DONE
 
 - `GET /admin/audit/export?format=csv|json` — same filters as `/admin/audit`, 10k row cap, Content-Disposition attachment; CSV escapes per RFC 4180. Tests cover CSV shape, JSON filters, format validation, auth gate.
-- Remaining (optional): a dedicated web page. The System workspace can link the export once UX modes settle.
+- UI shipped in the System workspace: `components/AuditTrail.tsx` — filterable table (tool / decision / sessionID / limit), decision badges, and CSV/JSON export honoring current filters. Admin-gated server-side; non-admins see a role note instead of data (401/403 handled without clearing valid tokens).
 
 ### P3.3 Org multi-tenancy
 
