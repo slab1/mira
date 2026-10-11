@@ -148,16 +148,20 @@ export class SessionCrud {
     parentID?: string
     agent?: string
     ownerID?: string | null
+    orgID?: string | null
     cwd?: string
     projectId?: string
   }) {
     const id = crypto.randomUUID()
     const now = Date.now()
     let ownerID = input.ownerID ?? null
-    if (!ownerID && input.parentID) {
+    let orgID = input.orgID ?? null
+    if ((!ownerID || !orgID) && input.parentID) {
       try {
         const parent = await this.getSession(input.parentID)
-        ownerID = parent?.ownerID ?? null
+        if (!ownerID) ownerID = parent?.ownerID ?? null
+        // Subagent/fork children inherit the parent's org tenancy (P3.3)
+        if (!orgID) orgID = (parent as { orgID?: string | null } | undefined)?.orgID ?? null
       } catch (e) {
         console.error('[session.session-crud] error:', e)
       }
@@ -190,6 +194,7 @@ export class SessionCrud {
       parentID: input.parentID,
       agent: (input.agent && isKnownAgent(input.agent) ? input.agent : null) as string | null,
       ownerID: ownerID as string | null,
+      orgID: orgID as string | null,
       tokensIn: null as number | null,
       tokensOut: null as number | null,
       costUsd: null as number | null,

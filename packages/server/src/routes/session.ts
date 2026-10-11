@@ -2,13 +2,14 @@ import type { Hono, Context } from 'hono'
 import type { MiraDB } from '../storage/db.js'
 import type { Bus } from '../bus/index.js'
 import type { SessionPrompt } from '../session/prompt.js'
-import { getJob, listJobs, cancelJob, type Job } from '../tools/task.js'
+import { getJob, listJobs, cancelJob } from '../tools/task.js'
 import type { JsonValue } from '../types/index.js'
 import type { TodoStatus, TodoPriority } from '../types/index.js'
 import { isKnownAgent } from '../agents/templates.js'
 import { z } from 'zod'
 import { desc } from 'drizzle-orm'
 import { sessions } from '../storage/schema.js'
+import { sessionVisibleTo as sessionVisibleToRow } from '../auth/session-access.js'
 
 /** Typed session row — mirrors the Drizzle `sessions` schema. */
 interface SessionRow {
@@ -21,6 +22,7 @@ interface SessionRow {
   parentID: string | null
   agent: string | null
   ownerID: string | null
+  orgID: string | null
   tokensIn: number | null
   tokensOut: number | null
   costUsd: number | null
@@ -115,10 +117,14 @@ export function mountSessionRoutes(
     prompt: SessionPrompt
     authorizedSession: (id: string, c: Context) => Promise<SessionRow | null>
     ownerOfSession: (id: string) => Promise<string | null>
+    /** Org of an owner from the live membership map (P3.3) — undefined when orgless */
+    orgOfOwner: (owner: string | null | undefined) => string | undefined
+    /** Org a session was created under (null on legacy/personal sessions) */
+    orgOfSession: (id: string) => Promise<string | null>
     resolveOwner: (t: string) => string | undefined
     bearerOf: (h?: string) => string
     OWNERSHIP_ENABLED: boolean | (() => boolean)
-    sessionOwnerCache: Map<string, { owner: string | null; ts: number }>
+    sessionOwnerCache: Map<string, { owner: string | null; org: string | null; ts: number }>
   },
 ) {
   const { db, bus, prompt } = deps
@@ -127,6 +133,12 @@ export function mountSessionRoutes(
       ? (deps.OWNERSHIP_ENABLED as () => boolean)()
       : !!deps.OWNERSHIP_ENABLED
 
+  /** Org-tenancy access (P3.3) — shared rule from auth/session-access.ts */
+  const sessionVisibleTo = (
+    s: { id: string; ownerID: string | null; orgID: string | null },
+    owner: string | undefined,
+  ) => sessionVisibleToRow(s, owner, deps.orgOfOwner)
+
   app.get('/session', async (c: Context) => {
     const owner = isOwnershipEnabled()
       ? deps.resolveOwner(deps.bearerOf(c.req.header('Authorization')))
@@ -134,7 +146,8 @@ export function mountSessionRoutes(
     const all = (await db.query.sessions.findMany({
       orderBy: desc(sessions.updatedAt),
     })) as SessionRow[]
-    return c.json(owner ? all.filter((s) => !s.ownerID || s.ownerID === owner) : all)
+    if (!owner) return c.json(all)
+    return c.json(all.filter((s) => sessionVisibleTo(s, owner)))
   })
   app.post('/session', async (c: Context) => {
     const parsed = createSessionSchema.safeParse(await c.req.json().catch(() => null))
@@ -148,11 +161,15 @@ export function mountSessionRoutes(
       )
     }
     const body = parsed.data
+    const owner = isOwnershipEnabled()
+      ? (deps.resolveOwner(deps.bearerOf(c.req.header('Authorization'))) ?? 'default')
+      : null
     const rawSession = await prompt.createSession({
       ...body,
-      ownerID: isOwnershipEnabled()
-        ? (deps.resolveOwner(deps.bearerOf(c.req.header('Authorization'))) ?? 'default')
-        : null,
+      ownerID: owner,
+      // Stamp the org the creating owner belongs to (P3.3); null when orgless
+      // or when ownership is off (sessions are global then — no org needed).
+      orgID: owner ? (deps.orgOfOwner(owner) ?? null) : null,
     })
     // Proper type bridge: prompt.createSession returns Session-like object, narrow to SessionRow via runtime check
     const session: SessionRow = {
@@ -165,13 +182,18 @@ export function mountSessionRoutes(
       parentID: rawSession.parentID ?? null,
       agent: rawSession.agent ?? null,
       ownerID: rawSession.ownerID ?? null,
+      orgID: (rawSession as { orgID?: string | null }).orgID ?? null,
       tokensIn: (rawSession as Partial<SessionRow>).tokensIn ?? null,
       tokensOut: (rawSession as Partial<SessionRow>).tokensOut ?? null,
       costUsd: (rawSession as Partial<SessionRow>).costUsd ?? null,
       cwd: (rawSession as Partial<SessionRow>).cwd ?? null,
       projectId: (rawSession as Partial<SessionRow>).projectId ?? null,
     }
-    deps.sessionOwnerCache.set(session.id, { owner: session.ownerID ?? null, ts: Date.now() })
+    deps.sessionOwnerCache.set(session.id, {
+      owner: session.ownerID ?? null,
+      org: session.orgID ?? null,
+      ts: Date.now(),
+    })
     bus.publish({
       type: 'session.created',
       payload: JSON.parse(JSON.stringify(session)) as JsonValue,
@@ -313,6 +335,7 @@ export function mountSessionRoutes(
       parentID,
       agent: agent ?? undefined,
       ownerID: owner,
+      orgID: owner ? (deps.orgOfOwner(owner) ?? null) : null,
       cwd: srcSession.cwd ?? undefined,
       projectId: srcSession.projectId ?? undefined,
     })
@@ -378,6 +401,7 @@ export function mountSessionRoutes(
     }
     deps.sessionOwnerCache.set(created.id, {
       owner: (created as { ownerID?: string | null }).ownerID ?? owner,
+      org: (created as { orgID?: string | null }).orgID ?? null,
       ts: Date.now(),
     })
     bus.publish({
@@ -439,7 +463,9 @@ export function mountSessionRoutes(
     const filtered: typeof all = []
     for (const j of all) {
       const o = await deps.ownerOfSession(j.parentSessionID)
-      if (o === null || o === owner) filtered.push(j)
+      // Org of the parent session only needs resolving for foreign-owned jobs
+      const g = o !== null && o !== owner ? await deps.orgOfSession(j.parentSessionID) : null
+      if (sessionVisibleToRow({ ownerID: o, orgID: g }, owner, deps.orgOfOwner)) filtered.push(j)
     }
     return c.json(filtered)
   })

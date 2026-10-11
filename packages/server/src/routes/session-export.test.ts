@@ -47,6 +47,9 @@ beforeAll(async () => {
     prompt,
     authorizedSession: async (id) => (await prompt.getSession(id)) as never,
     ownerOfSession: async (id) => (await prompt.getSession(id))?.ownerID ?? null,
+    orgOfOwner: () => undefined,
+    orgOfSession: async (id) =>
+      ((await prompt.getSession(id)) as { orgID?: string | null })?.orgID ?? null,
     resolveOwner: () => undefined,
     bearerOf: () => '',
     OWNERSHIP_ENABLED: false,

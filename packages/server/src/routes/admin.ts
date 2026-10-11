@@ -23,7 +23,7 @@ export function mountAdminRoutes(
     resolveOwner: (t: string) => string | undefined
     resolveRole: (t: string) => import('../auth/roles.js').Role
     bearerOf: (h: string | undefined) => string
-    sessionOwnerCache: Map<string, { owner: string | null; ts: number }>
+    sessionOwnerCache: Map<string, { owner: string | null; org: string | null; ts: number }>
   },
 ) {
   const {

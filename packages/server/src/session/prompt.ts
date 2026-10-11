@@ -110,6 +110,10 @@ export interface LoopOptions {
   compactionThreshold?: number // 0.8 = compact at 80% context
   signal?: AbortSignal
   agent?: string | null // per-turn agent override (Kilo K1 parity)
+  /** Owner driving this turn (P3.3) — may differ from the session owner when a
+   *  same-org member continues a colleague's session; agents address the
+   *  person present, not the session's creator. */
+  callerOwner?: string | null
 }
 
 /** Strip reasoning_content from all messages except last 2 assistant messages. */
@@ -520,6 +524,7 @@ export class SessionPrompt {
     parentID?: string
     agent?: string
     ownerID?: string | null
+    orgID?: string | null
     cwd?: string
     projectId?: string
   }) {
@@ -527,10 +532,13 @@ export class SessionPrompt {
     const now = Date.now()
     // Subagent/fork children inherit the parent session's owner (multi-tenant)
     let ownerID = input.ownerID ?? null
-    if (!ownerID && input.parentID) {
+    let orgID = input.orgID ?? null
+    if ((!ownerID || !orgID) && input.parentID) {
       try {
         const parent = await this.getSession(input.parentID)
-        ownerID = parent?.ownerID ?? null
+        if (!ownerID) ownerID = parent?.ownerID ?? null
+        // …and the parent's org tenancy (P3.3)
+        if (!orgID) orgID = (parent as { orgID?: string | null } | undefined)?.orgID ?? null
       } catch {}
     }
     // Kilo K1+K8: explicit > agent.model > autoModel tier > default
@@ -564,6 +572,7 @@ export class SessionPrompt {
       parentID: input.parentID,
       agent: (input.agent && isKnownAgent(input.agent) ? input.agent : null) as string | null,
       ownerID: ownerID as string | null,
+      orgID: orgID as string | null,
       tokensIn: null as number | null,
       tokensOut: null as number | null,
       costUsd: null as number | null,
@@ -850,6 +859,10 @@ export class SessionPrompt {
     const basePrompt = await buildSystemPrompt(
       session.cwd ?? process.cwd(),
       await getUserNameForOwner(this.deps.db, session.ownerID),
+      // Who is present this turn (P3.3): same-org member ≠ absent session owner
+      options?.callerOwner
+        ? await getUserNameForOwner(this.deps.db, options.callerOwner)
+        : undefined,
     )
     // Agent persona (researcher/coder/reviewer) prepended when set on the session or per-turn
     const persona = effectiveAgent ? getAgentTemplates()[effectiveAgent]?.system : undefined

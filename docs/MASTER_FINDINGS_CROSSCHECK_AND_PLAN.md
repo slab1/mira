@@ -60,42 +60,42 @@ Three graphs are built at boot: CodeGraph (AST, `codegraph/`), RepoKnowledgeGrap
 
 ## 1.2 Full Verdict Matrix
 
-| #   | Claim                     | Verdict                                                                                                     |
-| --- | ------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| 1   | Root cause analysis       | PARTIAL — regex heuristics, request-driven                                                                  |
-| 2   | Patch proposal engine     | PARTIAL — templated, rollback not co-emitted                                                                |
-| 3   | Validation loop           | ALREADY EXISTS — fail-closed governance                                                                     |
-| 4   | Confidence thresholds     | PARTIAL — risk-keyed, not unified policy                                                                    |
-| 5   | Strategic agent layer     | PARTIAL — task-scoped planning only                                                                         |
-| 6   | Execution agent layer     | PARTIAL — tools + personas, not a layer                                                                     |
-| 7   | Validation agent layer    | PARTIAL — cross-cutting roles                                                                               |
-| 8   | Learning agent layer      | PARTIAL — background subsystem, not agentic                                                                 |
-| 9   | Working memory            | ALREADY EXISTS                                                                                              |
-| 10  | Episodic memory           | ALREADY EXISTS                                                                                              |
-| 11  | Semantic memory           | ALREADY EXISTS                                                                                              |
-| 12  | Procedural memory         | ALREADY EXISTS                                                                                              |
-| 13  | Strategic memory          | REAL GAP                                                                                                    |
-| 14  | Decision log              | PARTIAL — audit log ≠ rationale log; `appendDecision()` never called                                        |
-| 15  | Approval levels L0–L3     | PARTIAL — three non-aligned schemes; no deploy tier                                                         |
-| 16  | Explainability dashboard  | PARTIAL — API exists (`/memory/evolution/:id/explain`), UI dead code (`ProvenancePanel.tsx` never imported) |
-| 17  | Project health score      | REAL GAP                                                                                                    |
-| 18  | Repository timeline       | REAL GAP — no git-history analysis anywhere                                                                 |
-| 19  | Team memory               | PARTIAL — findings real; `decisions.md`/`conventions.md` empty templates                                    |
-| 20  | Impact analysis           | PARTIAL — forward deps only; `findDependents` unexposed                                                     |
-| 21  | Ownership analysis        | PARTIAL — data built, zero query surface                                                                    |
-| 22  | Architectural reasoning   | PARTIAL — scaffolding only                                                                                  |
-| 23  | Refactoring safety        | PARTIAL — risky-edit blocking exists; no dead-code analysis                                                 |
-| 24  | Beginner/Pro/Expert modes | REAL GAP — all advanced surfaces always visible                                                             |
-| 25  | Plugin marketplace        | PARTIAL — **working MCP marketplace exists** (curated, offline, one-click install); general plugins missing |
-| 26  | Agent marketplace         | REAL GAP                                                                                                    |
-| 27  | Community skill packs     | PARTIAL — local skill system strong (20 packs); distribution missing                                        |
-| 28  | Shared knowledge modules  | REAL GAP — in-process singleton only                                                                        |
-| 29  | RBAC                      | REAL GAP                                                                                                    |
-| 30  | Audit trails              | ALREADY EXISTS (no UI page/export)                                                                          |
-| 31  | Compliance layer          | REAL GAP                                                                                                    |
-| 32  | Multi-tenant isolation    | PARTIAL — per-user owner isolation; no orgs                                                                 |
-| 33  | Policy enforcement        | ALREADY EXISTS (permissive default)                                                                         |
-| 34  | Vertical-agent platform   | PARTIAL — multi-agent runtime exists; no verticals/marketplace                                              |
+| #   | Claim                     | Verdict                                                                                                                                                                          |
+| --- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Root cause analysis       | PARTIAL — regex heuristics, request-driven                                                                                                                                       |
+| 2   | Patch proposal engine     | PARTIAL — templated, rollback not co-emitted                                                                                                                                     |
+| 3   | Validation loop           | ALREADY EXISTS — fail-closed governance                                                                                                                                          |
+| 4   | Confidence thresholds     | PARTIAL — risk-keyed, not unified policy                                                                                                                                         |
+| 5   | Strategic agent layer     | PARTIAL — task-scoped planning only                                                                                                                                              |
+| 6   | Execution agent layer     | PARTIAL — tools + personas, not a layer                                                                                                                                          |
+| 7   | Validation agent layer    | PARTIAL — cross-cutting roles                                                                                                                                                    |
+| 8   | Learning agent layer      | PARTIAL — background subsystem, not agentic                                                                                                                                      |
+| 9   | Working memory            | ALREADY EXISTS                                                                                                                                                                   |
+| 10  | Episodic memory           | ALREADY EXISTS                                                                                                                                                                   |
+| 11  | Semantic memory           | ALREADY EXISTS                                                                                                                                                                   |
+| 12  | Procedural memory         | ALREADY EXISTS                                                                                                                                                                   |
+| 13  | Strategic memory          | REAL GAP                                                                                                                                                                         |
+| 14  | Decision log              | PARTIAL — audit log ≠ rationale log; `appendDecision()` never called                                                                                                             |
+| 15  | Approval levels L0–L3     | PARTIAL — three non-aligned schemes; no deploy tier                                                                                                                              |
+| 16  | Explainability dashboard  | PARTIAL — API exists (`/memory/evolution/:id/explain`), UI dead code (`ProvenancePanel.tsx` never imported)                                                                      |
+| 17  | Project health score      | REAL GAP                                                                                                                                                                         |
+| 18  | Repository timeline       | REAL GAP — no git-history analysis anywhere                                                                                                                                      |
+| 19  | Team memory               | PARTIAL — findings real; `decisions.md`/`conventions.md` empty templates                                                                                                         |
+| 20  | Impact analysis           | PARTIAL — forward deps only; `findDependents` unexposed                                                                                                                          |
+| 21  | Ownership analysis        | PARTIAL — data built, zero query surface                                                                                                                                         |
+| 22  | Architectural reasoning   | PARTIAL — scaffolding only                                                                                                                                                       |
+| 23  | Refactoring safety        | PARTIAL — risky-edit blocking exists; no dead-code analysis                                                                                                                      |
+| 24  | Beginner/Pro/Expert modes | REAL GAP — all advanced surfaces always visible                                                                                                                                  |
+| 25  | Plugin marketplace        | PARTIAL — **working MCP marketplace exists** (curated, offline, one-click install); general plugins missing                                                                      |
+| 26  | Agent marketplace         | REAL GAP                                                                                                                                                                         |
+| 27  | Community skill packs     | PARTIAL — local skill system strong (20 packs); distribution missing                                                                                                             |
+| 28  | Shared knowledge modules  | REAL GAP — in-process singleton only                                                                                                                                             |
+| 29  | RBAC                      | REAL GAP                                                                                                                                                                         |
+| 30  | Audit trails              | ALREADY EXISTS (no UI page/export)                                                                                                                                               |
+| 31  | Compliance layer          | REAL GAP                                                                                                                                                                         |
+| 32  | Multi-tenant isolation    | PARTIAL — org tenancy shipped (P3.3); per-user orgless isolation holds. Org-unscoped resources (findings, snapshots, workspace items, knowledge) still global — pre-existing gap |
+| 33  | Policy enforcement        | ALREADY EXISTS (permissive default)                                                                                                                                              |
+| 34  | Vertical-agent platform   | PARTIAL — multi-agent runtime exists; no verticals/marketplace                                                                                                                   |
 
 ## 1.3 Critical Blockers Discovered
 
@@ -248,8 +248,8 @@ Aggregate: test coverage signal, guardrail deny rate, open findings by severity,
 
 ## P3 — Platform & Enterprise
 
-> **Status (2026-10-10): P3.1, P3.2 DONE — under the recommended primary identity
-> (autonomous engineering agent platform). P3.3–P3.6 remain.**
+> **Status (2026-10-11): P3.1, P3.2, P3.3 DONE — under the recommended primary
+> identity (autonomous engineering agent platform). P3.4–P3.6 remain.**
 
 Order within P3 assumes primary identity = engineering agent platform.
 
@@ -277,9 +277,17 @@ sessions healthy:
 - `GET /admin/audit/export?format=csv|json` — same filters as `/admin/audit`, 10k row cap, Content-Disposition attachment; CSV escapes per RFC 4180. Tests cover CSV shape, JSON filters, format validation, auth gate.
 - UI shipped in the System workspace: `components/AuditTrail.tsx` — filterable table (tool / decision / sessionID / limit), decision badges, and CSV/JSON export honoring current filters. Admin-gated server-side; non-admins see a role note instead of data (401/403 handled without clearing valid tokens).
 
-### P3.3 Org multi-tenancy
+### P3.3 Org multi-tenancy — ✅ DONE
 
 Extend per-user owner isolation (already solid) with org entities, org-scoped resources, org admin. Larger change — schema + session stamping + WS filtering.
+
+- **Schema**: `orgs` + `org_members` tables (`storage/schema.ts`, `storage/db.ts` DDL + idempotent adds); `sessions.org_id` column + index. Single-org-per-owner enforced (`UNIQUE(owner)`) so owner → org is a function — session stamping and access checks stay deterministic.
+- **Stamping**: sessions record the creating owner's org at creation (REST create, both import paths); subagent/fork children inherit it. Stamps are immutable — membership changes alter access, never history.
+- **Access rule** (`auth/session-access.ts`, one shared predicate): readable ⟺ ownerless (legacy/shared) ∨ owner match ∨ same-org member. Wired into GET /session lists, the per-session `authorizedSession` gate (extracted — was duplicated twice in index.ts), /jobs, /manager, and WS event delivery. Foreign resources 404 (no existence leaks).
+- **Org management** (`routes/orgs.ts`): platform admin creates orgs (first org admin designated or self); org admins manage membership; members read. Live in-memory mirrors (boot-loaded from db, mutated on write) mirror the API_KEY_OWNERS pattern — membership changes apply immediately.
+- **Identity/presence**: `GET /me` exposes `org` alongside `role`; the prompt pipeline now threads the driving owner through `LoopOptions.callerOwner` — when a same-org member runs a colleague's session the agent is told who is present and addresses them by name (`config/prompt.ts` presence line; the default-name `'user'` still never leaks into prompts).
+- **Honest scope notes**: findings, file_snapshots, workspace_items and knowledge_entries remain owner-unscoped (pre-existing gap, orthogonal to orgs — flagged in §1.3 and still open); orgs are DB-managed via REST (like minted API keys) — env-only `MIRA_API_KEYS` deployments gain orgs only after an admin mints keys / uses the db.
+- Tests: `routes/orgs.test.ts` (21), `routes/session-org.test.ts` (16), `config/prompt.test.ts` presence cases (5).
 
 ### P3.4 Community distribution (skills → agents → knowledge modules)
 

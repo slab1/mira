@@ -6,6 +6,7 @@ import { listJobs } from '../tools/task.js'
 import { isKnownAgent } from '../agents/templates.js'
 import type { JsonValue } from '../types/index.js'
 import type { TodoStatus, TodoPriority } from '../types/index.js'
+import { sessionVisibleTo } from '../auth/session-access.js'
 import { z } from 'zod'
 
 const importSessionSchema = z
@@ -73,10 +74,14 @@ export function mountSessionExtrasRoutes(
     prompt: SessionPrompt
     authorizedSession: (id: string, c: Context) => Promise<{ id: string } | null>
     ownerOfSession: (id: string) => Promise<string | null>
+    /** Org of an owner from the live membership map (P3.3) — undefined when orgless */
+    orgOfOwner: (owner: string | null | undefined) => string | undefined
+    /** Org a session was created under (null on legacy/personal sessions) */
+    orgOfSession: (id: string) => Promise<string | null>
     resolveOwner: (t: string) => string | undefined
     bearerOf: (h?: string) => string
     API_KEY_OWNERS: Map<string, string>
-    sessionOwnerCache: Map<string, { owner: string | null; ts: number }>
+    sessionOwnerCache: Map<string, { owner: string | null; org: string | null; ts: number }>
   },
 ) {
   const { db, bus, prompt } = deps
@@ -103,10 +108,17 @@ export function mountSessionExtrasRoutes(
       return c.json({ error: `unknown agent "${agent}"` }, 400)
     }
     const signal = (c.req.raw as Request & { signal?: AbortSignal })?.signal
+    // Who is present (P3.3): the driving owner may be a same-org member, not
+    // the session's creator — agents address whoever is actually here.
+    const callerOwner =
+      deps.API_KEY_OWNERS.size > 0
+        ? (deps.resolveOwner(deps.bearerOf(c.req.header('Authorization'))) ?? null)
+        : null
     return prompt.streamResponse(id, text as string, model as string | undefined, {
       maxSteps: maxSteps as number | undefined,
       agent: (agent as string | undefined) ?? null,
       signal,
+      callerOwner,
     })
   })
 
@@ -199,7 +211,13 @@ export function mountSessionExtrasRoutes(
       deps.API_KEY_OWNERS.size > 0
         ? (deps.resolveOwner(deps.bearerOf(c.req.header('Authorization'))) ?? 'default')
         : null
-    const created = await prompt.createSession({ title, model, agent, ownerID: owner })
+    const created = await prompt.createSession({
+      title,
+      model,
+      agent,
+      ownerID: owner,
+      orgID: owner ? (deps.orgOfOwner(owner) ?? null) : null,
+    })
     const msgs = body.messages ?? []
     let copiedMessages = 0
     let copiedParts = 0
@@ -233,6 +251,7 @@ export function mountSessionExtrasRoutes(
     }
     deps.sessionOwnerCache.set(created.id, {
       owner: (created as { ownerID?: string | null }).ownerID ?? owner,
+      org: (created as { orgID?: string | null }).orgID ?? null,
       ts: Date.now(),
     })
     bus.publish({
@@ -262,7 +281,9 @@ export function mountSessionExtrasRoutes(
       jobs = []
       for (const j of activeJobs) {
         const o = await deps.ownerOfSession(j.parentSessionID)
-        if (o === null || o === owner) jobs.push(j)
+        // Org of the parent session only needs resolving for foreign-owned jobs
+        const g = o !== null && o !== owner ? await deps.orgOfSession(j.parentSessionID) : null
+        if (sessionVisibleTo({ ownerID: o, orgID: g }, owner, deps.orgOfOwner)) jobs.push(j)
       }
     }
     const sessions = (await db.query.sessions.findMany({
@@ -270,8 +291,12 @@ export function mountSessionExtrasRoutes(
       limit: 10,
     })) as Array<Record<string, JsonValue>>
     const filteredSessions = owner
-      ? (sessions as Array<{ ownerID?: string | null }>).filter(
-          (s) => !s.ownerID || s.ownerID === owner,
+      ? (sessions as Array<{ ownerID?: string | null; orgID?: string | null }>).filter((s) =>
+          sessionVisibleTo(
+            { ownerID: s.ownerID ?? null, orgID: s.orgID ?? null },
+            owner,
+            deps.orgOfOwner,
+          ),
         )
       : sessions
     return c.json({
@@ -315,7 +340,7 @@ export function mountSessionExtrasRoutes(
         )
         .all(id) as Array<{ id: string; text: string }>
       return c.json(items)
-    } catch (e) {
+    } catch {
       return c.json([], 200)
     }
   })
@@ -336,7 +361,7 @@ export function mountSessionExtrasRoutes(
         .prepare('DELETE FROM message_queue WHERE session_id = ? AND id = ?')
         .run(id, itemId)
       return c.json({ ok: true, deleted: result.changes > 0 })
-    } catch (e) {
+    } catch {
       return c.json({ error: 'delete failed' }, 500)
     }
   })
@@ -374,7 +399,7 @@ export function mountSessionExtrasRoutes(
           .run(crypto.randomUUID(), id, texts[i], Date.now() + i)
       }
       return c.json({ ok: true })
-    } catch (e) {
+    } catch {
       return c.json({ error: 'reorder failed' }, 500)
     }
   })

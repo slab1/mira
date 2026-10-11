@@ -200,6 +200,21 @@ export async function migrate(db: MiraDB) {
     );
     CREATE INDEX IF NOT EXISTS users_owner_idx ON users(owner);
 
+    CREATE TABLE IF NOT EXISTS orgs (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      created_by TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS org_members (
+      org_id TEXT NOT NULL,
+      owner TEXT NOT NULL UNIQUE,
+      role TEXT NOT NULL DEFAULT 'member',
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (org_id, owner)
+    );
+    CREATE INDEX IF NOT EXISTS org_members_org_idx ON org_members(org_id);
+
     CREATE TABLE IF NOT EXISTS audit_entries (
       id TEXT PRIMARY KEY,
       session_id TEXT,
@@ -230,11 +245,15 @@ export async function migrate(db: MiraDB) {
   addColumn('sessions', 'tokens_out', 'INTEGER')
   addColumn('sessions', 'cost_usd', 'REAL')
   addColumn('sessions', 'owner_id', 'TEXT')
+  addColumn('sessions', 'org_id', 'TEXT')
   addColumn('sessions', 'agent', 'TEXT')
   addColumn('sessions', 'cwd', 'TEXT')
   addColumn('sessions', 'project_id', 'TEXT')
   try {
     sqlite.exec(`CREATE INDEX IF NOT EXISTS sessions_project_id_idx ON sessions(project_id);`)
+  } catch {}
+  try {
+    sqlite.exec(`CREATE INDEX IF NOT EXISTS sessions_org_idx ON sessions(org_id);`)
   } catch {}
   // P3-1 / Option 1 safe: api_keys hash/prefix for DB-dump protection (hash-only storage)
   // `key` holds hash for new rows; `key_hash` authoritative; legacy rows backfilled on load
@@ -285,7 +304,9 @@ export async function migrate(db: MiraDB) {
   // Backfill pre-existing rows → honest default (§2.4: never infer historical
   // verification; evidence parts may have been compacted away).
   try {
-    sqlite.exec(`UPDATE jobs SET verification_state = 'UNVERIFIED' WHERE verification_state IS NULL;`)
+    sqlite.exec(
+      `UPDATE jobs SET verification_state = 'UNVERIFIED' WHERE verification_state IS NULL;`,
+    )
     sqlite.exec(`UPDATE jobs SET verification_evidence = '[]' WHERE verification_evidence IS NULL;`)
   } catch (e) {
     console.warn('[storage] jobs verification backfill failed:', String(e))

@@ -16,7 +16,7 @@ import { SessionPrompt } from './session/prompt.js'
 import { Bus } from './bus/index.js'
 import { PermissionManager } from './permission/index.js'
 import { ToolRegistry } from './tools/registry.js'
-import type { Gateway, GatewayChunk, StreamOptions } from './gateway/types.js'
+import type { Gateway, GatewayChunk } from './gateway/types.js'
 import { mountSessionRoutes } from './routes/session.js'
 import { mountSessionExtrasRoutes } from './routes/session-extras.js'
 
@@ -24,7 +24,7 @@ import { mountSessionExtrasRoutes } from './routes/session-extras.js'
 // Each call to stream() yields one identical tool call.
 // The doom-loop detector accumulates across steps and fires on the 3rd.
 const doomLoopGateway: Gateway = {
-  async stream(_opts: StreamOptions): Promise<AsyncIterable<GatewayChunk>> {
+  async stream(): Promise<AsyncIterable<GatewayChunk>> {
     return (async function* () {
       yield {
         type: 'tool-call',
@@ -75,6 +75,9 @@ beforeAll(async () => {
     prompt,
     authorizedSession: async (id) => (await prompt.getSession(id)) as never,
     ownerOfSession: async (id) => (await prompt.getSession(id))?.ownerID ?? null,
+    orgOfOwner: () => undefined,
+    orgOfSession: async (id) =>
+      ((await prompt.getSession(id)) as { orgID?: string | null })?.orgID ?? null,
     resolveOwner: () => undefined,
     bearerOf: () => '',
     OWNERSHIP_ENABLED: false,
@@ -86,6 +89,9 @@ beforeAll(async () => {
     prompt,
     authorizedSession: async (id) => (await prompt.getSession(id)) as never,
     ownerOfSession: async (id) => (await prompt.getSession(id))?.ownerID ?? null,
+    orgOfOwner: () => undefined,
+    orgOfSession: async (id) =>
+      ((await prompt.getSession(id)) as { orgID?: string | null })?.orgID ?? null,
     resolveOwner: () => undefined,
     bearerOf: () => '',
     API_KEY_OWNERS: new Map(),
@@ -264,7 +270,7 @@ describe('doom-loop detection E2E', () => {
     let callIndex = 0
     const commands = ['echo hello', 'cat file.txt', 'grep pattern src/', 'wc -l README.md']
     const safeGateway: Gateway = {
-      async stream(_opts: StreamOptions): Promise<AsyncIterable<GatewayChunk>> {
+      async stream(): Promise<AsyncIterable<GatewayChunk>> {
         return (async function* () {
           const cmd = commands[callIndex % commands.length]
           yield { type: 'text-delta', text: `step ${callIndex} hello ${cmd}` }

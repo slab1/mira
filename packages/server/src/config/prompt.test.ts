@@ -55,3 +55,36 @@ describe('buildSystemPrompt personalization (Lane C)', () => {
     expect(out).not.toContain('You are assisting   Ada')
   })
 })
+
+describe('buildSystemPrompt presence (P3.3)', () => {
+  test('present member replaces the absent owner in the personalization', async () => {
+    const out = await buildSystemPrompt(dir, 'Alice', 'Bob')
+    expect(out).toContain('You are assisting Bob, working in Alice' + String.raw`'s session`)
+    expect(out).toContain('Address them by name naturally')
+    expect(out).not.toContain('You are assisting Alice.')
+  })
+
+  test('present == owner behaves exactly like the two-arg form', async () => {
+    expect(await buildSystemPrompt(dir, 'Alice', 'Alice')).toBe(
+      await buildSystemPrompt(dir, 'Alice'),
+    )
+  })
+
+  test('present member with an unpersonalized owner has no owner reference', async () => {
+    const out = await buildSystemPrompt(dir, 'user', 'Bob')
+    expect(out).toContain('You are assisting Bob.')
+    expect(out).not.toContain('working in')
+  })
+
+  test('default "user" present falls back to the owner line', async () => {
+    const out = await buildSystemPrompt(dir, 'Alice', 'user')
+    expect(out).toContain('You are assisting Alice')
+  })
+
+  test('byte-identical when presentUser is omitted (legacy callers)', async () => {
+    const two = await buildSystemPrompt(dir, 'Alice')
+    expect(await buildSystemPrompt(dir, 'Alice', undefined)).toBe(two)
+    const base = await buildSystemPrompt(dir)
+    expect(await buildSystemPrompt(dir, undefined, undefined)).toBe(base)
+  })
+})

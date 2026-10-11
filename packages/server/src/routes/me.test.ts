@@ -57,6 +57,13 @@ describe('GET /me (Lane B identity)', () => {
     const res = await fetch(`${BASE}/me`)
     expect(res.status).toBe(401)
   })
+
+  test('org is null when membership maps are unwired (P3.3 backward compat)', async () => {
+    const me = (await (await fetch(`${BASE}/me`, { headers: AUTH })).json()) as {
+      org: unknown
+    }
+    expect(me.org).toBeNull()
+  })
 })
 
 describe('PATCH /me (name update)', () => {

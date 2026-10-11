@@ -46,9 +46,20 @@ export function mountMeRoutes(
     /** RBAC (P3.1): exposed as `role` in GET /me so clients can adapt their UI */
     resolveRole?: (t: string) => import('../auth/roles.js').Role
     bearerOf: (h?: string) => string
+    /** Org tenancy (P3.3) — live membership maps; when absent, GET /me
+     *  reports `org: null` (single membership per owner). */
+    ORG_NAMES?: Map<string, string>
+    ORG_MEMBERS?: Map<string, import('./orgs.js').OrgMembership>
   },
 ) {
   const { db } = deps
+
+  /** Live org membership for the caller — null when orgless or maps unwired. */
+  const orgOf = (owner: string) => {
+    const m = deps.ORG_MEMBERS?.get(owner)
+    if (!m) return null
+    return { id: m.org, name: deps.ORG_NAMES?.get(m.org) ?? '', role: m.role }
+  }
 
   app.get('/me', async (c: Context) => {
     const bearer = deps.bearerOf(c.req.header('Authorization'))
@@ -56,8 +67,9 @@ export function mountMeRoutes(
     if (!owner) return c.json({ error: 'unauthorized' }, 401)
     const user = await getUserByOwner(db, owner)
     const safe = sanitizeUser(user)
-    if (deps.resolveRole) return c.json({ ...safe, role: deps.resolveRole(bearer) })
-    return c.json(safe)
+    const org = orgOf(owner)
+    if (deps.resolveRole) return c.json({ ...safe, role: deps.resolveRole(bearer), org })
+    return c.json({ ...safe, org })
   })
 
   app.patch('/me', async (c: Context) => {

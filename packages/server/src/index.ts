@@ -61,6 +61,8 @@ import { mountFindingRoutes } from './routes/finding.js'
 import { mountWebhookRoutes } from './routes/webhooks.js'
 import { mountMeRoutes } from './routes/me.js'
 import { mountSessionExtrasRoutes } from './routes/session-extras.js'
+import { mountOrgRoutes, type OrgMembership } from './routes/orgs.js'
+import { sessionVisibleTo } from './auth/session-access.js'
 import { mountToolsRoutes } from './routes/tools-routes.js'
 import { mountWorkspaceRoutes } from './routes/workspace.js'
 import { mountWorkspacesRoutes } from './routes/workspaces.js'
@@ -243,6 +245,15 @@ if (
   process.exit(1)
 }
 export const OWNERSHIP_ENABLED = API_KEY_OWNERS.size > 0
+// Org tenancy (P3.3) — live access-control maps, loaded from db at boot and
+// mutated by routes/orgs.ts. ORG_MEMBERS: owner → single membership.
+const ORG_NAMES = new Map<string, string>()
+const ORG_MEMBERS = new Map<string, OrgMembership>()
+/** Org of an owner from the live membership map — undefined when orgless. */
+function orgOfOwner(owner: string | null | undefined): string | undefined {
+  if (!owner) return undefined
+  return ORG_MEMBERS.get(owner)?.org
+}
 function resolveOwner(token: string): string | undefined {
   if (!token) return undefined
   if (REQUIRED_TOKEN && tokenEquals(token, REQUIRED_TOKEN)) return 'default'
@@ -421,7 +432,10 @@ async function initOtel() {
 }
 
 // ── Owner helpers ──────────────────────────────────────────────────
-const sessionOwnerCache = new Map<string, { owner: string | null; ts: number }>()
+const sessionOwnerCache = new Map<
+  string,
+  { owner: string | null; org: string | null; ts: number }
+>()
 const pendingOwnerLookups = new Map<string, Promise<string | null>>()
 let dbRef: ReturnType<typeof createDatabase> | null = null
 function ownerOfSession(sessionID: string): Promise<string | null> {
@@ -433,7 +447,8 @@ function ownerOfSession(sessionID: string): Promise<string | null> {
       .findFirst({ where: (s, { eq }) => eq(s.id, sessionID) })
       .then((s) => {
         const o = (s?.ownerID ?? null) as string | null
-        sessionOwnerCache.set(sessionID, { owner: o, ts: Date.now() })
+        const g = ((s as { orgID?: string | null } | undefined)?.orgID ?? null) as string | null
+        sessionOwnerCache.set(sessionID, { owner: o, org: g, ts: Date.now() })
         pendingOwnerLookups.delete(sessionID)
         return o
       })
@@ -445,6 +460,14 @@ function ownerOfSession(sessionID: string): Promise<string | null> {
     pendingOwnerLookups.set(sessionID, lookup)
   }
   return p
+}
+
+/** Org a session was created under (P3.3) — null on legacy/personal sessions. */
+function orgOfSession(sessionID: string): Promise<string | null> {
+  const cached = sessionOwnerCache.get(sessionID)
+  if (cached && Date.now() - cached.ts < 5 * 60_000) return Promise.resolve(cached.org)
+  // Fill the cache via the shared lookup, then read the org off it.
+  return ownerOfSession(sessionID).then(() => sessionOwnerCache.get(sessionID)?.org ?? null)
 }
 
 async function main() {
@@ -548,6 +571,24 @@ async function main() {
     if (rows.length) log(`loaded ${rows.length} issued API key(s) from db`)
   } catch (e) {
     warn('failed to load issued API keys:', String(e))
+  }
+
+  // Org tenancy (P3.3) — load orgs + memberships into the live access maps.
+  // ORG_MEMBERS is the access-control source for session stamping/filters.
+  try {
+    const orgRows = db.sqlite.prepare('SELECT id, name FROM orgs').all() as Array<{
+      id: string
+      name: string
+    }>
+    for (const o of orgRows) ORG_NAMES.set(o.id, o.name)
+    const memberRows = db.sqlite
+      .prepare('SELECT org_id, owner, role FROM org_members')
+      .all() as Array<{ org_id: string; owner: string; role: string }>
+    for (const m of memberRows)
+      ORG_MEMBERS.set(m.owner, { org: m.org_id, role: m.role === 'admin' ? 'admin' : 'member' })
+    if (memberRows.length) log(`loaded ${memberRows.length} org member(s) from db`)
+  } catch (e) {
+    warn('failed to load orgs:', String(e))
   }
 
   const bus = new Bus()
@@ -705,17 +746,32 @@ async function main() {
     CORS_ORIGIN_LIST,
   })
 
+  // Shared per-session access gate (P3.3 org-aware) — one predicate for REST
+  // gates and list filters: ownerless (legacy) → shared; owner match; else
+  // same-org members. 404s stay the caller's concern; this resolves visibility.
+  const authorizedSession = async (
+    id: string,
+    c: { req: { header: (n: string) => string | undefined } },
+  ) => {
+    const s = await prompt.getSession(id)
+    if (!s) return null
+    if (API_KEY_OWNERS.size === 0) return s
+    const caller = resolveOwner(bearerOf(c.req.header('Authorization')))
+    const row = {
+      ownerID: (s as { ownerID?: string | null }).ownerID ?? null,
+      orgID: ((s as { orgID?: string | null }).orgID ?? (await orgOfSession(id))) as string | null,
+    }
+    return sessionVisibleTo(row, caller, orgOfOwner) ? s : null
+  }
+
   mountSessionRoutes(app, {
     db,
     bus,
     prompt,
-    authorizedSession: async (id, c) => {
-      const s = await prompt.getSession(id)
-      if (!s) return null
-      if (API_KEY_OWNERS.size === 0 || !s.ownerID) return s
-      return resolveOwner(bearerOf(c.req.header('Authorization'))) === s.ownerID ? s : null
-    },
+    authorizedSession,
     ownerOfSession,
+    orgOfOwner,
+    orgOfSession,
     resolveOwner,
     bearerOf,
     OWNERSHIP_ENABLED: () => API_KEY_OWNERS.size > 0,
@@ -736,23 +792,30 @@ async function main() {
   mountFindingRoutes(app, { db, bus })
   mountWebhookRoutes(app, { bus })
 
-  mountMeRoutes(app, { db, resolveOwner, resolveRole, bearerOf })
+  mountMeRoutes(app, { db, resolveOwner, resolveRole, bearerOf, ORG_NAMES, ORG_MEMBERS })
 
   mountSessionExtrasRoutes(app, {
     db,
     bus,
     prompt,
-    authorizedSession: async (id, c) => {
-      const s = await prompt.getSession(id)
-      if (!s) return null
-      if (API_KEY_OWNERS.size === 0 || !s.ownerID) return s
-      return resolveOwner(bearerOf(c.req.header('Authorization'))) === s.ownerID ? s : null
-    },
+    authorizedSession,
     ownerOfSession,
+    orgOfOwner,
+    orgOfSession,
     resolveOwner,
     bearerOf,
     API_KEY_OWNERS,
     sessionOwnerCache,
+  })
+
+  // Org tenancy (P3.3) — org CRUD + membership, live-mirrored into ORG_*
+  mountOrgRoutes(app, {
+    db,
+    ORG_NAMES,
+    ORG_MEMBERS,
+    resolveOwner,
+    resolveRole,
+    bearerOf,
   })
 
   mountMcpRoutes(app, mcp)
@@ -1016,9 +1079,17 @@ async function main() {
         if (API_KEY_OWNERS.size === 0 || !event.sessionID || event.type.startsWith('server.')) {
           json = JSON.stringify(event)
         } else {
-          return void ownerOfSession(event.sessionID).then((o) => {
+          const sid = event.sessionID
+          return void ownerOfSession(sid).then(async (o) => {
             if (!ws.__active) return
-            if (o === null || o === ws.__owner) sendToSocket(ws, JSON.stringify(event))
+            if (o === null || o === ws.__owner) {
+              sendToSocket(ws, JSON.stringify(event))
+              return
+            }
+            // Org tenancy (P3.3): same-org members receive each other's events
+            const g = await orgOfSession(sid)
+            if (sessionVisibleTo({ ownerID: o, orgID: g }, ws.__owner, orgOfOwner))
+              sendToSocket(ws, JSON.stringify(event))
           })
         }
         sendToSocket(ws, json)

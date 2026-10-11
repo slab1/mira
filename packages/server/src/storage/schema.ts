@@ -25,6 +25,10 @@ export const sessions = sqliteTable(
     agent: text('agent'),
     // Multi-tenant ownership — null on legacy rows (accessible to all authenticated users)
     ownerID: text('owner_id'),
+    // Org tenancy (P3.3) — org the session was created under; null = personal/global.
+    // Stamped at creation from the creating owner's membership; access rule is
+    // owner-match OR same-org (see authorizedSession / list filters).
+    orgID: text('org_id'),
     // Token/cost tracking — populated by SessionPrompt.runLoop, migrated via ALTER TABLE if missing
     tokensIn: integer('tokens_in'),
     tokensOut: integer('tokens_out'),
@@ -35,6 +39,7 @@ export const sessions = sqliteTable(
   (t) => [
     index('sessions_updated_idx').on(t.updatedAt),
     index('sessions_project_id_idx').on(t.projectId),
+    index('sessions_org_idx').on(t.orgID),
   ],
 )
 
@@ -293,6 +298,33 @@ export const users = sqliteTable(
   (t) => [index('users_owner_idx').on(t.owner)],
 )
 
+// ── Org tenancy (P3.3) ────────────────────────────────────────────────────
+// An org is a group of owners sharing session visibility: a session created
+// under an org is readable (REST + WS) by the owner AND same-org members.
+// Single-org-per-owner is enforced by the UNIQUE(owner) constraint below —
+// membership is a function owner → {org, role}, which keeps session stamping
+// (orgID at creation) and access predicates deterministic.
+
+export const orgs = sqliteTable('orgs', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  createdBy: text('created_by').notNull(),
+  createdAt: integer('created_at').notNull(),
+})
+
+export const orgMembers = sqliteTable(
+  'org_members',
+  {
+    orgID: text('org_id').notNull(),
+    owner: text('owner').notNull().unique(),
+    // Org-scoped role — distinct from the platform Role: org admins manage
+    // membership; everyone in the org gets session visibility.
+    role: text('role').notNull().default('member'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('org_members_org_idx').on(t.orgID)],
+)
+
 export const schema = {
   sessions,
   messages,
@@ -305,6 +337,8 @@ export const schema = {
   auditEntries,
   apiKeys,
   users,
+  orgs,
+  orgMembers,
   sessionsRelations,
   messagesRelations,
   partsRelations,
