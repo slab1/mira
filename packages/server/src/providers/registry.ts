@@ -38,6 +38,9 @@ const FALLBACK_CHAINS: Record<Capability, string[]> = {
 
 // ── Provider → capability mapping ─────────────────────────────────────────
 
+/** Sustained latency above this (EMA) marks a CLOSED provider `degraded`. */
+const DEGRADED_LATENCY_MS = 30_000
+
 const PROVIDER_CAPABILITIES: Record<string, Capability[]> = {
   anthropic: ['coding', 'reasoning', 'vision', 'speed'],
   openai: ['coding', 'reasoning', 'speed', 'cost_optimized'],
@@ -72,6 +75,11 @@ export class ProviderRegistry {
   private fallbacks: string[]
   private defaultProvider: string
   private onTrace?: RegistryOptions['onTrace']
+  /** Real latency / last-check bookkeeping per provider (see noteOutcome). */
+  private healthMeta = new Map<
+    string,
+    { latencyMs: number; lastCheck: number | null; lastSuccess: number | null }
+  >()
   private rateLimiter?: RateLimiter
 
   constructor(providerMap: Record<string, ProviderConfig>, opts?: RegistryOptions) {
@@ -430,28 +438,38 @@ export class ProviderRegistry {
 
   /**
    * Get health status for a provider.
+   *
+   * `degraded` now has two real sources instead of one: a HALF_OPEN breaker, and
+   * sustained high latency on a CLOSED breaker. Previously latency was hardcoded
+   * to 0, so the latency branch could never fire and `degraded` was effectively
+   * unreachable for a serving-but-slow provider.
    */
   getHealth(providerKey: string): ProviderHealth {
     const breaker = createCircuitBreaker(providerKey)
     const state = breaker.getState()
+    const latencyMs = this.healthMeta.get(providerKey)?.latencyMs ?? 0
+    const lastCheck = this.healthMeta.get(providerKey)?.lastCheck ?? null
+    // Only judge latency on a recently-seen provider, so a provider that was
+    // fast an hour ago is not called degraded forever.
+    const latencyIsFresh = lastCheck !== null && Date.now() - lastCheck < 5 * 60_000
     const status =
       state === 'OPEN'
         ? ('down' as const)
-        : state === 'HALF_OPEN'
+        : state === 'HALF_OPEN' || (latencyIsFresh && latencyMs > DEGRADED_LATENCY_MS)
           ? ('degraded' as const)
           : ('healthy' as const)
     return {
       providerKey,
       state,
       status,
-      latencyMs: 0,
-      lastCheck: null,
+      latencyMs,
+      lastCheck,
       failureCount: breaker.getFailureCount(),
       successCount: breaker.getSuccessCount(),
-      lastFailureTime: null,
-      lastSuccessTime: null,
+      lastFailureTime: breaker.getLastFailureTime(),
+      lastSuccessTime: this.healthMeta.get(providerKey)?.lastSuccess ?? null,
       consecutiveFailures: breaker.getFailureCount(),
-      cooldownUntil: null,
+      cooldownUntil: state === 'OPEN' ? Date.now() + breaker.getTimeUntilReset() : null,
     }
   }
 
@@ -476,16 +494,43 @@ export class ProviderRegistry {
     return this.rateLimiter.check(`${providerKey}:${modelID}`, tokens).allowed
   }
 
-  /** Record success — delegates to per-provider CircuitBreaker. */
-  recordSuccess(providerKey: string): void {
+  /**
+   * Record success — delegates to per-provider CircuitBreaker.
+   * `latencyMs` feeds the real latency reported by getHealth().
+   */
+  recordSuccess(providerKey: string, latencyMs?: number): void {
     const breaker = createCircuitBreaker(providerKey)
     breaker.recordSuccess()
+    this.noteOutcome(providerKey, latencyMs, true)
   }
 
   /** Record failure — delegates to per-provider CircuitBreaker. */
-  recordFailure(providerKey: string): void {
+  recordFailure(providerKey: string, latencyMs?: number): void {
     const breaker = createCircuitBreaker(providerKey)
     breaker.recordFailure()
+    this.noteOutcome(providerKey, latencyMs, false)
+  }
+
+  /**
+   * Track real latency / last-check time per provider.
+   *
+   * getHealth() previously hardcoded `latencyMs: 0` and `lastCheck: null`, so
+   * every provider reported `healthy` with no latency evidence and the
+   * `degraded` state was unreachable. Latency is an exponential moving average
+   * (recent requests matter more than a long tail).
+   */
+  private noteOutcome(providerKey: string, latencyMs: number | undefined, ok: boolean): void {
+    const cur = this.healthMeta.get(providerKey) ?? {
+      latencyMs: 0,
+      lastCheck: null,
+      lastSuccess: null,
+    }
+    if (typeof latencyMs === 'number' && Number.isFinite(latencyMs) && latencyMs >= 0) {
+      cur.latencyMs = cur.latencyMs === 0 ? latencyMs : cur.latencyMs * 0.7 + latencyMs * 0.3
+      cur.lastCheck = Date.now()
+    }
+    if (ok) cur.lastSuccess = Date.now()
+    this.healthMeta.set(providerKey, cur)
   }
 
   /** Check rate limit for an identity without consuming */

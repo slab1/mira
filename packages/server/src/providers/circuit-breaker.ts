@@ -92,6 +92,11 @@ export class CircuitBreaker {
     return this.failureCount
   }
 
+  /** Timestamp of the last recorded failure, or null if none. */
+  getLastFailureTime(): number | null {
+    return this.lastFailureTime
+  }
+
   /** Get the number of successes in HALF_OPEN */
   getSuccessCount(): number {
     return this.successCount
@@ -112,7 +117,10 @@ const breakerRegistry = new Map<string, CircuitBreaker>()
  * Factory: get or create a CircuitBreaker for a given provider key.
  * Each provider key gets its own isolated instance.
  */
-export function createCircuitBreaker(providerKey: string, config?: Partial<CircuitBreakerConfig>): CircuitBreaker {
+export function createCircuitBreaker(
+  providerKey: string,
+  config?: Partial<CircuitBreakerConfig>,
+): CircuitBreaker {
   if (!breakerRegistry.has(providerKey)) {
     breakerRegistry.set(providerKey, new CircuitBreaker(config))
   }

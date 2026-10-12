@@ -214,10 +214,13 @@ export class Subgateway implements Gateway {
    * Called with the candidate that actually served/failed, so the right
    * provider is blamed.
    */
-  private recordProviderOutcome(providerKey: string, ok: boolean): void {
+  private recordProviderOutcome(providerKey: string, ok: boolean, t0?: number): void {
     try {
-      if (ok) this.registry.recordSuccess(providerKey)
-      else this.registry.recordFailure(providerKey)
+      // Feed real latency so ProviderRegistry.getHealth() stops reporting 0 —
+      // it feeds the `degraded` state and the health endpoints.
+      const latency = typeof t0 === 'number' ? Date.now() - t0 : undefined
+      if (ok) this.registry.recordSuccess(providerKey, latency)
+      else this.registry.recordFailure(providerKey, latency)
     } catch {
       /* health bookkeeping must never break a request */
     }
@@ -535,7 +538,7 @@ export class Subgateway implements Gateway {
               opts,
             })
             this.recordSuccess()
-            this.recordProviderOutcome(cand.providerKey, true)
+            this.recordProviderOutcome(cand.providerKey, true, t0)
             return trackedStream(iter, (usage) => {
               this.statsCollector.record(cand.modelID, usage.input, usage.output, Date.now() - t0)
               // Per-session cost tracking
@@ -735,7 +738,7 @@ export class Subgateway implements Gateway {
           // Blame the provider that failed (not the caller): a cancelled
           // request is not the provider's fault.
           if (!(lastError instanceof SubgatewayError && lastError.code === 'ABORTED')) {
-            this.recordProviderOutcome(cand.providerKey, false)
+            this.recordProviderOutcome(cand.providerKey, false, t0)
           }
           break
         }
@@ -974,7 +977,7 @@ export class Subgateway implements Gateway {
           sessionCosts.set(opts.sessionID, sess)
         }
         this.recordSuccess()
-        this.recordProviderOutcome(resolved.providerKey, true)
+        this.recordProviderOutcome(resolved.providerKey, true, t0)
         return {
           text,
           inputTokens: data.usage?.prompt_tokens,
@@ -1000,7 +1003,7 @@ export class Subgateway implements Gateway {
       }
     }
     this.recordFailure()
-    this.recordProviderOutcome(resolved.providerKey, false)
+    this.recordProviderOutcome(resolved.providerKey, false, t0)
     throw (
       lastErr ??
       new SubgatewayError({

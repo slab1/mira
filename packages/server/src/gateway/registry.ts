@@ -9,6 +9,7 @@ import type { MiraConfig } from '../types/index.js'
 import { Subgateway, type SubgatewayConfig } from './subgateway.js'
 import { ProviderRegistry } from '../providers/registry.js'
 import { buildRegistry } from './provider.js'
+import { createHealthChecker } from '../providers/health.js'
 import type { GatewayStats } from './types.js'
 
 export class SubgatewayRegistry {
@@ -96,8 +97,7 @@ export class SubgatewayRegistry {
       case 'compaction':
         return {
           provider: 'anthropic',
-          model:
-            config.smallModel ?? config.loop?.smallModel ?? 'claude-3.5-sonnet',
+          model: config.smallModel ?? config.loop?.smallModel ?? 'claude-3.5-sonnet',
           fallback: [],
           rateLimit: { rps: 10, burst: 20 },
           retry: { maxAttempts: 2, baseMs: 300, maxMs: 5_000 },
@@ -197,10 +197,7 @@ export class SubgatewayRegistry {
     return out
   }
 
-  health(): Record<
-    string,
-    ReturnType<Subgateway['health']>
-  > {
+  health(): Record<string, ReturnType<Subgateway['health']>> {
     const out: Record<string, ReturnType<Subgateway['health']>> = {}
     for (const [lane, gw] of this.gateways) {
       out[lane] = gw.health()
@@ -208,11 +205,27 @@ export class SubgatewayRegistry {
     return out
   }
 
-  /** Provider health — circuit-breaker + rate-limiter per provider (from ProviderRegistry) */
+  /**
+   * Provider health — circuit-breaker + rate-limiter per provider (from ProviderRegistry).
+   *
+   * Enriches each entry with a reachability verdict from ProviderHealthChecker,
+   * which was previously never constructed. The checker answers a question the
+   * breaker cannot: is this provider even usable right now (configured, key
+   * present) independent of recent traffic? Without it a provider with no API
+   * key still reported `healthy` simply because nobody had called it.
+   */
   providersHealth(): Record<string, import('../providers/types.js').ProviderHealth> {
     const map = this.baseRegistry.getAllHealth()
     const out: Record<string, import('../providers/types.js').ProviderHealth> = {}
     for (const [k, v] of map) out[k] = v
+    // Enrich with a reachability verdict (configured + has key), which the
+    // breaker alone cannot answer: a provider nobody has called looks healthy.
+    try {
+      const checker = createHealthChecker(this.baseRegistry)
+      for (const key of Object.keys(out)) out[key] = checker.checkSync(key)
+    } catch {
+      // health enrichment is best-effort; never break the endpoint
+    }
     return out
   }
 
@@ -231,8 +244,9 @@ export class SubgatewayRegistry {
     const lanes = this.health()
     const providers = this.providersHealth()
     const stats = this.statsAll()
-    const cap = (this.globalConfig as MiraConfig & { costCap?: { perTask?: number; perSession?: number } })
-      .costCap
+    const cap = (
+      this.globalConfig as MiraConfig & { costCap?: { perTask?: number; perSession?: number } }
+    ).costCap
     return { lanes, providers, stats, costCap: cap }
   }
 

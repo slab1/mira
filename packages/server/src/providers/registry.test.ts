@@ -183,3 +183,68 @@ describe('capabilities via options.kind', () => {
     expect(reg.capabilitiesOfPublic('openai')).not.toContain('vision')
   })
 })
+
+// getHealth() used to hardcode latencyMs: 0, lastCheck/lastSuccess/lastFailure
+// null and cooldownUntil null, so every provider looked identical and `degraded`
+// was unreachable for a slow-but-serving provider.
+describe('health reporting is truthful', () => {
+  const prov = (baseURL: string, apiKey = 'k') => ({
+    npm: '@ai-sdk/openai-compatible',
+    name: baseURL,
+    options: { baseURL, apiKey, timeout: 100 },
+    models: {},
+  })
+
+  test('latency and lastCheck are recorded from real outcomes', () => {
+    const reg = new ProviderRegistry({ a: prov('https://a.test') })
+    reg.recordSuccess('a', 120)
+    reg.recordSuccess('a', 200)
+    const h = reg.getHealth('a')
+    expect(h.latencyMs).toBeGreaterThan(0)
+    expect(h.lastCheck).not.toBeNull()
+    expect(h.lastSuccessTime).not.toBeNull()
+    // EMA: recent calls dominate
+    expect(h.latencyMs).toBeGreaterThan(100)
+    expect(h.latencyMs).toBeLessThan(220)
+  })
+
+  test('lastFailureTime is populated after a failure', () => {
+    const reg = new ProviderRegistry({ a: prov('https://a.test') })
+    expect(reg.getHealth('a').lastFailureTime).toBeNull()
+    reg.recordFailure('a', 50)
+    expect(reg.getHealth('a').lastFailureTime).not.toBeNull()
+  })
+
+  test('cooldownUntil is set only while the breaker is OPEN', () => {
+    const reg = new ProviderRegistry({ a: prov('https://a.test') })
+    expect(reg.getHealth('a').cooldownUntil).toBeNull()
+    for (let i = 0; i < 5; i++) reg.recordFailure('a')
+    const h = reg.getHealth('a')
+    expect(h.state).toBe('OPEN')
+    expect(h.cooldownUntil).not.toBeNull()
+    expect(h.cooldownUntil!).toBeGreaterThan(Date.now() - 1000)
+  })
+
+  test('a slow but serving provider reports degraded', () => {
+    const reg = new ProviderRegistry({ a: prov('https://a.test') })
+    reg.recordSuccess('a', 45_000) // well over the 30s threshold
+    expect(reg.getHealth('a').status).toBe('degraded')
+  })
+
+  test('a fast provider stays healthy', () => {
+    const reg = new ProviderRegistry({ a: prov('https://a.test') })
+    reg.recordSuccess('a', 50)
+    expect(reg.getHealth('a').status).toBe('healthy')
+  })
+
+  test('stale latency does not keep a provider degraded forever', () => {
+    const reg = new ProviderRegistry({ a: prov('https://a.test') })
+    reg.recordSuccess('a', 45_000)
+    expect(reg.getHealth('a').status).toBe('degraded')
+    // age the observation past the freshness window by hand
+    const meta = (reg as unknown as { healthMeta: Map<string, { lastCheck: number }> }).healthMeta
+    const m = meta.get('a')!
+    m.lastCheck = Date.now() - 10 * 60_000
+    expect(reg.getHealth('a').status).toBe('healthy')
+  })
+})

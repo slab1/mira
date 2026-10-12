@@ -122,6 +122,30 @@ export class ProviderHealthChecker {
     return this.registry.getAllHealth()
   }
 
+  /**
+   * Synchronous reachability verdict, merged into health endpoints.
+   *
+   * The async `check()` measures latency by attempting a real call; this answers
+   * the cheaper, side-effect-free question: is the provider configured and does
+   * it have a usable key? A provider that has never been called looks perfectly
+   * healthy to the circuit breaker, so without this an unconfigured provider
+   * reported `healthy` indefinitely. Records no breaker outcome — it must stay
+   * safe to call on every health request.
+   */
+  checkSync(providerKey: string): ProviderHealth {
+    const health = this.registry.getHealth(providerKey)
+    const cfg = this.registry.getProvider(providerKey)
+    if (!cfg) {
+      return { ...health, status: 'down', lastError: `Provider "${providerKey}" not found` }
+    }
+    if (!this.registry.hasKey(providerKey)) {
+      return { ...health, status: 'down', lastError: 'No API key configured' }
+    }
+    // Breaker state still wins: an OPEN circuit is down regardless of config.
+    if (health.status === 'down') return health
+    return health
+  }
+
   /** Run health checks for all registered providers */
   private async runChecks(): Promise<void> {
     const keys = this.registry.keys()
