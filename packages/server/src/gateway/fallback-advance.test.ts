@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
 import { Subgateway } from './subgateway.js'
 import { clearBreakerRegistry } from '../providers/circuit-breaker.js'
+import { ProviderRegistry } from '../providers/registry.js'
 import { GlobalBus } from '../bus/index.js'
 import type { MiraConfig } from '../types/index.js'
 
@@ -165,5 +166,58 @@ describe('client errors stay terminal (no pointless retry)', () => {
     respond = () => 404
     await expect(drain(sub())).rejects.toThrow()
     expect(hosts).toEqual(['a.test'])
+  })
+})
+
+// P0-3: lane outcomes were recorded only on the lane-local breaker, while
+// ProviderRegistry.isHealthy()/getHealth() read a different store — so every
+// provider reported "healthy" forever and health-aware routing never degraded.
+describe('provider health reflects real outcomes (P0-3)', () => {
+  test('a failing provider is marked unhealthy after repeated 503s', async () => {
+    respond = () => 503
+    const gw = sub()
+    const registry = (gw as unknown as { registry: ProviderRegistry }).registry
+
+    for (let i = 0; i < 6; i++) {
+      await expect(drain(gw)).rejects.toThrow()
+    }
+    expect(registry.isHealthy('aaa')).toBe(false)
+    expect(registry.getHealth('aaa').status).not.toBe('healthy')
+  })
+
+  test('a serving provider is recorded healthy and its health is reportable', async () => {
+    respond = () => 'sse'
+    const gw = sub()
+    const registry = (gw as unknown as { registry: ProviderRegistry }).registry
+    await drain(gw)
+    // the primary serves it, so aaa is the provider credited
+    const health = registry.getHealth('aaa')
+    expect(health.status).toBe('healthy')
+    // successCount is a HALF_OPEN probe counter, not a lifetime counter —
+    // the meaningful signal here is that the provider stayed closed.
+    expect(health.state).toBe('CLOSED')
+  })
+
+  test('a caller abort does not mark the provider unhealthy', async () => {
+    respond = () => 'sse'
+    const gw = sub()
+    const registry = (gw as unknown as { registry: ProviderRegistry }).registry
+    const controller = new AbortController()
+    const it = await gw.stream({
+      model: 'aaa/m1',
+      messages: [{ role: 'user', content: 'hi' }],
+      signal: controller.signal,
+    })
+    controller.abort()
+    // consume; the stream should throw or end, but never blame the provider
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _chunk of it) {
+        /* drain */
+      }
+    } catch {
+      /* aborted */
+    }
+    expect(registry.getHealth('aaa').failureCount).toBe(0)
   })
 })
