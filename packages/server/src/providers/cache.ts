@@ -3,6 +3,16 @@
  *
  * Caches LLM responses by prompt hash (model + temperature + prompt).
  * TTL-based eviction with configurable max entries.
+ *
+ * NOT wired into the request path, deliberately. This is an agentic system:
+ * a tool-calling turn is not a pure function of its prompt. Replaying a cached
+ * response after the workspace changed can re-issue a stale edit or tool call
+ * that no longer applies, and the agent has no way to know the response was
+ * 5 minutes old. That is a correctness hazard, not a missed optimization.
+ *
+ * It is exported and tested as an opt-in utility for callers that DO want
+ * determinism (e.g. a fixed evaluation prompt, or an idempotent lookup), and
+ * any future wiring must be gated behind an explicit flag.
  */
 
 import { createHash } from 'node:crypto'

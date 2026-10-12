@@ -248,3 +248,46 @@ describe('health reporting is truthful', () => {
     expect(reg.getHealth('a').status).toBe('healthy')
   })
 })
+
+// providers/index.ts re-implemented the config→registry mapping and the copy had
+// drifted: no key lowercasing, no case-duplicate merge, no rate limiter. It now
+// delegates to gateway/provider.ts's buildRegistry, so the two cannot diverge.
+describe('createProviderRegistry matches the canonical builder', () => {
+  test('case-duplicate keys merge exactly like buildRegistry', async () => {
+    const { createProviderRegistry } = await import('./index.js')
+    const { buildRegistry } = await import('../gateway/provider.js')
+    const cfg = {
+      provider: {
+        NVIDIA: { name: 'N', options: { baseURL: 'https://n.test', apiKey: '' }, models: {} },
+        nvidia: {
+          name: 'n',
+          options: { baseURL: 'https://n.test', apiKey: 'real-key' },
+          models: {},
+        },
+      },
+      routing: { defaultProvider: 'nvidia' },
+    } as never
+
+    const viaBarrel = createProviderRegistry(cfg)
+    const viaCanonical = buildRegistry(cfg)
+
+    // Both lowercase to a single entry and both resolve through it.
+    expect(viaBarrel.keys().sort()).toEqual(viaCanonical.keys().sort())
+    const a = viaBarrel.resolve('nvidia/meta/llama')
+    const b = viaCanonical.resolve('nvidia/meta/llama')
+    expect(a.providerKey).toBe(b.providerKey)
+    expect(a.modelID).toBe(b.modelID)
+  })
+
+  test('the barrel also carries a rate limiter, like the canonical builder', async () => {
+    const { createProviderRegistry } = await import('./index.js')
+    const cfg = {
+      provider: {
+        a: { name: 'A', options: { baseURL: 'https://a.test', apiKey: 'k' }, models: {} },
+      },
+      routing: { defaultProvider: 'a', providerRateLimit: { rps: 1, burst: 1 } },
+    } as never
+    const reg = createProviderRegistry(cfg)
+    expect(reg.getRateLimiter()).toBeTruthy()
+  })
+})
