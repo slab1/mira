@@ -305,14 +305,34 @@ export const envToConfigMap: Record<string, string> = {
   NVIDIA_API_KEY: 'provider.nvidia.options.apiKey',
 }
 
-/** Parse env vars into a partial config (layer 6). Pure — no process access required if env passed. */
-export function parseEnvConfig(env: Record<string, string | undefined> = {}): PartialMiraConfig {
+/**
+ * Parse env vars into a partial config (the env layer).
+ *
+ * Driven entirely by `envToConfigMap` so the map is the single source of truth —
+ * the previous version hard-coded two keys in the body and never produced the
+ * provider-key entries its own map promised.
+ *
+ * Dotted paths (`provider.openai.options.apiKey`) are expanded into nested
+ * objects. Values are injected literally; a provider whose config uses a
+ * `{env:VAR}` template already resolves through that template instead, and the
+ * merge below leaves an explicit env value in place either way.
+ */
+export function parseEnvConfig(
+  env: Record<string, string | undefined> = process.env,
+): PartialMiraConfig {
   const out: PartialMiraConfig = {}
-  // Direct mappings
-  if (env.MIRA_MODEL) out.model = env.MIRA_MODEL
-  if (env.MIRA_SMALL_MODEL) out.smallModel = env.MIRA_SMALL_MODEL
-  // Provider keys → ensure provider record shape via zod safeParse later
-  // Keep minimal: just apiKey injection; full provider is merged in applyLayers
+  for (const [key, path] of Object.entries(envToConfigMap)) {
+    const value = env[key]
+    if (value === undefined || value === '') continue
+    const parts = path.split('.')
+    let cursor = out as Record<string, unknown>
+    for (let i = 0; i < parts.length - 1; i++) {
+      const seg = parts[i]
+      if (typeof cursor[seg] !== 'object' || cursor[seg] === null) cursor[seg] = {}
+      cursor = cursor[seg] as Record<string, unknown>
+    }
+    cursor[parts[parts.length - 1]] = value
+  }
   return out
 }
 

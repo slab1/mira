@@ -4,6 +4,7 @@ import { DEFAULT_CONFIG } from './defaults.js'
 import { z } from 'zod'
 import { existsSync, readFileSync } from 'node:fs'
 import { warn, log } from '../util/logger.js'
+import { parseEnvConfig } from '../../../shared/src/schemas/config.js'
 
 const configCache = new Map<string, MiraConfig>()
 let cached: MiraConfig | null = null
@@ -233,9 +234,37 @@ function mergeSection<T>(base: T | undefined, override: T | undefined): T | unde
   return out as T
 }
 
+/**
+ * Apply the env layer on top of a resolved config.
+ *
+ * `MIRA_MODEL` / `MIRA_SMALL_MODEL` and the provider-key mappings in
+ * `envToConfigMap` were declared in the shared schema and documented in
+ * `.env.example`, but nothing ever read them — the functions had zero callers,
+ * so setting `MIRA_MODEL` silently did nothing. Provider keys still worked
+ * because `config/defaults.ts` hardcodes `{env:VAR}` templates, which is a
+ * different mechanism.
+ *
+ * The env layer is merged LAST (it is the highest-precedence layer), and the
+ * merge is deep so a provider key from the environment does not wipe that
+ * provider's `baseURL`/`timeout` siblings.
+ */
+function applyEnvLayer(config: MiraConfig): MiraConfig {
+  try {
+    if (!config) return config
+    const envPatch = parseEnvConfig(process.env)
+    if (!envPatch || Object.keys(envPatch).length === 0) return config
+    return mergeSection(config, envPatch as Partial<MiraConfig>) as MiraConfig
+  } catch {
+    // A malformed env must never take the server down.
+    return config
+  }
+}
+
 export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
-  if (configCache.has(cwd)) return configCache.get(cwd)!
-  if (cached && cwd === process.cwd()) return cached
+  // Cache hits still re-apply the env layer, so a MIRA_MODEL change takes effect
+  // without a restart-free reload of the file (the env layer is the top layer).
+  if (configCache.has(cwd)) return applyEnvLayer(configCache.get(cwd)!)
+  if (cached && cwd === process.cwd()) return applyEnvLayer(cached)
 
   // Auto-generate mira.json from example on first boot
   const candidates = ['mira.json', 'mira.jsonc', '.mira/config.json']
@@ -294,19 +323,23 @@ export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
           features: mergeSection(DEFAULT_CONFIG.features, raw.features),
           tools: mergeSection(DEFAULT_CONFIG.tools, raw.tools),
         } as MiraConfig
-        configCache.set(cwd, cached)
+        // Env layer is the highest file-independent layer (documented layer 6,
+        // above the project file's layer 4), so it is applied last.
+        configCache.set(cwd, applyEnvLayer(cached))
         if (cwd === process.cwd()) cached = configCache.get(cwd)!
-        return cached
+        return applyEnvLayer(cached)
       }
     } catch (e) {
       warn(`⚠ ${name}: failed to load — ${e instanceof Error ? e.message : String(e)}`)
       warn(`  → check ${cwd}/${name} for structural issues`)
     }
   }
+  // No config file found — defaults plus the env layer. Cache the DEFAULTS (not
+  // the patched result) so a later env change is picked up on the next read.
   cached = DEFAULT_CONFIG
   configCache.set(cwd, cached)
   if (cwd === process.cwd()) cached = configCache.get(cwd)!
-  return cached
+  return applyEnvLayer(cached)
 }
 
 export function getConfig(cwd?: string): MiraConfig {
@@ -355,16 +388,20 @@ export function getConfig(cwd?: string): MiraConfig {
             features: mergeSection(DEFAULT_CONFIG.features, raw.features),
             tools: mergeSection(DEFAULT_CONFIG.tools, raw.tools),
           } as MiraConfig
-          configCache.set(cwd, merged)
-          return merged
+          // Env layer is the highest file-independent layer (documented layer 6,
+          // above the project file's layer 4), applied to the sync merge.
+          const withEnv = applyEnvLayer(merged)
+          configCache.set(cwd, withEnv)
+          if (cwd === process.cwd()) cached = withEnv
+          return withEnv
         }
       }
     } catch (e) {
       warn(`⚠ config: failed to load — ${e instanceof Error ? e.message : String(e)}`)
     }
-    return cached ?? DEFAULT_CONFIG
+    return applyEnvLayer(cached ?? DEFAULT_CONFIG)
   }
-  return cached ?? DEFAULT_CONFIG
+  return applyEnvLayer(cached ?? DEFAULT_CONFIG)
 }
 
 /** Reset the cached config (used by tests and hot-reload). */

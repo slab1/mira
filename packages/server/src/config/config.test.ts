@@ -488,3 +488,71 @@ describe('auto-generate mira.json from example', () => {
     expect(config.model).toBeDefined()
   })
 })
+
+// P0-5: the env layer was declared (envToConfigMap / parseEnvConfig) and
+// documented in .env.example, but nothing ever called it — MIRA_MODEL was a
+// no-op. These pin the behavior that is now wired.
+describe('env layer (MIRA_MODEL / provider keys)', () => {
+  const saved = { ...process.env }
+  afterEach(() => {
+    process.env = { ...saved }
+    resetConfigCache()
+  })
+
+  test('MIRA_MODEL overrides the config model', async () => {
+    process.env.MIRA_MODEL = 'nvidia/some-other-model'
+    resetConfigCache()
+    const config = await loadConfig(testDir)
+    expect(config.model).toBe('nvidia/some-other-model')
+  })
+
+  test('MIRA_SMALL_MODEL overrides the small model', async () => {
+    process.env.MIRA_SMALL_MODEL = 'nvidia/tiny'
+    resetConfigCache()
+    const config = await loadConfig(testDir)
+    expect(config.smallModel).toBe('nvidia/tiny')
+  })
+
+  // Documented layer order: defaults < system < global < project < local < env
+  // < override (shared/src/schemas/config.ts header), so env (6) outranks a
+  // project mira.json (4).
+  test('MIRA_MODEL outranks a project mira.json value (layer 6 > layer 4)', async () => {
+    writeFileSync(join(testDir, 'mira.json'), JSON.stringify({ model: 'from-file' }))
+    process.env.MIRA_MODEL = 'from-env'
+    resetConfigCache()
+    const config = await loadConfig(testDir)
+    expect(config.model).toBe('from-env')
+  })
+
+  test('an env provider key does not wipe that provider baseURL', async () => {
+    process.env.OPENAI_API_KEY = 'sk-from-env'
+    resetConfigCache()
+    const config = await loadConfig(testDir)
+    const openai = config.provider.openai
+    expect(String(openai.options.apiKey)).toContain('sk-from-env')
+    // the deep merge must preserve siblings
+    expect(openai.options.baseURL).toBe('https://api.openai.com/v1')
+  })
+
+  test('no env vars → defaults are untouched', async () => {
+    delete process.env.MIRA_MODEL
+    delete process.env.MIRA_SMALL_MODEL
+    resetConfigCache()
+    const config = await loadConfig(testDir)
+    expect(config.model).toBeDefined()
+    expect(config.model).not.toBe('')
+  })
+})
+
+test('getConfig (sync path) also honors MIRA_MODEL', () => {
+  const saved = process.env.MIRA_MODEL
+  process.env.MIRA_MODEL = 'sync-env-model'
+  resetConfigCache()
+  try {
+    expect(getConfig(testDir).model).toBe('sync-env-model')
+  } finally {
+    if (saved === undefined) delete process.env.MIRA_MODEL
+    else process.env.MIRA_MODEL = saved
+    resetConfigCache()
+  }
+})
