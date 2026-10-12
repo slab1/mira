@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test'
 import { GatewayRouter } from './router.js'
 import type { MiraConfig } from '../types/index.js'
-import type { Gateway, GatewayStats, StreamOptions, GatewayChunk } from './types.js'
+import type { Gateway } from './types.js'
 import type { SubgatewayRegistry } from './registry.js'
 
 // Stub gateway for tests
@@ -141,7 +141,7 @@ describe('GatewayRouter.resolve', () => {
   })
 
   test('autoModel.enabled + tier=cheap routes to cheap', () => {
-    const config = makeConfig({ autoModel: { enabled: true, tier: 'cheap' } } as any)
+    const config = makeConfig({ autoModel: { enabled: true, tier: 'cheap' } })
     const router = new GatewayRouter(createStubRegistry(), config)
     expect(router.resolve({})).toBe('cheap')
   })
@@ -185,5 +185,77 @@ describe('GatewayRouter getCompactionGateway / getVisionGateway', () => {
     const gw = router.getVisionGateway()
     expect(gw).toBeDefined()
     expect(gw.stats()).toBeDefined()
+  })
+})
+
+// Dead-config fixes: `routing.lanes` and `subgateways.*.enabled` were declared
+// in the schema and documented, but nothing ever read them — a user's lane map
+// was ignored and a disabled lane still served traffic.
+describe('routing.lanes override', () => {
+  const cfgWithLanes = (lanes: Record<string, string>): MiraConfig =>
+    ({ model: 'm', routing: { lanes }, subgateways: {} }) as unknown as MiraConfig
+
+  test('an explicit task→lane map wins over the built-in default', () => {
+    const router = new GatewayRouter(createStubRegistry(), cfgWithLanes({ summarize: 'cheap' }))
+    // built-in behavior would send summarize to the compaction lane
+    expect(router.resolve({ task: 'summarize' })).toBe('cheap')
+  })
+
+  test('a task with no mapping keeps the built-in routing', () => {
+    const router = new GatewayRouter(createStubRegistry(), cfgWithLanes({ summarize: 'cheap' }))
+    expect(router.resolve({ task: 'vision' })).toBe('vision')
+  })
+
+  test('no routing.lanes at all → unchanged behavior', () => {
+    const router = new GatewayRouter(createStubRegistry(), {
+      model: 'm',
+      subgateways: {},
+    } as unknown as MiraConfig)
+    expect(router.resolve({ task: 'summarize' })).toBe('compaction')
+  })
+})
+
+describe('subgateways.*.enabled', () => {
+  const cfgWithEnabled = (cheapEnabled: boolean): MiraConfig =>
+    ({
+      model: 'm',
+      routing: {},
+      subgateways: {
+        default: { enabled: true },
+        cheap: { enabled: cheapEnabled },
+        vision: { enabled: true },
+        compaction: { enabled: true },
+      },
+    }) as unknown as MiraConfig
+
+  test('a disabled lane is not selected', () => {
+    const router = new GatewayRouter(createStubRegistry(), cfgWithEnabled(false))
+    // cheap is the built-in route for `complete`
+    expect(router.resolve({ task: 'complete' })).toBe('default')
+  })
+
+  test('an enabled lane is still selected normally', () => {
+    const router = new GatewayRouter(createStubRegistry(), cfgWithEnabled(true))
+    expect(router.resolve({ task: 'complete' })).toBe('cheap')
+  })
+
+  test('a disabled lane named by routing.lanes is also skipped', () => {
+    const cfg = {
+      model: 'm',
+      routing: { lanes: { summarize: 'cheap' } },
+      subgateways: { default: { enabled: true }, cheap: { enabled: false } },
+    } as unknown as MiraConfig
+    const router = new GatewayRouter(createStubRegistry(), cfg)
+    expect(router.resolve({ task: 'summarize' })).toBe('default')
+  })
+
+  test('lanes with no explicit enabled flag stay enabled (back-compatible)', () => {
+    const cfg = {
+      model: 'm',
+      routing: {},
+      subgateways: { cheap: {} },
+    } as unknown as MiraConfig
+    const router = new GatewayRouter(createStubRegistry(), cfg)
+    expect(router.resolve({ task: 'complete' })).toBe('cheap')
   })
 })

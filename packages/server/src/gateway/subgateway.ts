@@ -362,7 +362,32 @@ export class Subgateway implements Gateway {
   }
 
   private resolveModelID(requestedModel: string): string {
-    // 'auto' or empty → health-aware nvidia auto-pick; lane's model is already nvidia flash by default
+    return this.qualifyWithLaneProvider(this.resolveModelIDRaw(requestedModel))
+  }
+
+  /**
+   * Apply `subgateways.<lane>.provider` to a model that carries no provider
+   * prefix.
+   *
+   * The field was declared ("Provider key for this lane") and set in
+   * config/defaults.ts, but never read: an unprefixed lane model resolved
+   * through the global `defaultProvider` instead of the provider the lane
+   * actually names. An already-prefixed model is left alone — an explicit
+   * prefix in the model string is more specific than the lane default.
+   */
+  private qualifyWithLaneProvider(modelID: string): string {
+    const laneProvider = this.subConfig.provider
+    if (!laneProvider) return modelID
+    if (!modelID) return modelID
+    // Already provider-qualified (e.g. "openai/gpt-4o") → leave it.
+    if (modelID.includes('/')) {
+      const prefix = modelID.split('/')[0].toLowerCase()
+      if (this.registry.keys().some((k) => k.toLowerCase() === prefix)) return modelID
+    }
+    return `${laneProvider}/${modelID}`
+  }
+
+  private resolveModelIDRaw(requestedModel: string): string {
     if (!requestedModel || requestedModel === 'auto') {
       const laneModel = this.subConfig.model
       if (laneModel) {
@@ -962,8 +987,9 @@ export class Subgateway implements Gateway {
   }
 
   async summarize(messages: GatewayMessage[], smallModel?: string): Promise<string> {
-    const model =
-      smallModel ?? this.subConfig.model ?? this.globalConfig.smallModel ?? this.globalConfig.model
+    const model = this.qualifyWithLaneProvider(
+      smallModel ?? this.subConfig.model ?? this.globalConfig.smallModel ?? this.globalConfig.model,
+    )
     let resolved: ReturnType<ProviderRegistry['resolve']>
     try {
       resolved = this.registry.resolve(model)

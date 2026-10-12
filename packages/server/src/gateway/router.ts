@@ -100,7 +100,45 @@ export class GatewayRouter {
     this.config = config
   }
 
+  /**
+   * Is a lane enabled? `subgateways.<lane>.enabled === false` disables it.
+   * The field was declared in the schema and defaulted to `true` for every lane
+   * in config/defaults.ts, but nothing ever read it — so a user could not turn a
+   * lane off. Lanes with no explicit `enabled` are enabled (back-compatible).
+   */
+  private isLaneEnabled(lane: string): boolean {
+    const lanes = (
+      this.config as MiraConfig & {
+        subgateways?: Record<string, { enabled?: boolean } | undefined>
+      }
+    ).subgateways
+    return lanes?.[lane]?.enabled !== false
+  }
+
+  /**
+   * Honor a disabled lane: if the chosen lane is switched off, fall back to
+   * `default` (and only if `default` itself is enabled). A disabled lane must
+   * never serve traffic.
+   */
+  private pickEnabledLane(lane: string): string {
+    if (this.isLaneEnabled(lane)) return lane
+    return this.isLaneEnabled('default') ? 'default' : lane
+  }
+
   resolve(ctx: RouteContext): string {
+    return this.pickEnabledLane(this.resolveRaw(ctx))
+  }
+
+  private resolveRaw(ctx: RouteContext): string {
+    // 0. Explicit routing.lanes overrides for this task win over everything
+    // below (`routing.lanes: { summarize: 'cheap' }`). The field was declared
+    // in the schema and documented but never read, so a user's lane map was
+    // silently ignored. Applied first so it is a true override.
+    const lanes = (this.config as MiraConfig & { routing?: { lanes?: Record<string, string> } })
+      .routing?.lanes
+    const override = ctx.task ? lanes?.[ctx.task] : undefined
+    if (override) return override
+
     // 1. summarize → compaction
     if (ctx.task === 'summarize') return 'compaction'
 

@@ -344,3 +344,96 @@ describe('lane timeout wins over the provider default', () => {
     expect(seen).toBe(200)
   })
 })
+
+// Dead-config fix: `subgateways.<lane>.provider` was declared and set in
+// defaults but never read, so an unprefixed lane model resolved through the
+// global defaultProvider instead of the provider the lane names.
+describe('subgateways.*.provider qualifies unprefixed models', () => {
+  const providerCfg = (): MiraConfig =>
+    ({
+      model: 'aaa/m1',
+      permission: {},
+      mcp: {},
+      provider: {
+        aaa: {
+          name: 'A',
+          options: { baseURL: 'https://a.test/v1', apiKey: 'k', timeout: 1000, kind: 'aaa' },
+          models: {},
+        },
+        bbb: {
+          name: 'B',
+          options: { baseURL: 'https://b.test/v1', apiKey: 'k', timeout: 1000, kind: 'bbb' },
+          models: {},
+        },
+      },
+      routing: { aliases: {}, fallbacks: [], defaultProvider: 'aaa' },
+      subgateways: {},
+    }) as unknown as MiraConfig
+
+  const originalFetch = globalThis.fetch
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    clearBreakerRegistry()
+  })
+
+  test('an unprefixed lane model goes to the lane provider, not the default', async () => {
+    const hosts: string[] = []
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      hosts.push(url.includes('b.test') ? 'bbb' : 'aaa')
+      return new Response('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })
+    }) as typeof fetch
+
+    const gw = new Subgateway({
+      lane: 'default',
+      config: {
+        provider: 'bbb', // lane names bbb
+        model: 'm1', // unprefixed
+        rateLimit: { rps: 1000, burst: 1000 },
+        retry: { maxAttempts: 1, baseMs: 1, maxMs: 2 },
+        timeout: 1000,
+        circuitBreaker: { failureThreshold: 99, resetTimeoutMs: 60_000 },
+      },
+      globalConfig: providerCfg(),
+    })
+    const it = await gw.stream({ model: '', messages: [{ role: 'user', content: 'x' }] })
+    for await (const _ of it) {
+      void _
+    }
+    expect(hosts[0]).toBe('bbb')
+  })
+
+  test('an already-prefixed model is left alone', async () => {
+    const hosts: string[] = []
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      hosts.push(url.includes('b.test') ? 'bbb' : 'aaa')
+      return new Response('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })
+    }) as typeof fetch
+
+    const gw = new Subgateway({
+      lane: 'default',
+      config: {
+        provider: 'bbb', // lane says bbb
+        model: 'aaa/explicit', // but the model explicitly says aaa
+        rateLimit: { rps: 1000, burst: 1000 },
+        retry: { maxAttempts: 1, baseMs: 1, maxMs: 2 },
+        timeout: 1000,
+        circuitBreaker: { failureThreshold: 99, resetTimeoutMs: 60_000 },
+      },
+      globalConfig: providerCfg(),
+    })
+    const it = await gw.stream({ model: '', messages: [{ role: 'user', content: 'x' }] })
+    for await (const _ of it) {
+      void _
+    }
+    // explicit prefix wins over the lane default
+    expect(hosts[0]).toBe('aaa')
+  })
+})
