@@ -211,6 +211,28 @@ function validateConfig(raw: Record<string, unknown>, source: string): void {
   }
 }
 
+/**
+ * Merge a user config section over the defaults.
+ *
+ * Recursive on plain objects so a partial override only replaces the keys it
+ * names. This matters for nested sections: with a one-level spread, a
+ * `mira.json` setting only `provider.openai.options.apiKey` replaced the whole
+ * openai provider entry, silently dropping `options.baseURL` — every request
+ * then went to `undefined/chat/completions`. Arrays and scalars replace
+ * wholesale (a user who lists `apiKey` as an array means it).
+ */
+function mergeSection<T>(base: T | undefined, override: T | undefined): T | undefined {
+  if (override === undefined) return base
+  if (base === undefined) return override
+  if (typeof override !== 'object' || override === null || Array.isArray(override)) return override
+  if (typeof base !== 'object' || base === null || Array.isArray(base)) return override
+  const out: Record<string, unknown> = { ...(base as Record<string, unknown>) }
+  for (const [k, v] of Object.entries(override as Record<string, unknown>)) {
+    out[k] = mergeSection(out[k], v)
+  }
+  return out as T
+}
+
 export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
   if (configCache.has(cwd)) return configCache.get(cwd)!
   if (cached && cwd === process.cwd()) return cached
@@ -250,16 +272,6 @@ export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
         }
         // Validate config structure and report issues
         validateConfig(raw as Record<string, unknown>, name)
-        // Deep-merge object sections so a partial mira.json (e.g. {"permission":{"bash":"ask"}})
-        // overrides only the keys it names — never wipes sibling defaults.
-        function mergeSection<T>(base: T | undefined, override: T | undefined): T | undefined {
-          if (override === undefined) return base
-          if (base === undefined) return override
-          if (typeof override !== 'object' || override === null || Array.isArray(override))
-            return override
-          if (typeof base !== 'object' || base === null || Array.isArray(base)) return override
-          return { ...(base as object), ...(override as object) } as T
-        }
         cached = {
           ...DEFAULT_CONFIG,
           ...raw,
@@ -320,14 +332,6 @@ export function getConfig(cwd?: string): MiraConfig {
             continue
           }
           validateConfig(raw as Record<string, unknown>, name)
-          function mergeSection<T>(base: T | undefined, override: T | undefined): T | undefined {
-            if (override === undefined) return base
-            if (base === undefined) return override
-            if (typeof override !== 'object' || override === null || Array.isArray(override))
-              return override
-            if (typeof base !== 'object' || base === null || Array.isArray(base)) return override
-            return { ...(base as object), ...(override as object) } as T
-          }
           const merged = {
             ...DEFAULT_CONFIG,
             ...raw,

@@ -73,6 +73,70 @@ describe('loadConfig', () => {
     const config = await loadConfig(testDir)
     expect(config.model).toBe('from-mira-dir')
   })
+
+  // P0-4 regression: a one-level merge replaced the whole provider entry, so
+  // setting only an apiKey dropped options.baseURL and every request went to
+  // "undefined/chat/completions".
+  test('partial provider override keeps sibling options (baseURL survives)', async () => {
+    writeFileSync(
+      join(testDir, 'mira.json'),
+      JSON.stringify({ provider: { openai: { options: { apiKey: 'sk-user' } } } }),
+    )
+    const config = await loadConfig(testDir)
+    expect(config.provider.openai.options.apiKey).toBe('sk-user')
+    expect(config.provider.openai.options.baseURL).toBe('https://api.openai.com/v1')
+    expect(config.provider.openai.options.timeout).toBe(120_000)
+  })
+
+  test('partial provider override keeps other providers and the npm tag', async () => {
+    writeFileSync(
+      join(testDir, 'mira.json'),
+      JSON.stringify({ provider: { openai: { options: { apiKey: 'sk-user' } } } }),
+    )
+    const config = await loadConfig(testDir)
+    expect(config.provider.anthropic).toBeDefined()
+    expect(config.provider.nvidia).toBeDefined()
+    expect(config.provider.openai.npm).toBe('@ai-sdk/openai')
+  })
+
+  test('array values replace rather than merge', async () => {
+    writeFileSync(
+      join(testDir, 'mira.json'),
+      JSON.stringify({ provider: { google: { options: { apiKey: ['{env:ONE}', '{env:TWO}'] } } } }),
+    )
+    const config = await loadConfig(testDir)
+    expect(config.provider.google.options.apiKey).toEqual(['{env:ONE}', '{env:TWO}'])
+  })
+
+  test('partial routing override keeps aliases and fallbacks', async () => {
+    writeFileSync(
+      join(testDir, 'mira.json'),
+      JSON.stringify({ routing: { defaultProvider: 'openai' } }),
+    )
+    const config = await loadConfig(testDir)
+    const routing = config.routing as {
+      defaultProvider?: string
+      fallbacks?: string[]
+      aliases?: Record<string, string>
+    }
+    expect(routing.defaultProvider).toBe('openai')
+    // sibling routing config must survive a partial override
+    expect(Array.isArray(routing.fallbacks)).toBe(true)
+    expect((routing.fallbacks ?? []).length).toBeGreaterThan(0)
+    expect(routing.aliases).toBeDefined()
+  })
+
+  test('partial subgateway override keeps retry/timeout siblings', async () => {
+    writeFileSync(
+      join(testDir, 'mira.json'),
+      JSON.stringify({ subgateways: { default: { model: 'nvidia/some-model' } } }),
+    )
+    const config = await loadConfig(testDir)
+    const lane = config.subgateways.default as unknown as Record<string, unknown>
+    expect(lane.model).toBe('nvidia/some-model')
+    // sibling lane config must survive a partial override
+    expect(lane.timeout ?? lane.rateLimit ?? lane.retry ?? lane.costCap).toBeDefined()
+  })
 })
 
 describe('getConfig', () => {
