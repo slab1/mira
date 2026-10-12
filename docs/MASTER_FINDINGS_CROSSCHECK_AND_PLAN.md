@@ -418,3 +418,48 @@ P3       Scale (RBAC, audit UI, orgs, distribution, compliance, verticals)
 ```
 
 The through-line: **most of the addendum's "missing" infrastructure is half-wired, not absent.** P0 alone converts a large share of REAL GAPs into PARTIAL/ALREADY EXISTS at minimal cost, and is the highest-leverage work available.
+
+---
+
+# Addendum 2026-10-12 — Provider/Model Subsystem Audit (P0–P3)
+
+Independent audit of `providers/` + `gateway/` + the provider config schema
+against the code (25 findings). All five P0 broken contracts are now **fixed,
+each with a regression test proven to fail without the fix**.
+
+## P0 — fixed this session
+
+| #    | Broken contract                                                                                                                                                                                | Fix                                                                                                                                                   | Test                                                                                 |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| P0-1 | Fallback chain advanced only on 401/429, so a **503/500/timeout/network error aborted the request** despite configured fallbacks. Failover existed on paper.                                   | `subgateway.ts` now advances on any provider-level failure via `ProviderRegistry.shouldFallback`; 400/401/404 stay terminal; aborts are never retried | `gateway/fallback-advance.test.ts` (8 cases; 5 fail without the fix)                 |
+| P0-2 | `resolveWithFallbacks` threw `CIRCUIT_OPEN` from the **primary** before building the chain, discarding healthy fallbacks                                                                       | `providers/registry.ts` skips `NO_API_KEY`/`CIRCUIT_OPEN`/`RATE_LIMITED` candidates; surfaces the primary's real reason when all are skipped          | `providers/registry.test.ts` (new file — the 615-line resolver had **no tests**)     |
+| P0-3 | Provider health was **never recorded** — lane and provider circuit breakers were two disjoint stores, so `/provider/health` reported `healthy` forever and health-aware routing never degraded | `recordProviderOutcome()` bridges lane outcomes onto the provider-level breaker (per-candidate, skipping aborts); wired in `stream()` + `complete()`  | `gateway/fallback-advance.test.ts` P0-3 block (1 case fails without the fix)         |
+| P0-4 | Config merge was **one level deep**, so `provider.openai.options.apiKey` alone dropped sibling `baseURL` → requests to `undefined/chat/completions`                                            | `mergeSection` in `config/store.ts` is now recursive (shared by both load paths, replacing two duplicated copies)                                     | `config/config.test.ts` — 5 new cases (provider/routing/subgateway siblings survive) |
+| P2-7 | `GET /providers/:id/models` expanded an **array** `apiKey` as a string → `value.replace is not a function`; `google` discovery always 500'd                                                    | `expandApiKeyFirst()`; route also accepts `?cwd=` like `PATCH /config`                                                                                | `routes/config.test.ts` (fails without the fix)                                      |
+| P2-5 | Alias expansion was case-sensitive while prefix matching was not, so `Sonnet` became a billed request for a nonexistent model on the default provider                                          | `expandAlias()` matches case-insensitively                                                                                                            | `providers/registry.test.ts`                                                         |
+
+## Still open (not fixed — ranked, with why)
+
+- **P1 dead config (18 items)**: `provider.*.npm`, `models[].limit.*`, `options.kind`,
+  `routing.lanes`, `subgateways.*.{provider,enabled}` are declared, validated and
+  schema-documented but never read. `timeout` on the stream path is shadowed by the
+  provider's own timeout (`cand.timeout ?? timeout` never falls through), so
+  `compaction`/`local` lanes configured at 180s actually time out at the provider's 120s.
+  These are _misleading config_, not crashes — each needs a decision (honor it, or
+  delete the declaration) rather than a quick patch.
+- **Dead modules**: `providers/{cache,health,rate-limiter,pricing}.ts`,
+  `gateway/{retry,pricing}.ts`, `providers/index.ts` — no call sites outside their
+  own tests. `providers/rate-limiter.ts` is the confusing one: the _real_ rate limiter
+  is the unrelated `gateway/rate-limiter.ts` `TokenBucket`.
+- **P0-5 env layer**: `envToConfigMap`/`parseEnvConfig` (shared schema) are dead, so
+  `MIRA_MODEL` has no effect. Provider keys work only because `config/defaults.ts`
+  hardcodes `{env:VAR}` templates — a different mechanism.
+- **P2-8**: `complete()` skips `checkCostCap()` and per-session cost tracking
+  (`stream()` has both).
+- **P3 coverage**: `providers/registry.ts`, `providers/auth.ts`,
+  `providers/circuit-breaker.ts`, `gateway/stream.ts` (401 lines, the real transport)
+  had **zero tests**. `providers/registry.ts` and the fallback path are now covered;
+  `stream.ts` and `auth.ts` remain the biggest untested surfaces.
+
+**Net:** failover, health reporting, and provider config overrides now behave as
+documented. Server suite: 1,226 passing (baseline 1,156), typecheck + lint clean.
