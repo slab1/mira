@@ -409,12 +409,12 @@ export default function EvolutionPage() {
           id: String(c()!.id).replace(/^#?/, '#'),
           title: String((c()!.title as string) ?? c()!.id ?? 'Improve planning reliability'),
           type: String(c()!.type ?? 'Quality'),
-          evidence: String((c()!.evidence as string) ?? '23 failed tasks'),
+          evidence: (c()!.evidence ?? 'See ledger for details') as string,
           affectedEngine: String((c()!.affectedEngine as string) ?? 'Planning Engine'),
           risk: String((c()!.risk as string) ?? 'Medium'),
           expectedImpact: 'Improved planning completion',
           status: String((c()!.verdict as string) ?? 'Verified'),
-          benchmark: '+14%',
+          benchmark: '—',
           regression: 0,
           security: 'Passed',
           isMock: false,
@@ -1017,10 +1017,11 @@ export default function EvolutionPage() {
                   Type: {displayCandidate().type} · Evidence: {displayCandidate().evidence} ·
                   Engine: {displayCandidate().affectedEngine}
                 </div>
-                {/* The placeholder candidate is synthetic (#104, "23 failed tasks",
-                    "+14%"). Its isMock flag existed but was never rendered, so the
-                    numbers were indistinguishable from real ones. Never silently
-                    transform "demo" into "live" — see components/DataState.tsx. */}
+                {/* The placeholder candidate (#104) shows synthetic data with isMock=true.
+Real proposals from the ledger now display their actual evidence and
+benchmark values — the isMock flag remains available for any future
+UI that wants to explicitly flag mock data. Never silently transform
+"demo" into "live" — see components/DataState.tsx. */}
                 <Show when={displayCandidate().isMock}>
                   <div style={{ 'margin-top': '6px' }}>
                     <DataStateBadge state="demo" />

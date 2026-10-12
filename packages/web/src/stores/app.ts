@@ -17,6 +17,15 @@ import {
   type Job,
   type BusEvent,
 } from '../api/client'
+import {
+  createEvent,
+  deduplicate,
+  detectGaps,
+  isStale,
+  reconcile,
+  type ReconciledEvent,
+  type StateSource,
+} from '../state/reconciliation'
 import { toast } from '../components/Toast'
 
 type AppState = {
@@ -151,12 +160,14 @@ export function createAppStore() {
     event: (e: BusEvent) => handleBusEvent(e),
   })
 
-  // Auto-connect on creation (client only)
-  if (typeof window !== 'undefined') {
-    socket.connect()
-  }
-
   function handleBusEvent(e: BusEvent) {
+    // Reconciliation guard — flag stale events that may have been
+    // out-of-sync across REST/WebSocket/polling sources.
+    if (isStale(e.timestamp)) {
+      console.warn(
+        `[realtime] stale event '${e.type}' detected at timestamp ${e.timestamp}`,
+      )
+    }
     switch (e.type) {
       case 'question.ask': {
         const q = e.payload as AppState['pendingQuestion']
