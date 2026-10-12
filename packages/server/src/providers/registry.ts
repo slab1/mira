@@ -23,7 +23,6 @@ import {
   classifyError,
 } from './auth.js'
 import { priceFor } from './pricing.js'
-import { RateLimiter } from './rate-limiter.js'
 import { createCircuitBreaker } from './circuit-breaker.js'
 
 // ── Capability → ordered fallback chain (best → cheapest) ─────────────────
@@ -60,8 +59,11 @@ export interface RegistryOptions {
     costUSD: number
     error?: string
   }) => void
-  /** Optional rate limiter (per-identity token bucket) */
-  rateLimiter?: RateLimiter
+  // The per-provider `rateLimiter` field and providers/rate-limiter.ts were
+  // removed 2026-10-12: the RateLimiter was never constructed by any caller, so
+  // the enforcement branch could never fire. The limiter that actually governs
+  // requests is the per-lane TokenBucket (gateway/rate-limiter.ts, wired in
+  // Subgateway and covered by subgateway.test.ts).
 }
 
 /** Provider registry uses per-provider CircuitBreaker from circuit-breaker.ts */
@@ -72,7 +74,6 @@ export class ProviderRegistry {
   private fallbacks: string[]
   private defaultProvider: string
   private onTrace?: RegistryOptions['onTrace']
-  private rateLimiter?: RateLimiter
 
   constructor(providerMap: Record<string, ProviderConfig>, opts?: RegistryOptions) {
     for (const [k, v] of Object.entries(providerMap)) {
@@ -83,7 +84,6 @@ export class ProviderRegistry {
     this.fallbacks = opts?.fallbacks ?? []
     this.defaultProvider = opts?.defaultProvider ?? 'openrouter'
     this.onTrace = opts?.onTrace
-    this.rateLimiter = opts?.rateLimiter
   }
 
   // ── Core resolution ────────────────────────────────────────────────────
@@ -156,21 +156,6 @@ export class ProviderRegistry {
         status: 503,
         retryable: true,
       })
-    }
-
-    // Check rate limiter if configured
-    if (this.rateLimiter) {
-      const identity = `${providerKey}:${modelID}`
-      const result = this.rateLimiter.check(identity)
-      if (!result.allowed) {
-        throw new ProviderError({
-          message: `Rate limited for "${identity}" — retry after ${result.retryAfterMs}ms`,
-          code: 'RATE_LIMITED',
-          provider: providerKey,
-          status: 429,
-          retryable: true,
-        })
-      }
     }
 
     const baseURL = expandEnv(cfg.options.baseURL)
@@ -471,22 +456,6 @@ export class ProviderRegistry {
   recordFailure(providerKey: string): void {
     const breaker = createCircuitBreaker(providerKey)
     breaker.recordFailure()
-  }
-
-  /** Check rate limit for an identity without consuming */
-  checkRateLimit(identity: string): { allowed: boolean; retryAfterMs?: number } {
-    if (!this.rateLimiter) return { allowed: true }
-    return this.rateLimiter.check(identity, 0)
-  }
-
-  /** Get rate limiter instance */
-  getRateLimiter(): RateLimiter | undefined {
-    return this.rateLimiter
-  }
-
-  /** Set rate limiter */
-  setRateLimiter(limiter: RateLimiter): void {
-    this.rateLimiter = limiter
   }
 
   // ── Existing methods (preserved) ───────────────────────────────────────

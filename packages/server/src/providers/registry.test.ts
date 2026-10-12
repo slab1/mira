@@ -50,18 +50,6 @@ describe('resolveWithFallbacks', () => {
     expect(out).toEqual(['b'])
   })
 
-  test('a rate-limited candidate is skipped, not fatal', () => {
-    const reg = new ProviderRegistry(
-      { a: prov('https://a.test'), b: prov('https://b.test') },
-      { fallbacks: ['b/m1'], defaultProvider: 'a' },
-    )
-    // exhaust the limiter for a
-    for (let i = 0; i < 100; i++) reg.checkRateLimit('a:m1')
-    const out = reg.resolveWithFallbacks('a/m1').map((r) => r.providerKey)
-    // with no limiter configured this is simply 'a'; the point is it does not throw
-    expect(out.length).toBeGreaterThan(0)
-  })
-
   test('when every candidate is skipped, the primary error still surfaces', () => {
     const reg = new ProviderRegistry(
       { a: prov('https://a.test', '') },

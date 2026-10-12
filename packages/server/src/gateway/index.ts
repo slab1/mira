@@ -14,9 +14,7 @@
  */
 
 import type { MiraConfig } from '../types/index.js'
-import { ProviderError } from './errors.js'
 import { ProviderRegistry } from '../providers/registry.js'
-import { buildRegistry } from './provider.js'
 import { SubgatewayRegistry } from './registry.js'
 import { GatewayRouter, createRoutingGateway } from './router.js'
 
@@ -32,9 +30,8 @@ export type {
   GatewayStats,
 } from './types.js'
 export { ProviderError } from './errors.js'
-export { GatewayStatsStore } from './pricing.js'
 export { createSSEParser, parseSSEText } from './sse.js'
-export { backoffWithJitter, parseRetryAfter, withRetry, withFallbackChain } from './retry.js'
+export { backoffWithJitter, parseRetryAfter } from './retry.js'
 export { priceFor, PRICING_TABLE } from './pricing.js'
 export {
   expandEnv,
