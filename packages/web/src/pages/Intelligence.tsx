@@ -4,7 +4,6 @@ import { DataStateBadge, type OperationalState } from '../components/DataState'
 import { createIntelligenceFeatureStore } from '../features/intelligence'
 import { Card, SectionHeader, StatusBadge } from '../components/DesignSystem'
 import { ProgressiveDisclosure } from '../components/ProgressiveDisclosure'
-import { ScopeTransparency } from '../components/ScopeTransparency'
 
 interface KnowledgeNode {
   id: string
@@ -40,24 +39,10 @@ interface MemoryEntry {
   updatedAt: number
 }
 
-interface RepoNode {
-  id: string
-  kind: string
-  name: string
-  path?: string
-  updatedAt: number
-}
-
 interface RepoStats {
   nodes: number
   edges: number
   byKind: Record<string, number>
-}
-
-async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(path)
-  if (!res.ok) throw new Error(res.status + ' ' + (await res.text().catch(() => '')))
-  return (await res.json()) as T
 }
 
 function provenanceTone(provenance: string): 'success' | 'warning' | 'error' | 'info' | 'muted' {
@@ -77,9 +62,9 @@ export default function IntelligencePage() {
   onMount(async () => {
     try {
       const [g, m, r] = await Promise.all([
-        getJson<KnowledgeGraph>('/knowledge/graph').catch(() => null),
-        getJson<MemoryEntry[]>('/memory').catch(() => null),
-        getJson<RepoStats>('/dashboard').catch(() => null),
+        req<KnowledgeGraph>('/knowledge/graph').catch(() => null),
+        req<MemoryEntry[]>('/memory').catch(() => null),
+        req<RepoStats>('/dashboard').catch(() => null),
       ])
       setGraph(g)
       setMemories(m ?? [])
@@ -92,27 +77,83 @@ export default function IntelligencePage() {
   })
 
   return (
-    <div style={{ flex: '1', display: 'flex', 'flex-direction': 'column', overflow: 'auto', background: 'var(--bg-canvas)', padding: '18px 14px 28px' }}>
-      <div style={{ 'max-width': '1100px', margin: '0 auto', width: '100%', display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
+    <div
+      style={{
+        flex: '1',
+        display: 'flex',
+        'flex-direction': 'column',
+        overflow: 'auto',
+        background: 'var(--bg-canvas)',
+        padding: '18px 14px 28px',
+      }}
+    >
+      <div
+        style={{
+          'max-width': '1100px',
+          margin: '0 auto',
+          width: '100%',
+          display: 'flex',
+          'flex-direction': 'column',
+          gap: '14px',
+        }}
+      >
         <Card padding="14px 16px" style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
-          <div style={{ width: '28px', height: '28px', 'border-radius': '8px', background: 'var(--grad-brand)', display: 'grid', 'place-items': 'center', color: 'var(--on-accent)', 'font-weight': '800', 'font-size': '14px' }} aria-hidden="true">I</div>
+          <div
+            style={{
+              width: '28px',
+              height: '28px',
+              'border-radius': '8px',
+              background: 'var(--grad-brand)',
+              display: 'grid',
+              'place-items': 'center',
+              color: 'var(--on-accent)',
+              'font-weight': '800',
+              'font-size': '14px',
+            }}
+            aria-hidden="true"
+          >
+            I
+          </div>
           <div>
             <div style={{ 'font-size': 'var(--fs-lg)', 'font-weight': '700' }}>Intelligence</div>
-            <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>What does Mira know, and why does Mira believe it?</div>
+            <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>
+              What does Mira know, and why does Mira believe it?
+            </div>
           </div>
-          <div style={{ 'margin-left': 'auto', display: 'flex', 'align-items': 'center', 'gap': '8px' }}>
+          <div
+            style={{ 'margin-left': 'auto', display: 'flex', 'align-items': 'center', gap: '8px' }}
+          >
             <input
               type="text"
               placeholder="Search knowledge..."
               value={intelligenceStore.state().searchQuery}
               onInput={(e) => intelligenceStore.setSearch(e.currentTarget.value)}
-              style={{ padding: '4px 8px', 'border-radius': '4px', border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--fg)', 'font-size': 'var(--fs-xs)', width: '160px' }}
+              style={{
+                padding: '4px 8px',
+                'border-radius': '4px',
+                border: '1px solid var(--border)',
+                background: 'var(--bg-surface)',
+                color: 'var(--fg)',
+                'font-size': 'var(--fs-xs)',
+                width: '160px',
+              }}
               aria-label="Search knowledge"
             />
             <select
               value={intelligenceStore.state().tierFilter}
-              onChange={(e) => intelligenceStore.setTierFilter(e.currentTarget.value as 'all' | 'episodic' | 'semantic' | 'procedural')}
-              style={{ padding: '4px 8px', 'border-radius': '4px', border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--fg)', 'font-size': 'var(--fs-xs)' }}
+              onChange={(e) =>
+                intelligenceStore.setTierFilter(
+                  e.currentTarget.value as 'all' | 'episodic' | 'semantic' | 'procedural',
+                )
+              }
+              style={{
+                padding: '4px 8px',
+                'border-radius': '4px',
+                border: '1px solid var(--border)',
+                background: 'var(--bg-surface)',
+                color: 'var(--fg)',
+                'font-size': 'var(--fs-xs)',
+              }}
               aria-label="Filter by tier"
             >
               <option value="all">All tiers</option>
@@ -125,7 +166,9 @@ export default function IntelligencePage() {
         </Card>
 
         <Show when={error()}>
-          <div class="card" style={{ padding: '12px 16px', color: 'var(--danger)' }}>Error: {error()}</div>
+          <div class="card" style={{ padding: '12px 16px', color: 'var(--danger)' }}>
+            Error: {error()}
+          </div>
         </Show>
 
         {/* Knowledge Graph — Progressive Disclosure */}
@@ -133,7 +176,10 @@ export default function IntelligencePage() {
           {(g) => (
             <Card padding="0">
               <div style={{ padding: '12px 16px', 'border-bottom': '1px solid var(--border)' }}>
-                <SectionHeader title="Knowledge Graph" sub={`${g().nodes.length} nodes · ${g().edges.length} edges`} />
+                <SectionHeader
+                  title="Knowledge Graph"
+                  sub={`${g().nodes.length} nodes · ${g().edges.length} edges`}
+                />
               </div>
               <For each={g().nodes.slice(0, 20)}>
                 {(n) => (
@@ -143,26 +189,33 @@ export default function IntelligencePage() {
                     badgeLabel={n.tier}
                     badgeTone="info"
                   >
-                    <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', 'font-size': 'var(--fs-xs)' }}>
-                      <div style={{ display: 'flex', 'gap': '12px', 'flex-wrap': 'wrap' }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        'flex-direction': 'column',
+                        gap: '6px',
+                        'font-size': 'var(--fs-xs)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', gap: '12px', 'flex-wrap': 'wrap' }}>
                         <span style={{ color: 'var(--fg-subtle)' }}>Source: {n.source}</span>
                         <span style={{ color: 'var(--fg-subtle)' }}>Kind: {n.kind}</span>
                       </div>
                       <Show when={n.tags.length > 0}>
-                        <div style={{ display: 'flex', 'gap': '6px', 'flex-wrap': 'wrap' }}>
+                        <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
                           <For each={n.tags}>
                             {(tag) => <StatusBadge label={tag} tone="muted" />}
                           </For>
                         </div>
                       </Show>
                       <Show when={n.entities.length > 0}>
-                        <div style={{ display: 'flex', 'gap': '6px', 'flex-wrap': 'wrap' }}>
+                        <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
                           <For each={n.entities}>
                             {(entity) => <StatusBadge label={entity} tone="info" />}
                           </For>
                         </div>
                       </Show>
-                      <div style={{ display: 'flex', 'gap': '12px', color: 'var(--fg-faint)' }}>
+                      <div style={{ display: 'flex', gap: '12px', color: 'var(--fg-faint)' }}>
                         <span>Created: {new Date(n.createdAt).toLocaleDateString()}</span>
                         <span>Updated: {new Date(n.updatedAt).toLocaleDateString()}</span>
                         <span>Last access: {new Date(n.lastAccessedAt).toLocaleDateString()}</span>
@@ -195,20 +248,27 @@ export default function IntelligencePage() {
                   badgeLabel={m.provenance}
                   badgeTone={provenanceTone(m.provenance)}
                 >
-                  <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', 'font-size': 'var(--fs-xs)' }}>
-                    <div style={{ color: 'var(--fg-subtle)', 'line-height': '1.5' }}>{m.content}</div>
-                    <div style={{ display: 'flex', 'gap': '12px', 'flex-wrap': 'wrap' }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      'flex-direction': 'column',
+                      gap: '6px',
+                      'font-size': 'var(--fs-xs)',
+                    }}
+                  >
+                    <div style={{ color: 'var(--fg-subtle)', 'line-height': '1.5' }}>
+                      {m.content}
+                    </div>
+                    <div style={{ display: 'flex', gap: '12px', 'flex-wrap': 'wrap' }}>
                       <span style={{ color: 'var(--fg-subtle)' }}>Tier: {m.tier}</span>
                       <span style={{ color: 'var(--fg-subtle)' }}>Source: {m.source}</span>
                     </div>
                     <Show when={m.tags.length > 0}>
-                      <div style={{ display: 'flex', 'gap': '6px', 'flex-wrap': 'wrap' }}>
-                        <For each={m.tags}>
-                          {(tag) => <StatusBadge label={tag} tone="muted" />}
-                        </For>
+                      <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
+                        <For each={m.tags}>{(tag) => <StatusBadge label={tag} tone="muted" />}</For>
                       </div>
                     </Show>
-                    <div style={{ display: 'flex', 'gap': '12px', color: 'var(--fg-faint)' }}>
+                    <div style={{ display: 'flex', gap: '12px', color: 'var(--fg-faint)' }}>
                       <span>Created: {new Date(m.createdAt).toLocaleDateString()}</span>
                       <span>Updated: {new Date(m.updatedAt).toLocaleDateString()}</span>
                     </div>
@@ -224,12 +284,14 @@ export default function IntelligencePage() {
           {(r) => (
             <Card padding="16px">
               <SectionHeader title="Repository Understanding" sub="Codebase structure overview" />
-              <div style={{ display: 'flex', 'gap': '16px', 'flex-wrap': 'wrap' }}>
+              <div style={{ display: 'flex', gap: '16px', 'flex-wrap': 'wrap' }}>
                 <span style={{ 'font-size': 'var(--fs-sm)' }}>{r().nodes} nodes</span>
                 <span style={{ 'font-size': 'var(--fs-sm)' }}>{r().edges} edges</span>
                 <For each={Object.entries(r().byKind)}>
                   {([kind, count]) => (
-                    <span style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>{kind}: {count}</span>
+                    <span style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>
+                      {kind}: {count}
+                    </span>
                   )}
                 </For>
               </div>

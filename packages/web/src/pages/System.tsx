@@ -1,4 +1,5 @@
 import { createSignal, onMount, Show, For } from 'solid-js'
+import { req } from '../api/client'
 import { DataStateBadge, type OperationalState } from '../components/DataState'
 import { AuditTrail } from '../components/AuditTrail'
 import { Card, SectionHeader, StatusRow } from '../components/DesignSystem'
@@ -25,12 +26,6 @@ interface DashboardData {
   cost: { totalTokens: number; totalRuns: number }
 }
 
-async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(path)
-  if (!res.ok) throw new Error(res.status + ' ' + (await res.text().catch(() => '')))
-  return (await res.json()) as T
-}
-
 export default function SystemPage() {
   const [health, setHealth] = createSignal<HealthStatus | null>(null)
   const [config, setConfig] = createSignal<SystemConfig | null>(null)
@@ -41,9 +36,9 @@ export default function SystemPage() {
   onMount(async () => {
     try {
       const [h, c, d] = await Promise.all([
-        getJson<HealthStatus>('/health').catch(() => null),
-        getJson<SystemConfig>('/config').catch(() => null),
-        getJson<DashboardData>('/dashboard').catch(() => null),
+        req<HealthStatus>('/health').catch(() => null),
+        req<SystemConfig>('/config').catch(() => null),
+        req<DashboardData>('/dashboard').catch(() => null),
       ])
       setHealth(h)
       setConfig(c)
