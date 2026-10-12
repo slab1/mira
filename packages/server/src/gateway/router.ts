@@ -46,7 +46,12 @@ export const NVIDIA_AUTO_MODELS = {
 export function pickNvidiaAutoModel(
   lane: string,
   task: string | undefined,
-  registry: { providersHealth?: () => Record<string, { status: string; state: string; failureCount: number; latencyMs: number }> },
+  registry: {
+    providersHealth?: () => Record<
+      string,
+      { status: string; state: string; failureCount: number; latencyMs: number }
+    >
+  },
   capability: 'reasoning' | 'default' = 'default',
 ): string {
   // Vision lane never auto-picks nvidia
@@ -56,7 +61,8 @@ export function pickNvidiaAutoModel(
   try {
     health = registry.providersHealth?.()?.['nvidia'] ?? registry.providersHealth?.()?.['Nvidia']
   } catch {}
-  const degraded = health && (health.status === 'down' || health.state === 'OPEN' || health.failureCount >= 5)
+  const degraded =
+    health && (health.status === 'down' || health.state === 'OPEN' || health.failureCount >= 5)
 
   // Reasoning capability → pro (higher quality, still nvidia)
   if (capability === 'reasoning' || lane.includes('reasoning')) {
@@ -179,7 +185,17 @@ export class GatewayRouter {
       const lane = this.resolve(ctx)
       // Detect reasoning intent from task/agent (future: capability param)
       const capability = ctx.task === 'vision' ? 'default' : 'default'
-      return pickNvidiaAutoModel(lane, ctx.task, this.registry as unknown as { providersHealth: () => Record<string, { status: string; state: string; failureCount: number; latencyMs: number }> }, capability)
+      return pickNvidiaAutoModel(
+        lane,
+        ctx.task,
+        this.registry as unknown as {
+          providersHealth: () => Record<
+            string,
+            { status: string; state: string; failureCount: number; latencyMs: number }
+          >
+        },
+        capability,
+      )
     }
     return ctx.model!
   }
@@ -220,9 +236,14 @@ export function createRoutingGateway(
         return false
       })
       // Auto-pick nvidia healthiest when model is empty or 'auto'
-      const effectiveModel = !opts.model || opts.model === 'auto'
-        ? router.resolveModel({ model: opts.model, messages: opts.messages as GatewayMessage[], task: isVision ? 'vision' : 'stream' })
-        : opts.model
+      const effectiveModel =
+        !opts.model || opts.model === 'auto'
+          ? router.resolveModel({
+              model: opts.model,
+              messages: opts.messages as GatewayMessage[],
+              task: isVision ? 'vision' : 'stream',
+            })
+          : opts.model
       const lane = router.resolve({
         model: effectiveModel,
         messages: opts.messages as GatewayMessage[],
@@ -236,13 +257,15 @@ export function createRoutingGateway(
       system?: string
       prompt: string | import('./types.js').GatewayContentPart[]
       maxTokens?: number
+      sessionID?: string
     }): Promise<{ text: string; inputTokens?: number; outputTokens?: number }> {
       const isVision =
         Array.isArray(opts.prompt) &&
         opts.prompt.some((p) => (p as { type?: string }).type === 'image_url')
-      const effectiveModel = !opts.model || opts.model === 'auto'
-        ? router.resolveModel({ model: opts.model, task: isVision ? 'vision' : 'complete' })
-        : opts.model
+      const effectiveModel =
+        !opts.model || opts.model === 'auto'
+          ? router.resolveModel({ model: opts.model, task: isVision ? 'vision' : 'complete' })
+          : opts.model
       const lane = router.resolve({
         model: effectiveModel,
         task: isVision ? 'vision' : 'complete',

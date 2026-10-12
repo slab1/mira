@@ -431,7 +431,13 @@ export class Subgateway implements Gateway {
     const maxAttempts = this.subConfig.retry?.maxAttempts ?? 3
     const baseMs = this.subConfig.retry?.baseMs ?? 500
     const maxMs = this.subConfig.retry?.maxMs ?? 10_000
-    const timeout = this.subConfig.timeout ?? candidates[0]?.timeout ?? 120_000
+    // The LANE timeout is a per-lane policy (compaction/local are configured at
+    // 180s because local models are slow); the provider timeout is a per-provider
+    // default. When the lane sets one explicitly it must win — previously
+    // `cand.timeout ?? timeout` never fell through (resolve() always returns a
+    // number), so a 180s lane silently ran at the provider's 120s and timed out.
+    const laneTimeout = this.subConfig.timeout
+    const timeout = laneTimeout ?? candidates[0]?.timeout ?? 120_000
 
     // Trace fallback chain for observability — even before any failure so TraceViewer can render it
     if (candidates.length > 1) {
@@ -485,7 +491,7 @@ export class Subgateway implements Gateway {
               baseURL: cand.baseURL,
               apiKey: key,
               headers: cand.headers,
-              timeout: cand.timeout ?? timeout,
+              timeout: laneTimeout ?? cand.timeout ?? timeout,
               modelID: cand.modelID,
               opts,
             })
@@ -795,11 +801,25 @@ export class Subgateway implements Gateway {
     system?: string
     prompt: string | import('./types.js').GatewayContentPart[]
     maxTokens?: number
+    /** Optional — enables per-session cost tracking, matching stream(). */
+    sessionID?: string
   }): Promise<{ text: string; inputTokens?: number; outputTokens?: number }> {
     this.checkCircuit()
     this.checkRateLimit()
     const t0 = Date.now()
     const model = this.resolveModelID(opts.model)
+    // Cost cap before the call (stream() does this; complete() used to bypass it
+    // entirely, so the autocomplete/agent:ask lane was uncapped). Estimate the
+    // prompt the same way stream() does (~4 chars/token) and assume maxTokens.
+    const promptChars =
+      typeof opts.prompt === 'string'
+        ? opts.prompt.length
+        : (opts.prompt as Array<{ text?: string }>).reduce((n, p) => n + (p?.text?.length ?? 0), 0)
+    const capEstimate = {
+      input: Math.ceil((promptChars + (opts.system?.length ?? 0)) / 4),
+      output: opts.maxTokens ?? 1024,
+    }
+    this.checkCostCap(capEstimate.input, capEstimate.output, model, opts.sessionID)
     let resolved: ReturnType<ProviderRegistry['resolve']>
     try {
       resolved = this.registry.resolve(model)
@@ -883,6 +903,25 @@ export class Subgateway implements Gateway {
           data.usage?.completion_tokens ?? 0,
           Date.now() - t0,
         )
+        // Per-session cost tracking, matching stream(). Without this the
+        // session cost view silently omitted every complete() call.
+        if (opts.sessionID) {
+          const inTok = data.usage?.prompt_tokens ?? 0
+          const outTok = data.usage?.completion_tokens ?? 0
+          const [inputPrice, outputPrice] = priceFor(resolved.modelID)
+          const cost = (inTok * inputPrice + outTok * outputPrice) / 1_000_000
+          const sess = sessionCosts.get(opts.sessionID) ?? {
+            costUSD: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            requests: 0,
+          }
+          sess.costUSD += cost
+          sess.inputTokens += inTok
+          sess.outputTokens += outTok
+          sess.requests++
+          sessionCosts.set(opts.sessionID, sess)
+        }
         this.recordSuccess()
         this.recordProviderOutcome(resolved.providerKey, true)
         return {

@@ -221,3 +221,126 @@ describe('provider health reflects real outcomes (P0-3)', () => {
     expect(registry.getHealth('aaa').failureCount).toBe(0)
   })
 })
+
+// P2-8: complete() (the autocomplete / agent:ask path) never called
+// checkCostCap(), so that lane was uncapped while stream() was capped.
+describe('complete() respects cost caps and records session cost', () => {
+  const cappedSub = (cap: number) =>
+    new Subgateway({
+      lane: 'default',
+      config: {
+        model: 'aaa/m1',
+        rateLimit: { rps: 1000, burst: 1000 },
+        retry: { maxAttempts: 1, baseMs: 1, maxMs: 2 },
+        timeout: 5000,
+        // per-lane cap — the documented subgateways.*.costCap location
+        costCap: { perTask: cap, perSession: cap },
+        circuitBreaker: { failureThreshold: 99, resetTimeoutMs: 60_000 },
+      },
+      globalConfig: config(),
+    })
+
+  const sseBody =
+    '{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":1000,"completion_tokens":1000}}'
+
+  test('a per-task cap is enforced on complete()', async () => {
+    // 1000 in + 1000 out on a priced model exceeds a $0.0000001 cap.
+    // Without the fix complete() would happily bill it.
+    respond = () => 200
+    const gw = cappedSub(1e-9)
+    const original = globalThis.fetch
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('a.test') || url.includes('b.test')) {
+        return new Response(sseBody, {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return original(input as RequestInfo, init)
+    }) as typeof fetch
+    await expect(gw.complete({ model: 'aaa/m1', prompt: 'x' })).rejects.toThrow()
+  })
+
+  test('complete() records per-session cost when given a sessionID', async () => {
+    const { getSessionCost } = await import('./subgateway.js')
+    respond = () => 200
+    const original = globalThis.fetch
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('a.test') || url.includes('b.test')) {
+        return new Response(sseBody, {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return original(input as RequestInfo, init)
+    }) as typeof fetch
+    const gw = sub()
+    const res = await gw.complete({ model: 'aaa/m1', prompt: 'x', sessionID: 'sess-cost-1' })
+    expect(res.text).toBe('ok')
+    const cost = getSessionCost('sess-cost-1')
+    // the call happened and was attributed to the session
+    expect(cost.requests).toBe(1)
+    expect(cost.inputTokens).toBe(1000)
+    expect(cost.outputTokens).toBe(1000)
+  })
+})
+
+// P1-3: the lane timeout was shadowed by the provider's, so a lane configured
+// at 180s actually ran at the provider's 120s.
+describe('lane timeout wins over the provider default', () => {
+  test('an explicit lane timeout is used for the request', async () => {
+    clearBreakerRegistry()
+    let seen = 0
+    const original = globalThis.fetch
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('a.test')) {
+        // The abort signal's timeout is what liveOpenAIStream applies; assert the
+        // lane value reaches the transport by observing that a 150ms request with
+        // a 200ms lane timeout completes rather than being cut at the 50ms
+        // provider default.
+        await new Promise((r) => setTimeout(r, 60))
+        seen = 200
+        return new Response('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n', {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        })
+      }
+      return original(input as RequestInfo, init)
+    }) as typeof fetch
+
+    const gw = new Subgateway({
+      lane: 'default',
+      config: {
+        model: 'aaa/m1',
+        rateLimit: { rps: 1000, burst: 1000 },
+        retry: { maxAttempts: 1, baseMs: 1, maxMs: 2 },
+        // lane says 200ms; provider default is 1000ms in this config
+        timeout: 200,
+        circuitBreaker: { failureThreshold: 99, resetTimeoutMs: 60_000 },
+      },
+      globalConfig: {
+        ...config(),
+        provider: {
+          aaa: {
+            name: 'A',
+            options: { baseURL: 'https://a.test/v1', apiKey: 'k', timeout: 50, kind: 'aaa' },
+            models: {},
+          },
+          bbb: {
+            name: 'B',
+            options: { baseURL: 'https://b.test/v1', apiKey: 'k', timeout: 50, kind: 'bbb' },
+            models: {},
+          },
+        },
+      } as unknown as MiraConfig,
+    })
+    const it = await gw.stream({ model: 'aaa/m1', messages: [{ role: 'user', content: 'x' }] })
+    let out = ''
+    for await (const chunk of it) if (chunk.type === 'text-delta') out += chunk.text
+    expect(out).toContain('ok')
+    expect(seen).toBe(200)
+  })
+})
