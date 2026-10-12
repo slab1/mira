@@ -146,6 +146,7 @@ MIRA_API_URL=http://127.0.0.1:4096 MIRA_API_KEY=<key> SLACK_BOT_TOKEN=xoxb-... S
 | `MIRA_COMPLIANCE_RETENTION_DAYS`       | Audit evidence retention window (default 90; `compliance.retentionDays` in mira.json also works)                               |
 | `MIRA_EMBEDDING_MODEL`                 | Embedding model for edit-relevance checks, gateway-routed (default `openai/text-embedding-3-small`; any provider in mira.json) |
 | `MIRA_STRICT_EDIT_TARGET=1`            | Block the high-confidence wrong-file signal instead of warning                                                                 |
+| `MIRA_BLAST_RADIUS_BLOCK`              | Fan-in at which a blast-radius warning becomes a block under strict mode (default 10 dependents)                               |
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) and [packages/server/README.md](./packages/server/README.md).
 

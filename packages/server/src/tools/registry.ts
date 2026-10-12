@@ -102,6 +102,33 @@ export interface RegistryDeps {
 
 // ── Registry ───────────────────────────────────────────────────────
 
+/**
+ * Marker error for the strict-mode blast-radius block.
+ *
+ * The blast-radius check runs inside a `try { … } catch {}` (a cold or broken
+ * code graph must never break an edit), so the deliberate block needs its own
+ * type to travel through that catch and reach the caller. Any other error from
+ * that block is swallowed, exactly as before.
+ */
+class BlastRadiusBlock extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'BlastRadiusBlock'
+  }
+}
+
+/**
+ * Fan-in at which a blast-radius warning becomes a block, when
+ * MIRA_STRICT_EDIT_TARGET=1. Tunable via MIRA_BLAST_RADIUS_BLOCK because the
+ * right number is codebase-specific — a shared util with 12 importers is not
+ * the same risk as a leaf module with 12.
+ */
+function blastRadiusBlockThreshold(): number {
+  const raw = Number.parseInt(process.env.MIRA_BLAST_RADIUS_BLOCK ?? '', 10)
+  if (Number.isFinite(raw) && raw >= 1) return raw
+  return 10
+}
+
 export class ToolRegistry {
   private tools = new Map<string, ToolDef>()
   private subagentRunner?: ToolContext['subagentRunner']
@@ -499,7 +526,10 @@ export class ToolRegistry {
         targetWarnings.push(...signal.warnings)
         // Blast radius (edit only) — reverse deps from the already-built code
         // graph. Never triggers a build: on a cold graph this is skipped so the
-        // edit path stays fast.
+        // edit path stays fast. Under strict edit-target mode a HIGH-fan-in
+        // edit (a hub many files import) blocks instead of warning; below the
+        // threshold it stays an advisory, because blast radius alone says
+        // nothing about whether the edit is correct.
         if (name === 'edit') {
           try {
             const { codeGraphFor } = await import('../codegraph/index.js')
@@ -510,13 +540,29 @@ export class ToolRegistry {
               const dependents = graph.findDependents(rel, 50)
               if (dependents.length > 0) {
                 const shown = dependents.slice(0, 3)
-                targetWarnings.push(
+                const message =
                   `Blast radius: ${dependents.length} file(s) import this file ` +
-                    `(${shown.join(', ')}${dependents.length > 3 ? ', …' : ''}) — verify they still compile.`,
-                )
+                  `(${shown.join(', ')}${dependents.length > 3 ? ', …' : ''}) — verify they still compile.`
+                // Strict mode promotes a genuinely high-fan-in edit to a block:
+                // one mistake here breaks every one of those dependents.
+                const { strictEditTarget } = await import('./edit-target.js')
+                if (strictEditTarget() && dependents.length >= blastRadiusBlockThreshold()) {
+                  throw new BlastRadiusBlock(
+                    `Blast-radius guard: ${message} ` +
+                      `High fan-in (${dependents.length} dependents ≥ ${blastRadiusBlockThreshold()}) — ` +
+                      `set MIRA_STRICT_EDIT_TARGET=0 to downgrade this to a warning.`,
+                  )
+                }
+                targetWarnings.push(message)
               }
             }
-          } catch {}
+          } catch (e) {
+            // Re-throw the deliberate strict-mode block; swallow only real
+            // graph failures (a cold/broken graph must not break the edit).
+            if (e instanceof BlastRadiusBlock) throw e
+            // any other error (graph unavailable, findDependents throw) → advisory
+            // path simply doesn't run; the edit proceeds as before.
+          }
         }
         try {
           const { snapshotFile } = await import('../storage/snapshots.js')

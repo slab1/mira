@@ -105,6 +105,86 @@ describe('blast-radius advisory (edit only, graph already built)', () => {
     )) as { editTargetWarnings?: string[] }
     expect((res.editTargetWarnings ?? []).some((w) => w.startsWith('Blast radius'))).toBe(false)
   })
+
+  test('strict mode blocks a high fan-in edit (and writes nothing)', async () => {
+    process.env.MIRA_STRICT_EDIT_TARGET = '1'
+    process.env.MIRA_BLAST_RADIUS_BLOCK = '3'
+    try {
+      mkdirSync(join(dir, 'src'), { recursive: true })
+      writeFileSync(join(dir, 'src', 'hub.ts'), 'export const hub = 1\n')
+      for (let i = 0; i < 4; i++)
+        writeFileSync(
+          join(dir, 'src', `consumer${i}.ts`),
+          `import { hub } from "./hub"\nexport const use${i} = hub\n`,
+        )
+      seedSession('s3')
+      const reg = await registry()
+      const { codeGraphFor } = await import('../codegraph/index.js')
+      await codeGraphFor(db).buildGraph(dir)
+      expect(codeGraphFor(db).stats().files).toBeGreaterThan(0)
+
+      await reg.execute('read', { path: 'src/hub.ts' }, ctx('s3'))
+      await expect(
+        reg.execute(
+          'edit',
+          { path: 'src/hub.ts', oldString: 'hub = 1', newString: 'hub = 2' },
+          ctx('s3'),
+        ),
+      ).rejects.toThrow(/Blast-radius guard/)
+      // the block happens before any write
+      expect(readFileSync(join(dir, 'src', 'hub.ts'), 'utf-8')).toContain('export const hub = 1')
+    } finally {
+      delete process.env.MIRA_STRICT_EDIT_TARGET
+      delete process.env.MIRA_BLAST_RADIUS_BLOCK
+    }
+  })
+
+  test('strict mode still only WARNS below the fan-in threshold', async () => {
+    process.env.MIRA_STRICT_EDIT_TARGET = '1'
+    process.env.MIRA_BLAST_RADIUS_BLOCK = '10'
+    try {
+      mkdirSync(join(dir, 'src'), { recursive: true })
+      writeFileSync(join(dir, 'src', 'small.ts'), 'export const small = 1\n')
+      writeFileSync(
+        join(dir, 'src', 'one-consumer.ts'),
+        'import { small } from "./small"\nexport const use = small\n',
+      )
+      seedSession('s4')
+      const reg = await registry()
+      const { codeGraphFor } = await import('../codegraph/index.js')
+      await codeGraphFor(db).buildGraph(dir)
+
+      await reg.execute('read', { path: 'src/small.ts' }, ctx('s4'))
+      const res = (await reg.execute(
+        'edit',
+        { path: 'src/small.ts', oldString: 'small = 1', newString: 'small = 2' },
+        ctx('s4'),
+      )) as { editTargetWarnings?: string[] }
+      const blast = (res.editTargetWarnings ?? []).find((w) => w.startsWith('Blast radius'))
+      expect(blast).toBeTruthy()
+      expect(readFileSync(join(dir, 'src', 'small.ts'), 'utf-8')).toContain('small = 2')
+    } finally {
+      delete process.env.MIRA_STRICT_EDIT_TARGET
+      delete process.env.MIRA_BLAST_RADIUS_BLOCK
+    }
+  })
+
+  test('a broken code graph never blocks an edit', async () => {
+    // Blast-radius runs inside a try/catch; a cold graph must skip silently.
+    mkdirSync(join(dir, 'src'), { recursive: true })
+    writeFileSync(join(dir, 'src', 'x.ts'), 'export const x = 1\n')
+    seedSession('s5')
+    const reg = await registry()
+    // no buildGraph() — graph is empty/cold
+    await reg.execute('read', { path: 'src/x.ts' }, ctx('s5'))
+    const res = (await reg.execute(
+      'edit',
+      { path: 'src/x.ts', oldString: 'x = 1', newString: 'x = 2' },
+      ctx('s5'),
+    )) as { editTargetWarnings?: string[] }
+    expect((res.editTargetWarnings ?? []).some((w) => w.startsWith('Blast radius'))).toBe(false)
+    expect(readFileSync(join(dir, 'src', 'x.ts'), 'utf-8')).toContain('x = 2')
+  })
 })
 
 describe('per-session state eviction', () => {
