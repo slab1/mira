@@ -130,7 +130,11 @@ jobs:
         run: |
           echo "Deploying $IMAGE to $DEPLOY_URL"
           # Example: trigger deploy hook / helm upgrade / fly deploy
-          if [ -n "${{ vars.DEPLOY_HOOK_URL }}" ]; then
+          # Read the URL from the environment, not ${{ vars.* }} — direct
+          # interpolation into `run:` (line above) is the template-injection
+          # surface the comment warns about, and a hook URL with a quote in it
+          # would otherwise corrupt this script.
+          if [ -n "$DEPLOY_HOOK_URL" ]; then
             # Deploy hook payload built with jq — no string-concatenated JSON.
             curl -fsSL -X POST "$DEPLOY_HOOK_URL" \
               -H "Authorization: Bearer $DEPLOY_TOKEN" \
