@@ -111,3 +111,58 @@ describe('provider model discovery with an array apiKey', () => {
     delete process.env.MIRA_TEST_GKEY
   })
 })
+
+// `provider.*.models[].limit` is required by the schema and was being dropped
+// by the /providers listing, so the configured context/output window could
+// never reach the UI — declared-but-unused dead config.
+describe('provider listing surfaces model limits', () => {
+  let dir: string
+  let server: { stop: (c?: boolean) => void; port: number | undefined }
+  let BASE: string
+
+  afterEach(() => {
+    resetConfigCache()
+    try {
+      server.stop(true)
+    } catch {}
+    try {
+      rmSync(dir, { recursive: true, force: true })
+    } catch {}
+  })
+
+  test('context/output limits are returned per model', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'mira-provlimit-'))
+    writeFileSync(
+      join(dir, 'mira.json'),
+      JSON.stringify({
+        provider: {
+          lprov: {
+            name: 'L',
+            options: { baseURL: 'https://l.test/v1', apiKey: 'k' },
+            models: {
+              'big-model': { name: 'Big', limit: { context: 200000, output: 8192 } },
+              'small-model': { name: 'Small', limit: { context: 8000, output: 2048 } },
+            },
+          },
+        },
+      }),
+    )
+    resetConfigCache()
+    const app = new Hono<{ Variables: { requestId: string } }>()
+    mountConfigRoutes(app)
+    server = Bun.serve({ port: 0, fetch: app.fetch })
+    BASE = `http://127.0.0.1:${server.port}`
+
+    const res = await fetch(`${BASE}/providers?cwd=${encodeURIComponent(dir)}`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Array<{
+      id: string
+      models: Array<{ id: string; limit: { context: number | null; output: number | null } | null }>
+    }>
+    const prov = (Array.isArray(body) ? body : []).find((p) => p.id === 'lprov')
+    expect(prov).toBeDefined()
+    const big = prov!.models.find((m) => m.id === 'big-model')
+    expect(big?.limit?.context).toBe(200000)
+    expect(big?.limit?.output).toBe(8192)
+  })
+})

@@ -144,3 +144,43 @@ describe('alias expansion', () => {
     expect(r.modelID).toBe('mystery-model')
   })
 })
+
+// `options.kind` had a real latent use that was never wired: a user-defined
+// provider key (`corp-gateway`, `openrouter-mirror`) matches no capability-table
+// entry, so capability routing silently ignored it. Declaring kind lets a custom
+// key inherit a known provider's capabilities.
+describe('capabilities via options.kind', () => {
+  const withKind = (key: string, kind: string) =>
+    new ProviderRegistry(
+      {
+        [key]: {
+          name: key,
+          options: { baseURL: 'https://x.test', apiKey: 'k', timeout: 1000, kind },
+          models: {},
+        },
+      },
+      { defaultProvider: key },
+    )
+
+  test('a custom key inherits the capabilities of its declared kind', () => {
+    const reg = withKind('corp-gateway', 'openrouter')
+    // WITHOUT the kind lookup, an unknown key has no capabilities, so
+    // routeByCapability('vision') cannot find a vision provider and falls back
+    // to plain resolve() with no capability filtering. WITH the lookup, openrouter's
+    // capabilities (incl. vision) apply and corp-gateway is returned as capable.
+    expect(reg.capabilitiesOfPublic('corp-gateway')).toContain('vision')
+    expect(reg.capabilitiesOfPublic('corp-gateway')).toContain('coding')
+  })
+
+  test('without a matching kind, an unknown key has no capabilities', () => {
+    const reg = withKind('mystery', 'not-a-known-kind')
+    expect(reg.capabilitiesOfPublic('mystery')).toEqual([])
+  })
+
+  test('the key entry wins over kind when the key is itself known', () => {
+    const reg = withKind('openai', 'google')
+    // openai's own capabilities apply, not google's
+    expect(reg.capabilitiesOfPublic('openai')).toContain('coding')
+    expect(reg.capabilitiesOfPublic('openai')).not.toContain('vision')
+  })
+})

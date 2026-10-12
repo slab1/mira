@@ -12,6 +12,19 @@ let cached: MiraConfig | null = null
 // ── Config validation helpers ────────────────────────────────────────
 
 /** Known top-level keys in mira.json — flag unknowns as typos. */
+/**
+ * Provider SDK packages the gateway recognises. `provider.*.npm` is
+ * documentation of which SDK a provider maps to; the transport is raw
+ * OpenAI-compatible HTTP, so this set is used to catch typos in config rather
+ * than to load anything.
+ */
+const KNOWN_PROVIDER_SDKS = new Set([
+  '@ai-sdk/openai',
+  '@ai-sdk/anthropic',
+  '@ai-sdk/google',
+  '@ai-sdk/openai-compatible',
+])
+
 const KNOWN_TOP_KEYS = new Set([
   'model',
   'smallModel',
@@ -112,6 +125,13 @@ function validateConfig(raw: Record<string, unknown>, source: string): void {
       const p = prov as Record<string, unknown>
       if (p.npm !== undefined && typeof p.npm !== 'string') {
         issues.push(`provider.${name}.npm: expected string, got ${typeof p.npm}`)
+      } else if (typeof p.npm === 'string' && !KNOWN_PROVIDER_SDKS.has(p.npm)) {
+        // `npm` names the provider SDK. The gateway transport is raw HTTP today
+        // (nothing loads this package), so a typo here is otherwise invisible —
+        // surface it rather than let a wrong package name sit in config forever.
+        issues.push(
+          `provider.${name}.npm: unknown SDK "${p.npm}" (known: ${[...KNOWN_PROVIDER_SDKS].join(', ')})`,
+        )
       }
       if (p.options && typeof p.options === 'object') {
         const opts = p.options as Record<string, unknown>

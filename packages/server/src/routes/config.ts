@@ -245,7 +245,10 @@ export function mountConfigRoutes(
   })
   app.get('/providers', async (c: Context) => {
     try {
-      const cfg = getConfig() as MiraConfig
+      // Optional ?cwd= selects the project's config, matching
+      // GET /providers/:id/models and PATCH /config.
+      const cwdRaw = c.req.query('cwd')
+      const cfg = (cwdRaw ? getConfig(cwdRaw) : getConfig()) as MiraConfig
       const providers = (cfg as MiraConfig).provider ?? {}
       const snap = gatewaySnapshot()
       const provHealth = (snap?.providers ?? {}) as Record<
@@ -274,14 +277,27 @@ export function mountConfigRoutes(
               string,
               JsonValue
             >,
-          ).map(([mid, m]) => ({
-            id: mid,
-            name:
-              (m as { name?: string } | null | undefined)?.name &&
-              typeof (m as { name?: string }).name === 'string'
-                ? (m as { name: string }).name
-                : mid,
-          }))
+          ).map(([mid, m]) => {
+            // Surface the configured context/output limits. They are required by
+            // the schema and were being dropped here, so `models[].limit.*` was
+            // declared-but-unused dead config; the UI could never show a model's
+            // context window. (Other consumers: compaction threshold reads
+            // loop.contextLimit, not this.)
+            const lim = (
+              m as { limit?: { context?: unknown; output?: unknown } } | null | undefined
+            )?.limit
+            const ctx = typeof lim?.context === 'number' ? lim.context : null
+            const out = typeof lim?.output === 'number' ? lim.output : null
+            return {
+              id: mid,
+              name:
+                (m as { name?: string } | null | undefined)?.name &&
+                typeof (m as { name?: string }).name === 'string'
+                  ? (m as { name: string }).name
+                  : mid,
+              limit: ctx !== null || out !== null ? { context: ctx, output: out } : null,
+            }
+          })
           const health =
             (provHealth as Record<string, unknown>)[id.toLowerCase()] ??
             (provHealth as Record<string, unknown>)[id]

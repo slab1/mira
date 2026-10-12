@@ -73,11 +73,16 @@ export const providerOptionsSchema = z.object({
   kind: z
     .string()
     .optional()
-    .describe('Provider kind: openrouter|anthropic|openai|google|deepseek|nvidia'),
+    .describe(
+      'Provider kind: openrouter|anthropic|openai|google|deepseek|nvidia. For a custom provider key, declares which known provider it behaves like (drives capability + cost routing).',
+    ),
 })
 export type ProviderOptions = z.infer<typeof providerOptionsSchema>
 
 export const providerConfigSchema = z.object({
+  // `npm` documents which provider SDK this entry maps to. The transport is raw
+  // HTTP (nothing loads the package today), but a value outside the known set is
+  // reported as a config issue so a typo is not silently ignored.
   npm: z.string().optional().describe('NPM package for provider SDK'),
   name: z.string().describe('Display name'),
   options: providerOptionsSchema,

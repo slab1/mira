@@ -176,6 +176,8 @@ export class ProviderRegistry {
     const baseURL = expandEnv(cfg.options.baseURL)
     const headers = expandHeaders(cfg.options.headers)
     const timeout = cfg.options.timeout ?? 120_000
+    // `kind` lets a user-defined provider key declare which known provider it
+    // behaves like (see capabilitiesOf). Defaults to the key itself.
     const kind = (cfg.options.kind ?? providerKey) as ProviderKind
     const ring = this.keyRings.get(providerKey)
     const apiKey = ring?.current ?? expandEnvArray(cfg.options.apiKey as string | string[])[0] ?? ''
@@ -600,12 +602,33 @@ export class ProviderRegistry {
 
   // ── Private helpers ────────────────────────────────────────────────────
 
+  /**
+   * Capabilities for a provider entry.
+   *
+   * The map KEY is looked up first, then `options.kind`. The `kind` fallback is
+   * what makes the field functional: a user-defined key (`corp-gateway`,
+   * `openrouter-mirror`, `my-nvidia`) matches no table entry, so capability and
+   * cost routing silently ignored it. Declaring `options.kind: 'openrouter'`
+   * now lets a custom key declare which known provider it behaves like.
+   */
+  private capabilitiesOf(key: string): Capability[] {
+    const byKey = PROVIDER_CAPABILITIES[key]
+    if (byKey) return byKey
+    const kind = this.providers.get(key)?.options?.kind
+    if (kind && PROVIDER_CAPABILITIES[kind]) return PROVIDER_CAPABILITIES[kind]
+    return []
+  }
+
+  /** Test seam: capabilities the registry derives for a provider key. */
+  capabilitiesOfPublic(key: string): Capability[] {
+    return this.capabilitiesOf(key)
+  }
+
   /** Find providers that support a given capability */
   private findCapableProviders(capability: Capability): string[] {
-    return Object.keys(this.providers).filter((key) => {
-      const caps = PROVIDER_CAPABILITIES[key]
-      return caps ? caps.includes(capability) : false
-    })
+    return Object.keys(this.providers).filter((key) =>
+      this.capabilitiesOf(key).includes(capability),
+    )
   }
 
   /** Emit a trace event if onTrace callback is configured */
