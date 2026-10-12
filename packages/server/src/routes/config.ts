@@ -6,12 +6,26 @@ import {
   removeProviderFromConfig,
 } from '../config/index.js'
 import { sanitizePath, isPathAllowed } from '../guardrails/index.js'
-import type { MiraConfig, JsonValue, ProviderConfig } from '../types/index.js'
+import type { MiraConfig, JsonValue, ProviderConfig, BusEvent } from '../types/index.js'
 import type { Context } from 'hono'
 
 function expandEnv(value: string | undefined | null): string {
   if (typeof value !== 'string' || !value) return value ?? ''
   return value.replace(/\{env:([^}]+)\}/g, (_, name: string) => process.env[name] ?? '')
+}
+/**
+ * First usable key from a provider's `apiKey`, which may be a single string or
+ * an array of fallbacks (google lists two). Returns '' when none is configured.
+ */
+function expandApiKeyFirst(value: string | string[] | undefined | null): string {
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const e = expandEnv(v)
+      if (e) return e
+    }
+    return ''
+  }
+  return expandEnv(value)
 }
 function maskApiKey(key: string): string {
   if (!key) return ''
@@ -78,7 +92,7 @@ function resolveCwd(c: Context): { cwd?: string; error?: string; status?: number
 export function mountConfigRoutes(
   app: Hono<{ Variables: { requestId: string } }>,
   opts?: {
-    bus?: { publish: (e: any) => void }
+    bus?: { publish: <T>(e: BusEvent<T>) => void }
     gateway?: {
       stats: () => unknown
       registry?: {
@@ -324,7 +338,9 @@ export function mountConfigRoutes(
         { ok: false, error: 'provider not found', latencyMs: Date.now() - started },
         404,
       )
-    const apiKey = expandEnv((prov as { options?: { apiKey?: string } }).options?.apiKey ?? '')
+    const apiKey = expandApiKeyFirst(
+      (prov as { options?: { apiKey?: string | string[] } }).options?.apiKey,
+    )
     if (!apiKey)
       return c.json(
         {
@@ -357,11 +373,16 @@ export function mountConfigRoutes(
   app.get('/providers/:id/models', async (c: Context) => {
     const id = c.req.param('id')
     if (!id) return c.json({ ok: false, error: 'provider not found' }, 404)
-    const cfg = getConfig() as MiraConfig
+    // Optional ?cwd= selects the project's config, matching PATCH /config.
+    const cwdRaw = c.req.query('cwd')
+    const cfg = (cwdRaw ? getConfig(cwdRaw) : getConfig()) as MiraConfig
     const prov = cfg.provider[id] as ProviderConfig | undefined
     if (!prov) return c.json({ ok: false, error: 'provider not found' }, 404)
     try {
-      const apiKey = expandEnv((prov as { options?: { apiKey?: string } }).options?.apiKey ?? '')
+      // apiKey may be an array (google lists two env fallbacks) — expanding it
+      // as a string threw "value.replace is not a function" and broke discovery.
+      const rawKey = (prov as { options?: { apiKey?: string | string[] } }).options?.apiKey
+      const apiKey = expandApiKeyFirst(rawKey)
       if (!apiKey)
         return c.json({ ok: false, error: 'missing apiKey (check {env:VAR} + mira.env)' }, 400)
       const baseURL = expandEnv((prov as { options?: { baseURL?: string } }).options?.baseURL ?? '')
