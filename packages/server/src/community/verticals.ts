@@ -31,8 +31,14 @@ export interface ResolvedVertical {
 /**
  * Resolve a vertical's components against the catalogs.
  * Pure: no filesystem or config writes.
+ *
+ * `cwd` (optional) additionally resolves components this project has published
+ * (P3.7), so a vertical may be built from local artifacts as well as curated
+ * ones. Resolution order stays curated-first: `getRegistryEntry` prefers a
+ * curated name over a published one, so a local publish can never hijack a
+ * shipped entry.
  */
-export function planVertical(entry: CommunityEntry): ResolvedVertical | null {
+export function planVertical(entry: CommunityEntry, cwd?: string): ResolvedVertical | null {
   if (entry.source.kind !== 'vertical') return null
   const spec: VerticalSpec = entry.source.vertical
   const resolved: ResolvedVertical = {
@@ -49,7 +55,7 @@ export function planVertical(entry: CommunityEntry): ResolvedVertical | null {
     if ('definition' in spec.agent && spec.agent.definition) {
       resolved.agent = { name: entry.name, definition: spec.agent.definition }
     } else if ('agent' in spec.agent && spec.agent.agent) {
-      const ref = getRegistryEntry('agent', spec.agent.agent)
+      const ref = getRegistryEntry('agent', spec.agent.agent, cwd)
       if (ref?.source.kind === 'agent-def') {
         resolved.agent = { name: spec.agent.agent, definition: ref.source.definition }
       } else {
@@ -59,13 +65,13 @@ export function planVertical(entry: CommunityEntry): ResolvedVertical | null {
   }
 
   for (const skillName of spec.skills ?? []) {
-    const ref = getRegistryEntry('skill', skillName)
+    const ref = getRegistryEntry('skill', skillName, cwd)
     if (ref) resolved.skills.push(ref)
     else resolved.missing.push(`skill:${skillName}`)
   }
 
   for (const modName of spec.knowledge ?? []) {
-    const ref = getRegistryEntry('knowledge', modName)
+    const ref = getRegistryEntry('knowledge', modName, cwd)
     if (ref) resolved.knowledge.push(ref)
     else resolved.missing.push(`knowledge:${modName}`)
   }

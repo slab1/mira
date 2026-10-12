@@ -142,9 +142,25 @@ function isKind(kind: string): kind is CommunityKind {
   return (KINDS as string[]).includes(kind)
 }
 
-/** Load a kind's catalog: committed JSON, data-dir override, then embedded fallback. */
-export function loadRegistry(kind: CommunityKind): CommunityEntry[] {
+/**
+ * Load a kind's catalog: curated JSON (committed), then embedded fallback.
+ *
+ * `cwd` (optional, P3.7) overlays this project's own published entries
+ * (`<cwd>/.mira/community/<kind>.json`, read fresh — never module-cached, so a
+ * publish is installable immediately). Curated entries win a name collision, so
+ * publishing can never shadow a shipped artifact. When `cwd` is omitted the
+ * curated catalog is returned unchanged, which is what every curated-only caller
+ * wants.
+ */
+export function loadRegistry(kind: CommunityKind, cwd?: string): CommunityEntry[] {
   if (!isKind(kind)) return []
+  const base = curatedRegistry(kind)
+  if (!cwd) return base
+  return mergePublished(base, cwd, kind)
+}
+
+/** Curated-only catalog (cached), with the embedded fallback. */
+function curatedRegistry(kind: CommunityKind): CommunityEntry[] {
   const cached = cache[kind]
   if (cached) return cached
   let entries: CommunityEntry[] | null = null
@@ -162,6 +178,46 @@ export function loadRegistry(kind: CommunityKind): CommunityEntry[] {
   }
   cache[kind] = entries && entries.length ? entries : FALLBACK[kind]
   return cache[kind]
+}
+
+/**
+ * Append this project's published entries, skipping names a curated entry
+ * already claims. Re-read per call on purpose (publish must take effect without
+ * a restart).
+ */
+function mergePublished(
+  base: CommunityEntry[],
+  cwd: string,
+  kind: CommunityKind,
+): CommunityEntry[] {
+  let published: CommunityEntry[]
+  try {
+    // Imported lazily: publish.ts imports this module, so a static import here
+    // would be a cycle at module-eval time.
+    published = readPublishedSync(cwd, kind)
+  } catch {
+    return base
+  }
+  if (published.length === 0) return base
+  const taken = new Set(base.map((e) => e.name.toLowerCase()))
+  const extra = published.filter((e) => !taken.has(e.name.toLowerCase()))
+  return extra.length ? [...base, ...extra] : base
+}
+
+/**
+ * Direct JSON read of a published catalog. Lives here (rather than in
+ * publish.ts) so the registry's load path stays a leaf module with no cycle.
+ */
+function readPublishedSync(cwd: string, kind: CommunityKind): CommunityEntry[] {
+  const file = join(cwd, '.mira', 'community', `${kind}.json`)
+  if (!existsSync(file)) return []
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf-8')) as unknown
+    if (!Array.isArray(raw)) return []
+    return raw.filter(isCommunityEntry)
+  } catch {
+    return []
+  }
 }
 
 function isCommunityEntry(e: unknown): e is CommunityEntry {
@@ -199,10 +255,18 @@ function score(entry: CommunityEntry, q: string): number {
   return matchScore(entry, q) + Math.log10((entry.stars ?? 100) + 1)
 }
 
-/** Search a kind's catalog. Empty query returns the whole catalog by stars (browse). */
-export function searchRegistry(kind: CommunityKind, query = '', limit = 20): CommunityResult[] {
+/**
+ * Search a kind's catalog. Empty query returns the whole catalog by stars
+ * (browse). Pass `cwd` to include this project's published entries (P3.7).
+ */
+export function searchRegistry(
+  kind: CommunityKind,
+  query = '',
+  limit = 20,
+  cwd?: string,
+): CommunityResult[] {
   const q = query.trim()
-  const all = loadRegistry(kind).map((e) => ({ ...e, kind }))
+  const all = loadRegistry(kind, cwd).map((e) => ({ ...e, kind }))
   if (!q) return all.sort((a, b) => (b.stars ?? 0) - (a.stars ?? 0)).slice(0, limit)
   return all
     .map((e) => ({ e, s: score(e, q) }))
@@ -212,9 +276,17 @@ export function searchRegistry(kind: CommunityKind, query = '', limit = 20): Com
     .map(({ e }) => e)
 }
 
-/** Exact lookup by name (case-insensitive) for one-click install. */
-export function getRegistryEntry(kind: CommunityKind, name: string): CommunityResult | null {
-  const hit = loadRegistry(kind).find((e) => e.name.toLowerCase() === name.toLowerCase())
+/**
+ * Exact lookup by name (case-insensitive) for one-click install. Pass `cwd` to
+ * resolve against published entries too (P3.7); curated wins a collision.
+ */
+export function getRegistryEntry(
+  kind: CommunityKind,
+  name: string,
+  cwd?: string,
+): CommunityResult | null {
+  const target = name.toLowerCase()
+  const hit = loadRegistry(kind, cwd).find((e) => e.name.toLowerCase() === target)
   return hit ? { ...hit, kind } : null
 }
 

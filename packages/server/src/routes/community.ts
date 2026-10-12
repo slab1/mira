@@ -9,15 +9,20 @@
  *   POST   /community/agents/:name     → mira.json `agents`
  *   DELETE /community/agents/:name     → remove from mira.json
  *   POST   /community/knowledge/:name  → seed KnowledgeBase entries
+ *   POST   /community/publish         → add an artifact to THIS project's catalog
+ *   GET    /community/published       → list what this project published
+ *   DELETE /community/published/:k/:n → remove a published catalog entry
  *   GET    /community/registry         → catalog search across kinds
  *
  * Install targets are all read by live loaders, so an install takes effect
  * without a restart (skills loader re-reads the directory per call, agents are
- * merged from config per call, knowledge is stored directly).
+ * merged from config per call, knowledge is stored directly). Published catalogs
+ * are likewise re-read per lookup, so publish → install needs no restart either.
  *
  * Writes are cwd-scoped (`?cwd=`), sanitized, and checked against guardrails
  * allowedRoots — same contract as PATCH /config. Uninstall only removes the
- * project-local artifact, never a packaged one.
+ * project-local artifact, never a packaged one; unpublish only removes the
+ * catalog entry, never an installed artifact.
  */
 import type { Hono, Context } from 'hono'
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -31,6 +36,13 @@ import {
   type CommunityKind,
 } from '../community/registry.js'
 import { planVertical } from '../community/verticals.js'
+import {
+  isCommunityKind,
+  listPublished,
+  publishEntry,
+  unpublishEntry,
+  type PublishRequest,
+} from '../community/publish.js'
 import { SKILLS_DIR } from '../skills/loader.js'
 import type { StoreInput } from '../learning/knowledge.js'
 import type { MiraConfig } from '../types/index.js'
@@ -111,7 +123,11 @@ export function mountCommunityRoutes(
       limit = n
     }
     const kinds = kindRaw ? [kindRaw as CommunityKind] : [...KINDS]
-    const results = kinds.flatMap((k) => searchRegistry(k, rawQ, limit))
+    // Published entries (P3.7) are project-local, so search overlays the
+    // caller's cwd catalog when one is supplied.
+    const resolved = resolveCwd(c)
+    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status ?? 400) as 400)
+    const results = kinds.flatMap((k) => searchRegistry(k, rawQ, limit, resolved.cwd))
     return c.json({ query: rawQ, count: results.length, entries: results })
   })
 
@@ -120,11 +136,13 @@ export function mountCommunityRoutes(
     const name = c.req.param('name')
     if (!name || !isValidArtifactName(name))
       return c.json({ error: 'invalid skill name (lowercase slug required)' }, 400)
-    const entry = getRegistryEntry('skill', name)
-    if (!entry) return c.json({ error: `skill not found in registry: ${name}` }, 404)
+    // cwd first: install targets are file WRITES, so the path guardrail must be
+    // checked before a catalog lookup (which is cwd-aware, P3.7).
     const resolved = resolveCwd(c)
     if (resolved.error) return c.json({ error: resolved.error }, (resolved.status ?? 400) as 400)
     const cwd = resolved.cwd ?? process.cwd()
+    const entry = getRegistryEntry('skill', name, cwd)
+    if (!entry) return c.json({ error: `skill not found in registry: ${name}` }, 404)
 
     let body: string
     if (entry.source.kind === 'packaged') {
@@ -188,13 +206,13 @@ export function mountCommunityRoutes(
     const name = c.req.param('name')
     if (!name || !/^[a-z][a-z0-9_-]{1,40}$/.test(name))
       return c.json({ error: 'invalid agent name (lowercase slug required)' }, 400)
-    const entry = getRegistryEntry('agent', name)
-    if (!entry) return c.json({ error: `agent not found in registry: ${name}` }, 404)
-    if (entry.source.kind !== 'agent-def')
-      return c.json({ error: 'entry is not installable as an agent' }, 400)
     const resolved = resolveCwd(c)
     if (resolved.error) return c.json({ error: resolved.error }, (resolved.status ?? 400) as 400)
     const cwd = resolved.cwd ?? process.cwd()
+    const entry = getRegistryEntry('agent', name, cwd)
+    if (!entry) return c.json({ error: `agent not found in registry: ${name}` }, 404)
+    if (entry.source.kind !== 'agent-def')
+      return c.json({ error: 'entry is not installable as an agent' }, 400)
     const current = getConfig(cwd).agents ?? {}
     const def = entry.source.definition
     if (typeof def.system !== 'string' || def.system.trim().length < 10)
@@ -241,18 +259,18 @@ export function mountCommunityRoutes(
     const name = c.req.param('name')
     if (!name || !isValidArtifactName(name))
       return c.json({ error: 'invalid vertical name (lowercase slug required)' }, 400)
-    const entry = getRegistryEntry('vertical', name)
+    const resolved = resolveCwd(c)
+    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status ?? 400) as 400)
+    const cwd = resolved.cwd ?? process.cwd()
+    const entry = getRegistryEntry('vertical', name, cwd)
     if (!entry) return c.json({ error: `vertical not found in registry: ${name}` }, 404)
-    const plan = planVertical(entry)
+    const plan = planVertical(entry, cwd)
     if (!plan) return c.json({ error: 'entry is not a vertical bundle' }, 400)
     if (plan.missing.length > 0)
       return c.json(
         { error: `vertical references missing catalog entries: ${plan.missing.join(', ')}` },
         409,
       )
-    const resolved = resolveCwd(c)
-    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status ?? 400) as 400)
-    const cwd = resolved.cwd ?? process.cwd()
 
     const installed: { agent?: string; skills: string[]; knowledge: string[] } = {
       skills: [],
@@ -354,13 +372,13 @@ export function mountCommunityRoutes(
   app.delete('/community/verticals/:name', async (c: Context) => {
     const name = c.req.param('name')
     if (!name || !isValidArtifactName(name)) return c.json({ error: 'invalid vertical name' }, 400)
-    const entry = getRegistryEntry('vertical', name)
-    if (!entry) return c.json({ error: `vertical not found in registry: ${name}` }, 404)
-    const plan = planVertical(entry)
-    if (!plan) return c.json({ error: 'entry is not a vertical bundle' }, 400)
     const resolved = resolveCwd(c)
     if (resolved.error) return c.json({ error: resolved.error }, (resolved.status ?? 400) as 400)
     const cwd = resolved.cwd ?? process.cwd()
+    const entry = getRegistryEntry('vertical', name, cwd)
+    if (!entry) return c.json({ error: `vertical not found in registry: ${name}` }, 404)
+    const plan = planVertical(entry, cwd)
+    if (!plan) return c.json({ error: 'entry is not a vertical bundle' }, 400)
 
     const removed: string[] = []
     if (plan.agent) {
@@ -391,7 +409,10 @@ export function mountCommunityRoutes(
   app.post('/community/knowledge/:name', async (c: Context) => {
     const name = c.req.param('name')
     if (!name || !isValidArtifactName(name)) return c.json({ error: 'invalid module name' }, 400)
-    const entry = getRegistryEntry('knowledge', name)
+    const resolved = resolveCwd(c)
+    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status ?? 400) as 400)
+    const cwd = resolved.cwd ?? process.cwd()
+    const entry = getRegistryEntry('knowledge', name, cwd)
     if (!entry) return c.json({ error: `module not found in registry: ${name}` }, 404)
     if (entry.source.kind !== 'knowledge')
       return c.json({ error: 'entry is not a knowledge module' }, 400)
@@ -411,5 +432,80 @@ export function mountCommunityRoutes(
       ids.push(stored.id)
     }
     return c.json({ installed: name, kind: 'knowledge', entries: ids.length, ids }, 201)
+  })
+
+  // ── POST /community/publish — add an artifact to this project's catalog ──
+  // The write side of the catalog (P3.7). Validation mirrors install exactly, so
+  // a publish that succeeds is an install that succeeds; curated names are
+  // refused (409) because a local catalog may not redefine a shipped entry.
+  app.post('/community/publish', async (c: Context) => {
+    const resolved = resolveCwd(c)
+    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status ?? 400) as 400)
+    const cwd = resolved.cwd ?? process.cwd()
+    let body: unknown
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400)
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body))
+      return c.json({ error: 'body must be a JSON object' }, 400)
+    const req = body as PublishRequest
+    const result = publishEntry(cwd, req)
+    if (!result.ok) return c.json({ error: result.error }, result.status)
+    return c.json(
+      {
+        published: result.entry.name,
+        kind: req.kind,
+        replacing: result.replacing,
+        installPath: {
+          skill: `/community/skills/${result.entry.name}`,
+          agent: `/community/agents/${result.entry.name}`,
+          knowledge: `/community/knowledge/${result.entry.name}`,
+          vertical: `/community/verticals/${result.entry.name}`,
+        }[req.kind],
+      },
+      result.replacing ? 200 : 201,
+    )
+  })
+
+  // ── GET /community/published — what this project has published ─────
+  app.get('/community/published', (c: Context) => {
+    const resolved = resolveCwd(c)
+    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status ?? 400) as 400)
+    const cwd = resolved.cwd ?? process.cwd()
+    const entries = listPublished(cwd)
+    return c.json({
+      cwd,
+      count: entries.length,
+      entries: entries.map((e) => ({
+        kind: e.kind,
+        name: e.name,
+        description: e.description,
+        category: e.category,
+        version: e.version,
+        author: e.author,
+      })),
+    })
+  })
+
+  // ── DELETE /community/published/:kind/:name — remove a published entry ──
+  // Removes the catalog entry only. Anything installed from it (agent in
+  // mira.json, .mira/skills files, seeded knowledge) is left alone — uninstall
+  // routes own artifact removal, and seeded memories have no uninstall at all.
+  app.delete('/community/published/:kind/:name', (c: Context) => {
+    const kind = c.req.param('kind')
+    const name = c.req.param('name')
+    if (!kind || !isCommunityKind(kind))
+      return c.json({ error: 'kind must be skill | agent | knowledge | vertical' }, 400)
+    if (!name || !isValidArtifactName(name)) return c.json({ error: 'invalid name' }, 400)
+    const resolved = resolveCwd(c)
+    if (resolved.error) return c.json({ error: resolved.error }, (resolved.status ?? 400) as 400)
+    const cwd = resolved.cwd ?? process.cwd()
+    const result = unpublishEntry(cwd, kind, name)
+    if (!result.removed) {
+      return c.json({ error: result.reason }, result.reason?.includes('curated') ? 409 : 404)
+    }
+    return c.json({ unpublished: name, kind, installedArtifactsKept: true })
   })
 }
