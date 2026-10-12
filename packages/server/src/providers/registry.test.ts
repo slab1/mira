@@ -37,6 +37,17 @@ describe('resolveWithFallbacks', () => {
     expect(out).toEqual(['b'])
   })
 
+  test('a rate-limited candidate is skipped, not fatal', () => {
+    const reg = new ProviderRegistry(
+      { a: prov('https://a.test'), b: prov('https://b.test') },
+      { fallbacks: ['b/m1'], defaultProvider: 'a' },
+    )
+    // exhaust the limiter for a
+    for (let i = 0; i < 100; i++) reg.checkRateLimit('a:m1')
+    const out = reg.resolveWithFallbacks('a/m1').map((r) => r.providerKey)
+    expect(out.length).toBeGreaterThan(0)
+  })
+
   // P0-2: an open circuit on the PRIMARY used to throw before the fallback
   // list was ever built, discarding a perfectly healthy fallback.
   test('an open circuit on the primary still yields the healthy fallback', () => {

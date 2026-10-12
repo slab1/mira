@@ -110,12 +110,14 @@ export function mountWorkspacesRoutes(
       ? (
           db.sqlite
             .prepare(
-              `SELECT id, session_id, path, content, created_at FROM file_snapshots
+              `SELECT id, session_id, message_id, path, content, created_at FROM file_snapshots
              WHERE session_id IN (${sessions.map(() => '?').join(',') || "''"})
              ORDER BY created_at DESC LIMIT ?`,
             )
             .all(...sessions, limit) as Array<{
             id: string
+            session_id: string
+            message_id: string | null
             path: string
             content: string | null
             created_at: number
@@ -125,11 +127,32 @@ export function mountWorkspacesRoutes(
           path: s.path,
           content: s.content,
           createdAt: s.created_at,
+          sessionId: s.session_id,
+          messageId: s.message_id,
         }))
-      : await db.query.fileSnapshots.findMany({
-          orderBy: desc(db.schema.fileSnapshots.createdAt),
-          limit,
-        })
+      : (
+          (await db.query.fileSnapshots.findMany({
+            orderBy: desc(db.schema.fileSnapshots.createdAt),
+            limit,
+          })) as unknown as Array<{
+            id: string
+            sessionID: string
+            messageID: string | null
+            path: string
+            content: string | null
+            createdAt: number
+          }>
+        )
+          // Drizzle returns the schema's own key names (sessionID/messageID);
+          // normalize to the shape the raw-SQL branch above produces.
+          .map((s) => ({
+            id: s.id,
+            path: s.path,
+            content: s.content,
+            createdAt: s.createdAt,
+            sessionId: s.sessionID,
+            messageId: s.messageID,
+          }))
     const items = rows.map((s) => {
       const hasContent = s.content !== null && s.content !== undefined
       const type = hasContent ? 'update' : 'create'
@@ -147,9 +170,73 @@ export function mountWorkspacesRoutes(
         type,
         diff,
         createdAt: s.createdAt,
+        sessionId: s.sessionId,
+        messageId: s.messageId,
+        // Pre-change content: the snapshot IS the "before". A null content means
+        // the file did not exist, so "before" is genuinely empty (created).
+        before: s.content ?? '',
+        after: hasContent ? '' : null,
+        snapshot: s.id,
       }
     })
-    return c.json(items)
+
+    // Join real session facts so the UI's change entries carry evidence instead
+    // of rendering "undefined". Agent comes from the session; verification state
+    // lives on jobs (VERIFICATION_STATES_DESIGN §2.2), so it is the WORST state
+    // across the session's jobs — a change with any failed verification must not
+    // read as verified.
+    const sessionIDs = [...new Set(items.map((i) => i.sessionId).filter(Boolean))] as string[]
+    const sessionFacts = new Map<string, { agent: string | null; verification: string | null }>()
+    if (sessionIDs.length > 0 && db.sqlite) {
+      try {
+        const qs = sessionIDs.map(() => '?').join(',')
+        const agentRows = db.sqlite
+          .prepare(`SELECT id, agent FROM sessions WHERE id IN (${qs})`)
+          .all(...sessionIDs) as Array<{ id: string; agent: string | null }>
+        for (const r of agentRows) {
+          sessionFacts.set(r.id, { agent: r.agent, verification: null })
+        }
+        const jobRows = db.sqlite
+          .prepare(
+            `SELECT parent_session_id, verification_state FROM jobs WHERE parent_session_id IN (${qs})`,
+          )
+          .all(...sessionIDs) as Array<{
+          parent_session_id: string
+          verification_state: string | null
+        }>
+        // Worst-state-wins: FAILED beats everything, then PARTIAL, then VERIFIED.
+        const rank: Record<string, number> = {
+          FAILED_VERIFICATION: 3,
+          PARTIALLY_VERIFIED: 2,
+          VERIFIED: 1,
+          UNVERIFIED: 0,
+        }
+        for (const j of jobRows) {
+          const cur = sessionFacts.get(j.parent_session_id)
+          if (!cur || !j.verification_state) continue
+          const next = rank[j.verification_state] ?? 0
+          const prev = rank[cur.verification ?? 'UNVERIFIED'] ?? 0
+          if (next > prev) cur.verification = j.verification_state
+        }
+      } catch {}
+    }
+
+    return c.json(
+      items.map((i) => {
+        const facts = i.sessionId ? sessionFacts.get(i.sessionId) : undefined
+        return {
+          ...i,
+          agent: facts?.agent ?? null,
+          verification: facts?.verification ?? null,
+          // Not recorded at the snapshot level. Explicitly null so the UI shows
+          // "not recorded" — never a fabricated pass/fail or a fake tool list.
+          tools: null,
+          tests: null,
+          rollback: i.snapshot ? 'available' : null,
+          approval: null,
+        }
+      }),
+    )
   })
 
   // GET /cost — placeholder cost aggregation
@@ -167,8 +254,65 @@ export function mountWorkspacesRoutes(
     return c.json([])
   })
 
-  // GET /memory — placeholder
+  // GET /memory — real knowledge_entries (was a `return []` placeholder, which
+  // meant the Intelligence page's Memory section never rendered anything).
   app.get('/memory', async (c) => {
-    return c.json([])
+    const limit = Math.min(parseInt(c.req.query('limit') ?? '100', 10) || 100, 500)
+    const tier = c.req.query('tier')
+    try {
+      const rows = db.sqlite
+        .prepare(
+          `SELECT id, tier, source, title, content, tags, metadata, created_at, updated_at
+             FROM knowledge_entries
+             ${tier ? 'WHERE tier = ?' : ''}
+             ORDER BY created_at DESC LIMIT ?`,
+        )
+        .all(...(tier ? [tier, limit] : [limit])) as Array<{
+        id: string
+        tier: string | null
+        source: string | null
+        title: string | null
+        content: string
+        tags: string | null
+        metadata: string | null
+        created_at: number
+        updated_at: number | null
+      }>
+      const parse = (raw: string | null): string[] => {
+        if (!raw) return []
+        try {
+          const v = JSON.parse(raw)
+          return Array.isArray(v) ? v.map(String) : []
+        } catch {
+          return []
+        }
+      }
+      return c.json(
+        rows.map((r) => {
+          let provenance = 'unverified'
+          let confidence = 0.5
+          try {
+            const meta = r.metadata ? (JSON.parse(r.metadata) as Record<string, unknown>) : {}
+            if (typeof meta.provenance === 'string') provenance = meta.provenance
+            if (typeof meta.confidence === 'number') confidence = meta.confidence
+          } catch {}
+          return {
+            id: r.id,
+            tier: r.tier ?? 'semantic',
+            source: r.source ?? 'user',
+            title: r.title ?? r.content.slice(0, 80),
+            content: r.content,
+            tags: parse(r.tags),
+            provenance,
+            confidence,
+            createdAt: r.created_at,
+            updatedAt: r.updated_at ?? r.created_at,
+          }
+        }),
+      )
+    } catch {
+      // A missing table must degrade to "no memories", not a 500.
+      return c.json([])
+    }
   })
 }
