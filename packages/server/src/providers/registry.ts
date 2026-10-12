@@ -88,10 +88,19 @@ export class ProviderRegistry {
 
   // ── Core resolution ────────────────────────────────────────────────────
 
-  /** Expand alias: "sonnet" → "openrouter/anthropic/claude-sonnet-4" */
+  /**
+   * Expand alias: "sonnet" → "openrouter/anthropic/claude-sonnet-4".
+   *
+   * Alias lookup is case-insensitive, matching the provider-prefix matching
+   * below. A mis-cased alias used to miss silently and then be treated as a
+   * model id on the default provider — a real, billed request for a model that
+   * does not exist. `Sonnet` now resolves to the same target as `sonnet`.
+   */
   expandAlias(model: string): string {
     if (this.aliases[model]) return this.aliases[model]
-    return model
+    const lower = model.toLowerCase()
+    const hit = Object.keys(this.aliases).find((k) => k.toLowerCase() === lower)
+    return hit ? this.aliases[hit] : model
   }
 
   /** Longest-prefix resolution: "openrouter/anthropic/claude-sonnet-4" → provider openrouter, model "anthropic/claude-sonnet-4" */

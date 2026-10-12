@@ -114,3 +114,33 @@ describe('resolve', () => {
     }
   })
 })
+
+describe('alias expansion', () => {
+  const aliased = () =>
+    new ProviderRegistry(
+      { a: prov('https://a.test'), b: prov('https://b.test') },
+      { aliases: { sonnet: 'b/claude-sonnet-4' }, defaultProvider: 'a' },
+    )
+
+  test('a known alias resolves to its target', () => {
+    const r = aliased().resolve('sonnet')
+    expect(r.providerKey).toBe('b')
+    expect(r.modelID).toBe('claude-sonnet-4')
+  })
+
+  // P2-5: prefix matching was case-insensitive but alias lookup was not, so a
+  // mis-cased alias silently became a model id on the default provider.
+  test('alias lookup is case-insensitive', () => {
+    for (const input of ['Sonnet', 'SONNET', 'SoNNet', 'sONNET']) {
+      const r = aliased().resolve(input)
+      expect(r.providerKey).toBe('b')
+      expect(r.modelID).toBe('claude-sonnet-4')
+    }
+  })
+
+  test('an unknown alias is passed through unchanged', () => {
+    const r = aliased().resolve('mystery-model')
+    expect(r.providerKey).toBe('a')
+    expect(r.modelID).toBe('mystery-model')
+  })
+})
