@@ -129,23 +129,23 @@ MIRA_API_URL=http://127.0.0.1:4096 MIRA_API_KEY=<key> SLACK_BOT_TOKEN=xoxb-... S
 
 ## Environment Reference
 
-| Variable                               | Purpose                                                                                                    |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `OPENROUTER_API_KEY`                   | Primary provider                                                                                           |
-| `NVIDIA_API_KEY`                       | NVIDIA NIM provider + enables vision model default                                                         |
-| `FIRECRAWL_API_KEY` / `TAVILY_API_KEY` | websearch quality tiers (DuckDuckGo fallback needs none)                                                   |
-| `MIRA_VISION_MODEL`                    | Vision model override (default `nvidia/meta/llama-3.2-90b-vision-instruct`)                                |
-| `MIRA_LSP_GO_CMD`                      | Custom Go LSP command (default `gopls`)                                                                    |
-| `MIRA_AUTOPILOT=1`                     | Open PRs for verified self-patches                                                                         |
-| `MIRA_TOKEN`                           | Bearer auth in `~/.mira/mira.env` (0o600) — canonical; not `.env` (`.env` is HOST/PORT/CORS/PROVIDER only) |
-| `MIRA_NO_AUTOPROVISION=1`              | Opt out of dev auto-provision (no `~/.mira/mira.env` created)                                              |
-| `VITE_MIRA_TOKEN`                      | Dev-only fallback for web (gated to `NODE_ENV !== 'production'`, never baked into prod bundle)             |
-| `HOST`                                 | Bind address (default `127.0.0.1`)                                                                         |
-| `MIRA_AUTO_ROLLBACK=1`                 | Revert a run's file edits automatically when verification FAILS (default off)                              |
-| `MIRA_EDIT_CRITIC=1`                   | Second-model review of agent edits against the task text (default off)                                     |
-| `MIRA_COMPLIANCE_RETENTION_DAYS`       | Audit evidence retention window (default 90; `compliance.retentionDays` in mira.json also works)           |
-| `MIRA_EMBEDDING_MODEL`                 | Embedding model for edit-relevance checks (default `text-embedding-3-small`; needs `OPENAI_API_KEY`)       |
-| `MIRA_STRICT_EDIT_TARGET=1`            | Block the high-confidence wrong-file signal instead of warning                                             |
+| Variable                               | Purpose                                                                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `OPENROUTER_API_KEY`                   | Primary provider                                                                                                               |
+| `NVIDIA_API_KEY`                       | NVIDIA NIM provider + enables vision model default                                                                             |
+| `FIRECRAWL_API_KEY` / `TAVILY_API_KEY` | websearch quality tiers (DuckDuckGo fallback needs none)                                                                       |
+| `MIRA_VISION_MODEL`                    | Vision model override (default `nvidia/meta/llama-3.2-90b-vision-instruct`)                                                    |
+| `MIRA_LSP_GO_CMD`                      | Custom Go LSP command (default `gopls`)                                                                                        |
+| `MIRA_AUTOPILOT=1`                     | Open PRs for verified self-patches                                                                                             |
+| `MIRA_TOKEN`                           | Bearer auth in `~/.mira/mira.env` (0o600) — canonical; not `.env` (`.env` is HOST/PORT/CORS/PROVIDER only)                     |
+| `MIRA_NO_AUTOPROVISION=1`              | Opt out of dev auto-provision (no `~/.mira/mira.env` created)                                                                  |
+| `VITE_MIRA_TOKEN`                      | Dev-only fallback for web (gated to `NODE_ENV !== 'production'`, never baked into prod bundle)                                 |
+| `HOST`                                 | Bind address (default `127.0.0.1`)                                                                                             |
+| `MIRA_AUTO_ROLLBACK=1`                 | Revert a run's file edits automatically when verification FAILS (default off)                                                  |
+| `MIRA_EDIT_CRITIC=1`                   | Second-model review of agent edits against the task text (default off)                                                         |
+| `MIRA_COMPLIANCE_RETENTION_DAYS`       | Audit evidence retention window (default 90; `compliance.retentionDays` in mira.json also works)                               |
+| `MIRA_EMBEDDING_MODEL`                 | Embedding model for edit-relevance checks, gateway-routed (default `openai/text-embedding-3-small`; any provider in mira.json) |
+| `MIRA_STRICT_EDIT_TARGET=1`            | Block the high-confidence wrong-file signal instead of warning                                                                 |
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) and [packages/server/README.md](./packages/server/README.md).
 

@@ -1,9 +1,13 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createDatabase, migrate, type MiraDB } from '../storage/db.js'
 import {
   analyzeEmbeddingRelevance,
   cosineSimilarity,
   DEFAULT_SIMILARITY_THRESHOLD,
+  getEmbedder,
   resetEmbedFn,
 } from './embed-relevance.js'
 
@@ -146,12 +150,123 @@ describe('analyzeEmbeddingRelevance', () => {
   })
 
   test('without an embedder at all → signal absent, no warning', async () => {
-    resetEmbedFn() // no OPENAI_API_KEY in test env → getEmbedFn() returns null
+    resetEmbedFn() // nothing resolvable in the test env → getEmbedder() returns null
     const res = await analyzeEmbeddingRelevance({
       taskText: 'task text long enough to be judged by the analyzer',
       fileContent: 'content',
       db,
     })
     expect(res.similarity).toBeNull()
+  })
+
+  test('dimension mismatch → signal absent, NOT similarity 0', async () => {
+    // Two providers whose vectors have different widths. Reporting 0 here would
+    // raise a "completely unrelated" warning off a dimensionality artifact.
+    const res = await analyzeEmbeddingRelevance({
+      taskText: 'task text long enough to be judged by the analyzer',
+      fileContent: 'content',
+      db,
+      embedFn: async (text: string) => (text.startsWith('path context') ? [1, 2, 3] : [1, 2]),
+    })
+    expect(res.similarity).toBeNull()
+    expect(res.warning).toBeUndefined()
+  })
+})
+
+describe('gateway-routed embedder', () => {
+  test('routes through the configured provider for a non-OpenAI embedding model', () => {
+    resetEmbedFn()
+    delete process.env.MIRA_EMBEDDING_MODEL
+    const dir = mkdtempSync(join(tmpdir(), 'mira-embed-'))
+    writeFileSync(
+      join(dir, 'mira.json'),
+      JSON.stringify({
+        provider: {
+          local: {
+            npm: '@ai-sdk/openai-compatible',
+            name: 'Local',
+            options: { baseURL: 'http://127.0.0.1:9999/v1', apiKey: 'k' },
+          },
+        },
+      }),
+    )
+    process.env.MIRA_EMBEDDING_MODEL = 'local/nomic-embed-text'
+    const embedder = getEmbedder(dir)
+    expect(embedder).toBeTruthy()
+    expect(embedder!.provider).toBe('local')
+    expect(embedder!.model).toBe('nomic-embed-text')
+    // The id is what keys the vector cache — provider-qualified so two
+    // providers' vectors can never be compared.
+    expect(embedder!.id).toBe('local/nomic-embed-text')
+    delete process.env.MIRA_EMBEDDING_MODEL
+    resetEmbedFn()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('a provider with no key → signal absent', () => {
+    resetEmbedFn()
+    const dir = mkdtempSync(join(tmpdir(), 'mira-embed-'))
+    writeFileSync(
+      join(dir, 'mira.json'),
+      JSON.stringify({
+        provider: {
+          keyless: {
+            npm: '@ai-sdk/openai-compatible',
+            options: { baseURL: 'http://127.0.0.1:9999/v1', apiKey: '' },
+          },
+        },
+      }),
+    )
+    process.env.MIRA_EMBEDDING_MODEL = 'keyless/some-model'
+    expect(getEmbedder(dir)).toBeNull()
+    delete process.env.MIRA_EMBEDDING_MODEL
+    resetEmbedFn()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('an unprefixed model resolves via the default provider (same rule as chat)', () => {
+    resetEmbedFn()
+    const dir = mkdtempSync(join(tmpdir(), 'mira-embed-'))
+    writeFileSync(
+      join(dir, 'mira.json'),
+      JSON.stringify({
+        provider: {
+          local: {
+            npm: '@ai-sdk/openai-compatible',
+            options: { baseURL: 'http://127.0.0.1:9999/v1', apiKey: 'k' },
+          },
+        },
+        routing: { defaultProvider: 'local' },
+      }),
+    )
+    process.env.MIRA_EMBEDDING_MODEL = 'bge-m3'
+    const embedder = getEmbedder(dir)
+    expect(embedder?.provider).toBe('local')
+    expect(embedder?.model).toBe('bge-m3')
+    delete process.env.MIRA_EMBEDDING_MODEL
+    resetEmbedFn()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('an unknown prefix with no reachable provider → signal absent, not a guess', () => {
+    resetEmbedFn()
+    const dir = mkdtempSync(join(tmpdir(), 'mira-embed-'))
+    writeFileSync(
+      join(dir, 'mira.json'),
+      JSON.stringify({
+        provider: {
+          keyless: {
+            npm: '@ai-sdk/openai-compatible',
+            options: { baseURL: 'http://127.0.0.1:9999/v1', apiKey: '' },
+          },
+        },
+        routing: { defaultProvider: 'keyless' },
+      }),
+    )
+    process.env.MIRA_EMBEDDING_MODEL = 'nosuchprovider/model'
+    expect(getEmbedder(dir)).toBeNull()
+    delete process.env.MIRA_EMBEDDING_MODEL
+    resetEmbedFn()
+    rmSync(dir, { recursive: true, force: true })
   })
 })

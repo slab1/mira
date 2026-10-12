@@ -9,17 +9,20 @@
  * the file being changed.
  *
  * Honesty rules:
- *   - Requires OPENAI_API_KEY (AI SDK + @ai-sdk/openai). Without it, the
- *     signal is silently absent — never a fake score.
+ *   - Routed through the gateway's provider registry, so ANY provider
+ *     configured in mira.json can serve embeddings (default:
+ *     `openai/text-embedding-3-small`, overridable with MIRA_EMBEDDING_MODEL).
+ *     With nothing resolvable the signal is silently absent — never a fake score.
  *   - Advisory only, like every relevance signal: it can be wrong about
  *     intent and must never block a mutation.
- *   - Bounded cost: an SQLite cache (sha256 of model+text → vector) means the
- *     task text and each file version embed at most once; disable with
- *     MIRA_EMBED_RELEVANCE=0.
+ *   - Bounded cost: an SQLite cache (sha256 of provider+model+text → vector)
+ *     means the task text and each file version embed at most once; disable
+ *     with MIRA_EMBED_RELEVANCE=0.
  */
 import { createHash } from 'node:crypto'
-import { embed } from 'ai'
-import { createOpenAI } from '@ai-sdk/openai'
+import { getConfig } from '../config/index.js'
+import { buildRegistry } from '../gateway/provider.js'
+import { embedText } from '../providers/embedding.js'
 import type { MiraDB } from '../storage/db.js'
 
 export type EmbedFn = (text: string) => Promise<number[] | null>
@@ -60,37 +63,69 @@ export function cosineSimilarity(a: number[], b: number[]): number {
  *  technical text cluster near 0.0–0.15; related pairs typically > 0.3. */
 export const DEFAULT_SIMILARITY_THRESHOLD = 0.18
 
-let cachedEmbedFn: EmbedFn | null | undefined
+/** Default embedding model — provider-qualified so the gateway can route it. */
+export const DEFAULT_EMBEDDING_MODEL = 'openai/text-embedding-3-small'
+
+export interface Embedder {
+  fn: EmbedFn
+  /** `provider/model` — part of the cache key, so vectors from two providers
+   *  can never be compared (their dimensions differ; the cosine would be
+   *  meaningless even when the lengths happened to match). */
+  id: string
+  provider: string
+  model: string
+}
+
+let cachedEmbedder: Embedder | null | undefined
 
 /**
- * Build (once) the AI SDK-backed embedder. Returns null when no API key is
- * configured or construction fails — callers treat null as "signal absent".
+ * Build (once) the gateway-routed embedder for `MIRA_EMBEDDING_MODEL`.
+ * Returns null when no provider can serve it — callers treat null as "signal
+ * absent", never as a zero vector.
  */
-export function getEmbedFn(): EmbedFn | null {
-  if (cachedEmbedFn !== undefined) return cachedEmbedFn
+export function getEmbedder(cwd?: string): Embedder | null {
+  if (cachedEmbedder !== undefined) return cachedEmbedder
   try {
-    if (!process.env.OPENAI_API_KEY) {
-      cachedEmbedFn = null
+    const requested = process.env.MIRA_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL
+    // Same registry the chat path uses: longest-prefix resolution, alias
+    // expansion, circuit breaker, rate limit, and env-expanded keys/headers.
+    const registry = buildRegistry(getConfig(cwd))
+    const target = registry.resolve(requested)
+    if (!target.apiKey) {
+      cachedEmbedder = null
       return null
     }
-    const provider = createOpenAI({ apiKey: process.env.OPENAI_API_KEY })
-    const model = provider.textEmbeddingModel(
-      process.env.MIRA_EMBEDDING_MODEL || 'text-embedding-3-small',
-    )
-    cachedEmbedFn = async (text: string) => {
-      const res = await embed({ model, value: text.slice(0, 8000) })
-      return res.embedding ?? null
+    const id = `${target.providerKey}/${target.modelID}`
+    const embedFn: EmbedFn = async (text: string) =>
+      embedText({
+        baseURL: target.baseURL,
+        apiKey: target.apiKey,
+        modelID: target.modelID,
+        input: text,
+        headers: target.headers,
+        timeoutMs: target.timeout,
+      })
+    cachedEmbedder = {
+      fn: embedFn,
+      id,
+      provider: target.providerKey,
+      model: target.modelID,
     }
   } catch (e) {
     console.warn('[edit-target] embedder unavailable:', String(e))
-    cachedEmbedFn = null
+    cachedEmbedder = null
   }
-  return cachedEmbedFn
+  return cachedEmbedder
 }
 
-/** Reset the memoized embedder (tests). */
+/** The embed function alone (tests and callers that only need to embed). */
+export function getEmbedFn(): EmbedFn | null {
+  return getEmbedder()?.fn ?? null
+}
+
+/** Reset the memoized embedder (tests, runtime config change). */
 export function resetEmbedFn(): void {
-  cachedEmbedFn = undefined
+  cachedEmbedder = undefined
 }
 
 function cacheKey(model: string, text: string): string {
@@ -132,10 +167,13 @@ export async function analyzeEmbeddingRelevance(
   const task = input.taskText.trim()
   if (task.length < 20) return { similarity: null } // too little intent to judge
 
-  const embedFn = input.embedFn ?? getEmbedFn()
+  const embedder = input.embedFn ? null : getEmbedder()
+  const embedFn = input.embedFn ?? embedder?.fn ?? null
   if (!embedFn) return { similarity: null }
 
-  const model = process.env.MIRA_EMBEDDING_MODEL || 'text-embedding-3-small'
+  // Cache key is provider-qualified: switching MIRA_EMBEDDING_MODEL (or its
+  // provider) must not reuse vectors from another model's space.
+  const model = input.embedFn ? process.env.MIRA_EMBEDDING_MODEL || 'injected' : embedder!.id
   const fileHead = `path context\n${input.fileContent.slice(0, 4000)}`
   try {
     const taskKey = cacheKey(model, task)
@@ -143,7 +181,7 @@ export async function analyzeEmbeddingRelevance(
     let taskVec = cacheGet(input.db, taskKey)
     let fileVec = cacheGet(input.db, fileKey)
     if (!taskVec) {
-      taskVec = await embedFn(task)
+      taskVec = await embedFn(task.slice(0, 8000))
       if (taskVec) cachePut(input.db, taskKey, taskVec)
     }
     if (!fileVec) {
@@ -151,6 +189,11 @@ export async function analyzeEmbeddingRelevance(
       if (fileVec) cachePut(input.db, fileKey, fileVec)
     }
     if (!taskVec || !fileVec) return { similarity: null }
+    // Dimensions must agree. A mismatch (different provider, model swap
+    // mid-flight, truncated response) is missing signal, not similarity 0 —
+    // reporting 0 would raise a "completely unrelated" warning off a
+    // dimensionality artifact.
+    if (taskVec.length !== fileVec.length) return { similarity: null }
 
     const similarity = cosineSimilarity(taskVec, fileVec)
     if (similarity < threshold) {
