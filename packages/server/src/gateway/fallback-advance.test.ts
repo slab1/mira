@@ -437,3 +437,91 @@ describe('subgateways.*.provider qualifies unprefixed models', () => {
     expect(hosts[0]).toBe('aaa')
   })
 })
+
+// The RateLimiter existed but nothing ever passed one to the ProviderRegistry,
+// so its enforcement branch could never fire. Now wired in buildRegistry from
+// routing.providerRateLimit. The subtle part is CHARGE-ONCE: resolve() runs
+// several times per request (per candidate + a re-resolve of each fallback), so
+// it only peeks; the token is debited once at dispatch.
+describe('per-provider rate limiting', () => {
+  const rateLimited = (rps: number, burst: number): MiraConfig =>
+    ({
+      ...config(),
+      routing: {
+        aliases: {},
+        fallbacks: ['bbb/m1'],
+        defaultProvider: 'aaa',
+        providerRateLimit: { rps, burst },
+      },
+    }) as unknown as MiraConfig
+
+  const originalFetch = globalThis.fetch
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    clearBreakerRegistry()
+  })
+
+  const sse = () =>
+    new Response('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n', {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })
+
+  test('one request consumes exactly one token (not one per resolve)', async () => {
+    clearBreakerRegistry()
+    globalThis.fetch = (async () => sse()) as unknown as typeof fetch
+    const { buildRegistry } = await import('../gateway/provider.js')
+    const registry = buildRegistry(rateLimited(0.0001, 3)) // ~3 requests then empty
+    const limit = registry.getRateLimiter()!
+
+    // resolve() peeks: 5 resolutions must NOT drain the bucket
+    for (let i = 0; i < 5; i++) registry.resolve('aaa/m1')
+    const afterPeek = limit.getTokensRemaining('aaa:m1')
+    expect(afterPeek).toBeCloseTo(3, 1)
+
+    // each dispatch charges exactly one
+    expect(registry.consumeRateLimit('aaa', 'm1')).toBe(true)
+    const afterOne = limit.getTokensRemaining('aaa:m1')
+    expect(afterOne).toBeCloseTo(2, 1)
+    registry.consumeRateLimit('aaa', 'm1')
+    registry.consumeRateLimit('aaa', 'm1')
+    // bucket now empty (refill is ~0 at rps 0.0001)
+    expect(registry.consumeRateLimit('aaa', 'm1')).toBe(false)
+  })
+
+  test('a throttled primary falls through to the fallback, not a hard failure', async () => {
+    clearBreakerRegistry()
+    const hosts: string[] = []
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      hosts.push(url.includes('b.test') ? 'bbb' : 'aaa')
+      return sse()
+    }) as typeof fetch
+    const gw = new Subgateway({
+      lane: 'default',
+      config: {
+        model: 'aaa/m1',
+        fallback: ['bbb/m1'],
+        rateLimit: { rps: 1000, burst: 1000 },
+        retry: { maxAttempts: 1, baseMs: 1, maxMs: 2 },
+        timeout: 5000,
+        circuitBreaker: { failureThreshold: 99, resetTimeoutMs: 60_000 },
+      },
+      globalConfig: rateLimited(0.0001, 1),
+    })
+    // burn the only aaa token
+    const first = await gw.stream({ model: 'aaa/m1', messages: [{ role: 'user', content: 'x' }] })
+    for await (const chunk of first) if (chunk.type === 'text-delta') void chunk.text
+    const usedAfterFirst = [...hosts]
+    // next request: aaa is over budget, so bbb serves it — rate limiting is a
+    // per-provider budget, not a request failure.
+    const second = await gw.stream({ model: 'aaa/m1', messages: [{ role: 'user', content: 'x' }] })
+    let out = ''
+    for await (const chunk of second) if (chunk.type === 'text-delta') out += chunk.text
+    expect(out).toContain('ok')
+    expect(usedAfterFirst.length).toBeGreaterThan(0)
+    // the second request went to bbb, not aaa
+    const secondHost = hosts[usedAfterFirst.length]
+    expect(secondHost).toBe('bbb')
+  })
+})

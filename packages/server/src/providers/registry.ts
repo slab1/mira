@@ -158,10 +158,13 @@ export class ProviderRegistry {
       })
     }
 
-    // Check rate limiter if configured
+    // Rate-limit CAPACITY check only (peek, non-consuming). resolve() runs
+    // several times per request (per candidate + a re-resolve of each fallback),
+    // so charging here would bill one user request multiple tokens. The token is
+    // charged once, at dispatch, via consumeRateLimit().
     if (this.rateLimiter) {
       const identity = `${providerKey}:${modelID}`
-      const result = this.rateLimiter.check(identity)
+      const result = this.rateLimiter.peek(identity)
       if (!result.allowed) {
         throw new ProviderError({
           message: `Rate limited for "${identity}" — retry after ${result.retryAfterMs}ms`,
@@ -459,6 +462,18 @@ export class ProviderRegistry {
       result.set(key, this.getHealth(key))
     }
     return result
+  }
+
+  /**
+   * Charge one token for an actual outbound request.
+   *
+   * `resolve()` only PEEKS (see the note there) so that a single user request —
+   * which resolves several times — is billed once. Call this immediately before
+   * dispatching to the provider; returns false when the identity is over budget.
+   */
+  consumeRateLimit(providerKey: string, modelID: string, tokens = 1): boolean {
+    if (!this.rateLimiter) return true
+    return this.rateLimiter.check(`${providerKey}:${modelID}`, tokens).allowed
   }
 
   /** Record success — delegates to per-provider CircuitBreaker. */

@@ -484,6 +484,20 @@ export class Subgateway implements Gateway {
 
     let lastError: ProviderError | Error | null = null
     for (const cand of candidates) {
+      // Charge the per-provider token bucket once per candidate we actually try.
+      // resolve() only peeked, so this is the single debit for the request.
+      if (!this.registry.consumeRateLimit(cand.providerKey, cand.modelID)) {
+        lastError = new SubgatewayError({
+          message: `Rate limited for "${cand.providerKey}:${cand.modelID}" — provider budget exhausted`,
+          code: 'RATE_LIMITED',
+          provider: cand.providerKey,
+          lane: this.lane,
+          status: 429,
+          retryable: true,
+        })
+        // fall through to the next candidate rather than failing outright
+        continue
+      }
       const allKeys = this.registry.getAllKeys(cand.providerKey)
       const keysToTry = allKeys.length ? allKeys : [cand.apiKey]
       // Try each key with retries before moving to next candidate
@@ -872,6 +886,18 @@ export class Subgateway implements Gateway {
         lane: this.lane,
       })
     }
+    // Charge the per-provider token bucket for this actual dispatch (resolve()
+    // only peeked, so this is the single debit).
+    if (!this.registry.consumeRateLimit(resolved.providerKey, resolved.modelID)) {
+      throw new SubgatewayError({
+        message: `Rate limited for "${resolved.providerKey}:${resolved.modelID}" — provider budget exhausted`,
+        code: 'RATE_LIMITED',
+        provider: resolved.providerKey,
+        lane: this.lane,
+        status: 429,
+        retryable: true,
+      })
+    }
     const allKeys = this.registry.getAllKeys(resolved.providerKey)
     const keysToTry = allKeys.length ? allKeys : [resolved.apiKey]
     const timeout = this.subConfig.timeout ?? resolved.timeout
@@ -1014,6 +1040,18 @@ export class Subgateway implements Gateway {
         `[subgateway:${this.lane}] summarize: no API key for ${resolved.providerKey}, using extractive fallback`,
       )
       return extractiveFallback(messages)
+    }
+    // Charge the per-provider token bucket for this actual dispatch (resolve()
+    // only peeked, so this is the single debit).
+    if (!this.registry.consumeRateLimit(resolved.providerKey, resolved.modelID)) {
+      throw new SubgatewayError({
+        message: `Rate limited for "${resolved.providerKey}:${resolved.modelID}" — provider budget exhausted`,
+        code: 'RATE_LIMITED',
+        provider: resolved.providerKey,
+        lane: this.lane,
+        status: 429,
+        retryable: true,
+      })
     }
     const allKeys = this.registry.getAllKeys(resolved.providerKey)
     try {

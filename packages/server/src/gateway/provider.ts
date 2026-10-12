@@ -7,6 +7,7 @@
 import type { MiraConfig } from '../types/index.js'
 import type { ProviderConfig } from '../providers/types.js'
 import { ProviderRegistry } from '../providers/registry.js'
+import { RateLimiter } from '../providers/rate-limiter.js'
 
 // Re-export from providers/auth.ts — single source of truth for env expansion
 export { expandEnv, expandEnvArray, expandHeaders } from '../providers/auth.js'
@@ -58,13 +59,28 @@ export function buildRegistry(config: MiraConfig): ProviderRegistry {
   }
   const routing = (
     config as MiraConfig & {
-      routing?: { aliases?: Record<string, string>; fallbacks?: string[]; defaultProvider?: string }
+      routing?: {
+        aliases?: Record<string, string>
+        fallbacks?: string[]
+        defaultProvider?: string
+        providerRateLimit?: { rps?: number; burst?: number }
+      }
     }
   ).routing
+  // Per-provider token bucket. The RateLimiter existed but no caller ever passed
+  // one, so the registry's rate-limit branch could not fire; this is the single
+  // construction point every consumer goes through, so wiring it here makes the
+  // capability real. Tunable via routing.providerRateLimit in mira.json.
+  const rl = routing?.providerRateLimit
+  const rateLimiter = new RateLimiter({
+    refillRate: rl?.rps ?? 100 / 60,
+    capacity: rl?.burst ?? rl?.rps ?? 20,
+  })
   return new ProviderRegistry(providerMap, {
     aliases: routing?.aliases,
     fallbacks: routing?.fallbacks,
     defaultProvider: routing?.defaultProvider,
+    rateLimiter,
   })
 }
 

@@ -94,6 +94,21 @@ export const routingConfigSchema = z.object({
   aliases: z.record(z.string(), z.string()).optional().describe('Model alias → canonical model ID'),
   fallbacks: z.array(z.string()).optional().describe('Fallback model IDs in priority order'),
   defaultProvider: z.string().optional().describe('Default provider when model has no prefix'),
+  /**
+   * Per-provider request throttling (token bucket per provider:model identity).
+   * Previously the RateLimiter existed but nothing ever passed one to the
+   * ProviderRegistry, so the enforcement branch could never fire. Omit for the
+   * defaults; set `rps: 0` to disable.
+   */
+  providerRateLimit: z
+    .object({
+      /** Requests per second per provider:model. Default 10. */
+      rps: z.number().positive().optional(),
+      /** Burst capacity. Defaults to rps * 2. */
+      burst: z.number().int().positive().optional(),
+    })
+    .optional()
+    .describe('Per-provider token-bucket rate limit (in addition to per-lane limits)'),
   /** Subgateway lane routing: task/agent → lane */
   lanes: z
     .record(z.string(), z.string())

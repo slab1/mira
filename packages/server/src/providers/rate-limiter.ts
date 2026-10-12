@@ -13,6 +13,8 @@ export interface TokenBucketConfig {
 
 export interface TokenBucket {
   consume(tokens: number): boolean
+  /** Would `consume` succeed right now? Refills first, but charges nothing. */
+  peek(tokens: number): boolean
   getTokensRemaining(): number
   getNextRefillMs(): number
   getIdentity(): string
@@ -52,6 +54,16 @@ class TokenBucketImpl implements TokenBucket {
     return false
   }
 
+  /**
+   * Would `consume(tokens)` succeed right now? Refills (time passed) but
+   * charges nothing — so a caller can ask "is there capacity?" during routing
+   * without spending a token it may never use.
+   */
+  peek(tokens: number): boolean {
+    this.refill()
+    return this.tokens >= tokens
+  }
+
   /** Get current tokens remaining (fractional) */
   getTokensRemaining(): number {
     this.refill()
@@ -83,6 +95,16 @@ const PREMIUM_TIER: RateLimitTier = { capacity: 200, refillRate: 1000 / 60 } // 
 export class RateLimiter {
   private buckets = new Map<string, TokenBucketImpl>()
   private tierMap = new Map<string, 'standard' | 'premium'>()
+  private standard: RateLimitTier
+
+  /**
+   * @param standard Override the default (standard-tier) bucket. Wire this from
+   *   `routing.providerRateLimit` in mira.json; omit for the built-in
+   *   100 req/min, burst 20.
+   */
+  constructor(standard?: Partial<RateLimitTier>) {
+    this.standard = { ...STANDARD_TIER, ...(standard ?? {}) }
+  }
 
   /** Set the tier for an identity prefix (e.g., "user:premium:*") */
   setTier(identityPrefix: string, tier: 'standard' | 'premium'): void {
@@ -93,28 +115,34 @@ export class RateLimiter {
   private getTier(identity: string): RateLimitTier {
     for (const [prefix, tier] of this.tierMap) {
       if (identity.startsWith(prefix)) {
-        return tier === 'premium' ? PREMIUM_TIER : STANDARD_TIER
+        return tier === 'premium' ? PREMIUM_TIER : this.standard
       }
     }
-    return STANDARD_TIER
+    return this.standard
   }
 
-  /** Check if an identity is allowed to consume tokens. Returns allowed status and retry-after if limited. */
-  check(identity: string, tokens: number = 1): { allowed: boolean; retryAfterMs?: number } {
-    const tier = this.getTier(identity)
-
-    if (!this.buckets.has(identity)) {
-      this.buckets.set(
+  /** Get (or lazily create) the bucket for an identity. */
+  private bucketFor(identity: string): TokenBucketImpl {
+    let bucket = this.buckets.get(identity)
+    if (!bucket) {
+      const tier = this.getTier(identity)
+      bucket = new TokenBucketImpl({
+        capacity: tier.capacity,
+        refillRate: tier.refillRate,
         identity,
-        new TokenBucketImpl({
-          capacity: tier.capacity,
-          refillRate: tier.refillRate,
-          identity,
-        }),
-      )
+      })
+      this.buckets.set(identity, bucket)
     }
+    return bucket
+  }
 
-    const bucket = this.buckets.get(identity)!
+  /**
+   * Check if an identity is allowed to consume tokens. Returns allowed status and retry-after if limited.
+   *
+   * CONSUMES a token. For a non-charging capacity check use `peek`.
+   */
+  check(identity: string, tokens: number = 1): { allowed: boolean; retryAfterMs?: number } {
+    const bucket = this.bucketFor(identity)
     const allowed = bucket.consume(tokens)
 
     if (!allowed) {
@@ -122,6 +150,20 @@ export class RateLimiter {
     }
 
     return { allowed: true }
+  }
+
+  /**
+   * Non-consuming capacity check.
+   *
+   * Model resolution calls `resolve()` several times per request (per candidate,
+   * plus a re-resolve of each fallback). Charging in `resolve()` would bill one
+   * user request several tokens and make a low-rps provider throttle itself, so
+   * routing only PEEKS here and the token is charged once at dispatch.
+   */
+  peek(identity: string, tokens: number = 1): { allowed: boolean; retryAfterMs?: number } {
+    const bucket = this.bucketFor(identity)
+    if (bucket.peek(tokens)) return { allowed: true }
+    return { allowed: false, retryAfterMs: bucket.getNextRefillMs() }
   }
 
   /** Get tokens remaining for an identity */
