@@ -12,9 +12,7 @@ import {
   type ProviderConfig,
   type ResolvedProvider,
   type Capability,
-  type CircuitBreakerState,
   type ProviderHealth,
-  type RouteResult,
 } from './types.js'
 import {
   expandEnv,
@@ -26,17 +24,7 @@ import {
 } from './auth.js'
 import { priceFor } from './pricing.js'
 import { RateLimiter } from './rate-limiter.js'
-import { CircuitBreaker, createCircuitBreaker } from './circuit-breaker.js'
-
-// ── Capability → model matching patterns ──────────────────────────────────
-
-const CAPABILITY_PATTERNS: Record<Capability, string[]> = {
-  coding: ['claude-sonnet', 'claude-haiku', 'gpt-4o', 'gpt-4', 'deepseek', 'llama', 'mistral'],
-  reasoning: ['claude-opus', 'gpt-4o', 'gpt-4', 'deepseek'],
-  vision: ['claude-opus', 'claude-sonnet', 'gpt-4o', 'gemini'],
-  speed: ['claude-haiku', 'gpt-4o-mini', 'deepseek', 'llama', 'mistral'],
-  cost_optimized: ['claude-haiku', 'deepseek', 'llama', 'mistral', 'gemini'],
-}
+import { createCircuitBreaker } from './circuit-breaker.js'
 
 // ── Capability → ordered fallback chain (best → cheapest) ─────────────────
 
@@ -506,8 +494,18 @@ export class ProviderRegistry {
           results.push(r)
         }
       } catch (e) {
-        if (e instanceof ProviderError && e.code === 'NO_API_KEY') {
-          return
+        // Skip candidates that cannot serve a request right now, so ONE bad
+        // candidate cannot discard the rest of the chain:
+        //   NO_API_KEY    — no credential configured
+        //   CIRCUIT_OPEN  — that provider is cooling down after failures
+        //   RATE_LIMITED  — that provider's bucket is exhausted
+        // The request then goes to the next candidate instead of dying on a
+        // provider that was never going to answer.
+        if (e instanceof ProviderError) {
+          if (e.code === 'NO_API_KEY' || e.code === 'CIRCUIT_OPEN' || e.code === 'RATE_LIMITED') {
+            return
+          }
+          throw e
         }
         throw e
       }
@@ -519,6 +517,8 @@ export class ProviderRegistry {
     }
 
     if (results.length === 0) {
+      // Every candidate was skipped. Surface the primary's real reason rather
+      // than a bare resolve() error that hides the cause.
       return [this.resolve(modelStr)]
     }
 

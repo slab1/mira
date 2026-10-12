@@ -81,7 +81,9 @@ async function drain(gw: Subgateway): Promise<string> {
     messages: [{ role: 'user', content: 'hi' }],
   })
   let out = ''
-  for await (const chunk of it) out += chunk.text ?? ''
+  for await (const chunk of it) {
+    if (chunk.type === 'text-delta') out += chunk.text
+  }
   return out
 }
 
