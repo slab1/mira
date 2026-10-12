@@ -132,7 +132,7 @@ describe('loadConfig', () => {
       JSON.stringify({ subgateways: { default: { model: 'nvidia/some-model' } } }),
     )
     const config = await loadConfig(testDir)
-    const lane = config.subgateways.default as unknown as Record<string, unknown>
+    const lane = config.subgateways?.default as unknown as Record<string, unknown>
     expect(lane.model).toBe('nvidia/some-model')
     // sibling lane config must survive a partial override
     expect(lane.timeout ?? lane.rateLimit ?? lane.retry ?? lane.costCap).toBeDefined()

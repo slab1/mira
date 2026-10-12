@@ -669,11 +669,24 @@ export class Subgateway implements Gateway {
         }
       }
       if (candidateFailed && lastError) {
-        // If last error was rotatable and we exhausted keys, try next candidate
-        if (
+        // Advance to the next candidate unless the failure is the caller's own
+        // doing. Previously only 401/429 advanced, so a 500/502/503/504 or a
+        // network failure aborted the request even though fallbacks were
+        // configured — failover existed on paper only.
+        //
+        // `shouldFallback` (providers/registry.ts) is the single taxonomy:
+        //   retryable  → 429/5xx/408/504/timeout/ECONN  → try next candidate
+        //   401/404/400 → the request itself is wrong; another provider won't fix it
+        // Aborts are the caller's own cancellation and must never be retried.
+        const isAbort = lastError instanceof SubgatewayError && lastError.code === 'ABORTED'
+        const isAuthOrQuota =
           lastError instanceof ProviderError &&
           (lastError.code === 'RATE_LIMITED' || lastError.code === 'UNAUTHORIZED')
-        ) {
+        // `shouldFallback` reads only .status/.message/.code, so it classifies a
+        // raw network Error correctly too (status 0 + message regex).
+        const shouldAdvance =
+          !isAbort && (isAuthOrQuota || ProviderRegistry.shouldFallback(lastError as ProviderError))
+        if (shouldAdvance) {
           // Fallback chain: primary failed with rotatable error — emit trace for viewer
           if (candidates.length > 1) {
             const failedCand = cand
@@ -689,7 +702,10 @@ export class Subgateway implements Gateway {
                   from: `${failedCand.providerKey}/${failedCand.modelID}`,
                   to: `${nextCand.providerKey}/${nextCand.modelID}`,
                   reason: lastError.message,
-                  code: lastError.code,
+                  code:
+                    lastError instanceof ProviderError
+                      ? lastError.code
+                      : ('PROVIDER_ERROR' as const),
                   chain: candidates.map((c) => `${c.providerKey}/${c.modelID}`),
                 },
                 timestamp: Date.now(),
@@ -995,8 +1011,7 @@ export class Subgateway implements Gateway {
       state === 'CLOSED' ? 'closed' : state === 'OPEN' ? 'open' : 'half-open'
     const cap = this.subConfig.costCap ?? readGlobalCostCap(this.globalConfig)
     const stats = this.stats()
-    const cooldownUntil =
-      circuit === 'open' ? Date.now() + this.breaker.getTimeUntilReset() : null
+    const cooldownUntil = circuit === 'open' ? Date.now() + this.breaker.getTimeUntilReset() : null
     return {
       lane: this.lane,
       circuit,
