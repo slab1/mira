@@ -1,106 +1,123 @@
-# Session Handoff — 2026-10-11
+# Session Handoff — 2026-10-12
 
 > Written at session end so the next session resumes without re-deriving context.
-> Everything below is committed and pushed (`main` = `8b18e65` at time of writing).
+> Everything below is committed and pushed (`main` = `ffc0f7a` at time of writing).
 
-## State: ALL documented findings closed
+## State: the entire next-queue is closed
 
-The master-findings plan (`docs/MASTER_FINDINGS_CROSSCHECK_AND_PLAN.md`) is fully
-executed — P0 → P3.6 plus every correction sweep. Items 1–21 in that doc are the
-authoritative record of what shipped and how. Do **not** re-audit from scratch;
-read that doc first.
+Every item from the previous handoff's queue (1–6) is now implemented, tested and
+merged to `main`, plus a full provider/model subsystem audit whose five P0
+broken contracts are fixed. CI / Security / CD are green on the real pipeline.
 
-## What this session added (chronological)
+## What this session added
 
-1. **Wrong-edit defense stack** — read-guard covers `patch` (was bypassed);
-   global ambiguity gate in `edit-fallback.ts` (multi-match `oldString` refused
-   before any layer); Layer 6/9 position validation (no blind splice, no fake
-   `verified: true`); `near` intent anchor on `edit` (refuses perfect matches
-   in the wrong function); symbol binding + task-text relevance + module-boundary
-   signals (`tools/edit-target.ts`); embedding relevance
-   (`tools/embed-relevance.ts`, AI SDK, sqlite-cached, needs `OPENAI_API_KEY`);
-   edit critic (`tools/edit-critic.ts`, opt-in second-model review, writes
-   finding + optional revert); agent-callable `revert`/`revert_list` tools
-   (file-scoped, never deletes messages); blast-radius advisory (codegraph
-   `findDependents`, only when graph already built, project-relative paths); 30
-   → 41 registered tools (registerAll preferred `default` over `tools` arrays —
-   `patch` was unreachable).
-2. **Auto-rollback** — `FAILED_VERIFICATION` reverts the run's file edits via
-   snapshots (`compliance/index.ts rollbackSessionMutations`). Opt-in:
-   `MIRA_AUTO_ROLLBACK=1` or `compliance.autoRollback`. Fires in `finishJob`
-   after the atomic settle; files only, messages preserved.
-3. **Tenancy completion** — findings + file_snapshots owner/org scoped
-   (`auth/session-access.ts sessionVisibleTo` — one predicate everywhere);
-   `deleteSession` stamps audit rows with owner/org (evidence survives);
-   `session-crud.ts` deleted (dead 384-line duplicate of SessionPrompt — a
-   compliance hazard).
-4. **Compliance** — redaction at write chokepoints (AuditLogger +
-   persistToolResult) and on reads; retention sweeps (`audit_entries` was
-   unbounded); violation reports with org scoping; audit `error` +
-   `owner_id`/`org_id` columns. ReDoS fixed in redaction patterns (6.5s → 11ms
-   per 50KB — keep quantifiers bounded).
-5. **CI/CD hardened** — all 57 actions SHA-pinned (Dependabot keeps them
-   current; PR #2 merged); turbo cache namespace `turbo-main-` (PRs restore
-   only, never save — poisoning impossible); per-job least-privilege
-   permissions; deploy vars via `env:` indirection + jq payload; release
-   pre-flights `npm whoami` (the repo's `NPM_TOKEN` is **invalid** — job falls
-   back to GitHub-release-only with a warning; rotate the token to restore npm
-   publishing). Verified green on real runs: CI ✓ Security ✓ CD ✓ Pages ✓.
-6. **Verticals (P3.6)** — `community/verticals.ts` + 4th registry kind;
-   `luxora`/`security-audit`/`dev-workflow` bundles; plan-before-write; ADR
-   amendment in `docs/ADR/0001-core-identity.md` records owner authorization.
-7. **Think/observe** — `think` tool (scratchpad, persisted to traces); critic
-   findings injected with an act-on-it header (`openFindingsForContext`).
-8. **Session auto-titling** — `session/title.ts` at the `streamResponse`
-   chokepoint; only replaces placeholder titles; subagent children were already
-   titled by `runSubagent`.
-9. **Canary automation** — `startCanary(..., {auto})` / `MIRA_CANARY_AUTO=1`
-   acts on the evaluate decision at expiry (auto-promote/rollback); manual
-   promote/rollback clear the timer; promoter events aligned to its documented
-   contract (`canary.promoted`/`canary.rollback`); promote route auto-starts a
-   canary when `MIRA_CANARY_AUTO_START=1` (`canaryStart` hook → CanaryManager).
+1. **Catalog publish path (P3.7)** — the missing write side of the distribution
+   catalog. `community/publish.ts` validates a proposed artifact against exactly
+   the constraints install enforces later (skill slug + body, agent slug +
+   `system ≥ 10`, knowledge entries inside the store caps, vertical components
+   resolvable), so a successful publish is a successful install. Curated names are
+   immutable (409) — publishing may only create new names or replace an earlier
+   _published_ entry. Project-local (`<cwd>/.mira/community/<kind>.json`), re-read
+   per lookup so publish→install needs no restart; `cwd` threaded (optionally)
+   through `loadRegistry`/`searchRegistry`/`getRegistryEntry`/`planVertical` so a
+   published entry is genuinely installable. Routes: `POST /community/publish`,
+   `GET /community/published`, `DELETE /community/published/:kind/:name`.
+   24 tests in `routes/publish.test.ts`.
+2. **Gateway-routed embeddings** — `providers/embedding.ts` speaks the same
+   OpenAI-compatible dialect the chat path already uses (`liveOpenAIStream`),
+   so _any_ provider in `mira.json` can serve embeddings (OpenAI, DeepSeek,
+   NVIDIA, local Colibri, OpenRouter) with no new dependency. The AI SDK path is
+   gone: it only supported OpenAI. Cache key is now provider-qualified
+   (`provider/model`) so two providers' vectors can never be compared, and a
+   dimension mismatch degrades to "signal absent" instead of a false `0.0`
+   "completely unrelated" warning. 7 + 5 tests.
+3. **Blast-radius blocking** — under `MIRA_STRICT_EDIT_TARGET=1`, an edit whose
+   file is imported by ≥ `MIRA_BLAST_RADIUS_BLOCK` (default 10) files now blocks
+   instead of warning. The block uses a dedicated `BlastRadiusBlock` error so it
+   can travel through the cold-graph `try/catch` without being swallowed like a
+   real graph failure. 4 tests.
+4. **Provider/model audit — 5 P0 contracts fixed**, each with a regression test
+   proven to fail without the fix. Full write-up in
+   `docs/MASTER_FINDINGS_CROSSCHECK_AND_PLAN.md` (final section). Highlights:
+   fallback chain advanced only on 401/429 (a 503 killed the request despite
+   configured fallbacks); `resolveWithFallbacks` threw `CIRCUIT_OPEN` before
+   building the chain; provider health was never recorded (two disjoint circuit
+   breakers — every health endpoint reported `healthy` forever); the config merge
+   was one level deep, so setting only `provider.openai.options.apiKey` dropped
+   `baseURL` → requests to `undefined/chat/completions`.
+5. **`self_healing.test.ts`** (16 tests) — fault injection against every
+   self-healing contract that is actually implemented in TypeScript: circuit
+   opens at 5 failures → cool-down → half-open probes → closes; a failed probe
+   re-opens (no false heal); per-provider isolation; no retry-loop; snapshot →
+   rollback restores content and is session-scoped; `MIRA_AUTO_ROLLBACK` is
+   opt-in. The doc's `Target` items (`POST /dev/heal`, `heal.*` events,
+   `features.selfHealing`) do **not** exist and are deliberately not faked; the
+   `disk 98%` / `symlink EPERM` faults are shell-level and cannot be unit-tested.
+6. **Deploy gate** — verified wired and fail-closed (no-op when unset, hard-errors
+   on partial config so a hook can never deploy unauthenticated, simulated all
+   four cases). Fixed one real inconsistency: the deploy step interpolated
+   `${{ vars.DEPLOY_HOOK_URL }}` into a `run:` block — precisely the
+   template-injection surface the file's own comment forbids. It now reads the
+   env var like every other var in that workflow.
 
 ## Verification status
 
-- Server: 1,156+ tests passing (`bun test src` from `packages/server`)
-- Typecheck + lint clean (server, web, shared)
-- CI/Security/CD/Pages all green on GitHub (verified via `gh run list`)
+- Server: **1,242 tests passing**, 1 skip, 0 fail (baseline was 1,156)
+- Typecheck + lint clean (server); prettier-clean
+- CI ✓ Security ✓ CD ✓ green on the real pipeline for `ffc0f7a`
 - Working tree clean, `origin/main` in sync
 
-## Next queue (prioritized — all scoped in the plan doc)
+## Next queue
 
-1. **Publish path for community catalogs** — verticals/skills install but
-   nothing publishes; offline-curated only.
-2. **Gateway-routed embedding models** — embed-relevance is OpenAI-only;
-   route via the gateway's multi-provider config.
-3. **Blast-radius blocking mode** — promote the warning to a block under
-   `MIRA_STRICT_EDIT_TARGET` (high-fan-in edits).
-4. **`self_healing.test.ts`** — fault-injection suite spec'd in
-   `MIRA_SELF_HEALING.md` §5 (disk 98%, symlink EPERM → verify heal).
-5. **Web-review treatment audit** — `docs/MIRA_WEB_REVIEW_AND_FINDINGS.md`
-   (963 lines) never verified against code.
-6. **Deploy gate** — user must set `DEPLOY_ENABLED=true` (+ hook URL/token)
-   in Actions vars/secrets; commands in `.env.example` bottom block. The
-   Codespace token gets 403 on Actions variables.
+The old queue is empty. From the audit's "still open" list, in priority order:
 
-## Operational gotchas (hit this session, all documented)
+1. **Dead config needs a decision, not a patch** — `provider.*.npm`,
+   `models[].limit.*`, `options.kind`, `routing.lanes`,
+   `subgateways.*.{provider,enabled}` are declared, validated and documented but
+   never read. For each: honor it or delete the declaration. Separately,
+   `subgateways.*.timeout` is shadowed on the stream path by the provider's own
+   timeout, so the `compaction`/`local` lanes configured at 180s actually time out
+   at 120s.
+2. **Dead modules** — `providers/{cache,health,rate-limiter,pricing}.ts`,
+   `gateway/{retry,pricing}.ts`, `providers/index.ts` have no call sites outside
+   their own tests. `providers/rate-limiter.ts` is the trap: the real rate
+   limiter is the unrelated `gateway/rate-limiter.ts` `TokenBucket`.
+3. **Env layer is dead (P0-5 in the audit)** — `envToConfigMap`/`parseEnvConfig`
+   are never applied, so `MIRA_MODEL` has no effect. Provider keys work only
+   because `config/defaults.ts` hardcodes `{env:VAR}` templates — a different
+   mechanism from the documented one.
+4. **`complete()` bypasses cost caps** — `stream()` enforces `checkCostCap()` and
+   per-session cost tracking; `complete()` (the autocomplete path) does neither.
+5. **Test coverage** — `gateway/stream.ts` (401 lines, the real SSE transport) and
+   `providers/auth.ts` are the largest untested surfaces. `providers/registry.ts`
+   and the fallback path are now covered.
+6. **Web-review audit leftovers** — the highest-value items from item 5 of the
+   previous queue are still unfixed: unlabeled synthetic data on the Evolution
+   page, and raw `fetch` calls in `Changes`/`Intelligence`/`System` that 401
+   whenever a token is set (which is the default).
 
-- **Hermetic tests**: `packages/server/bunfig.toml` preloads
-  `tests/preload.ts` (temp ledger + memory bank) but ONLY when `bun test` runs
-  from `packages/server`. Repo-root runs use the root bunfig. `ledger.decisions.test.ts`
-  has belt-and-braces env setting. If `shared/context.json` shows up modified
-  after a test run, that's a hermeticity leak — find the test calling
-  `appendDecision`/`saveContext` without the env.
-- **lint-staged**: touched files must be eslint-clean or the commit fails
-  (commitlint: header ≤ 72 chars, `fix:`/`feat:`/`ci:`/`docs:`/`chore:` types).
-  Pre-existing lint debt exists in files NOT being touched (brio, browser,
-  glob, lsp, mcp_marketplace, memory, other) — only fix files you modify.
-- **RAM**: 8GB no-swap Codespace. Run targeted `bun test src/<area>`, not the
-  full suite, alongside builds; commit in small batches (lint-staged cost).
-- **bunfig preload cwd trap**: `bun -e` / direct script imports bypass the
-  preload — hermeticity only guaranteed under `bun test`.
-- **`findDependents`** needs project-relative paths (absolute silently
-  matches nothing). **`codeGraphFor(db)`** — only query when
-  `graph.stats().files > 0`, never trigger a build from the edit path.
-- **`applyChange` appends** a review note (does not replace) — the patcher's
-  contract, not a replace-in-place.
+## Operational gotchas (added this session)
+
+- **Two circuit breakers, not one.** The lane breaker (`subgateways.*.circuitBreaker`)
+  and the provider breaker (registry default: 5 failures) are separate stores. If
+  the lane threshold is the lower of the two, the lane opens first and
+  short-circuits `stream()` _before_ the candidate loop — so the provider counter
+  stops accumulating and provider health never heals. `self_healing.test.ts`
+  pins this interaction; set the lane threshold above 5 if you want the provider
+  breaker to be the one that governs.
+- **`successCount` on a breaker is a HALF_OPEN probe counter, not a lifetime
+  counter** — it only increments while half-open. Assert on `state`/`status`,
+  not `successCount`, when testing health.
+- **A test that stubs `globalThis.fetch` must delegate non-target hosts back to
+  the captured original**, or it intercepts the test's own localhost call.
+- **commitlint header ≤ 72 chars** (the 2026-10-12 commits hit this twice), and
+  the allowed `scope` enum is `[server, web, tui, cli, shared, slack, vscode,
+deps, ci, dx, eval, gateway, memory, auth, guardrails, lsp, mcp]` — `community`
+  is a warning, not an error.
+- **`git checkout` on a file mid-session silently discards uncommitted work.**
+  I lost an `expandAlias` fix this way; a stray `git stash pop` then created a
+  merge conflict that needed `--abort` + `reset --hard`.
+- **`rollbackSessionMutations` is async** (it dynamically imports `node:fs`);
+  forgetting `await` makes the file assertions run before the write.
+- All previous handoff gotchas still apply (bunfig preload cwd, lint-staged,
+  `findDependents` project-relative paths, `codeGraphFor(db)`, RAM limits).
