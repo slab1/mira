@@ -96,8 +96,14 @@ describe('decision log → decisions.md mirror (P2-3)', () => {
       evidence: ['stage=canary', 'metrics pass'],
       alternatives: ['remain in CANARY_PASSED'],
     })
-    // No cwd passed → the preload's MIRA_MEMORY_BANK_DIR redirect is used.
-    const file = join(process.env.MIRA_MEMORY_BANK_DIR!, 'decisions.md')
+    // No cwd passed → resolveBankDir() falls back to MIRA_MEMORY_BANK_DIR.
+    // That var is set by tests/preload.ts, which only loads when bunfig.toml
+    // [test].preload is registered — running `bun test` from the repo root uses
+    // the root bunfig.toml (no [test] section), so it is unset there. Mirror
+    // resolveBankDir()'s precedence instead of asserting the var exists.
+    const bankDir =
+      process.env.MIRA_MEMORY_BANK_DIR?.trim() || join(process.cwd(), 'data', 'memory_bank')
+    const file = join(bankDir, 'decisions.md')
     const content = await pollForLine(file, marker)
     expect(content).toContain(`${marker} — Proposal p1 promoted`)
     expect(content).toContain('evidence: stage=canary; metrics pass')
