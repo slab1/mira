@@ -39,6 +39,11 @@ export interface ApprovalRequest {
   requestedAt: number
   status: 'pending' | 'approved' | 'denied'
   approver?: string
+  /** Two-person rule: distinct operator approvals collected so far. */
+  approvers?: string[]
+  /** How many distinct operator approvals this request needs (1 unless the
+   *  two-person rule applies to this risk tier). */
+  requiredApprovals?: number
 }
 
 export interface ApprovalResult {
@@ -55,6 +60,9 @@ export interface ApprovalResult {
   policyAuto?: boolean
   /** Who/what made the decision: a designated human operator, policy, or mock. */
   approverKind?: 'human-operator' | 'policy' | 'mock'
+  /** Two-person rule: distinct operators that approved (mirrors request). */
+  approvers?: string[]
+  requiredApprovals?: number
 }
 
 /**
@@ -160,6 +168,11 @@ export class ApprovalGate {
   private operators: Set<string> | null
   /** Completed decisions, so a replay returns the recorded answer. */
   private decided = new Map<string, ApprovalResult>()
+  private twoPersonRule: boolean
+  private agingMs: number
+  /** Aging dedupe: id → last emission bucket, so a pending item notifies once
+   *  per aging window, not on every queue read. */
+  private agingEmitted = new Map<string, number>()
   private store?: ApprovalStore
 
   /**
@@ -173,6 +186,11 @@ export class ApprovalGate {
    * (comma-separated). When configured, ONLY listed operators may approve/deny
    * (fail-closed for everyone else); when unset, any authenticated human who
    * is not the proposal author is the operator — single-operator deployments.
+   * @param twoPersonRule high-risk changes need approvals from 2 distinct
+   * operators (author excluded). Default: on when ≥2 operators are designated;
+   * auto-off for single-operator deployments (a quorum of 1 is a deadlock,
+   * not a rule). Override via config approvals.twoPersonRule.
+   * @param agingMs pending-approval aging notification threshold (default 1h).
    * @param store durable approval state (pending queue + decided replay).
    */
   constructor(opts?: {
@@ -181,6 +199,8 @@ export class ApprovalGate {
     allowMockApproval?: boolean
     autoApproveLowRisk?: boolean
     operators?: string[] | null
+    twoPersonRule?: boolean
+    agingMs?: number
     store?: ApprovalStore
   }) {
     this.bus = opts?.bus
@@ -196,6 +216,10 @@ export class ApprovalGate {
               .filter(Boolean)
           : null
     this.operators = opRaw && opRaw.length > 0 ? new Set(opRaw) : null
+    // Two-person rule default: on when ≥2 operators are designated — with a
+    // single operator a quorum of 2 is a deadlock, not a rule.
+    this.twoPersonRule = opts?.twoPersonRule ?? (this.operators?.size ?? 0) >= 2
+    this.agingMs = opts?.agingMs ?? 3_600_000
     if (opts?.store) {
       this.store = opts.store
       try {
@@ -260,6 +284,7 @@ export class ApprovalGate {
     // But per requiresApproval, high already needs approval → we keep it pending to exercise POST /evolution/approve/:id
     // For medium at canary, also pending
     // High risk ALWAYS waits for a real human, whatever the mock setting.
+    // With the two-person rule on, TWO distinct operators must approve.
     if (r.level === 'high') {
       const req: ApprovalRequest = {
         id: proposal.id,
@@ -268,6 +293,8 @@ export class ApprovalGate {
         proposal,
         requestedAt: Date.now(),
         status: 'pending',
+        approvers: [],
+        requiredApprovals: this.twoPersonRule ? 2 : 1,
       }
       this.pending.set(proposal.id, req)
       try {
@@ -277,7 +304,12 @@ export class ApprovalGate {
       return {
         approved: false,
         pending: true,
-        reason: 'high-risk requires an authenticated human approval — POST /evolution/approve/:id',
+        requiredApprovals: req.requiredApprovals,
+        approvers: [],
+        reason:
+          (req.requiredApprovals ?? 1) > 1
+            ? 'high-risk requires TWO distinct operator approvals (two-person rule) — POST /evolution/approve/:id per operator'
+            : 'high-risk requires an authenticated human approval — POST /evolution/approve/:id',
       }
     }
 
@@ -376,6 +408,38 @@ export class ApprovalGate {
       }
     }
 
+    // Two-person rule (§18: high-risk needs stronger approval): collect
+    // DISTINCT operator approvals until the quorum is met. Duplicate approvals
+    // from the same operator do not count twice, and the required count is
+    // recorded on the request so the UI can show "1 of 2".
+    const required = req.requiredApprovals ?? 1
+    const collected = new Set(req.approvers ?? [])
+    if (required > 1) {
+      if (collected.has(approver)) {
+        return {
+          approved: false,
+          pending: true,
+          approvers: [...collected],
+          requiredApprovals: required,
+          reason: `two-person rule: "${approver}" already approved — waiting for ${required - collected.size} more distinct operator(s)`,
+        }
+      }
+      collected.add(approver)
+      req.approvers = [...collected]
+      if (collected.size < required) {
+        try {
+          this.store?.savePending(req)
+        } catch {}
+        return {
+          approved: false,
+          pending: true,
+          approvers: [...collected],
+          requiredApprovals: required,
+          reason: `two-person rule: ${collected.size} of ${required} operator approvals recorded — waiting for ${required - collected.size} more`,
+        }
+      }
+    }
+
     req.status = 'approved'
     req.approver = approver
     this.emit(req.proposal, req.level, req.risk, 'approved', approver)
@@ -384,12 +448,15 @@ export class ApprovalGate {
       this.store?.deletePending(id)
     } catch {}
     // Decision log — why approved, with risk evidence; the human operator is
-    // the authority of record.
+    // the authority of record. Two-person rule records both operators.
     try {
       appendDecision(
         {
           decision: 'approval:approved',
-          context: `Proposal ${id} (level ${req.level}) approved by human operator ${approver}`,
+          context:
+            required > 1
+              ? `Proposal ${id} (level ${req.level}) approved by human operators ${req.approvers?.join(' + ')} (two-person rule)`
+              : `Proposal ${id} (level ${req.level}) approved by human operator ${approver}`,
           by: approver,
           evidence: req.risk.reasons ?? [],
           alternatives: ['deny', 'keep pending'],
@@ -402,7 +469,11 @@ export class ApprovalGate {
       approver,
       authoritative: true,
       approverKind: 'human-operator',
-      reason: 'approved by human operator',
+      ...(required > 1 ? { approvers: [...collected], requiredApprovals: required } : {}),
+      reason:
+        required > 1
+          ? 'approved by human operators (two-person rule)'
+          : 'approved by human operator',
     }
     this.decided.set(id, result)
     try {
@@ -468,6 +539,43 @@ export class ApprovalGate {
 
   listPending(): ApprovalRequest[] {
     return [...this.pending.values()]
+  }
+
+  /**
+   * Aging notifications (§18 escalation = awareness, never approval): emit
+   * `evolution.approval_aging` for pending requests older than the aging
+   * threshold. Deduped per id per aging window — a queue read is a notification
+   * tick, and re-notify every window while still pending. Called by the
+   * approvals endpoint; approval itself stays a human act, a timer never
+   * promotes anything.
+   */
+  checkAging(now = Date.now()): number {
+    let emitted = 0
+    for (const req of this.pending.values()) {
+      const age = now - req.requestedAt
+      if (age < this.agingMs) continue
+      const bucket = Math.floor(age / this.agingMs)
+      if ((this.agingEmitted.get(req.id) ?? 0) >= bucket) continue
+      this.agingEmitted.set(req.id, bucket)
+      try {
+        this.bus?.publish({
+          type: 'evolution.approval_aging' as unknown as import('../types/index.js').BusEventType,
+          payload: {
+            proposalId: req.id,
+            title: req.proposal?.title,
+            risk: req.risk?.level,
+            ageMs: age,
+            bucket,
+            requiredApprovals: req.requiredApprovals ?? 1,
+            approvers: req.approvers ?? [],
+            note: 'pending operator approval is aging — escalation is awareness, not approval (§18)',
+          } as unknown as JsonValue,
+          timestamp: now,
+        } as unknown as import('../types/index.js').BusEvent)
+        emitted++
+      } catch {}
+    }
+    return emitted
   }
 
   private emit(

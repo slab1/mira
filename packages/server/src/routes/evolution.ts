@@ -55,6 +55,7 @@ import {
   DEFAULT_CONFIDENCE_THRESHOLD,
 } from '../evolution/modification-gate.js'
 import { isProposalState, type ProposalState } from '../patching/governance/types.js'
+import { getConfig } from '../config/store.js'
 import type { GovernanceGateLike } from '../patching/governance/index.js'
 import { ShadowComparison } from '../shadow/comparison.js'
 
@@ -313,6 +314,19 @@ export function mountEvolutionRoutes(
   const ledger = deps.ledger ?? new ImprovementLedger(db, bus)
   const observer = deps.observer ?? new EvolutionObserver({ bus })
   const riskEngine = deps.riskEngine ?? new RiskEngine()
+  // §18 approval policy — humans own it via mira.json `approvals`; env vars
+  // are the fallback. The meta-rule: changing the approvals section is itself
+  // a high-risk change routed through this same gate.
+  const cfgApprovals = (
+    getConfig() as unknown as {
+      approvals?: {
+        autoLowRisk?: boolean
+        operators?: string[]
+        twoPersonRule?: boolean
+        agingMs?: number
+      }
+    }
+  ).approvals
   // §18 durability: the operator's pending approval queue must survive a
   // restart — silently forgetting what a human was asked to approve is both
   // an operational stall and an audit hole. Fail-soft to in-memory.
@@ -320,7 +334,18 @@ export function mountEvolutionRoutes(
     deps.approvalGate ??
     (() => {
       try {
-        return new ApprovalGate({ bus, store: createSqliteApprovalStore(db) })
+        return new ApprovalGate({
+          bus,
+          store: createSqliteApprovalStore(db),
+          ...(cfgApprovals?.autoLowRisk !== undefined
+            ? { autoApproveLowRisk: cfgApprovals.autoLowRisk }
+            : {}),
+          ...(cfgApprovals?.operators !== undefined ? { operators: cfgApprovals.operators } : {}),
+          ...(cfgApprovals?.twoPersonRule !== undefined
+            ? { twoPersonRule: cfgApprovals.twoPersonRule }
+            : {}),
+          ...(cfgApprovals?.agingMs !== undefined ? { agingMs: cfgApprovals.agingMs } : {}),
+        })
       } catch {
         return new ApprovalGate({ bus })
       }
@@ -1208,11 +1233,14 @@ export function mountEvolutionRoutes(
   // ── GET /evolution/approvals — the operator's pending queue ─────
   // The UI is a surface, not an authority: this reads gate state (durable),
   // approve/deny still require the operator's authenticated credentials.
+  // Reading the queue is also the aging-notification tick.
   app.get('/evolution/approvals', (c) => {
+    const agingEmitted = approvalGate.checkAging()
     const pending = approvalGate.listPending()
     return c.json({
       ok: true,
       count: pending.length,
+      agingEmitted,
       pending: pending.map((p) => ({
         id: p.id,
         title: p.proposal?.title,
@@ -1222,6 +1250,9 @@ export function mountEvolutionRoutes(
         riskReasons: p.risk?.reasons,
         level: p.level,
         requestedAt: p.requestedAt,
+        // Two-person rule progress — the UI shows "1 of 2 operator approvals"
+        approvers: p.approvers ?? [],
+        requiredApprovals: p.requiredApprovals ?? 1,
       })),
     })
   })

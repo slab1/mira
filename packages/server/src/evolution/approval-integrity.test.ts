@@ -219,6 +219,93 @@ describe('human operator is the approval authority', () => {
   })
 })
 
+describe('two-person rule — high-risk needs two distinct operators (§18)', () => {
+  test('two designated operators: first approval is partial, duplicate ignored, second completes', () => {
+    const g = new ApprovalGate({ operators: ['op-a', 'op-b'], twoPersonRule: true })
+    g.requestApproval(proposal(), 3, HIGH)
+    const first = g.approve(proposal().id, { owner: 'op-a', authenticated: true })
+    expect(first.approved).toBe(false)
+    expect(first.pending).toBe(true)
+    expect(first.approvers).toEqual(['op-a'])
+    expect(first.requiredApprovals).toBe(2)
+    expect(first.reason).toContain('1 of 2')
+    // same operator again does not double-count
+    const dup = g.approve(proposal().id, { owner: 'op-a', authenticated: true })
+    expect(dup.approved).toBe(false)
+    expect(dup.reason).toContain('already approved')
+    // second distinct operator completes the quorum
+    const second = g.approve(proposal().id, { owner: 'op-b', authenticated: true })
+    expect(second.approved).toBe(true)
+    expect(second.approvers).toEqual(['op-a', 'op-b'])
+    expect(second.reason).toContain('two-person rule')
+  })
+
+  test('single operator → two-person rule auto-off (a quorum of 1 is a deadlock)', () => {
+    const g = new ApprovalGate({ operators: ['solo'], store: undefined })
+    const r = g.requestApproval(proposal(), 3, HIGH)
+    expect(r.requiredApprovals).toBe(1)
+    const a = g.approve(proposal().id, { owner: 'solo', authenticated: true })
+    expect(a.approved).toBe(true)
+  })
+
+  test('no operators configured → rule off by default (any authenticated non-author human)', () => {
+    const g = new ApprovalGate()
+    g.requestApproval(proposal(), 3, HIGH)
+    const a = g.approve(proposal().id, { owner: 'human', authenticated: true })
+    expect(a.approved).toBe(true)
+    expect(a.requiredApprovals).toBeUndefined()
+  })
+
+  test('two-person quorum survives a restart via the durable request', () => {
+    const pending = new Map<string, unknown>()
+    const decided = new Map<string, unknown>()
+    const store = {
+      loadPending: () => [...pending.values()] as never[],
+      loadDecided: () => [...decided.entries()].map(([id, result]) => ({ id, result })) as never[],
+      savePending: (req: { id: string }) => pending.set(req.id, JSON.parse(JSON.stringify(req))),
+      deletePending: (id: string) => pending.delete(id),
+      saveDecided: (id: string, result: unknown) =>
+        decided.set(id, JSON.parse(JSON.stringify(result))),
+    }
+    const g1 = new ApprovalGate({ operators: ['op-a', 'op-b'], twoPersonRule: true, store })
+    g1.requestApproval(proposal(), 3, HIGH)
+    g1.approve(proposal().id, { owner: 'op-a', authenticated: true })
+    // restart: partial quorum persisted
+    const g2 = new ApprovalGate({ operators: ['op-a', 'op-b'], twoPersonRule: true, store })
+    const second = g2.approve(proposal().id, { owner: 'op-b', authenticated: true })
+    expect(second.approved).toBe(true)
+    expect(second.approvers).toEqual(['op-a', 'op-b'])
+  })
+})
+
+describe('aging notifications — escalation is awareness, never approval', () => {
+  test('aging emits once per window, re-emits next bucket; young items stay quiet', async () => {
+    const { Bus } = await import('../bus/index.js')
+    const bus = new Bus()
+    const seen: Array<{ id: string; bucket: number }> = []
+    bus.subscribeAll?.(
+      (e: { type: string; payload?: { proposalId?: string; bucket?: number } }) => {
+        if (e.type === 'evolution.approval_aging') {
+          seen.push({ id: e.payload?.proposalId ?? '', bucket: e.payload?.bucket ?? 0 })
+        }
+      },
+    )
+    const g = new ApprovalGate({ bus, agingMs: 1000 })
+    g.requestApproval(proposal(), 3, HIGH)
+    const t0 = Date.now()
+    // young → quiet
+    expect(g.checkAging(t0 + 500)).toBe(0)
+    // bucket 1
+    expect(g.checkAging(t0 + 1500)).toBe(1)
+    // same bucket → no duplicate
+    expect(g.checkAging(t0 + 1900)).toBe(0)
+    // bucket 2 → re-notify
+    expect(g.checkAging(t0 + 2600)).toBe(1)
+    expect(seen.filter((s) => s.bucket === 1)).toHaveLength(1)
+    expect(seen.filter((s) => s.bucket === 2)).toHaveLength(1)
+  })
+})
+
 describe('durable approval state — operator queue survives restart', () => {
   const fakeStore = () => {
     const pending = new Map<string, unknown>()

@@ -25,6 +25,10 @@ type PendingApproval = {
   riskReasons?: string[]
   level?: number
   requestedAt?: number
+  /** Two-person rule progress: distinct operators that already approved. */
+  approvers?: string[]
+  /** Quorum size (1 unless the two-person rule applies). */
+  requiredApprovals?: number
 }
 
 function riskPill(risk: string | undefined): string {
@@ -182,6 +186,15 @@ export function ApprovalQueue(props: { onDecided?: () => void }) {
                       {' '}
                       · risk score {p.riskScore?.toFixed(2)}
                     </Show>
+                  </div>
+                </Show>
+
+                {/* Two-person rule progress — one operator cannot approve twice */}
+                <Show when={(p.requiredApprovals ?? 1) > 1}>
+                  <div style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--warn)' }}>
+                    two-person rule: {p.approvers?.length ?? 0} of {p.requiredApprovals} operator
+                    approvals
+                    <Show when={(p.approvers ?? []).length > 0}> ({p.approvers?.join(', ')})</Show>
                   </div>
                 </Show>
 

@@ -201,6 +201,24 @@ export interface MiraConfig {
   tools?: Record<string, JsonValue>
   /** Skills v2 settings */
   skills?: Record<string, JsonValue>
+  /**
+   * §18 approval policy — human-owned and versioned in mira.json. The meta-rule
+   * applies: changing this section is itself a high-risk change and should be
+   * routed through the same approval gate it configures.
+   */
+  approvals?: {
+    /** §18 Level 5: low-risk autonomous promotion (default: on unless MIRA_APPROVAL_AUTO_LOW=0) */
+    autoLowRisk?: boolean
+    /** Designated human operators (owner ids). Unset → any authenticated
+     * non-author human is the operator (single-operator deployments). */
+    operators?: string[]
+    /** Two-person rule: high-risk changes need approvals from 2 distinct
+     * operators (author excluded). Default: on when ≥2 operators designated,
+     * auto-off for single-operator deployments (a quorum of 1 is a deadlock). */
+    twoPersonRule?: boolean
+    /** Pending-approval aging threshold in ms for notifications (default 1h) */
+    agingMs?: number
+  }
 }
 
 /** User-supplied agent definition; missing fields fall back to safe defaults. */
