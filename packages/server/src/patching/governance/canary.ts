@@ -33,12 +33,21 @@ export interface CanaryDeps {
   workspace?: VariantWorkspace
   /** Injected for tests; defaults to a real timer. */
   sleep?: (ms: number) => Promise<void>
+  /**
+   * Declares that candidate-arm requests actually EXECUTE candidate code
+   * (tool execution bound to the variant root). Defaults to
+   * MIRA_CANARY_CANDIDATE_EXEC=1. While this is false the runner refuses to
+   * report candidate evidence — see the §3 guard in start().
+   */
+  executesCandidate?: boolean
 }
 
 export class CanaryRunner {
   private readonly router?: VariantRouter
   private readonly workspace?: VariantWorkspace
   private readonly sleep: (ms: number) => Promise<void>
+  /** Declared by the deployment: candidate-arm requests execute candidate code. */
+  private readonly executesCandidate: boolean
 
   constructor(
     private latency?: LatencyTracker,
@@ -47,6 +56,8 @@ export class CanaryRunner {
     this.router = deps.router
     this.workspace = deps.workspace
     this.sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)))
+    this.executesCandidate =
+      deps.executesCandidate ?? process.env.MIRA_CANARY_CANDIDATE_EXEC === '1'
   }
 
   /**
@@ -109,7 +120,11 @@ export class CanaryRunner {
     ;(this.router ?? getVariantRouter()).unregister(proposalId)
   }
 
-  async start(proposalId: string, config?: CanaryConfig): Promise<CanaryResult> {
+  async start(
+    proposalId: string,
+    config?: CanaryConfig,
+    opts: { executesCandidate?: boolean } = {},
+  ): Promise<CanaryResult> {
     const trafficPct = config?.trafficPct ?? 5
     const durationMs = config?.durationMs ?? 300_000
     const slo = config?.slo
@@ -129,6 +144,29 @@ export class CanaryRunner {
 
     if (!this.latency) {
       return blocked('no latency tracker injected; cannot measure the candidate')
+    }
+
+    // §3 — a canary must measure the CANDIDATE, and the candidate must
+    // actually execute.
+    //
+    // Attribution records a latency sample under the candidate's key when a
+    // request lands on the candidate arm, but the attribution middleware only
+    // sets `miraVariantRoot` on the request context — nothing binds tool
+    // execution to that root. Both arms therefore run the SAME production code,
+    // and the resulting samples are production latencies wearing a candidate
+    // label. That is exactly the "candidate == production" comparison §3
+    // exists to forbid, and reporting it as candidate evidence would be worse
+    // than reporting nothing.
+    //
+    // So: refuse to produce candidate evidence until the deployment declares
+    // that candidate-arm requests execute candidate code (the execution
+    // binding — tools resolving against `miraVariantRoot`). Fail-closed.
+    const candidateExecutes = opts?.executesCandidate ?? this.executesCandidate
+    if (!candidateExecutes) {
+      return blocked(
+        'candidate arm does not execute candidate code — attribution samples are production latencies labeled as candidate; ' +
+          'bind tool execution to the variant root and set MIRA_CANARY_CANDIDATE_EXEC=1 to measure a real candidate',
+      )
     }
 
     // Config validation — an unusable config must not authorize promotion.

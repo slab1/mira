@@ -29,9 +29,17 @@ const tracker = (...ms: number[]) => {
   return t
 }
 
-/** Canary now OBSERVES for durationMs, so tests must not wait in real time. */
+/** Canary now OBSERVES for durationMs, so tests must not wait in real time.
+ *  `executesCandidate` declares the deployment fact that candidate-arm requests
+ *  really run candidate code — without it the runner refuses to report
+ *  candidate evidence (§3). */
 const runner = (t?: LatencyTracker, deps: Record<string, unknown> = {}) =>
-  new CanaryRunner(t, { sleep: async () => {}, router: new VariantRouter(), ...deps })
+  new CanaryRunner(t, {
+    sleep: async () => {},
+    router: new VariantRouter(),
+    executesCandidate: true,
+    ...deps,
+  })
 
 /**
  * A canary that observes for `durationMs` of REAL (but tiny) time while traffic
@@ -51,7 +59,7 @@ const observingRunner = (
     if (s) t.record(s.ms, 'proposal_x', 'trace', s.error ?? false)
     await new Promise((r) => setTimeout(r, 2))
   }
-  const r = new CanaryRunner(t, { sleep, router })
+  const r = new CanaryRunner(t, { sleep, router, executesCandidate: true })
   r.route('proposal_x', { trafficPct: opts.trafficPct ?? 100, resolveVariant: () => 'variant-a' })
   return r
 }
@@ -60,7 +68,7 @@ const observingRunner = (
  *  gates are genuinely exercised rather than short-circuiting. */
 const routedRunner = (t: LatencyTracker) => {
   const router = new VariantRouter()
-  const r = new CanaryRunner(t, { sleep: async () => {}, router })
+  const r = new CanaryRunner(t, { sleep: async () => {}, router, executesCandidate: true })
   r.route('proposal_x', { trafficPct: 100, resolveVariant: () => 'variant-a' })
   return r
 }
@@ -179,7 +187,11 @@ describe('§3 acceptance: canary timeout / insufficient traffic → blocked', ()
     // tracker has traffic, but none attributed to this candidate
     const t = tracker(10, 20, 30)
     // a variant IS routable — traffic simply never arrived for this proposal
-    const r = new CanaryRunner(t, { sleep: async () => {}, router: new VariantRouter() })
+    const r = new CanaryRunner(t, {
+      sleep: async () => {},
+      router: new VariantRouter(),
+      executesCandidate: true,
+    })
     r.route('other_proposal', { trafficPct: 5, resolveVariant: () => 'variant-a' })
     const out = await r.start('other_proposal', { trafficPct: 5, durationMs: FAST, slo: SLO })
     expect(out.passed).toBe(false)
@@ -222,6 +234,46 @@ describe('§3 acceptance: canary timeout / insufficient traffic → blocked', ()
       slo: SLO,
     })
     expect(outcomeOf(r)).toBe('BLOCKED')
+  })
+})
+
+describe('§3: a canary that cannot execute the candidate reports nothing', () => {
+  test('without an execution binding the canary BLOCKS instead of reporting candidate evidence', async () => {
+    // The attribution middleware records a latency sample under the candidate's
+    // key when a request lands on the candidate arm, but nothing binds tool
+    // execution to the variant root — so both arms run production code. Those
+    // samples are production latencies wearing a candidate label. The runner
+    // must refuse rather than pass off production-on-production as a candidate
+    // measurement (§3).
+    const t = tracker(10, 20, 30)
+    const r = new CanaryRunner(t, { sleep: async () => {}, router: new VariantRouter() })
+    r.route('proposal_x', { trafficPct: 100, resolveVariant: () => 'variant-a' })
+    const out = await r.start('proposal_x', {
+      trafficPct: 100,
+      durationMs: FAST,
+      slo: SLO,
+      minSamples: 1,
+    })
+    expect(out.passed).toBe(false)
+    expect(outcomeOf(out)).toBe('BLOCKED')
+    expect(out.reason).toContain('does not execute candidate code')
+  })
+
+  test('declaring the execution binding lets the canary observe', async () => {
+    const t = tracker(10, 20, 30)
+    const r = new CanaryRunner(t, {
+      sleep: async () => {},
+      router: new VariantRouter(),
+      executesCandidate: true,
+    })
+    r.route('proposal_x', { trafficPct: 100, resolveVariant: () => 'variant-a' })
+    const out = await r.start('proposal_x', {
+      trafficPct: 100,
+      durationMs: FAST,
+      slo: SLO,
+      minSamples: 1,
+    })
+    expect(outcomeOf(out)).not.toBe('BLOCKED')
   })
 })
 
@@ -488,7 +540,7 @@ describe('§3.5: the configured duration is actually observed', () => {
       await new Promise((r) => setTimeout(r, 3))
     }
     const router = new VariantRouter()
-    const r = new CanaryRunner(t, { sleep, router })
+    const r = new CanaryRunner(t, { sleep, router, executesCandidate: true })
     r.route('proposal_x', { trafficPct: 100, resolveVariant: () => 'v' })
 
     const out = await r.start('proposal_x', {
@@ -514,7 +566,7 @@ describe('§3.5: the configured duration is actually observed', () => {
       await new Promise((r) => setTimeout(r, 3))
     }
     const router = new VariantRouter()
-    const r = new CanaryRunner(t, { sleep, router })
+    const r = new CanaryRunner(t, { sleep, router, executesCandidate: true })
     r.route('proposal_x', { trafficPct: 100, resolveVariant: () => 'v' })
 
     const out = await r.start('proposal_x', {
