@@ -53,6 +53,32 @@ describe('SystemRollbackManager — §6 metadata', () => {
     expect(Object.keys(s.configHashes)).toHaveLength(0)
   })
 
+  test('§6 Migration State: collector markers land in the snapshot + metadata', () => {
+    let calls = 0
+    const m = new SystemRollbackManager({
+      migrationState: () => {
+        calls++
+        return { tables: '42', schema: 'abc123def4567890' }
+      },
+    })
+    const s = m.capture()
+    expect(calls).toBe(1)
+    expect(s.migrationState).toEqual({ tables: '42', schema: 'abc123def4567890' })
+    // metadata carries the migration state too
+    const meta = m.recordCandidate('p_mig', s, null)
+    expect(meta.migrationState?.schema).toBe('abc123def4567890')
+  })
+
+  test('§6 Migration State: collector failures are fail-soft (snapshot omits it)', () => {
+    const m = new SystemRollbackManager({
+      migrationState: () => {
+        throw new Error('sqlite_master unavailable')
+      },
+    })
+    const s = m.capture()
+    expect(s.migrationState).toBeUndefined()
+  })
+
   test('recordCandidate produces full §6 metadata with rollback steps', () => {
     const m = new SystemRollbackManager()
     const before = snap()

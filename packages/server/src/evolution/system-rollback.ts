@@ -26,7 +26,7 @@
  * | 7 | Operational procedures | Implemented | capture() at rollback-point time in observe; metadata exposed via GET /evolution/rollback/:id/metadata |
  * | 8 | Migration strategy | Implemented | additive; durable store optional (SQLite evolution_system_rollback, write-through) — rollback metadata survives restarts, which is the point of rollback metadata |
  * | 9 | Rollback strategy | Implemented | this module IS the §6 rollback strategy: diff + metadata drive engine rollback()/snapshot restore; in-memory mode unchanged without a store |
- * | 10 | Known limitations | Implemented | durable store single-process (multi-process CAS Target); migration-state capture is Target; DB-schema components not yet tracked |
+ * | 10 | Known limitations | Implemented | durable store single-process (multi-process CAS Target); DB-schema components not yet tracked; migration-state capture implemented (schema fingerprint via collectors) |
  */
 
 import { createHash } from 'node:crypto'
@@ -154,6 +154,9 @@ export interface SystemRollbackCollectors {
   dependencyVersions?: () => Record<string, string>
   /** Config files whose content is hash-tracked (paths). */
   configPaths?: string[]
+  /** §6 Migration State — schema/migration markers (e.g. table-count + schema
+   *  fingerprint from sqlite_master). Fail-soft; absent → snapshot omits it. */
+  migrationState?: () => Record<string, string>
 }
 
 function envInt(name: string, fallback: number): number {
@@ -230,7 +233,22 @@ export class SystemRollbackManager {
         if (p && existsSync(p)) configHashes[p] = sha256(readFileSync(p, 'utf-8'))
       } catch {}
     }
-    return { components, dependencies, configHashes, timestamp: now }
+    let migrationState: Record<string, string> | undefined
+    try {
+      const ms = this.collectors.migrationState?.()
+      if (ms && typeof ms === 'object' && Object.keys(ms).length > 0) {
+        migrationState = Object.fromEntries(
+          Object.entries(ms).map(([k, v]) => [String(k).slice(0, 100), String(v).slice(0, 100)]),
+        )
+      }
+    } catch {}
+    return {
+      components,
+      dependencies,
+      configHashes,
+      ...(migrationState ? { migrationState } : {}),
+      timestamp: now,
+    }
   }
 
   /** Record a candidate's §6 rollback metadata from before/after snapshots. */

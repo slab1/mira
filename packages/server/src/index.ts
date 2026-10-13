@@ -980,6 +980,25 @@ async function main() {
           }
         },
         configPaths: ['mira.json'],
+        // §6 Migration State: schema shape fingerprint — table names + count
+        // from sqlite_master give a stable migration marker without a
+        // migrations-version table (DDL here is idempotent).
+        migrationState: (): Record<string, string> => {
+          try {
+            const tables = (
+              db.sqlite
+                .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                .all() as Array<{ name: string }>
+            ).map((t) => t.name)
+            const schemaHash = createHash('sha256')
+              .update(tables.join(','))
+              .digest('hex')
+              .slice(0, 16)
+            return { tables: String(tables.length), schema: schemaHash }
+          } catch {
+            return {}
+          }
+        },
       },
     })
 

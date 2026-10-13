@@ -22,7 +22,7 @@
  * | # | Item | Status | Evidence |
  * |---|------|--------|----------|
  * | 1 | Implementation path | Implemented | packages/server/src/evolution/loop-guard.ts |
- * | 2 | Public interfaces | Implemented | LoopGuard.check(failure, evidence): LoopDecision; acknowledge(fingerprint?); stats(); fingerprints are stable hashes |
+ * | 2 | Public interfaces | Implemented | LoopGuard.check(failure, evidence): LoopDecision (semantically grouped); acknowledge(fingerprint?); stats(); fingerprints stable + paraphrase-resistant via token-Jaccard (MIRA_LOOP_SIMILARITY, default 0.7) |
  * | 3 | Events | Implemented | caller emits evolution.loop_blocked / evolution.loop_escalated via Bus (module is pure) |
  * | 4 | Configuration | Implemented | MIRA_LOOP_COOLDOWN_MS (default 300000), MIRA_LOOP_MAX_ATTEMPTS (default 3), MIRA_LOOP_MAX_TRACKED (default 500) |
  * | 5 | Tests | Implemented | packages/server/src/evolution/loop-guard.test.ts (dedup, cap, escalation, ack, window expiry) |
@@ -30,11 +30,73 @@
  * | 7 | Operational procedures | Implemented | wired in routes/evolution.ts before propose; stats() exposes active cooldowns/escalations |
  * | 8 | Migration strategy | Implemented | additive; durable store optional (SQLite evolution_loop_state) — restarts no longer bypass §11 protection |
  * | 9 | Rollback strategy | Implemented | delete module + wiring + table; in-memory mode unchanged without a store |
- * | 10 | Known limitations | Implemented | durable store is write-through single-process (multi-process CAS/locking Target); fingerprint normalizes whitespace/case but not semantic near-duplicates |
+ * | 10 | Known limitations | Implemented | semantic grouping is token-Jaccard (catches reorder/filler paraphrases; synonym-level rephrasing stays distinct — Target); durable store single-process |
  */
 
 import { createHash } from 'node:crypto'
 import type { MiraDB } from '../storage/db.js'
+
+const FUZZY_STOP_TOKENS = new Set([
+  'the',
+  'a',
+  'an',
+  'and',
+  'or',
+  'of',
+  'to',
+  'in',
+  'on',
+  'for',
+  'with',
+  'is',
+  'are',
+  'was',
+  'were',
+  'be',
+  'been',
+  'that',
+  'this',
+  'it',
+  'as',
+  'at',
+  'by',
+  'from',
+  'not',
+  'occurred',
+  'error',
+  'errors',
+  'failed',
+  'failure',
+])
+
+/**
+ * Token signature for semantic grouping — the same failure rephrased with
+ * word reordering or filler changes maps to the same signature; an LLM agent
+ * paraphrasing its own error must not mint a fresh attempt budget per variant.
+ */
+function signatureTokens(failure: string, evidence?: unknown): Set<string> {
+  const norm = String(failure ?? '')
+    .toLowerCase()
+    .replace(/\d+/g, '#')
+  const tokens = new Set(
+    norm.split(/[^a-z0-9_#.]+/).filter((t) => t.length > 2 && !FUZZY_STOP_TOKENS.has(t)),
+  )
+  try {
+    if (evidence && typeof evidence === 'object') {
+      for (const k of Object.keys(evidence as Record<string, unknown>).slice(0, 5)) {
+        tokens.add(`ev:${k.toLowerCase()}`)
+      }
+    }
+  } catch {}
+  return tokens
+}
+
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 0
+  let inter = 0
+  for (const t of a) if (b.has(t)) inter++
+  return inter / (a.size + b.size - inter)
+}
 
 export interface LoopDecision {
   /** Whether this failure may proceed to diagnosis→proposal. */
@@ -53,6 +115,8 @@ export interface LoopDecision {
 interface FingerprintRecord {
   attempts: number[]
   escalatedAt?: number
+  /** Token signature for semantic grouping — persisted with the record. */
+  sig?: string
 }
 
 /**
@@ -83,24 +147,37 @@ export function createSqliteLoopGuardStore(db: MiraDB): LoopGuardStore {
         const rows = sqlite
           .prepare('SELECT fingerprint, attempts, escalated_at FROM evolution_loop_state')
           .all() as Array<{ fingerprint: string; attempts: string; escalated_at: number | null }>
-        return rows.map((r) => ({
-          fingerprint: r.fingerprint,
-          record: {
-            attempts: JSON.parse(r.attempts) as number[],
-            ...(r.escalated_at !== null ? { escalatedAt: r.escalated_at } : {}),
-          },
-        }))
+        return rows.map((r) => {
+          const parsed: unknown = JSON.parse(r.attempts)
+          // Legacy rows stored the plain attempts array; current rows store
+          // {a: attempts, s: signature} so semantic grouping survives restarts.
+          const record: FingerprintRecord = Array.isArray(parsed)
+            ? { attempts: parsed as number[] }
+            : {
+                attempts: (parsed as { a: number[] }).a ?? [],
+                ...((parsed as { s: string | null }).s ? { sig: (parsed as { s: string }).s } : {}),
+              }
+          if (r.escalated_at !== null) record.escalatedAt = r.escalated_at
+          return { fingerprint: r.fingerprint, record }
+        })
       } catch {
         return []
       }
     },
     save(fingerprint, record) {
       try {
+        // attempts column stores {a, s} JSON — attempts + semantic signature —
+        // so semantic grouping survives restarts without a schema change.
+        // Legacy rows (plain array) are handled on load.
         sqlite
           .prepare(
             `INSERT OR REPLACE INTO evolution_loop_state (fingerprint, attempts, escalated_at) VALUES (?, ?, ?)`,
           )
-          .run(fingerprint, JSON.stringify(record.attempts), record.escalatedAt ?? null)
+          .run(
+            fingerprint,
+            JSON.stringify({ a: record.attempts, s: record.sig ?? null }),
+            record.escalatedAt ?? null,
+          )
       } catch {}
     },
     clear(fingerprint) {
@@ -141,6 +218,7 @@ export class LoopGuard {
   private readonly cooldownMs: number
   private readonly maxAttempts: number
   private readonly maxTracked: number
+  private readonly similarity: number
   private store?: LoopGuardStore
 
   constructor(
@@ -148,6 +226,8 @@ export class LoopGuard {
       cooldownMs?: number
       maxAttempts?: number
       maxTracked?: number
+      /** Token-Jaccard threshold for grouping paraphrased failures (default 0.7). */
+      similarity?: number
       /** Durable §11 state — without it a restart resets the cap (bypass risk). */
       store?: LoopGuardStore
     } = {},
@@ -156,6 +236,7 @@ export class LoopGuard {
       opts.cooldownMs ?? envInt('MIRA_LOOP_COOLDOWN_MS', 300_000, 0, 24 * 60 * 60 * 1000)
     this.maxAttempts = opts.maxAttempts ?? envInt('MIRA_LOOP_MAX_ATTEMPTS', 3, 1, 100)
     this.maxTracked = opts.maxTracked ?? envInt('MIRA_LOOP_MAX_TRACKED', 500, 10, 10_000)
+    this.similarity = opts.similarity ?? envInt('MIRA_LOOP_SIMILARITY', 70, 10, 100) / 100
     if (opts.store) {
       this.store = opts.store
       try {
@@ -167,7 +248,13 @@ export class LoopGuard {
   }
 
   check(failure: string, evidence?: unknown, now = Date.now()): LoopDecision {
-    const fingerprint = failureFingerprint(failure, evidence)
+    const tokens = signatureTokens(failure, evidence)
+    const exact = failureFingerprint(failure, evidence)
+    // Semantic grouping (§11): a paraphrased failure shares the canonical
+    // incident's budget — rephrasing must not mint a fresh attempt cap.
+    const fingerprint = this.records.has(exact)
+      ? exact
+      : (this.findSimilarFingerprint(tokens) ?? exact)
     const rec = this.records.get(fingerprint) ?? { attempts: [] }
     // Prune attempts outside the cooldown window
     rec.attempts = rec.attempts.filter((t) => now - t < this.cooldownMs)
@@ -178,6 +265,7 @@ export class LoopGuard {
 
     if (escalated) rec.escalatedAt = rec.escalatedAt ?? now
     rec.attempts.push(now)
+    rec.sig = [...tokens].sort().join('|')
     this.records.set(fingerprint, rec)
     try {
       this.store?.save(fingerprint, rec)
@@ -198,6 +286,18 @@ export class LoopGuard {
         : `duplicate failure inside cooldown (${Math.round(retryInMs / 1000)}s left) — incident already being handled`
 
     return { allowed, fingerprint, attempts, escalated, reason, retryInMs }
+  }
+
+  /** Nearest stored incident with token-Jaccard ≥ the similarity threshold. */
+  private findSimilarFingerprint(tokens: Set<string>): string | null {
+    const threshold = this.similarity
+    let best: { fp: string; score: number } | null = null
+    for (const [fp, rec] of this.records) {
+      if (!rec.sig) continue
+      const score = jaccard(tokens, new Set(rec.sig.split('|')))
+      if (score >= threshold && (!best || score > best.score)) best = { fp, score }
+    }
+    return best?.fp ?? null
   }
 
   /** Human (or higher-level agent) acknowledges an escalated fingerprint — §11 ESCALATE path. */

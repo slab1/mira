@@ -5,6 +5,56 @@
 import { describe, test, expect } from 'bun:test'
 import { LoopGuard, failureFingerprint } from './loop-guard.js'
 
+describe('LoopGuard — semantic grouping (§11 paraphrase resistance)', () => {
+  test('a paraphrased failure shares the original incident budget', () => {
+    const g = new LoopGuard({ cooldownMs: 60_000, maxAttempts: 2 })
+    const d1 = g.check('timeout on lane default', { busType: 'server.error' })
+    expect(d1.allowed).toBe(true)
+    // word-reorder + filler paraphrase → same incident
+    const d2 = g.check('timeout occurred on the default lane', { busType: 'server.error' })
+    expect(d2.allowed).toBe(false)
+    expect(d2.fingerprint).toBe(d1.fingerprint)
+    expect(d2.reason).toContain('cooldown')
+  })
+
+  test('distinct failure shapes keep separate budgets', () => {
+    const g = new LoopGuard({ cooldownMs: 60_000, maxAttempts: 1 })
+    const d1 = g.check('cost cap exceeded on perTask budget', { busType: 'cost.warning' })
+    expect(d1.allowed).toBe(true)
+    const d2 = g.check('memory retrieval degraded recall', { busType: 'server.error' })
+    expect(d2.allowed).toBe(true)
+    expect(d2.fingerprint).not.toBe(d1.fingerprint)
+  })
+
+  test('paraphrase inherits escalation — no fresh cap per rephrase', () => {
+    const g = new LoopGuard({ cooldownMs: 60_000, maxAttempts: 1 })
+    g.check('guardrail permission denied on auth', { ev: 1 })
+    const esc = g.check('guardrail permission was denied on auth', { ev: 1 })
+    expect(esc.escalated).toBe(true)
+    // a third, differently-phrased variant is still under the same escalation
+    const d3 = g.check('auth guardrail denied the permission', { ev: 1 })
+    expect(d3.escalated).toBe(true)
+    expect(d3.fingerprint).toBe(esc.fingerprint)
+  })
+
+  test('semantic grouping survives a restart via the durable record signature', () => {
+    const rows = new Map<string, { attempts: number[]; escalatedAt?: number }>()
+    const store = {
+      load: () => [...rows.entries()].map(([fingerprint, record]) => ({ fingerprint, record })),
+      save: (fp: string, r: { attempts: number[]; escalatedAt?: number }) =>
+        rows.set(fp, JSON.parse(JSON.stringify(r))),
+      clear: (fp: string) => rows.delete(fp),
+    }
+    const g1 = new LoopGuard({ cooldownMs: 60_000, maxAttempts: 1, store })
+    g1.check('timeout on lane default', { busType: 'server.error' })
+    // restart: the loaded record carries its signature → grouping works
+    const g2 = new LoopGuard({ cooldownMs: 60_000, maxAttempts: 1, store })
+    const d = g2.check('timeout occurred on the default lane', { busType: 'server.error' })
+    expect(d.allowed).toBe(false)
+    expect(d.attempts).toBe(2)
+  })
+})
+
 describe('failureFingerprint', () => {
   test('stable across whitespace/case/number noise, sensitive to shape', () => {
     const a = failureFingerprint('Circuit OPEN on lane default (port 8080)', {
