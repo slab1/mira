@@ -349,14 +349,41 @@ describe('§3 acceptance: SLO breach fails, compliance passes', () => {
 
 describe('§3 acceptance: canary evidence is candidate-specific', () => {
   test('config thresholds are NOT reported as measurements', async () => {
-    const r = await runner(tracker(10, 20)).start('proposal_x', {
+    // This test was a ~2-in-3 flake, reproduced on a clean tree, for two
+    // compounding reasons:
+    //
+    //  1. It pre-recorded samples with `tracker(10, 20)` and then queried a
+    //     1 ms window (FAST). Samples recorded BEFORE the canary starts are
+    //     only counted while their timestamps remain inside the window, so
+    //     under load the window expired first and metrics came back with only
+    //     `count` — the failure signature.
+    //  2. The observing helper stops recording once its sample array is
+    //     exhausted, so every sample landed in the first millisecond and then
+    //     aged out of the `durationMs` measurement window — reaching
+    //     "observed 0 sample(s)".
+    //
+    // Real traffic does not stop mid-window, so record on every tick. The
+    // assertion is about WHICH keys `metrics` carries — observations only,
+    // never a configured threshold echoed back as if it were evidence.
+    const t = new LatencyTracker()
+    const router = new VariantRouter()
+    const canary = new CanaryRunner(t, {
+      sleep: async () => {
+        t.record(10, 'proposal_x', 'trace', false)
+        await new Promise((r) => setTimeout(r, 2))
+      },
+      router,
+      executesCandidate: true,
+    })
+    canary.route('proposal_x', { trafficPct: 5, resolveVariant: () => 'variant-a' })
+
+    const r = await canary.start('proposal_x', {
       trafficPct: 5,
-      durationMs: FAST,
+      durationMs: 30,
       slo: SLO,
       minSamples: 2,
     })
-    // `metrics` must carry observations only — a configured threshold echoed
-    // into metrics could be read by deriveMetrics() as if it were evidence.
+
     expect(Object.keys(r.metrics!).sort()).toEqual(['count', 'errorRate', 'p50', 'p95'])
     expect(r.policy).toMatchObject({ trafficPct: 5, minSamples: 2, route: 'proposal_x' })
   })
