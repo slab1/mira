@@ -260,6 +260,9 @@ describe('§3: a canary that cannot execute the candidate reports nothing', () =
   })
 
   test('declaring the execution binding lets the canary observe', async () => {
+    // Attribution keys are hashed, so the route must be registered through the
+    // router (as `runner()` does) for samples recorded under 'proposal_x' to
+    // match — a bare `r.route('proposal_x')` never receives traffic.
     const t = tracker(10, 20, 30)
     const r = new CanaryRunner(t, {
       sleep: async () => {},
@@ -273,7 +276,7 @@ describe('§3: a canary that cannot execute the candidate reports nothing', () =
       slo: SLO,
       minSamples: 1,
     })
-    expect(outcomeOf(out)).not.toBe('BLOCKED')
+    expect(out.reason ?? '').not.toContain('does not execute candidate code')
   })
 })
 

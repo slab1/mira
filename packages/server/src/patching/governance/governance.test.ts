@@ -532,7 +532,11 @@ describe('GovernanceGate promote — enforced lifecycle', () => {
 
     const result = await g.promote(p.id)
     expect(result.applied).toBe(false)
-    expect(result.reason).toBeUndefined()
+    // A refusal must name its cause. This test previously asserted
+    // `reason` was UNDEFINED — i.e. it locked in an unactionable refusal where
+    // the operator could not tell a denied promotion from a disabled one.
+    expect(result.reason).toBeDefined()
+    expect(String(result.reason).length).toBeGreaterThan(0)
     expect((await g.get(p.id))?.state).toBe('CANARY_PASSED')
     expect(transitions().length).toBe(before)
   })

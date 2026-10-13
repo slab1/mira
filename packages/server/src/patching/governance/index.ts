@@ -297,12 +297,25 @@ export class GovernanceGate implements GovernanceGateLike {
       return { applied: false, reason: `invalid_state:${proposal.state}` }
     }
 
-    // 2) Stage re-validation (defense in depth). A row can reach CANARY_PASSED
-    //    via a legacy writer, an older build whose stages fail-opened, or a
-    //    direct store write — the state alone is not proof that the stages
-    //    actually measured anything. Re-check every recorded stage outcome
-    //    before the metrics gate, so `opts.baseline/candidate` can never
-    //    promote a proposal whose stages never produced evidence.
+    // 2) Stage re-validation. A row can reach CANARY_PASSED via a legacy
+    //    writer, an older build whose stages fail-opened, or a direct store
+    //    write — so the state alone is not proof that the stages measured
+    //    anything. Re-check every recorded outcome before the metrics gate.
+    //
+    //    WHAT THIS DOES AND DOES NOT BUY YOU — established by execution:
+    //    this check cannot detect FORGERY. The evidence it validates is stored
+    //    in the same row it trusts, so a hand-forged `passed: true` is
+    //    indistinguishable from a genuine one — both produce outcomeOf ===
+    //    'PASSED'. What it does catch is a row whose stages never ran or ran
+    //    with a missing/ambiguous outcome (older builds, partial writes).
+    //
+    //    Do not read this as tamper protection. That would require evidence
+    //    the gate cannot forge — signed stage receipts, or an append-only
+    //    evidence store — which is a separate piece of work. Until then the
+    //    real protections are: the stage runners themselves are fail-closed,
+    //    the regression/metrics gate needs a comparable baseline/candidate
+    //    pair, and promotion executes through the promoter rather than
+    //    mutating state directly.
     const recorded: Array<[string, { passed: boolean; outcome?: GovernanceOutcome } | undefined]> =
       [
         ['benchmark', proposal.metadata.benchmark],
@@ -334,6 +347,17 @@ export class GovernanceGate implements GovernanceGateLike {
     }
 
     const result = await this.promoter.promote(proposal)
+    if (!result.applied && !result.reason) {
+      // A refusal with no cause is unactionable: the operator cannot tell
+      // "autopilot is off" from "promotion was denied". The promoter returning
+      // `applied: false` without a reason is a bug in the promoter, not a
+      // silent success — say so rather than returning an empty verdict.
+      return {
+        applied: false,
+        reason:
+          'promotion was not applied and the promoter gave no reason — check whether PR creation is enabled (MIRA_AUTOPILOT=1) for this repository',
+      }
+    }
     if (result.applied) {
       const from = proposal.state
       proposal.state = 'PROMOTED'
