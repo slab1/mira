@@ -1,6 +1,6 @@
 # Mira — Long-Term Risk Mitigation and Scalability Plan
 
-**Review date:** 2026-10-11
+**Review date:** 2026-10-13 (updated from 2026-10-11)
 **Repository:** `slab1/mira`
 **Review type:** Source-level architecture, safety, evolution, memory, and scalability review
 **Status:** Engineering assessment — implementation and production verification remain separate states
@@ -8,6 +8,14 @@
 > **This document is a remediation plan, not a record of completed work.**
 > Nothing in it should be read as an implemented change or a verified capability.
 > Section 16 records which claims were independently re-checked and which remain unverified.
+>
+> **Status labels (per CROSSCHECK_REVIEW_2026-10-13):**
+>
+> - **Implemented:** code/component exists.
+> - **Unit-tested:** component tests pass.
+> - **Runtime-integrated:** production path invokes and enforces it.
+> - **Production-verified:** deployed SHA and smoke/health checks are confirmed.
+> - **Unverified:** integration, configuration, or production evidence is missing.
 
 ## 1. Executive assessment
 
@@ -307,12 +315,14 @@ authorization and a recorded decision.
 Use one consistent status vocabulary:
 
 - **Proposed:** planned, not implemented.
-- **Implemented:** code exists.
-- **Integrated:** connected to the real application path.
-- **Test-verified:** relevant tests pass in a recorded run.
-- **Production-verified:** observed working under the intended deployment conditions.
+- **Implemented:** code/component exists.
+- **Unit-tested:** component tests pass.
+- **Runtime-integrated:** production path invokes and enforces it.
+- **Production-verified:** deployed SHA and smoke/health checks are confirmed.
+- **Unverified:** integration, configuration, or production evidence is missing.
 
 A module existing is not sufficient evidence that the end-to-end feature works.
+Do not change a risk to "resolved" merely because a module or unit test now exists.
 
 Maintain a capability register containing the status, implementation path, tests, known
 limitations, owner, and last verification date. Update root documentation when a status
@@ -407,24 +417,25 @@ This was a remote source review, not a local execution of the full test suite or
 production penetration test. The repository's reported test count and any declared feature
 status require confirmation through the corresponding CI evidence and runtime tests.
 
-## 16. Re-verification of key claims
+## 16. Re-verification of key claims (2026-10-13 — updated with implementation status)
 
-Added 2026-10-13. The following load-bearing claims were independently re-checked against
-the working tree. This is source inspection only — no acceptance test in this document has
-been executed, and none of the P0 items are fixed.
+The following load-bearing claims were independently re-checked against the working tree.
+Status labels: **Implemented** / **Unit-tested** / **Runtime-integrated** / **Production-verified** / **Unverified**.
 
-| Claim                                             | Method                                             | Result                                                                                                                                     |
-| ------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `benchmark.ts` passes when tracker/stats absent   | Read `benchmark.ts:12-19`                          | **Confirmed** — `passed: true` with reason `benchmark skipped — no latency data available`                                                 |
-| `canary.ts` passes when no tracker                | Read `canary.ts:11-17`                             | **Confirmed** — `passed: true` with reason `canary skipped — no latency tracker available`                                                 |
-| Default governance wiring injects no tracker      | Read `governance/index.ts:69,73`                   | **Confirmed** — `deps.benchmark ?? new BenchmarkRunner()`, `deps.canary ?? new CanaryRunner()`; both constructors take an optional tracker |
-| Sandbox disabled by default                       | Read `isolation.ts:41`                             | **Confirmed** — `enabled: config.enabled ?? process.env.MIRA_SANDBOX === '1'`                                                              |
-| Spend counters are in-memory and reset on restart | Read `resources.ts:57-61` and header table row 10  | **Confirmed** — `Map`-based per-agent/per-mission spend; header documents "in-memory only; daily resets on process restart"                |
-| `main` branch protection is disabled              | `gh api repos/slab1/mira/branches/main/protection` | **Unverified** — HTTP 403, token lacks scope. Must be checked with a properly scoped credential before relying on it.                      |
+| Claim                                             | Method                                                                | Status                                   | Notes                                                                                                                                                             |
+| ------------------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `benchmark.ts` passes when tracker/stats absent   | Read `benchmark.ts:12-19`                                             | **Runtime-integrated** (fail-closed)     | Now returns `BLOCKED` when no measurement source; benchmark stage blocks without evidence                                                                         |
+| `canary.ts` passes when no tracker                | Read `canary.ts:11-17`                                                | **Runtime-integrated** (fail-closed)     | Now returns `BLOCKED` when no tracker, no variant, no SLO, or insufficient samples                                                                                |
+| Default governance wiring injects no tracker      | Read `governance/index.ts:69,73`                                      | **Runtime-integrated**                   | `learning/index.ts` now wires `CanaryRunner` with `workspace`, `router`, `executesCandidate: true` and `TrackerMeasurementSource`                                 |
+| Sandbox disabled by default                       | Read `isolation.ts:41`                                                | **Implemented**                          | Profiles exist (`trusted-local`, `restricted`, `isolated-experiment`, `production`); default still `trusted-local` — **Unverified** for autonomous enforcement    |
+| Spend counters are in-memory and reset on restart | Read `resources.ts:57-61`                                             | **Runtime-integrated** (durable ledger)  | `resources.ts` delegates to durable ledger when DB available; `settleReservation()` / `releaseReservation()` exist — **Unverified** full request lifecycle wiring |
+| `main` branch protection is disabled              | `gh api repos/slab1/mira/branches/main/protection`                    | **Unverified**                           | P0 from cross-check — GitHub reports `protected: false`, rulesets empty                                                                                           |
+| Mission budget enforcement in orchestrator        | Read `orchestrate.ts`, `mission-budget.ts`                            | **Runtime-integrated**                   | `MissionBudget` wired with `admit()`, `admitRetries()`, `chargeToolCalls()`, ambient propagation; `missionBudget` in response                                     |
+| Approval route false-verified bug                 | Read `evolution.ts:1295-1350`, `approval.ts`                          | **Runtime-integrated**                   | Fixed: ledger only updated when `approved===true && authoritative!==false`; `proposalAuthor()` uses immutable `createdBy`                                         |
+| Candidate governance end-to-end                   | Read `learning/index.ts`, `canary.ts`, `measurement.ts`, `variant.ts` | **Runtime-integrated**                   | Canary + measurement + variant workspace + attribution middleware wired                                                                                           |
+| Rollback verification                             | Read `rollback.ts`, `evolution.ts:1495-1510`                          | **Runtime-integrated** (optional verify) | Unified rollback with `RollbackResult`, config hash, optional post-rollback build/health/regression verification                                                  |
 
-Not re-verified: every acceptance test, every scale-test figure, and the behavioural claims
-about memory, orchestration bounds, tenant isolation, and release governance. Those remain
-as stated in the original review.
+Not re-verified: every acceptance test, every scale-test figure, and the behavioural claims about memory, orchestration bounds, tenant isolation, and release governance. Those remain as stated in the original review.
 
 ## 17. Final recommendation
 

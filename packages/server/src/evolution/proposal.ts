@@ -44,6 +44,12 @@ export interface ImprovementProposal {
   sessionID?: string
   createdAt: number
   /**
+   * Immutable creator/origin identity — set once at proposal creation.
+   * Used by the approval gate to enforce independent approval (no self-approval).
+   * Source: sessionID, authenticated operator, or 'system' for autonomous proposals.
+   */
+  createdBy: string
+  /**
    * Co-emitted rollback plan (P1.3): how this change is reverted if wrong.
    * Present on every proposal so the unified modification gate's rollback
    * check is satisfiable, and so acceptance criteria include reversibility.
@@ -127,6 +133,9 @@ export function propose(diagnosis: Diagnosis): ImprovementProposal {
   const risk = riskFor(diagnosis)
   const priority = priorityFor(risk, diagnosis)
   const id = `prop_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+  // Immutable creator identity — sessionID if available, else 'system'
+  // This field is set once and never changed; used for self-approval prevention
+  const createdBy = diagnosis.sessionID ? `session:${diagnosis.sessionID}` : 'system'
   return {
     id,
     title: titleFor(diagnosis),
@@ -140,6 +149,7 @@ export function propose(diagnosis: Diagnosis): ImprovementProposal {
     confidence: diagnosis.confidence,
     sessionID: diagnosis.sessionID,
     createdAt: Date.now(),
+    createdBy,
     rollbackPlan: rollbackPlanFor(diagnosis, risk),
   }
 }

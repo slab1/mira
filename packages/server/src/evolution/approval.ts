@@ -153,11 +153,15 @@ export function createSqliteApprovalStore(db: MiraDB): ApprovalStore {
 /** Whoever produced the proposal — used to forbid self-approval. */
 function proposalAuthor(proposal: ImprovementProposal): string | undefined {
   const p = proposal as unknown as {
+    createdBy?: unknown
     author?: unknown
     by?: unknown
     agent?: unknown
     painPointId?: unknown
   }
+  // Prefer the immutable createdBy field (set at proposal creation)
+  if (typeof p.createdBy === 'string' && p.createdBy.length > 0) return p.createdBy
+  // Fallback to legacy fields for backward compatibility
   for (const v of [p.author, p.by, p.agent]) {
     if (typeof v === 'string' && v.length > 0) return v
   }

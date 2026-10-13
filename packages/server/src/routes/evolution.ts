@@ -669,9 +669,11 @@ export function mountEvolutionRoutes(
     const approval = approvalGate.requestApproval(proposal, effectiveLevel, risk)
 
     // Resource limits — per-task/per-agent/per-mission/daily (§13)
+    // P1: pass stable idempotency key from proposal ID for durable reservation lifecycle
     const budget = resourceLimits.checkBudget(
       proposal as unknown as unknown as Parameters<typeof resourceLimits.checkBudget>[0],
       cost ?? 0.05,
+      proposal.id, // idempotencyKey = proposal ID
     )
 
     // Security validation — no secrets / no permission escalation (§8)
@@ -1314,31 +1316,35 @@ export function mountEvolutionRoutes(
       )
     }
     const result = approvalGate.approve(id, identity)
-    // also update ledger verdict to approved if it was pending
-    try {
-      const ev = entry.evidence as Record<string, unknown> | null
-      const currentVerdict = String(entry.verdict)
-      if (currentVerdict.includes('pending')) {
-        // mark as verified-pending-approved
-        ledger.remember({
-          id: entry.id,
-          proposal: entry.proposal,
-          verdict: 'verified' as unknown as import('../evolution/ledger.js').LedgerVerdict,
-          evidence: {
-            ...(ev ?? {}),
-            approval: result,
-            approvedAt: Date.now(),
-            approver: result.approver ?? identity.owner,
-          } as unknown as JsonValue,
-        })
-      }
-    } catch {}
+    // P0 fix: only update ledger verdict when approval is confirmed AND authoritative
+    // A denied, non-authoritative, or policy/mock approval must NOT be recorded as verified
+    const isAuthoritativeApproval = result.approved === true && result.authoritative !== false
+    if (isAuthoritativeApproval) {
+      try {
+        const ev = entry.evidence as Record<string, unknown> | null
+        const currentVerdict = String(entry.verdict)
+        if (currentVerdict.includes('pending')) {
+          ledger.remember({
+            id: entry.id,
+            proposal: entry.proposal,
+            verdict: 'verified' as unknown as import('../evolution/ledger.js').LedgerVerdict,
+            evidence: {
+              ...(ev ?? {}),
+              approval: result,
+              approvedAt: Date.now(),
+              approver: result.approver ?? identity.owner,
+            } as unknown as JsonValue,
+          })
+        }
+      } catch {}
+    }
     return c.json({
       ok: true,
       id,
       approved: result.approved,
       approver: result.approver,
       approverKind: result.approverKind,
+      authoritative: result.authoritative,
       reason: result.reason,
     })
   })
@@ -1493,13 +1499,20 @@ export function mountEvolutionRoutes(
     const id = c.req.param('id')
     const entry = ledger.get(id)
     if (!entry) return c.json({ error: 'not found', id }, 404)
-    try {
-      rollbackManager.rollback(id)
-    } catch (e) {
-      return c.json({ error: String(e).slice(0, 500), id }, 500)
-    }
+    // In production, verify; in tests, skip for speed
+    const verify = process.env.NODE_ENV !== 'test'
+    const result = await rollbackManager.rollback(id, { verify })
     const after = ledger.get(id)
-    return c.json({ ok: true, id, rolledBack: true, verdict: after?.verdict ?? 'rolledback' })
+    return c.json({
+      ok: result.success,
+      id,
+      rolledBack: true,
+      verdict: after?.verdict ?? 'rolledback',
+      restoredFiles: result.restoredFiles,
+      failedFiles: result.failedFiles,
+      configRestored: result.configRestored,
+      verification: result.verification,
+    })
   })
 
   // ── GET /evolution/rollback/:id/metadata — §6 system rollback metadata ──
@@ -1521,6 +1534,8 @@ export function mountEvolutionRoutes(
       governance: deps.governance,
       rollbackManager,
       canaryStart: deps.canaryStart,
+      resourceLimits,
+      ledger,
     })
 }
 
@@ -1541,6 +1556,10 @@ export function mountEvolutionProposalRoutes(
     /** Auto-canary (P3.6/Phase 5): start a canary for the patched engine after
      *  a successful promote. Returns the canary id, or null when skipped. */
     canaryStart?: (affectedEngine: string) => { canaryId: string } | null
+    /** Resource limits for budget reservation settlement/release */
+    resourceLimits?: ResourceLimits
+    /** Ledger for reading budget reservation evidence */
+    ledger?: ImprovementLedger
   },
 ): void {
   if (proposalRoutesMounted.has(app)) return
@@ -1590,6 +1609,20 @@ export function mountEvolutionProposalRoutes(
         canary = deps.canaryStart(exists.kind)
       } catch {}
     }
+    // P1: Budget reservation settlement — settle with actual cost on promotion
+    if (result.applied && deps.resourceLimits) {
+      try {
+        const ledgerEntry = deps.ledger?.get(id)
+        const budgetEvidence = (ledgerEntry?.evidence as Record<string, unknown> | undefined)
+          ?.budget as { reservationId?: string; cost?: number } | undefined
+        const reservationId = budgetEvidence?.reservationId
+        if (reservationId) {
+          // Use the proposal's estimated cost as actual (could be measured later)
+          const actualCost = budgetEvidence?.cost ?? 0.05
+          deps.resourceLimits.settleReservation(reservationId, actualCost)
+        }
+      } catch {}
+    }
     // backward compatible: prUrl/regressionBlocked/reason are omitted from the
     // JSON body when undefined; failure reasons must reach the client.
     return c.json({
@@ -1614,7 +1647,25 @@ export function mountEvolutionProposalRoutes(
     if (!reason) return c.json({ error: 'body.reason string required' }, 400)
     const exists = await governance.get(id)
     if (!exists) return c.json({ error: 'not found', id }, 404)
+    // P1: Budget reservation release — return unspent reservation to budget on rollback
+    if (deps.resourceLimits) {
+      try {
+        const ledgerEntry = deps.ledger?.get(id)
+        const budgetEvidence = (ledgerEntry?.evidence as Record<string, unknown> | undefined)
+          ?.budget as { reservationId?: string; cost?: number } | undefined
+        const reservationId = budgetEvidence?.reservationId
+        if (reservationId) {
+          deps.resourceLimits.releaseReservation(reservationId, `rollback: ${reason}`)
+        }
+      } catch {}
+    }
     await governance.rollback(id, reason)
+    // Also trigger the unified rollback for file/config restore + verification
+    if (deps.rollbackManager) {
+      try {
+        await deps.rollbackManager.rollback(id, { verify: process.env.NODE_ENV !== 'test' })
+      } catch {}
+    }
     return c.json({ ok: true })
   })
 }

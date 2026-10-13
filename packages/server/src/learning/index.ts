@@ -45,8 +45,13 @@ import {
   TrackerMeasurementSource,
   type MeasurementSource,
 } from '../patching/governance/measurement.js'
+import { VariantWorkspace } from '../patching/governance/variant.js'
+import { getVariantRouter } from '../patching/governance/traffic.js'
+import { CanaryRunner } from '../patching/governance/canary.js'
 import type { LatencyTracker } from '../patching/latency.js'
 import { RollbackManager } from '../evolution/rollback.js'
+import { ResourceLimits } from '../evolution/resources.js'
+import { ImprovementLedger } from '../evolution/ledger.js'
 import { createAgentMetrics } from '../agents/metrics.js'
 import { createMemoryQualityTracker } from './quality.js'
 import {
@@ -130,14 +135,28 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
   setSharedGoals(goals)
   const policyEngine = createPolicyEngine({ db: deps.db, bus: deps.bus })
 
+  // Create shared dependencies for governance pipeline
+  const variantWorkspace = new VariantWorkspace({ rootDir: deps.rootDir ?? process.cwd() })
+  const variantRouter = getVariantRouter()
+  const latencyTracker = deps.measurementTracker?.()
+
   const governance = createGovernanceGate({
     db: deps.db,
     bus: deps.bus,
     rootDir: deps.rootDir ?? process.cwd(),
-    measurements: deps.measurementTracker
+    // Wire CanaryRunner with workspace, router, and candidate execution enabled
+    canary: latencyTracker
+      ? new CanaryRunner(latencyTracker, {
+          workspace: variantWorkspace,
+          router: variantRouter,
+          executesCandidate: true,
+        })
+      : undefined,
+    // Wire measurement source with the latency tracker for benchmark evidence
+    measurements: latencyTracker
       ? ({
           measure: async (proposal: Parameters<MeasurementSource['measure']>[0]) => {
-            const tracker = deps.measurementTracker?.()
+            const tracker = latencyTracker
             if (!tracker) return null
             return new TrackerMeasurementSource({ tracker }).measure(proposal)
           },
@@ -284,10 +303,20 @@ export function mountLearningRoutes(
   // Governance proposal routes (/evolution/proposals*) — wired to the
   // GovernanceGate created in createLearningSystem(). Idempotent: no-ops if
   // mountEvolutionRoutes already mounted them on this app.
+  if (!system.db || !system.bus) {
+    console.warn(
+      '[learning] mountLearningRoutes: db or bus not available, proposal routes may not work fully',
+    )
+    return
+  }
+  const resourceLimits = new ResourceLimits({ bus: system.bus, db: system.db })
+  const ledger = new ImprovementLedger(system.db, system.bus)
   mountEvolutionProposalRoutes(app, {
     governance: system.governance,
     // promote-time rollback points: exact snapshot linkage by patchId
     rollbackManager: new RollbackManager({ db: system.db, bus: system.bus }),
+    resourceLimits,
+    ledger,
   })
 
   // Workspace items — persistent workspace awareness (issues, decisions, roadmap, tech-debt).

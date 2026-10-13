@@ -96,6 +96,8 @@ jobs:
     environment:
       name: production
       url: ${{ vars.DEPLOY_URL }}
+    outputs:
+      deployed-sha: ${{ steps.deploy-record.outputs.deployed-sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Vars/secrets reach the script through the environment, never through
@@ -131,7 +133,7 @@ jobs:
           echo "Deploying $IMAGE to $DEPLOY_URL"
           # Example: trigger deploy hook / helm upgrade / fly deploy
           # Read the URL from the environment, not ${{ vars.* }} — direct
-          # interpolation into `run:` (line above) is the template-injection
+          # interpolation into `run:` is the template-injection
           # surface the comment warns about, and a hook URL with a quote in it
           # would otherwise corrupt this script.
           if [ -n "$DEPLOY_HOOK_URL" ]; then
@@ -143,7 +145,10 @@ jobs:
           else
             echo "::notice::DEPLOY_HOOK_URL not set — skipping external deploy"
           fi
-      - name: Health check
+          # Record deployed SHA for audit trail
+          echo "DEPLOYED_SHA=${{ github.sha }}" >> $GITHUB_ENV
+          echo "DEPLOYED_IMAGE=$IMAGE" >> $GITHUB_ENV
+      - name: Health check (hard gate)
         if: vars.DEPLOY_URL != ''
         env:
           DEPLOY_URL: ${{ vars.DEPLOY_URL }}
@@ -155,7 +160,15 @@ jobs:
             fi
             sleep 10
           done
-          echo "::warning::Health check did not pass"
+          echo "::error::Health check failed after 5 attempts — deployment unhealthy"
+          exit 1
+      - name: Record deployed SHA
+        if: success()
+        run: |
+          echo "deployed-sha=${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "Deployed SHA: ${{ github.sha }}"
+          echo "Deployed image: ${{ env.DEPLOYED_IMAGE }}"
+        id: deploy-record
 
   release:
     name: release
