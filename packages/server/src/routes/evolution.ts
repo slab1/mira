@@ -61,6 +61,12 @@ export interface EvolutionRouteDeps {
   /** Governance gate from learning/index.ts — when set, the
    *  /evolution/proposals* routes are mounted on this app too. */
   governance?: GovernanceGateLike
+  /**
+   * Resolves the authenticated owner from the caller's bearer token. Approval
+   * identity comes from this, NOT from a body field - section 5 requires a
+   * real, authenticated human decision.
+   */
+  resolveOwner?: (token: string) => string | undefined
   /** Auto-canary: forwarded to the proposal-routes promote handler */
   canaryStart?: (affectedEngine: string) => { canaryId: string } | null
 }
@@ -445,16 +451,24 @@ export function mountEvolutionRoutes(
     const id = c.req.param('id')
     const entry = ledger.get(id)
     if (!entry) return c.json({ error: 'not found', id }, 404)
-    let body: { approver?: unknown } | null = null
-    try {
-      body = (await c.req.json()) as unknown as unknown as typeof body
-    } catch {
-      body = null
+    // Identity comes from the caller's credentials. A body field named
+    // `approver` used to be trusted verbatim, so any caller could record an
+    // approval "by" whoever they liked.
+    const bearer = c.req.header('authorization')?.startsWith('Bearer ')
+      ? c.req.header('authorization')!.slice(7)
+      : ''
+    const owner = deps.resolveOwner?.(bearer)
+    const identity = {
+      owner: owner ?? 'unauthenticated',
+      authenticated: Boolean(owner),
     }
-    const approver = (body as unknown as { approver?: unknown } | null)?.approver
-      ? String((body as unknown as { approver?: unknown }).approver).slice(0, 100)
-      : 'human'
-    const result = approvalGate.approve(id, approver)
+    if (!identity.authenticated) {
+      return c.json(
+        { error: 'approval requires an authenticated caller', approved: false, id },
+        401,
+      )
+    }
+    const result = approvalGate.approve(id, identity)
     // also update ledger verdict to approved if it was pending
     try {
       const ev = entry.evidence as Record<string, unknown> | null
@@ -469,7 +483,7 @@ export function mountEvolutionRoutes(
             ...(ev ?? {}),
             approval: result,
             approvedAt: Date.now(),
-            approver,
+            approver: result.approver ?? identity.owner,
           } as unknown as JsonValue,
         })
       }

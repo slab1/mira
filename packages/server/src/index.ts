@@ -878,6 +878,9 @@ async function main() {
       bus,
       ledger: evolutionLedger,
       observer: evolutionObserver,
+      // Approval identity is resolved from the caller's credentials, so a body
+      // field cannot claim to be an approver (section 5).
+      resolveOwner,
       canaryStart: (affectedEngine: string) => canaryStartAfterPromote?.(affectedEngine) ?? null,
     })
 

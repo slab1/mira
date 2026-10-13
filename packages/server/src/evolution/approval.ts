@@ -11,7 +11,7 @@
  * | 3 | Events | Implemented | emits evolution.approval BusEvent |
  * | 4 | Configuration | Implemented | no config; MIRA_NO_AUTOPROVISION respected |
  * | 5 | Tests | Implemented | evolution/*.test.ts approval |
- * | 6 | Security boundaries | Implemented | high-risk fail-closed until POST /evolution/approve/:id |
+ * | 6 | Security boundaries | Implemented | fail-closed: unknown id denies, approver must be authenticated and must not be the proposal's own author, mock approvals are non-authoritative |
  * | 7 | Operational procedures | Implemented | approve via POST /evolution/approve/:id |
  * | 8 | Migration strategy | Implemented | additive, in-memory pending store |
  * | 9 | Rollback strategy | Implemented | clear pending, no DB |
@@ -40,16 +40,55 @@ export interface ApprovalResult {
   approver?: string
   reason?: string
   pending?: boolean
+  /**
+   * Whether this decision may authorize a high-risk change. A mock or
+   * unauthenticated approval is never authoritative, however `approved` reads.
+   */
+  authoritative?: boolean
+}
+
+/**
+ * Identity of the decision-maker. §5 requires "a real, authenticated human
+ * decision" and forbids a mock being represented as one.
+ */
+export interface ApproverIdentity {
+  /** The authenticated owner resolved from the caller's credentials. */
+  owner: string
+  /** True only when `owner` came from verified credentials. */
+  authenticated: boolean
+}
+
+/** Whoever produced the proposal — used to forbid self-approval. */
+function proposalAuthor(proposal: ImprovementProposal): string | undefined {
+  const p = proposal as unknown as {
+    author?: unknown
+    by?: unknown
+    agent?: unknown
+    painPointId?: unknown
+  }
+  for (const v of [p.author, p.by, p.agent]) {
+    if (typeof v === 'string' && v.length > 0) return v
+  }
+  return undefined
 }
 
 export class ApprovalGate {
   private bus?: Bus
   private pending = new Map<string, ApprovalRequest>()
   private rootDir?: string
+  private allowMockApproval: boolean
+  /** Completed decisions, so a replay returns the recorded answer. */
+  private decided = new Map<string, ApprovalResult>()
 
-  constructor(opts?: { bus?: Bus; rootDir?: string }) {
+  /**
+   * @param allowMockApproval when true, medium-risk approvals may be
+   * auto-granted by a mock approver. OFF by default, and even then the result
+   * is marked `authoritative: false` so it cannot authorize a high-risk change.
+   */
+  constructor(opts?: { bus?: Bus; rootDir?: string; allowMockApproval?: boolean }) {
     this.bus = opts?.bus
     this.rootDir = opts?.rootDir
+    this.allowMockApproval = opts?.allowMockApproval ?? false
   }
 
   requestApproval(
@@ -73,9 +112,8 @@ export class ApprovalGate {
     // For mock human: low/medium auto-approved, high stays pending
     // But per requiresApproval, high already needs approval → we keep it pending to exercise POST /evolution/approve/:id
     // For medium at canary, also pending
-    const isHigh = r.level === 'high'
-    if (isHigh || (r.level === 'medium' && level >= AutonomyLevels.Canary)) {
-      // store pending, return not approved yet (caller should block verifier)
+    // High risk ALWAYS waits for a real human, whatever the mock setting.
+    if (r.level === 'high') {
       const req: ApprovalRequest = {
         id: proposal.id,
         level,
@@ -89,21 +127,89 @@ export class ApprovalGate {
       return {
         approved: false,
         pending: true,
-        reason: 'high-risk requires human approval (§18) — POST /evolution/approve/:id to approve',
+        reason: 'high-risk requires an authenticated human approval — POST /evolution/approve/:id',
       }
     }
 
-    // other cases that need approval but not high: mock human approves immediately (but still emits)
-    this.emit(proposal, level, r, 'approved', 'mock-human')
-    return { approved: true, approver: 'mock-human', reason: 'mock human approved (non-high)' }
+    // Medium risk at Canary or above: pending unless a mock is explicitly
+    // enabled. The mock result is marked non-authoritative so it can never be
+    // mistaken for a human decision on a high-risk change.
+    if (r.level === 'medium' && level >= AutonomyLevels.Canary) {
+      if (this.allowMockApproval) {
+        this.emit(proposal, level, r, 'approved', 'mock-human')
+        return {
+          approved: true,
+          approver: 'mock-human',
+          authoritative: false,
+          reason: 'mock human approved (medium risk) — not authoritative for high-risk changes',
+        }
+      }
+      const req: ApprovalRequest = {
+        id: proposal.id,
+        level,
+        risk: r,
+        proposal,
+        requestedAt: Date.now(),
+        status: 'pending',
+      }
+      this.pending.set(proposal.id, req)
+      this.emit(proposal, level, r, 'pending', undefined)
+      return {
+        approved: false,
+        pending: true,
+        reason: 'approval required — no mock approver is configured; POST /evolution/approve/:id',
+      }
+    }
+
+    // Reached when approval is required for a reason not covered above. Stay
+    // pending rather than inventing an approver.
+    const req: ApprovalRequest = {
+      id: proposal.id,
+      level,
+      risk: r,
+      proposal,
+      requestedAt: Date.now(),
+      status: 'pending',
+    }
+    this.pending.set(proposal.id, req)
+    this.emit(proposal, level, r, 'pending', undefined)
+    return {
+      approved: false,
+      pending: true,
+      reason: 'approval required — POST /evolution/approve/:id',
+    }
   }
 
-  approve(id: string, approver = 'human'): ApprovalResult {
+  approve(id: string, identity: ApproverIdentity): ApprovalResult {
+    const prior = this.decided.get(id)
+    if (prior) return { ...prior, reason: `${prior.reason ?? 'decided'} (recorded decision)` }
+
     const req = this.pending.get(id)
     if (!req) {
-      // idempotent: if not pending, treat as approved (ledger may have already)
-      return { approved: true, approver, reason: 'no pending — already approved or unknown id' }
+      return {
+        approved: false,
+        reason: `no pending approval request for ${id} — nothing to approve`,
+      }
     }
+
+    if (!identity?.authenticated) {
+      return {
+        approved: false,
+        pending: true,
+        reason: 'approval rejected: approver identity is not authenticated',
+      }
+    }
+
+    const approver = identity.owner
+    const author = proposalAuthor(req.proposal)
+    if (author && approver === author) {
+      return {
+        approved: false,
+        pending: true,
+        reason: `approval rejected: "${approver}" authored this proposal and may not approve it`,
+      }
+    }
+
     req.status = 'approved'
     req.approver = approver
     this.emit(req.proposal, req.level, req.risk, 'approved', approver)
@@ -121,10 +227,21 @@ export class ApprovalGate {
         this.rootDir,
       )
     } catch {}
-    return { approved: true, approver, reason: 'human approved' }
+    const result: ApprovalResult = {
+      approved: true,
+      approver,
+      authoritative: true,
+      reason: 'human approved',
+    }
+    this.decided.set(id, result)
+    return result
   }
 
-  deny(id: string, approver = 'human'): ApprovalResult {
+  deny(id: string, identity: ApproverIdentity): ApprovalResult {
+    if (!identity?.authenticated) {
+      return { approved: false, reason: 'denial rejected: approver identity is not authenticated' }
+    }
+    const approver = identity.owner
     const req = this.pending.get(id)
     if (!req) return { approved: false, approver, reason: 'no pending' }
     req.status = 'denied'
@@ -144,7 +261,9 @@ export class ApprovalGate {
         this.rootDir,
       )
     } catch {}
-    return { approved: false, approver, reason: 'denied by human' }
+    const result: ApprovalResult = { approved: false, approver, reason: 'denied by human' }
+    this.decided.set(id, result)
+    return result
   }
 
   isPending(id: string): boolean {
