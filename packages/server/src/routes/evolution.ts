@@ -37,7 +37,7 @@ import { evaluate, defaultBaseline, type BaselineMetrics } from '../evolution/ev
 import { ImprovementLedger } from '../evolution/ledger.js'
 import { RiskEngine } from '../evolution/risk.js'
 import { selectLevel, requiresApproval, AutonomyLevels } from '../evolution/autonomy.js'
-import { ApprovalGate } from '../evolution/approval.js'
+import { ApprovalGate, createSqliteApprovalStore } from '../evolution/approval.js'
 import { ResourceLimits } from '../evolution/resources.js'
 import { SecurityValidator } from '../evolution/security.js'
 import { RollbackManager } from '../evolution/rollback.js'
@@ -313,7 +313,18 @@ export function mountEvolutionRoutes(
   const ledger = deps.ledger ?? new ImprovementLedger(db, bus)
   const observer = deps.observer ?? new EvolutionObserver({ bus })
   const riskEngine = deps.riskEngine ?? new RiskEngine()
-  const approvalGate = deps.approvalGate ?? new ApprovalGate({ bus })
+  // §18 durability: the operator's pending approval queue must survive a
+  // restart — silently forgetting what a human was asked to approve is both
+  // an operational stall and an audit hole. Fail-soft to in-memory.
+  const approvalGate =
+    deps.approvalGate ??
+    (() => {
+      try {
+        return new ApprovalGate({ bus, store: createSqliteApprovalStore(db) })
+      } catch {
+        return new ApprovalGate({ bus })
+      }
+    })()
   const resourceLimits = deps.resourceLimits ?? new ResourceLimits({ bus, db })
   const securityValidator = deps.securityValidator ?? new SecurityValidator({ bus })
   const rollbackManager = deps.rollbackManager ?? new RollbackManager({ db, bus, ledger })

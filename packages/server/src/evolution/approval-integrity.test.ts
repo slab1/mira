@@ -171,3 +171,123 @@ describe('§5: a mock approval is never presented as a human one', () => {
     expect(r.pending).toBe(true)
   })
 })
+
+describe('human operator is the approval authority', () => {
+  test('authenticated human approval is marked approverKind "human-operator"', () => {
+    const g = new ApprovalGate()
+    g.requestApproval(proposal(), 3, HIGH)
+    const r = g.approve(proposal().id, { owner: 'human', authenticated: true })
+    expect(r.approved).toBe(true)
+    expect(r.authoritative).toBe(true)
+    expect(r.approverKind).toBe('human-operator')
+    expect(r.reason).toContain('human operator')
+  })
+
+  test('MIRA_OPERATORS: only designated operators may approve (fail-closed)', () => {
+    const g = new ApprovalGate({ operators: ['the-operator'] })
+    g.requestApproval(proposal(), 3, HIGH)
+    // authenticated but not an operator → refused, stays pending
+    const r = g.approve(proposal().id, { owner: 'random-human', authenticated: true })
+    expect(r.approved).toBe(false)
+    expect(r.pending).toBe(true)
+    expect(r.reason).toContain('not a designated operator')
+    // the designated operator succeeds
+    const r2 = g.approve(proposal().id, { owner: 'the-operator', authenticated: true })
+    expect(r2.approved).toBe(true)
+    expect(r2.approverKind).toBe('human-operator')
+  })
+
+  test('MIRA_OPERATORS applies to deny() as well', () => {
+    const g = new ApprovalGate({ operators: ['the-operator'] })
+    g.requestApproval(proposal(), 3, HIGH)
+    const r = g.deny(proposal().id, { owner: 'random-human', authenticated: true })
+    expect(r.approved).toBe(false)
+    expect(r.reason).toContain('not a designated operator')
+    const r2 = g.deny(proposal().id, { owner: 'the-operator', authenticated: true })
+    expect(r2.approved).toBe(false)
+    expect(r2.approverKind).toBe('human-operator')
+    expect(r2.reason).toContain('denied by human operator')
+  })
+
+  test('policy and mock decisions are labelled, never mistaken for operators', () => {
+    const g = new ApprovalGate()
+    const auto = g.requestApproval(proposal(), 0, { level: 'low', score: 0.1, reasons: [] })
+    expect(auto.approverKind).toBe('policy')
+    const g2 = new ApprovalGate({ allowMockApproval: true })
+    const mock = g2.requestApproval(proposal(), 4, { level: 'medium', score: 0.5, reasons: [] })
+    if (mock.approver === 'mock-human') expect(mock.approverKind).toBe('mock')
+  })
+})
+
+describe('durable approval state — operator queue survives restart', () => {
+  const fakeStore = () => {
+    const pending = new Map<string, unknown>()
+    const decided = new Map<string, unknown>()
+    return {
+      pending,
+      decided,
+      loadPending: () => [...pending.values()] as never[],
+      loadDecided: () => [...decided.entries()].map(([id, result]) => ({ id, result })) as never[],
+      savePending: (req: { id: string }) => pending.set(req.id, JSON.parse(JSON.stringify(req))),
+      deletePending: (id: string) => pending.delete(id),
+      saveDecided: (id: string, result: unknown) =>
+        decided.set(id, JSON.parse(JSON.stringify(result))),
+    }
+  }
+
+  test('pending request survives a restart; approve on the new gate works', () => {
+    const store = fakeStore()
+    const g1 = new ApprovalGate({ store })
+    const pr = proposal()
+    g1.requestApproval(pr, 3, HIGH)
+    expect(store.pending.size).toBe(1)
+
+    // "restart": brand-new gate over the same store
+    const g2 = new ApprovalGate({ store })
+    expect(g2.isPending(pr.id)).toBe(true)
+    const r = g2.approve(pr.id, { owner: 'human', authenticated: true })
+    expect(r.approved).toBe(true)
+    expect(r.approverKind).toBe('human-operator')
+    // decided replay is durable too
+    expect(g2.approve(pr.id, { owner: 'human', authenticated: true }).reason).toContain(
+      'recorded decision',
+    )
+  })
+
+  test('decided replay survives a restart', () => {
+    const store = fakeStore()
+    const g1 = new ApprovalGate({ store })
+    const pr = proposal()
+    g1.requestApproval(pr, 3, HIGH)
+    g1.approve(pr.id, { owner: 'human', authenticated: true })
+    const g2 = new ApprovalGate({ store })
+    const replay = g2.approve(pr.id, { owner: 'human', authenticated: true })
+    expect(replay.approved).toBe(true)
+    expect(replay.reason).toContain('recorded decision')
+  })
+
+  test('store failures never block requestApproval/approve (fail-soft)', () => {
+    const throwing = {
+      loadPending: () => {
+        throw new Error('db gone')
+      },
+      loadDecided: () => {
+        throw new Error('db gone')
+      },
+      savePending: () => {
+        throw new Error('db gone')
+      },
+      deletePending: () => {
+        throw new Error('db gone')
+      },
+      saveDecided: () => {
+        throw new Error('db gone')
+      },
+    }
+    const g = new ApprovalGate({ store: throwing })
+    const pr = g.requestApproval(proposal(), 3, HIGH)
+    expect(pr.pending).toBe(true)
+    const r = g.approve(proposal().id, { owner: 'human', authenticated: true })
+    expect(r.approved).toBe(true) // in-memory still works
+  })
+})

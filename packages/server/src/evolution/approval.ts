@@ -12,15 +12,15 @@
  * | # | Item | Status | Evidence |
  * |---|------|--------|----------|
  * | 1 | Implementation path | Implemented | packages/server/src/evolution/approval.ts |
- * | 2 | Public interfaces | Implemented | ApprovalGate.requestApproval(proposal, level): {approved, approver?, pending?, authoritative?, policyAuto?} + approve/deny(identity) |
+ * | 2 | Public interfaces | Implemented | ApprovalGate.requestApproval(proposal, level): {approved, approver?, pending?, authoritative?, policyAuto?, approverKind?} + approve/deny(identity) |
  * | 3 | Events | Implemented | emits evolution.approval BusEvent |
- * | 4 | Configuration | Implemented | MIRA_APPROVAL_AUTO_LOW (default on = §18 Level 5; '0' → explicit approval for low risk too); MIRA_NO_AUTOPROVISION respected |
- * | 5 | Tests | Implemented | evolution/*.test.ts approval + phase2 low-risk policy-off test |
- * | 6 | Security boundaries | Implemented | fail-closed: unknown id denies, approver must be authenticated and must not be the proposal's own author, mock approvals are non-authoritative |
+ * | 4 | Configuration | Implemented | MIRA_APPROVAL_AUTO_LOW (default on = §18 Level 5; '0' → explicit approval for low risk too); MIRA_OPERATORS (comma-separated designated human operators — when set, ONLY they may approve/deny; unset → any authenticated non-author human is the operator, single-operator deployments); MIRA_NO_AUTOPROVISION respected |
+ * | 5 | Tests | Implemented | evolution/*.test.ts approval + phase2 low-risk policy-off test + operator restriction + restart survival |
+ * | 6 | Security boundaries | Implemented | fail-closed: unknown id denies, approver must be authenticated and must not be the proposal's own author, only designated operators approve when configured, mock approvals are non-authoritative |
  * | 7 | Operational procedures | Implemented | approve via POST /evolution/approve/:id |
- * | 8 | Migration strategy | Implemented | additive, in-memory pending store; default unchanged for existing callers |
- * | 9 | Rollback strategy | Implemented | clear pending, no DB |
- * | 10 | Known limitations | Implemented | no human UI yet (approve/deny via API); real human UI Target Phase 6 |
+ * | 8 | Migration strategy | Implemented | additive; durable store optional (SQLite evolution_approvals, write-through) — the operator's pending queue survives restarts |
+ * | 9 | Rollback strategy | Implemented | clear pending, drop table; in-memory mode unchanged without a store |
+ * | 10 | Known limitations | Implemented | no human UI yet (operator approves via API); two-person rule for high risk is Target; real human UI Target Phase 6 |
  */
 
 import type { Bus } from '../bus/index.js'
@@ -29,6 +29,7 @@ import type { ImprovementProposal } from './proposal.js'
 import type { RiskAssessment } from './risk.js'
 import { requiresApproval, AutonomyLevels } from './autonomy.js'
 import { appendDecision } from '../learning/ledger.js'
+import type { MiraDB } from '../storage/db.js'
 
 export interface ApprovalRequest {
   id: string // proposal.id
@@ -52,6 +53,8 @@ export interface ApprovalResult {
   authoritative?: boolean
   /** True when approved by §18 Level 5 low-risk policy rather than a human. */
   policyAuto?: boolean
+  /** Who/what made the decision: a designated human operator, policy, or mock. */
+  approverKind?: 'human-operator' | 'policy' | 'mock'
 }
 
 /**
@@ -63,6 +66,74 @@ export interface ApproverIdentity {
   owner: string
   /** True only when `owner` came from verified credentials. */
   authenticated: boolean
+}
+
+/**
+ * Durable approval state — the operator's pending queue must survive a
+ * restart: silently forgetting what a human was asked to approve is both an
+ * operational stall and an audit hole. Fail-soft at call sites.
+ */
+export interface ApprovalStore {
+  loadPending(): ApprovalRequest[]
+  loadDecided(): Array<{ id: string; result: ApprovalResult }>
+  savePending(req: ApprovalRequest): void
+  deletePending(id: string): void
+  saveDecided(id: string, result: ApprovalResult): void
+}
+
+/** SQLite-backed store — write-through, fail-soft at the call sites. */
+export function createSqliteApprovalStore(db: MiraDB): ApprovalStore {
+  const sqlite = db.sqlite
+  if (!sqlite) throw new Error('no sqlite handle')
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS evolution_approvals (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS evolution_approvals_kind_idx ON evolution_approvals(kind);
+  `)
+  const upsert = sqlite.prepare(
+    `INSERT OR REPLACE INTO evolution_approvals (id, kind, payload, updated_at) VALUES (?, ?, ?, ?)`,
+  )
+  return {
+    loadPending() {
+      try {
+        const rows = sqlite
+          .prepare(`SELECT payload FROM evolution_approvals WHERE kind = 'pending'`)
+          .all() as Array<{ payload: string }>
+        return rows.map((r) => JSON.parse(r.payload) as ApprovalRequest)
+      } catch {
+        return []
+      }
+    },
+    loadDecided() {
+      try {
+        const rows = sqlite
+          .prepare(`SELECT id, payload FROM evolution_approvals WHERE kind = 'decided'`)
+          .all() as Array<{ id: string; payload: string }>
+        return rows.map((r) => ({ id: r.id, result: JSON.parse(r.payload) as ApprovalResult }))
+      } catch {
+        return []
+      }
+    },
+    savePending(req) {
+      try {
+        upsert.run(req.id, 'pending', JSON.stringify(req), Date.now())
+      } catch {}
+    },
+    deletePending(id) {
+      try {
+        sqlite.prepare(`DELETE FROM evolution_approvals WHERE id = ? AND kind = 'pending'`).run(id)
+      } catch {}
+    },
+    saveDecided(id, result) {
+      try {
+        upsert.run(id, 'decided', JSON.stringify(result), Date.now())
+      } catch {}
+    },
+  }
 }
 
 /** Whoever produced the proposal — used to forbid self-approval. */
@@ -85,8 +156,11 @@ export class ApprovalGate {
   private rootDir?: string
   private allowMockApproval: boolean
   private autoApproveLowRisk: boolean
+  /** Designated human operators — when set, ONLY they may approve/deny. */
+  private operators: Set<string> | null
   /** Completed decisions, so a replay returns the recorded answer. */
   private decided = new Map<string, ApprovalResult>()
+  private store?: ApprovalStore
 
   /**
    * @param allowMockApproval when true, medium-risk approvals may be
@@ -95,17 +169,40 @@ export class ApprovalGate {
    * @param autoApproveLowRisk §18 Level 5 policy: low-risk improvements may be
    * promoted autonomously. Default reads MIRA_APPROVAL_AUTO_LOW (on unless
    * '0'); when OFF, even low risk waits for an authenticated human approval.
+   * @param operators designated human operators. Default reads MIRA_OPERATORS
+   * (comma-separated). When configured, ONLY listed operators may approve/deny
+   * (fail-closed for everyone else); when unset, any authenticated human who
+   * is not the proposal author is the operator — single-operator deployments.
+   * @param store durable approval state (pending queue + decided replay).
    */
   constructor(opts?: {
     bus?: Bus
     rootDir?: string
     allowMockApproval?: boolean
     autoApproveLowRisk?: boolean
+    operators?: string[] | null
+    store?: ApprovalStore
   }) {
     this.bus = opts?.bus
     this.rootDir = opts?.rootDir
     this.allowMockApproval = opts?.allowMockApproval ?? false
     this.autoApproveLowRisk = opts?.autoApproveLowRisk ?? process.env.MIRA_APPROVAL_AUTO_LOW !== '0'
+    const opRaw =
+      opts?.operators !== undefined
+        ? opts.operators
+        : process.env.MIRA_OPERATORS
+          ? process.env.MIRA_OPERATORS.split(',')
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : null
+    this.operators = opRaw && opRaw.length > 0 ? new Set(opRaw) : null
+    if (opts?.store) {
+      this.store = opts.store
+      try {
+        for (const req of this.store.loadPending()) this.pending.set(req.id, req)
+        for (const { id, result } of this.store.loadDecided()) this.decided.set(id, result)
+      } catch {}
+    }
   }
 
   requestApproval(
@@ -134,6 +231,9 @@ export class ApprovalGate {
           status: 'pending',
         }
         this.pending.set(proposal.id, req)
+        try {
+          this.store?.savePending(req)
+        } catch {}
         this.emit(proposal, level, r, 'pending', undefined)
         return {
           approved: false,
@@ -151,6 +251,7 @@ export class ApprovalGate {
         // `policyAuto` marks that it proceeded via §18 Level 5 low-risk policy.
         authoritative: false,
         policyAuto: true,
+        approverKind: 'policy',
         reason: 'low-risk auto-approved per §18 Level 5 (MIRA_APPROVAL_AUTO_LOW unset/1)',
       }
     }
@@ -169,6 +270,9 @@ export class ApprovalGate {
         status: 'pending',
       }
       this.pending.set(proposal.id, req)
+      try {
+        this.store?.savePending(req)
+      } catch {}
       this.emit(proposal, level, r, 'pending', undefined)
       return {
         approved: false,
@@ -187,6 +291,7 @@ export class ApprovalGate {
           approved: true,
           approver: 'mock-human',
           authoritative: false,
+          approverKind: 'mock',
           reason: 'mock human approved (medium risk) — not authoritative for high-risk changes',
         }
       }
@@ -199,6 +304,9 @@ export class ApprovalGate {
         status: 'pending',
       }
       this.pending.set(proposal.id, req)
+      try {
+        this.store?.savePending(req)
+      } catch {}
       this.emit(proposal, level, r, 'pending', undefined)
       return {
         approved: false,
@@ -218,6 +326,9 @@ export class ApprovalGate {
       status: 'pending',
     }
     this.pending.set(proposal.id, req)
+    try {
+      this.store?.savePending(req)
+    } catch {}
     this.emit(proposal, level, r, 'pending', undefined)
     return {
       approved: false,
@@ -255,17 +366,30 @@ export class ApprovalGate {
         reason: `approval rejected: "${approver}" authored this proposal and may not approve it`,
       }
     }
+    // The operator is the approval authority: when designated operators are
+    // configured, only they may approve (fail-closed for everyone else).
+    if (this.operators && !this.operators.has(approver)) {
+      return {
+        approved: false,
+        pending: true,
+        reason: `approval rejected: "${approver}" is not a designated operator (MIRA_OPERATORS)`,
+      }
+    }
 
     req.status = 'approved'
     req.approver = approver
     this.emit(req.proposal, req.level, req.risk, 'approved', approver)
     this.pending.delete(id)
-    // Decision log — why approved, with risk evidence
+    try {
+      this.store?.deletePending(id)
+    } catch {}
+    // Decision log — why approved, with risk evidence; the human operator is
+    // the authority of record.
     try {
       appendDecision(
         {
           decision: 'approval:approved',
-          context: `Proposal ${id} (level ${req.level}) approved by ${approver}`,
+          context: `Proposal ${id} (level ${req.level}) approved by human operator ${approver}`,
           by: approver,
           evidence: req.risk.reasons ?? [],
           alternatives: ['deny', 'keep pending'],
@@ -277,9 +401,13 @@ export class ApprovalGate {
       approved: true,
       approver,
       authoritative: true,
-      reason: 'human approved',
+      approverKind: 'human-operator',
+      reason: 'approved by human operator',
     }
     this.decided.set(id, result)
+    try {
+      this.store?.saveDecided(id, result)
+    } catch {}
     return result
   }
 
@@ -288,18 +416,28 @@ export class ApprovalGate {
       return { approved: false, reason: 'denial rejected: approver identity is not authenticated' }
     }
     const approver = identity.owner
+    // Same operator restriction as approve() — only designated operators.
+    if (this.operators && !this.operators.has(approver)) {
+      return {
+        approved: false,
+        reason: `denial rejected: "${approver}" is not a designated operator (MIRA_OPERATORS)`,
+      }
+    }
     const req = this.pending.get(id)
     if (!req) return { approved: false, approver, reason: 'no pending' }
     req.status = 'denied'
     req.approver = approver
     this.emit(req.proposal, req.level, req.risk, 'denied', approver)
     this.pending.delete(id)
-    // Decision log — why denied, with risk evidence
+    try {
+      this.store?.deletePending(id)
+    } catch {}
+    // Decision log — why denied, with risk evidence; operator is the authority.
     try {
       appendDecision(
         {
           decision: 'approval:denied',
-          context: `Proposal ${id} (level ${req.level}) denied by ${approver}`,
+          context: `Proposal ${id} (level ${req.level}) denied by human operator ${approver}`,
           by: approver,
           evidence: req.risk.reasons ?? [],
           alternatives: ['approve', 'keep pending'],
@@ -307,8 +445,16 @@ export class ApprovalGate {
         this.rootDir,
       )
     } catch {}
-    const result: ApprovalResult = { approved: false, approver, reason: 'denied by human' }
+    const result: ApprovalResult = {
+      approved: false,
+      approver,
+      approverKind: 'human-operator',
+      reason: 'denied by human operator',
+    }
     this.decided.set(id, result)
+    try {
+      this.store?.saveDecided(id, result)
+    } catch {}
     return result
   }
 
