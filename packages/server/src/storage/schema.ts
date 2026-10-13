@@ -276,6 +276,8 @@ export const auditEntries = sqliteTable(
 // P3-1 / Option 1 safe: key_hash + key_prefix for DB-dump protection; new rows store
 // hash in `key` (key=keyHash) so DB dump ≠ bearer; `key_hash` authoritative, `key` kept for back-compat fallback
 // Optional backfill: legacy rows with raw `key` + null key_hash are hashed on load (index.ts) / on next rotation
+// Role is now stored per-credential (not per-owner) to prevent credential role confusion.
+// Credential lifecycle: expiresAt, revokedAt, lastUsedAt for rotation and audit.
 export const apiKeys = sqliteTable(
   'api_keys',
   {
@@ -283,6 +285,10 @@ export const apiKeys = sqliteTable(
     keyHash: text('key_hash'),
     keyPrefix: text('key_prefix'),
     owner: text('owner').notNull(),
+    role: text('role'), // per-credential role: viewer | operator | admin
+    expiresAt: integer('expires_at'), // null = never expires
+    revokedAt: integer('revoked_at'), // null = not revoked
+    lastUsedAt: integer('last_used_at'), // for rotation audit
     createdAt: integer('created_at').notNull(),
     createdBy: text('created_by').notNull().default('default'),
   },

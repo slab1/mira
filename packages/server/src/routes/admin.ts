@@ -19,6 +19,7 @@ const ownerSchema = z
   .min(1)
   .max(64)
   .regex(/^[a-zA-Z0-9._-]+$/, 'owner must be alphanumeric, dot, underscore or hyphen')
+const expiresAtSchema = z.number().int().positive().optional()
 const MAX_KEYS = 100
 
 export function mountAdminRoutes(
@@ -27,7 +28,10 @@ export function mountAdminRoutes(
     db: MiraDB
     REQUIRED_TOKEN: string
     API_KEY_OWNERS: Map<string, string>
-    API_KEY_ROLES: Map<string, import('../auth/roles.js').Role>
+    API_KEY_CREDENTIAL_ROLES: Map<string, import('../auth/roles.js').Role>
+    API_KEY_EXPIRES_AT: Map<string, number | null>
+    API_KEY_REVOKED_AT: Map<string, number | null>
+    LEGACY_API_KEY_ROLES: Map<string, import('../auth/roles.js').Role>
     resolveOwner: (t: string) => string | undefined
     resolveRole: (t: string) => import('../auth/roles.js').Role
     bearerOf: (h: string | undefined) => string
@@ -40,7 +44,10 @@ export function mountAdminRoutes(
     db,
     REQUIRED_TOKEN,
     API_KEY_OWNERS,
-    API_KEY_ROLES,
+    API_KEY_CREDENTIAL_ROLES,
+    API_KEY_EXPIRES_AT,
+    API_KEY_REVOKED_AT,
+    LEGACY_API_KEY_ROLES,
     resolveRole,
     bearerOf,
     sessionOwnerCache,
@@ -85,6 +92,10 @@ export function mountAdminRoutes(
       key_hash TEXT,
       key_prefix TEXT,
       owner TEXT NOT NULL,
+      role TEXT,
+      expires_at INTEGER,
+      revoked_at INTEGER,
+      last_used_at INTEGER,
       created_at INTEGER NOT NULL,
       created_by TEXT NOT NULL DEFAULT 'default'
     ); CREATE INDEX IF NOT EXISTS api_keys_owner_idx ON api_keys(owner);`)
@@ -108,6 +119,25 @@ export function mountAdminRoutes(
       if (!String(e).includes('duplicate column name'))
         console.warn('[admin] addColumn role failed:', String(e))
     }
+    // Credential lifecycle (P1): expiry, revocation, last used
+    try {
+      db.sqlite.exec(`ALTER TABLE api_keys ADD COLUMN expires_at INTEGER;`)
+    } catch (e) {
+      if (!String(e).includes('duplicate column name'))
+        console.warn('[admin] addColumn expires_at failed:', String(e))
+    }
+    try {
+      db.sqlite.exec(`ALTER TABLE api_keys ADD COLUMN revoked_at INTEGER;`)
+    } catch (e) {
+      if (!String(e).includes('duplicate column name'))
+        console.warn('[admin] addColumn revoked_at failed:', String(e))
+    }
+    try {
+      db.sqlite.exec(`ALTER TABLE api_keys ADD COLUMN last_used_at INTEGER;`)
+    } catch (e) {
+      if (!String(e).includes('duplicate column name'))
+        console.warn('[admin] addColumn last_used_at failed:', String(e))
+    }
     tableEnsured = true
   }
 
@@ -116,9 +146,13 @@ export function mountAdminRoutes(
   // in the response — only key_prefix + key_hash presence (Gap 2).
   app.post('/admin/api-keys', async (c) => {
     if (!isAdmin(c)) return deny(c)
-    let body: { owner?: JsonValue; role?: JsonValue } = {}
+    let body: { owner?: JsonValue; role?: JsonValue; expiresInDays?: JsonValue } = {}
     try {
-      body = (await c.req.json()) as { owner?: JsonValue; role?: JsonValue }
+      body = (await c.req.json()) as {
+        owner?: JsonValue
+        role?: JsonValue
+        expiresInDays?: JsonValue
+      }
     } catch {}
     const parsed = ownerSchema.safeParse(typeof body.owner === 'string' ? body.owner : 'user')
     if (!parsed.success)
@@ -135,6 +169,14 @@ export function mountAdminRoutes(
     if (!isRole(roleStr))
       return c.json({ error: `invalid role: must be one of viewer, operator, admin` }, 400)
     const role = roleStr
+    // Optional expiry (P1: credential lifecycle)
+    const expiresParsed = expiresAtSchema.safeParse(
+      typeof body.expiresInDays === 'number' ? body.expiresInDays : undefined,
+    )
+    const expiresAt =
+      expiresParsed.success && expiresParsed.data
+        ? Date.now() + expiresParsed.data * 24 * 60 * 60 * 1000
+        : null
     ensureTable()
     const count = (db.sqlite.prepare('SELECT COUNT(*) as n FROM api_keys').get() as { n: number }).n
     if (count >= MAX_KEYS)
@@ -145,15 +187,16 @@ export function mountAdminRoutes(
     // Option 1 safe: DB bearer column `key` stores hash-only (DB dump ≠ bearer); raw kept only for log preview
     db.sqlite
       .prepare(
-        'INSERT INTO api_keys (key, key_hash, key_prefix, owner, role, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO api_keys (key, key_hash, key_prefix, owner, role, expires_at, revoked_at, last_used_at, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
-      .run(keyHash, keyHash, keyPrefix, owner, role, Date.now(), 'default')
+      .run(keyHash, keyHash, keyPrefix, owner, role, expiresAt, null, null, Date.now(), 'default')
     API_KEY_OWNERS.set(keyHash, owner)
-    if (role !== 'operator') API_KEY_ROLES.set(owner, role)
+    // Per-credential role (fixes P0: roles now per-credential, not per-owner)
+    API_KEY_CREDENTIAL_ROLES.set(keyHash, role)
     console.log(
-      `[admin] mint key for owner="${owner}" role=${role} preview=${key.slice(0, 6)}…${key.slice(-4)}`,
+      `[admin] mint key for owner="${owner}" role=${role}${expiresAt ? ` expiresInDays=${expiresParsed.data}` : ''} preview=${key.slice(0, 6)}…${key.slice(-4)}`,
     )
-    return c.json({ key_prefix: keyPrefix, key_hash: true, owner, role }, 201)
+    return c.json({ key_prefix: keyPrefix, key_hash: true, owner, role, expiresAt }, 201)
   })
 
   // List issued keys (admin only). Raw keys are never selected or returned —
@@ -163,13 +206,16 @@ export function mountAdminRoutes(
     ensureTable()
     const rows = db.sqlite
       .prepare(
-        'SELECT key_prefix, key_hash, owner, role, created_at, created_by FROM api_keys ORDER BY created_at DESC',
+        'SELECT key_prefix, key_hash, owner, role, expires_at, revoked_at, last_used_at, created_at, created_by FROM api_keys ORDER BY created_at DESC',
       )
       .all() as Array<{
       key_prefix: string | null
       key_hash: string | null
       owner: string
       role: string | null
+      expires_at: number | null
+      revoked_at: number | null
+      last_used_at: number | null
       created_at: number
       created_by: string
     }>
@@ -180,11 +226,37 @@ export function mountAdminRoutes(
       created_by: r.created_by,
       key_prefix: r.key_prefix ?? null,
       key_hash: !!r.key_hash,
+      expiresAt: r.expires_at ?? null,
+      revokedAt: r.revoked_at ?? null,
+      lastUsedAt: r.last_used_at ?? null,
     }))
     return c.json({ count: rows.length, issued })
   })
 
-  // Revoke a key (admin only) — hash-aware + legacy fallback (key_hash=hash OR key=raw)
+  // Soft revoke a key (admin only) — sets revoked_at, keeps record for audit
+  app.post('/admin/api-keys/:key/revoke', async (c) => {
+    if (!isAdmin(c)) return deny(c)
+    const key = c.req.param('key')
+    if (!key || key.length < 32) return c.json({ error: 'not found' }, 404)
+    ensureTable()
+    const hash = createHash('sha256').update(key).digest('hex')
+    const existing = db.sqlite
+      .prepare('SELECT owner FROM api_keys WHERE key_hash = ? OR key = ?')
+      .get(hash, key) as { owner?: string } | undefined
+    if (!existing) return c.json({ error: 'not found' }, 404)
+    const now = Date.now()
+    db.sqlite
+      .prepare('UPDATE api_keys SET revoked_at = ? WHERE key_hash = ? OR key = ?')
+      .run(now, hash, key)
+    // Credential lifecycle maps
+    API_KEY_CREDENTIAL_ROLES.delete(hash)
+    API_KEY_REVOKED_AT.set(hash, now)
+    sessionOwnerCache.clear()
+    console.log(`[admin] revoke key preview=${key.slice(0, 6)}…${key.slice(-4)}`)
+    return c.json({ ok: true, key: `${key.slice(0, 6)}…${key.slice(-4)}`, revokedAt: now })
+  })
+
+  // Hard delete a key (admin only) — removes record entirely
   app.delete('/admin/api-keys/:key', async (c) => {
     if (!isAdmin(c)) return deny(c)
     const key = c.req.param('key')
@@ -197,16 +269,81 @@ export function mountAdminRoutes(
     db.sqlite.prepare('DELETE FROM api_keys WHERE key_hash = ? OR key = ?').run(hash, key)
     API_KEY_OWNERS.delete(hash)
     API_KEY_OWNERS.delete(key)
-    // RBAC (P3.1): drop the owner's role when no remaining key carries one
+    // Per-credential cleanup (fixes P0)
+    API_KEY_CREDENTIAL_ROLES.delete(hash)
+    API_KEY_EXPIRES_AT.delete(hash)
+    API_KEY_REVOKED_AT.delete(hash)
+    // Legacy per-owner role cleanup (env MIRA_API_KEYS)
     if (existing?.owner) {
       const remaining = db.sqlite
         .prepare('SELECT COUNT(*) as n FROM api_keys WHERE owner = ? AND role IS NOT NULL')
         .get(existing.owner) as { n: number }
-      if (!remaining.n) API_KEY_ROLES.delete(existing.owner)
+      if (!remaining.n) LEGACY_API_KEY_ROLES.delete(existing.owner)
     }
     sessionOwnerCache.clear()
-    if (existing) console.log(`[admin] revoke key preview=${key.slice(0, 6)}…${key.slice(-4)}`)
+    if (existing) console.log(`[admin] delete key preview=${key.slice(0, 6)}…${key.slice(-4)}`)
     return c.json({ ok: true, key: existing ? `${key.slice(0, 6)}…${key.slice(-4)}` : 'not found' })
+  })
+
+  // Rotate a key (admin only) — revoke old, mint new with same owner/role
+  app.post('/admin/api-keys/:key/rotate', async (c) => {
+    if (!isAdmin(c)) return deny(c)
+    const key = c.req.param('key')
+    if (!key || key.length < 32) return c.json({ error: 'not found' }, 404)
+    ensureTable()
+    const hash = createHash('sha256').update(key).digest('hex')
+    const existing = db.sqlite
+      .prepare('SELECT owner, role, expires_at FROM api_keys WHERE key_hash = ? OR key = ?')
+      .get(hash, key) as
+      { owner?: string; role?: string | null; expires_at: number | null } | undefined
+    if (!existing || !existing.owner) return c.json({ error: 'not found' }, 404)
+    // Revoke old
+    const now = Date.now()
+    db.sqlite
+      .prepare('UPDATE api_keys SET revoked_at = ? WHERE key_hash = ? OR key = ?')
+      .run(now, hash, key)
+    // Credential lifecycle maps
+    API_KEY_CREDENTIAL_ROLES.delete(hash)
+    API_KEY_REVOKED_AT.set(hash, now)
+    // Mint new with same owner/role
+    const role = existing.role && isRole(existing.role) ? existing.role : 'operator'
+    const newKey = randomBytes(48).toString('hex')
+    const newKeyHash = createHash('sha256').update(newKey).digest('hex')
+    const newKeyPrefix = newKey.slice(0, 12)
+    const expiresAt = existing.expires_at ? existing.expires_at + (now - Date.now()) : null // preserve relative expiry
+    db.sqlite
+      .prepare(
+        'INSERT INTO api_keys (key, key_hash, key_prefix, owner, role, expires_at, revoked_at, last_used_at, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        newKeyHash,
+        newKeyHash,
+        newKeyPrefix,
+        existing.owner,
+        role,
+        expiresAt ?? null,
+        null,
+        null,
+        Date.now(),
+        'default',
+      )
+    API_KEY_OWNERS.set(newKeyHash, existing.owner)
+    API_KEY_CREDENTIAL_ROLES.set(newKeyHash, role)
+    API_KEY_EXPIRES_AT.set(newKeyHash, expiresAt)
+    console.log(
+      `[admin] rotate key for owner="${existing.owner}" role=${role} preview=${newKey.slice(0, 6)}…${newKey.slice(-4)}`,
+    )
+    return c.json(
+      {
+        key_prefix: newKeyPrefix,
+        key_hash: true,
+        owner: existing.owner,
+        role,
+        expiresAt,
+        rotatedFrom: `${key.slice(0, 6)}…${key.slice(-4)}`,
+      },
+      201,
+    )
   })
 
   // Queryable audit log (admin only) — DB mirror of file audit (Risk 2)

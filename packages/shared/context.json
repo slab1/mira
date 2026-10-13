@@ -82,6 +82,334 @@
       "decision": "routed:mv5xb632",
       "context": "goes to explicit dir",
       "at": "2026-10-13T00:09:01.839Z"
+    },
+    {
+      "id": "dec_mv72oias_dht6",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-10-13T19:27:08.452Z",
+      "by": "alice",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72oiax_ykp0",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-10-13T19:27:08.457Z",
+      "by": "alice",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72oib7_gtzj",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-10-13T19:27:08.467Z",
+      "by": "alice",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72oib9_ftr8",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-10-13T19:27:08.469Z",
+      "by": "alice",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72oibh_rv5p",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 0) approved by human operator human",
+      "at": "2026-10-13T19:27:08.477Z",
+      "by": "human",
+      "evidence": [],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72oibq_wmgp",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-10-13T19:27:08.486Z",
+      "by": "human",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72oibv_7tq5",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator the-operator",
+      "at": "2026-10-13T19:27:08.491Z",
+      "by": "the-operator",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72oicr_xq8q",
+      "decision": "approval:denied",
+      "context": "Proposal prop_1 (level 3) denied by human operator the-operator",
+      "at": "2026-10-13T19:27:08.523Z",
+      "by": "the-operator",
+      "evidence": ["touches auth"],
+      "alternatives": ["approve", "keep pending"]
+    },
+    {
+      "id": "dec_mv72oicx_disz",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
+      "at": "2026-10-13T19:27:08.529Z",
+      "by": "op-b",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72oid6_dbr8",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator solo",
+      "at": "2026-10-13T19:27:08.538Z",
+      "by": "solo",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72oid8_ypde",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-10-13T19:27:08.540Z",
+      "by": "human",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72oidd_ube5",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
+      "at": "2026-10-13T19:27:08.545Z",
+      "by": "op-b",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72oidg_buag",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator op-a",
+      "at": "2026-10-13T19:27:08.548Z",
+      "by": "op-a",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72oidz_jv1p",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-10-13T19:27:08.567Z",
+      "by": "human",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72oie4_875l",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-10-13T19:27:08.572Z",
+      "by": "human",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72oie9_5apr",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-10-13T19:27:08.577Z",
+      "by": "human",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72sco1_885w",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-10-13T19:30:07.777Z",
+      "by": "alice",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72sco6_rep0",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-10-13T19:30:07.782Z",
+      "by": "alice",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72scoh_dsq5",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-10-13T19:30:07.793Z",
+      "by": "alice",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72scom_4xmp",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-10-13T19:30:07.798Z",
+      "by": "alice",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72scor_7ptp",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 0) approved by human operator human",
+      "at": "2026-10-13T19:30:07.803Z",
+      "by": "human",
+      "evidence": [],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72scoy_rekw",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-10-13T19:30:07.810Z",
+      "by": "human",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72scp4_c0jb",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator the-operator",
+      "at": "2026-10-13T19:30:07.816Z",
+      "by": "the-operator",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72scp7_5ldj",
+      "decision": "approval:denied",
+      "context": "Proposal prop_1 (level 3) denied by human operator the-operator",
+      "at": "2026-10-13T19:30:07.819Z",
+      "by": "the-operator",
+      "evidence": ["touches auth"],
+      "alternatives": ["approve", "keep pending"]
+    },
+    {
+      "id": "dec_mv72scpa_lpcz",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
+      "at": "2026-10-13T19:30:07.822Z",
+      "by": "op-b",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72scpd_st7i",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator solo",
+      "at": "2026-10-13T19:30:07.825Z",
+      "by": "solo",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72scpg_7lt1",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-10-13T19:30:07.828Z",
+      "by": "human",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72scpj_4pm5",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
+      "at": "2026-10-13T19:30:07.831Z",
+      "by": "op-b",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72scpm_rnwr",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator op-a",
+      "at": "2026-10-13T19:30:07.834Z",
+      "by": "op-a",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72scpw_jdxh",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-10-13T19:30:07.844Z",
+      "by": "human",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72scq1_8bq7",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-10-13T19:30:07.849Z",
+      "by": "human",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72scq6_jrpw",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-10-13T19:30:07.854Z",
+      "by": "human",
+      "evidence": ["touches auth"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72skt3_mwr1",
+      "decision": "approval:approved",
+      "context": "Proposal prop_high (level 4) approved by human operator human-test",
+      "at": "2026-10-13T19:30:18.327Z",
+      "by": "human-test",
+      "evidence": ["guardrails"],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72skwd_rfyo",
+      "decision": "approval:approved",
+      "context": "Proposal prop_mv72skw6_xvss (level 1) approved by human operator test-human",
+      "at": "2026-10-13T19:30:18.445Z",
+      "by": "test-human",
+      "evidence": [
+        "changedFiles 6 >5 — large blast radius",
+        "sensitive files: packages/server/src/guardrails/index.ts",
+        "permission scope \"guardrails\" requires approval (§18)",
+        "P0 priority — higher stakes than P1",
+        "affectedEngine \"guardrails\" is high-risk per §18",
+        "proposer risk=high"
+      ],
+      "alternatives": ["deny", "keep pending"]
+    },
+    {
+      "id": "dec_mv72skx0_kj0w",
+      "decision": "approval:denied",
+      "context": "Proposal prop_mv72skww_4ukv (level 1) denied by human operator test-human",
+      "at": "2026-10-13T19:30:18.468Z",
+      "by": "test-human",
+      "evidence": [
+        "changedFiles 6 >5 — large blast radius",
+        "permission scope \"guardrails\" requires approval (§18)",
+        "P0 priority — higher stakes than P1",
+        "affectedEngine \"guardrails\" is high-risk per §18",
+        "proposer risk=high"
+      ],
+      "alternatives": ["approve", "keep pending"]
     }
   ],
   "strategy_log": [
@@ -420,6 +748,600 @@
       "agent_target": "general",
       "outcome": "completed:VERIFIED",
       "at": "2026-10-13T00:09:36.200Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T19:27:32.462Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-13T19:27:32.510Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T19:27:32.531Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-10-13T19:27:32.579Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T19:27:32.598Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T19:27:32.623Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T19:27:32.643Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T19:27:32.649Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T19:27:32.655Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T19:41:25.230Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-13T19:41:25.246Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T19:41:25.268Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-10-13T19:41:25.323Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T19:41:25.363Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T19:41:25.396Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T19:41:25.422Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T19:41:25.429Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T19:41:25.438Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T19:52:21.351Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-13T19:52:21.374Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T19:52:21.406Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-10-13T19:52:21.461Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T19:52:21.477Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T19:52:21.499Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T19:52:21.552Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T19:52:21.565Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T19:52:21.609Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T20:05:46.660Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-13T20:05:46.691Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T20:05:46.714Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-10-13T20:05:46.768Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T20:05:46.787Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T20:05:46.805Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T20:05:46.827Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T20:05:46.834Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T20:05:46.841Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T21:36:03.415Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-13T21:36:03.431Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T21:36:03.451Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-10-13T21:36:03.510Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T21:36:03.535Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T21:36:03.558Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T21:36:03.579Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T21:36:03.588Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T21:36:03.597Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T21:37:55.860Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-13T21:37:55.898Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T21:37:55.915Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-10-13T21:37:55.963Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T21:37:55.983Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T21:37:56.008Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T21:37:56.028Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T21:37:56.032Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T21:37:56.037Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T21:42:06.054Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-13T21:42:06.074Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T21:42:06.089Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-10-13T21:42:06.140Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T21:42:06.168Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T21:42:06.198Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T21:42:06.222Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T21:42:06.227Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T21:42:06.241Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T22:46:15.481Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-13T22:46:15.511Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T22:46:15.531Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-10-13T22:46:15.580Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T22:46:15.598Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T22:46:15.621Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T22:46:15.642Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T22:46:15.646Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T22:46:15.652Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T22:48:34.182Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-13T22:48:34.218Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T22:48:34.236Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-10-13T22:48:34.290Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T22:48:34.307Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T22:48:34.335Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T22:48:34.361Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T22:48:34.367Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T22:48:34.375Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T23:01:09.109Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-13T23:01:09.145Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T23:01:09.160Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-10-13T23:01:09.211Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T23:01:09.235Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T23:01:09.254Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T23:01:09.274Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T23:01:09.277Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T23:01:09.283Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T23:02:23.891Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-13T23:02:23.905Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T23:02:23.921Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-10-13T23:02:23.976Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T23:02:23.991Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T23:02:24.011Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T23:02:24.036Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T23:02:24.040Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T23:02:24.045Z"
     }
   ],
   "active_tasks": [
@@ -546,14 +1468,14 @@
       "last_updated": "2026-09-27T19:39:18.867875+00:00"
     },
     "agent:general": {
-      "count": 36,
-      "completed": 36,
-      "successes": 20,
+      "count": 135,
+      "completed": 135,
+      "successes": 75,
       "success_rate": 0.56,
-      "last_updated": "2026-10-13T00:09:36.198Z"
+      "last_updated": "2026-10-13T23:02:24.043Z"
     }
   },
-  "last_updated": "2026-10-13T00:09:36.200Z",
+  "last_updated": "2026-10-13T23:02:24.045Z",
   "workflow_trace": [
     {
       "agent": "fixer",

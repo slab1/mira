@@ -241,14 +241,23 @@ function hashKey(s: string): string {
   return createHash('sha256').update(s).digest('hex')
 }
 const API_KEY_OWNERS = new Map<string, string>()
-const API_KEY_ROLES = new Map<string, Role>()
+// Per-credential roles (keyed by credential hash) — fixes the issue where
+// multiple credentials for the same owner would share a single role.
+const API_KEY_CREDENTIAL_ROLES = new Map<string, Role>()
+// Per-credential expiry (keyed by credential hash) — for credential lifecycle
+const API_KEY_EXPIRES_AT = new Map<string, number | null>()
+// Per-credential revocation (keyed by credential hash) — for credential lifecycle
+const API_KEY_REVOKED_AT = new Map<string, number | null>()
+
+// Legacy env-based API keys (MIRA_API_KEYS) — role is per-owner (legacy behavior)
+const LEGACY_API_KEY_ROLES = new Map<string, Role>()
 for (const pair of (process.env.MIRA_API_KEYS ?? '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)) {
   const { key, owner, role } = parseKeyPair(pair)
   API_KEY_OWNERS.set(hashKey(key), owner)
-  if (role) API_KEY_ROLES.set(owner, role)
+  if (role) LEGACY_API_KEY_ROLES.set(owner, role)
 }
 if (
   process.env.NODE_ENV === 'production' &&
@@ -273,12 +282,45 @@ function resolveOwner(token: string): string | undefined {
   if (!token) return undefined
   if (REQUIRED_TOKEN && tokenEquals(token, REQUIRED_TOKEN)) return 'default'
   const h = hashKey(token)
+  // Check if credential is revoked or expired
+  const revokedAt = API_KEY_REVOKED_AT.get(h)
+  if (revokedAt !== undefined && revokedAt !== null) return undefined // revoked
+  const expiresAt = API_KEY_EXPIRES_AT.get(h)
+  if (expiresAt !== undefined && expiresAt !== null && Date.now() > expiresAt) return undefined // expired
   return API_KEY_OWNERS.get(h) ?? API_KEY_OWNERS.get(token)
 }
-/** RBAC (P3.1): role for a bearer — 'default' owner is always admin;
- *  owners default to operator; explicit key roles override. */
+/** RBAC (P3.1): role for a bearer — 'default' owner role is configurable.
+ *  Default: admin (backward compatible). Set MIRA_MASTER_TOKEN_ROLE=operator
+ *  to use the master token for routine access without admin privileges.
+ *  For DB-issued keys, role is per-credential (keyed by hash).
+ *  For legacy env keys (MIRA_API_KEYS), role is per-owner (legacy behavior).
+ *  Expired or revoked credentials return 'operator' (effectively unauthorized via resolveOwner). */
 function resolveRole(token: string): Role {
-  return roleForOwner(resolveOwner(token), API_KEY_ROLES)
+  if (!token) return 'operator'
+  if (REQUIRED_TOKEN && tokenEquals(token, REQUIRED_TOKEN)) {
+    // Master token role: configurable via MIRA_MASTER_TOKEN_ROLE (default: admin)
+    const masterRole = process.env.MIRA_MASTER_TOKEN_ROLE?.toLowerCase()
+    if (masterRole === 'viewer' || masterRole === 'operator' || masterRole === 'admin') {
+      return masterRole as Role
+    }
+    return 'admin' // default: backward compatible
+  }
+  const h = hashKey(token)
+  // Check if credential is revoked or expired
+  const revokedAt = API_KEY_REVOKED_AT.get(h)
+  if (revokedAt !== undefined && revokedAt !== null) return 'operator' // revoked
+  const expiresAt = API_KEY_EXPIRES_AT.get(h)
+  if (expiresAt !== undefined && expiresAt !== null && Date.now() > expiresAt) return 'operator' // expired
+  // First check per-credential roles (DB-issued keys)
+  const credRole = API_KEY_CREDENTIAL_ROLES.get(h)
+  if (credRole) return credRole
+  // Fall back to legacy per-owner roles (env MIRA_API_KEYS)
+  const owner = API_KEY_OWNERS.get(h) ?? API_KEY_OWNERS.get(token)
+  if (owner) {
+    const legacyRole = LEGACY_API_KEY_ROLES.get(owner)
+    if (legacyRole) return legacyRole
+  }
+  return roleForOwner(owner, new Map()) // default operator for unknown owners
 }
 function bearerOf(authHeader: string | undefined): string {
   return authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : ''
@@ -571,17 +613,28 @@ async function main() {
 
   // Load runtime-issued API keys from db — hash-keyed (Option 1 safe, back-compat)
   try {
-    const rows = db.sqlite.prepare('SELECT key, key_hash, owner, role FROM api_keys').all() as {
+    const rows = db.sqlite
+      .prepare('SELECT key, key_hash, owner, role, expires_at, revoked_at FROM api_keys')
+      .all() as {
       key: string
       key_hash: string | null
       owner: string
       role: string | null
+      expires_at: number | null
+      revoked_at: number | null
     }[]
     for (const r of rows) {
       const hash = r.key_hash ?? (r.key ? createHash('sha256').update(r.key).digest('hex') : null)
-      if (hash) API_KEY_OWNERS.set(hash, r.owner)
-      else if (r.key) API_KEY_OWNERS.set(r.key, r.owner)
-      if (r.role && isRole(r.role)) API_KEY_ROLES.set(r.owner, r.role)
+      if (hash) {
+        API_KEY_OWNERS.set(hash, r.owner)
+        // Per-credential role (fixes P0: roles now per-credential, not per-owner)
+        if (r.role && isRole(r.role)) API_KEY_CREDENTIAL_ROLES.set(hash, r.role)
+        // Credential lifecycle: expiry and revocation
+        API_KEY_EXPIRES_AT.set(hash, r.expires_at ?? null)
+        API_KEY_REVOKED_AT.set(hash, r.revoked_at ?? null)
+      } else if (r.key) {
+        API_KEY_OWNERS.set(r.key, r.owner)
+      }
     }
     if (rows.length) log(`loaded ${rows.length} issued API key(s) from db`)
   } catch (e) {
@@ -821,7 +874,10 @@ async function main() {
     db,
     REQUIRED_TOKEN,
     API_KEY_OWNERS,
-    API_KEY_ROLES,
+    API_KEY_CREDENTIAL_ROLES,
+    API_KEY_EXPIRES_AT,
+    API_KEY_REVOKED_AT,
+    LEGACY_API_KEY_ROLES,
     resolveOwner,
     resolveRole,
     bearerOf,
