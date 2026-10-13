@@ -194,3 +194,46 @@ describe('§3: a materialized candidate becomes real, routed traffic', () => {
     expect(router.get('prop_1')).toBeUndefined()
   })
 })
+
+describe('§3: a unified-diff candidate is a genuinely different tree', () => {
+  test('the diff lands in the candidate file (real change, not a note)', async () => {
+    const ws = new VariantWorkspace({ rootDir: repo, scratchRoot: scratch })
+    const diffPatch = {
+      ...PATCH,
+      id: 'patch_diff',
+      change: [
+        '--- a/src/mod.ts',
+        '+++ b/src/mod.ts',
+        '@@ -1,1 +1,1 @@',
+        '-export const value = 1',
+        '+export const value = 42',
+      ].join('\n'),
+    } as unknown as Patch
+    const { candidate } = await ws.materialize('prop_diff', diffPatch)
+    expect(candidate).not.toBeNull()
+    // the candidate file contains the REAL new value
+    const patched = readFileSync(join(candidate!.dir, 'src', 'mod.ts'), 'utf-8')
+    expect(patched).toContain('export const value = 42')
+    expect(patched).not.toContain('Mira Patch')
+    // and the repository is untouched
+    expect(readFileSync(join(repo, 'src', 'mod.ts'), 'utf-8')).toContain('export const value = 1')
+  })
+
+  test('a diff that does not match produces NO candidate (fail-closed)', async () => {
+    const ws = new VariantWorkspace({ rootDir: repo, scratchRoot: scratch })
+    const badDiff = {
+      ...PATCH,
+      id: 'patch_bad_diff',
+      change: [
+        '--- a/src/mod.ts',
+        '+++ b/src/mod.ts',
+        '@@ -1,1 +1,1 @@',
+        '-this line is not in the file',
+        '+replacement',
+      ].join('\n'),
+    } as unknown as Patch
+    const { candidate, reason } = await ws.materialize('prop_bad_diff', badDiff)
+    expect(candidate).toBeNull()
+    expect(reason).toContain('did not apply')
+  })
+})
