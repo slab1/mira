@@ -10,7 +10,7 @@ import type { VerifyResult } from './verifier.js'
 import type { Bus } from '../bus/index.js'
 import type { KnowledgeBase } from '../learning/knowledge.js'
 import type { MiraDB } from '../storage/db.js'
-import { applyChange } from './apply-change.js'
+import { applyChange, isUnifiedDiff } from './apply-change.js'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -124,6 +124,18 @@ export class Applier {
     }
 
     const patched = applyChange(original, patch.change, patch.targetFile)
+    // Fail-closed: when the change is a real unified diff that did not match
+    // the file (context drift), applyChange returns the ORIGINAL content. The
+    // patch did NOT land — reporting success here would make an unapplied
+    // candidate look verified, which is the exact failure §3 exists to stop.
+    if (patched === original && isUnifiedDiff(patch.change)) {
+      return {
+        applied: false,
+        patchId: patch.id,
+        targetFile: patch.targetFile,
+        reason: 'unified diff did not match the file (context drift) — nothing was applied',
+      }
+    }
     await Bun.write(abs, patched)
     console.log(
       `[patching:applier] ✓ applied ${patch.id} → ${patch.targetFile} (${patch.painPointId})`,
