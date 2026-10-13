@@ -24,13 +24,90 @@
  * | 5 | Tests | Implemented | packages/server/src/evolution/system-rollback.test.ts (capture/diff/metadata/caps) |
  * | 6 | Security boundaries | Implemented | config files hashed (sha256) — content never stored, so no secret leakage; collectors fail-soft to {} |
  * | 7 | Operational procedures | Implemented | capture() at rollback-point time in observe; metadata exposed via GET /evolution/rollback/:id/metadata |
- * | 8 | Migration strategy | Implemented | additive, in-memory; complements (does not replace) RollbackManager file snapshots |
- * | 9 | Rollback strategy | Implemented | this module IS the §6 rollback strategy: diff + metadata drive engine rollback()/snapshot restore |
- * | 10 | Known limitations | Implemented | in-memory metadata (restarts reset); migration-state capture is Target; DB-schema components not yet tracked |
+ * | 8 | Migration strategy | Implemented | additive; durable store optional (SQLite evolution_system_rollback, write-through) — rollback metadata survives restarts, which is the point of rollback metadata |
+ * | 9 | Rollback strategy | Implemented | this module IS the §6 rollback strategy: diff + metadata drive engine rollback()/snapshot restore; in-memory mode unchanged without a store |
+ * | 10 | Known limitations | Implemented | durable store single-process (multi-process CAS Target); migration-state capture is Target; DB-schema components not yet tracked |
  */
 
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
+import type { MiraDB } from '../storage/db.js'
+
+/** Durable §6 metadata store — rollback metadata must outlive the process. */
+export interface SystemRollbackStore {
+  load(): Array<{
+    proposalId: string
+    before: SystemStateSnapshot
+    after: SystemStateSnapshot | null
+    metadata: SystemRollbackMetadata
+  }>
+  save(entry: {
+    proposalId: string
+    before: SystemStateSnapshot
+    after: SystemStateSnapshot | null
+    metadata: SystemRollbackMetadata
+  }): void
+  clear(proposalId: string): void
+}
+
+/** SQLite-backed store — write-through, fail-soft at call sites. */
+export function createSqliteSystemRollbackStore(db: MiraDB): SystemRollbackStore {
+  const sqlite = db.sqlite
+  if (!sqlite) throw new Error('no sqlite handle')
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS evolution_system_rollback (
+      proposal_id TEXT PRIMARY KEY,
+      before_state TEXT NOT NULL,
+      after_state TEXT,
+      metadata TEXT NOT NULL
+    );
+  `)
+  return {
+    load() {
+      try {
+        const rows = sqlite
+          .prepare(
+            'SELECT proposal_id, before_state, after_state, metadata FROM evolution_system_rollback',
+          )
+          .all() as Array<{
+          proposal_id: string
+          before_state: string
+          after_state: string | null
+          metadata: string
+        }>
+        return rows.map((r) => ({
+          proposalId: r.proposal_id,
+          before: JSON.parse(r.before_state) as SystemStateSnapshot,
+          after: r.after_state ? (JSON.parse(r.after_state) as SystemStateSnapshot) : null,
+          metadata: JSON.parse(r.metadata) as SystemRollbackMetadata,
+        }))
+      } catch {
+        return []
+      }
+    },
+    save(entry) {
+      try {
+        sqlite
+          .prepare(
+            `INSERT OR REPLACE INTO evolution_system_rollback (proposal_id, before_state, after_state, metadata) VALUES (?, ?, ?, ?)`,
+          )
+          .run(
+            entry.proposalId,
+            JSON.stringify(entry.before),
+            entry.after ? JSON.stringify(entry.after) : null,
+            JSON.stringify(entry.metadata),
+          )
+      } catch {}
+    },
+    clear(proposalId) {
+      try {
+        sqlite
+          .prepare('DELETE FROM evolution_system_rollback WHERE proposal_id = ?')
+          .run(proposalId)
+      } catch {}
+    },
+  }
+}
 
 export interface ComponentState {
   version: string
@@ -117,10 +194,22 @@ export class SystemRollbackManager {
     }
   >()
   private readonly maxEntries: number
+  private store?: SystemRollbackStore
 
-  constructor(collectors: SystemRollbackCollectors = {}, opts: { maxEntries?: number } = {}) {
+  constructor(
+    collectors: SystemRollbackCollectors = {},
+    opts: { maxEntries?: number; store?: SystemRollbackStore } = {},
+  ) {
     this.collectors = collectors
     this.maxEntries = opts.maxEntries ?? envInt('MIRA_SYSTEM_ROLLBACK_MAX', 200)
+    if (opts.store) {
+      this.store = opts.store
+      try {
+        for (const { proposalId, before, after, metadata } of this.store.load()) {
+          this.candidates.set(proposalId, { before, after, metadata })
+        }
+      } catch {}
+    }
   }
 
   /** Capture the CURRENT system state (call before a candidate is applied). */
@@ -190,9 +279,17 @@ export class SystemRollbackManager {
       },
     }
     this.candidates.set(proposalId, { before, after: after ?? null, metadata })
+    try {
+      this.store?.save({ proposalId, before, after: after ?? null, metadata })
+    } catch {}
     if (this.candidates.size > this.maxEntries) {
       const oldest = [...this.candidates.keys()][0]
-      if (oldest) this.candidates.delete(oldest)
+      if (oldest) {
+        this.candidates.delete(oldest)
+        try {
+          this.store?.clear(oldest)
+        } catch {}
+      }
     }
     return metadata
   }

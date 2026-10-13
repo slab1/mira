@@ -46,6 +46,7 @@ import { LoopGuard, createSqliteLoopGuardStore } from '../evolution/loop-guard.j
 import { ComplexityTracker, type ComplexityMetrics } from '../evolution/complexity.js'
 import {
   SystemRollbackManager,
+  createSqliteSystemRollbackStore,
   type SystemRollbackCollectors,
 } from '../evolution/system-rollback.js'
 import {
@@ -333,7 +334,17 @@ export function mountEvolutionRoutes(
   for (const [k, fn] of Object.entries(deps.complexityProviders ?? {})) {
     complexityTracker.registerProvider(k as keyof ComplexityMetrics, fn)
   }
-  const systemRollback = new SystemRollbackManager(deps.systemRollbackCollectors ?? {})
+  // §6 durability: rollback metadata must outlive the process — a rollback
+  // point that vanishes on restart is not a rollback point. Fail-soft.
+  const systemRollback = (() => {
+    try {
+      return new SystemRollbackManager(deps.systemRollbackCollectors ?? {}, {
+        store: createSqliteSystemRollbackStore(db),
+      })
+    } catch {
+      return new SystemRollbackManager(deps.systemRollbackCollectors ?? {})
+    }
+  })()
 
   // ── GET /evolution/health ────────────────────────────────────────
   app.get('/evolution/health', (c) => {

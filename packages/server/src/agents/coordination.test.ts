@@ -132,3 +132,104 @@ describe('CoordinationHub — shared mission state (§12)', () => {
     expect(s.activeTransactions).toBe(0)
   })
 })
+
+describe('CoordinationHub — durable store (§12 restart survival)', () => {
+  const fakeStore = () => {
+    const rows = new Map<
+      string,
+      { kind: 'claim' | 'lock' | 'write'; payload: unknown; expiresAt: number | null }
+    >()
+    return {
+      rows,
+      load: () =>
+        [...rows.entries()].map(([k, v]) => {
+          const [kind, key] = k.split(':') as ['claim' | 'lock' | 'write', string]
+          return { kind, key, payload: v.payload, expiresAt: v.expiresAt }
+        }),
+      save: (
+        kind: 'claim' | 'lock' | 'write',
+        key: string,
+        payload: unknown,
+        expiresAt?: number | null,
+      ) => {
+        rows.set(`${kind}:${key}`, {
+          kind,
+          payload: JSON.parse(JSON.stringify(payload)),
+          expiresAt: expiresAt ?? null,
+        })
+      },
+      clear: (kind: 'claim' | 'lock' | 'write', key: string) => rows.delete(`${kind}:${key}`),
+    }
+  }
+
+  test('locks and claims survive a restart — two agents cannot both hold a lock', () => {
+    const store = fakeStore()
+    const t0 = Date.now()
+    const h1 = new CoordinationHub({ store, lockTtlMs: 600_000, claimTtlMs: 1_800_000 })
+    h1.claimTask({ taskId: 't1', owner: 'a', files: ['f.ts'], now: t0 })
+
+    // "restart": brand-new hub over the same store
+    const h2 = new CoordinationHub({ store, lockTtlMs: 600_000, claimTtlMs: 1_800_000 })
+    // agent a still owns the task…
+    const re = h2.claimTask({ taskId: 't1', owner: 'b', now: t0 + 1000 })
+    expect(re.ok).toBe(false)
+    expect(re.conflicts[0].holder).toBe('a')
+    // …and the lock survives: b cannot lock it
+    const l = h2.lockFiles('b', ['f.ts'], { now: t0 + 1000 })
+    expect(l.locked).toHaveLength(0)
+    expect(l.conflicts[0].kind).toBe('lock')
+  })
+
+  test('last writes survive a restart — stale-base detection continues to work', () => {
+    const store = fakeStore()
+    const h1 = new CoordinationHub({ store })
+    h1.recordWrite('src/a.ts', 'hash-v1', 'developer')
+
+    const h2 = new CoordinationHub({ store })
+    const r = h2.patchConflicts('src/a.ts', 'hash-v0', 'reviewer')
+    expect(r.stale).toBe(true)
+    expect(r.conflicts[0].holder).toBe('developer')
+  })
+
+  test('expired claims/locks are dropped on load (sweep semantics)', () => {
+    const store = fakeStore()
+    const t0 = 6_000_000
+    const h1 = new CoordinationHub({ store, lockTtlMs: 100, claimTtlMs: 100 })
+    h1.claimTask({ taskId: 't1', owner: 'a', files: ['f.ts'], now: t0 })
+    // restart well past the TTLs
+    const h2 = new CoordinationHub({ store, lockTtlMs: 100, claimTtlMs: 100 })
+    const s = h2.status(Date.now() + 1)
+    expect(s.claims).toHaveLength(0)
+    // the file is lockable again
+    expect(h2.lockFiles('b', ['f.ts'], { now: Date.now() + 1 }).locked).toEqual(['f.ts'])
+  })
+
+  test('release/unlock clear durable rows — no resurrection', () => {
+    const store = fakeStore()
+    const h1 = new CoordinationHub({ store })
+    h1.claimTask({ taskId: 't1', owner: 'a', files: ['f.ts'] })
+    h1.releaseTask('t1', 'a')
+    expect(store.rows.size).toBe(0)
+    const h2 = new CoordinationHub({ store })
+    expect(h2.claimTask({ taskId: 't1', owner: 'b', files: ['f.ts'] }).ok).toBe(true)
+  })
+
+  test('store failures never block hub operations (fail-soft)', () => {
+    const throwing = {
+      load: () => {
+        throw new Error('db gone')
+      },
+      save: () => {
+        throw new Error('db gone')
+      },
+      clear: () => {
+        throw new Error('db gone')
+      },
+    }
+    const h = new CoordinationHub({ store: throwing })
+    expect(h.claimTask({ taskId: 't1', owner: 'a' }).ok).toBe(true)
+    expect(h.lockFiles('a', ['x.ts']).locked).toEqual(['x.ts'])
+    expect(h.recordWrite('x.ts', 'h', 'a').owner).toBe('a')
+    expect(h.releaseTask('t1', 'a').ok).toBe(true)
+  })
+})

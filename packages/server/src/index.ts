@@ -77,7 +77,7 @@ import { ImprovementLedger } from './evolution/ledger.js'
 import { EvolutionObserver } from './evolution/observer.js'
 import { mountShadowRoutes } from './routes/shadow.js'
 import { mountCoordinationRoutes } from './routes/coordination.js'
-import { CoordinationHub } from './agents/coordination.js'
+import { CoordinationHub, createSqliteCoordinationStore } from './agents/coordination.js'
 import { ShadowMira } from './shadow/shadow.js'
 import { mountEngineRoutes } from './routes/engines.js'
 import { CanaryManager } from './canary/canary.js'
@@ -1091,7 +1091,15 @@ async function main() {
       mountShadowRoutes(app, { shadow: shadowMira })
       // §12 Multi-Agent Coordination — task ownership, TTL file locks,
       // conflict detection, version-aware patches, transaction boundaries.
-      mountCoordinationRoutes(app, { hub: new CoordinationHub() })
+      // Durable store: claims/locks/writes survive a server restart so two
+      // agents cannot both believe they hold a lock after a bounce. Fail-soft.
+      let coordinationHub: CoordinationHub
+      try {
+        coordinationHub = new CoordinationHub({ store: createSqliteCoordinationStore(db) })
+      } catch {
+        coordinationHub = new CoordinationHub()
+      }
+      mountCoordinationRoutes(app, { hub: coordinationHub })
       ;(globalThis as unknown as Record<string, unknown>).__miraShadow = shadowMira
       log(
         `shadow ready — isolated shadow env (shadow.db or :memory:), Bus isolated, telemetry ingesting`,

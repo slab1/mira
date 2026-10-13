@@ -8,6 +8,7 @@ import {
   SystemRollbackManager,
   diffSnapshots,
   type SystemStateSnapshot,
+  type SystemRollbackMetadata,
 } from './system-rollback.js'
 
 const snap = (overrides: Partial<SystemStateSnapshot> = {}): SystemStateSnapshot => ({
@@ -90,5 +91,75 @@ describe('SystemRollbackManager — §6 metadata', () => {
     expect(m.count()).toBe(2)
     expect(m.metadata('p1')).toBeUndefined()
     expect(m.metadata('p3')).toBeDefined()
+  })
+})
+
+describe('SystemRollbackManager — durable store (§6 restart survival)', () => {
+  const fakeStore = () => {
+    const rows = new Map<
+      string,
+      {
+        before: SystemStateSnapshot
+        after: SystemStateSnapshot | null
+        metadata: SystemRollbackMetadata
+      }
+    >()
+    return {
+      rows,
+      load: () => [...rows.entries()].map(([proposalId, r]) => ({ proposalId, ...r })),
+      save: (
+        e: { proposalId: string } & {
+          before: SystemStateSnapshot
+          after: SystemStateSnapshot | null
+          metadata: SystemRollbackMetadata
+        },
+      ) => {
+        rows.set(e.proposalId, { before: e.before, after: e.after, metadata: e.metadata })
+      },
+      clear: (id: string) => rows.delete(id),
+    }
+  }
+
+  test('metadata survives a restart: fresh manager loads from the store', () => {
+    const store = fakeStore()
+    const m1 = new SystemRollbackManager({}, { store })
+    const before = snap()
+    m1.recordCandidate('proposal_x', before, snap({ components: { model: { version: '2.0.0' } } }))
+
+    // "restart": brand-new manager over the same store
+    const m2 = new SystemRollbackManager({}, { store })
+    const meta = m2.metadata('proposal_x')
+    expect(meta).toBeDefined()
+    expect(meta!.parentVersion.model).toBe('1.0.0')
+    expect(meta!.candidateVersion!.model).toBe('2.0.0')
+    expect(meta!.changedComponents).toEqual(['model'])
+  })
+
+  test('cap pruning clears durable rows too', () => {
+    const store = fakeStore()
+    const m = new SystemRollbackManager({}, { maxEntries: 1, store })
+    m.recordCandidate('p1', snap())
+    m.recordCandidate('p2', snap())
+    expect(m.count()).toBe(1)
+    expect(store.rows.has('p2')).toBe(true)
+    expect(store.rows.has('p1')).toBe(false)
+  })
+
+  test('store failures never block recordCandidate (fail-soft)', () => {
+    const throwing = {
+      load: () => {
+        throw new Error('db gone')
+      },
+      save: () => {
+        throw new Error('db gone')
+      },
+      clear: () => {
+        throw new Error('db gone')
+      },
+    }
+    const m = new SystemRollbackManager({}, { store: throwing })
+    const meta = m.recordCandidate('p1', snap())
+    expect(meta.proposalId).toBe('p1')
+    expect(m.metadata('p1')).toBeDefined() // in-memory still works
   })
 })
