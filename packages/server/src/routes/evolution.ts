@@ -49,6 +49,8 @@ import {
   createSqliteSystemRollbackStore,
   type SystemRollbackCollectors,
 } from '../evolution/system-rollback.js'
+import { buildCandidatePatch } from '../evolution/candidate.js'
+import { VariantWorkspace } from '../patching/governance/variant.js'
 import {
   checkSelfModificationGate,
   gateByConfidence,
@@ -87,6 +89,8 @@ export interface EvolutionRouteDeps {
   /** §6 system-state collectors (component versions, dependency versions,
    *  config paths) for system-level rollback metadata. */
   systemRollbackCollectors?: SystemRollbackCollectors
+  /** Repository root candidates resolve against (default process.cwd()). */
+  repoRoot?: string
 }
 
 /** Normalized shadow outcome recorded in ledger evidence + observe response.
@@ -600,7 +604,44 @@ export function mountEvolutionRoutes(
       } catch {}
     }
 
-    const experiment = createExperiment(proposal, patch)
+    // ── Real candidate (§24): the proposal becomes a candidate ONLY when the
+    // change is genuinely appliable — a real unified diff against an existing,
+    // in-repo file the proposal claims to touch. Otherwise this is an
+    // investigation: no patch is fabricated, and the shadow stage reports a
+    // parity benchmark instead of pretending a candidate exists.
+    const candidate =
+      patch !== undefined
+        ? buildCandidatePatch({
+            proposal,
+            change: patch,
+            claimedFiles: changedFiles,
+            // Candidates resolve against the same root the patcher applies to,
+            // so a candidate that materializes is a change to THIS repo.
+            repoRoot: deps.repoRoot ?? process.cwd(),
+          })
+        : null
+    const experiment = createExperiment(
+      proposal,
+      // A change that is not a real candidate is recorded as an investigation —
+      // never stored as if it were an appliable patch.
+      candidate ? patch : undefined,
+      candidate ? { targetFile: candidate.targetFile, appliable: true } : undefined,
+    )
+
+    // Materialize the candidate tree up front so the shadow stage can measure
+    // the candidate BY EXECUTION (shadow/variant-benchmark.ts) rather than by
+    // caller-supplied numbers. Disposable; removed after measurement.
+    let variantWorkspace: VariantWorkspace | null = null
+    let variantDir: string | undefined
+    if (candidate) {
+      try {
+        // Same root the candidate validated against — the tree must be a copy
+        // of the repo the diff actually applies to.
+        variantWorkspace = new VariantWorkspace({ rootDir: deps.repoRoot ?? process.cwd() })
+        const mat = await variantWorkspace.materialize(proposal.id, candidate.patch)
+        if (mat.candidate) variantDir = mat.candidate.dir
+      } catch {}
+    }
 
     // ── Phase 2 gates: Risk → Autonomy → Approval → Resources → Security → Verifier
     const risk = riskEngine.assess({
@@ -748,6 +789,10 @@ export function mountEvolutionRoutes(
             latencyMs: verification.benchmark?.latencyMs ?? 0,
             successRate: verification.benchmark?.successRate ?? 0.9,
             costDelta: verification.benchmark?.costDelta ?? 0,
+            // A real materialized candidate tree, when the proposal carried one:
+            // the shadow then measures the candidate BY EXECUTING checks inside
+            // that tree instead of trusting these numbers.
+            ...(variantDir ? { variantDir } : {}),
           })
           shadowMeta = {
             source: 'full',
@@ -947,16 +992,43 @@ export function mountEvolutionRoutes(
       })
     } catch {}
 
+    // Candidate trees are disposable — remove after the pipeline measured it.
+    try {
+      variantWorkspace?.disposeAll()
+    } catch {}
+
     return c.json({
       ok: true,
       observed,
       diagnosis,
       proposal,
+      candidate: candidate
+        ? {
+            real: true,
+            targetFile: candidate.targetFile,
+            basis: candidate.basis,
+            variantMaterialized: Boolean(variantDir),
+            note: 'real appliable change — measurable by execution (variant/shadow/canary)',
+          }
+        : {
+            real: false,
+            targetFile: null,
+            basis: patch
+              ? 'proposed change is not an appliable unified diff against an existing claimed file'
+              : 'no change proposed — this is an investigation',
+            variantMaterialized: false,
+            note: 'no real candidate: nothing to materialize, shadow reports a parity benchmark',
+          },
       experiment: {
         proposalId: experiment.proposalId,
         sandboxPath: experiment.sandboxPath,
         simulationId: experiment.simulationId,
         riskScore: experiment.riskScore,
+        appliable: experiment.appliable,
+        // the investigation note (or the real change) so the operator can see
+        // exactly what is — and is not — being verified
+        patch: experiment.patch.slice(0, 2000),
+        ...(experiment.targetFile ? { targetFile: experiment.targetFile } : {}),
       },
       risk,
       autonomy: {

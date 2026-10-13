@@ -12,7 +12,7 @@ import { SecurityValidator } from './security.js'
 import { RollbackManager } from './rollback.js'
 import { ImprovementLedger } from './ledger.js'
 import { createDatabase, migrate } from '../storage/db.js'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Hono } from 'hono'
@@ -849,6 +849,120 @@ describe('Longitudinal drift detection (§16) — deriveLongitudinalBaselineDeta
     expect(body.drift[0].adaptive).toBe(true)
     // adaptive baseline pinned to recent window, not the full mean
     expect(body.derivedBaseline.successRate).toBeCloseTo(0.99)
+  })
+})
+
+describe('§24: real candidates flow from observe into a measured variant', () => {
+  let repoDir: string
+  let db: ReturnType<typeof createDatabase>
+
+  beforeEach(async () => {
+    repoDir = mkdtempSync(join(tmpdir(), 'mira-evo-candidate-'))
+    mkdirSync(join(repoDir, 'src'), { recursive: true })
+    writeFileSync(join(repoDir, 'src', 'mod.ts'), 'export const value = 1\n', 'utf-8')
+    writeFileSync(join(repoDir, 'package.json'), '{"name":"c"}\n', 'utf-8')
+    process.env.MIRA_NO_AUTOPROVISION = '1'
+    db = createDatabase(join(repoDir, 'test.db'))
+    await migrate(db as unknown as Parameters<typeof migrate>[0])
+  })
+  afterEach(() => {
+    try {
+      db.sqlite?.close?.()
+    } catch {}
+    try {
+      rmSync(repoDir, { recursive: true, force: true })
+    } catch {}
+  })
+
+  const observe = (app: Hono, body: Record<string, unknown>) =>
+    app.request('/evolution/observe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+
+  test('a real diff against an existing claimed file becomes a real candidate', async () => {
+    const bus = new Bus()
+    const app = new Hono()
+    mountEvolutionRoutes(app as unknown as Hono<{ Variables: { requestId: string } }>, {
+      db: db as unknown as import('../storage/db.js').MiraDB,
+      bus,
+      repoRoot: repoDir,
+    })
+    const diff = [
+      '--- a/src/mod.ts',
+      '+++ b/src/mod.ts',
+      '@@ -1,1 +1,1 @@',
+      '-export const value = 1',
+      '+export const value = 42',
+    ].join('\n')
+    const res = await observe(app, {
+      failure: 'edit failed on src/mod.ts (stale anchor)',
+      changedFiles: ['src/mod.ts'],
+      patch: diff,
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      candidate: { real: boolean; targetFile: string; variantMaterialized: boolean }
+      experiment: { appliable: boolean; targetFile?: string }
+    }
+    expect(body.candidate.real).toBe(true)
+    expect(body.candidate.targetFile).toBe('src/mod.ts')
+    expect(body.experiment.appliable).toBe(true)
+    expect(body.experiment.targetFile).toBe('src/mod.ts')
+    // the variant tree really materialized (disposed after measurement)
+    expect(body.candidate.variantMaterialized).toBe(true)
+    // and the repository itself was never touched
+    expect(readFileSync(join(repoDir, 'src', 'mod.ts'), 'utf-8')).toContain(
+      'export const value = 1',
+    )
+  })
+
+  test('prose intent is recorded as an investigation — no fabricated candidate', async () => {
+    const bus = new Bus()
+    const app = new Hono()
+    mountEvolutionRoutes(app as unknown as Hono<{ Variables: { requestId: string } }>, {
+      db: db as unknown as import('../storage/db.js').MiraDB,
+      bus,
+      repoRoot: repoDir,
+    })
+    const res = await observe(app, {
+      failure: 'edit failed on src/mod.ts (stale anchor)',
+      changedFiles: ['src/mod.ts'],
+      patch: 'make the editor more resilient please',
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      candidate: { real: boolean; variantMaterialized: boolean }
+      experiment: { appliable: boolean; patch: string }
+    }
+    expect(body.candidate.real).toBe(false)
+    expect(body.candidate.variantMaterialized).toBe(false)
+    expect(body.experiment.appliable).toBe(false)
+    // the experiment records the investigation, not a fake diff
+    expect(body.experiment.patch).toContain('INVESTIGATION')
+    expect(body.experiment.patch).not.toContain('--- a/')
+  })
+
+  test('a diff against a nonexistent file yields an investigation, not a bad candidate', async () => {
+    const bus = new Bus()
+    const app = new Hono()
+    mountEvolutionRoutes(app as unknown as Hono<{ Variables: { requestId: string } }>, {
+      db: db as unknown as import('../storage/db.js').MiraDB,
+      bus,
+      repoRoot: repoDir,
+    })
+    const diff = ['--- a/src/ghost.ts', '+++ b/src/ghost.ts', '@@ -1,1 +1,1 @@', '-a', '+b'].join(
+      '\n',
+    )
+    const res = await observe(app, {
+      failure: 'edit failed on src/ghost.ts',
+      changedFiles: ['src/ghost.ts'],
+      patch: diff,
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { candidate: { real: boolean } }
+    expect(body.candidate.real).toBe(false)
   })
 })
 
