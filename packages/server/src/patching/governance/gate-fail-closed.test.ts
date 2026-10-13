@@ -19,6 +19,7 @@ import { LatencyTracker } from '../latency.js'
 import { outcomeOf, isPassing } from './types.js'
 import { SecurityReview } from './security-review.js'
 import { SecurityScanner } from '../security.js'
+import { TrackerMeasurementSource, UnavailableMeasurementSource } from './measurement.js'
 
 // ── helpers ──────────────────────────────────────────────────────────
 
@@ -276,15 +277,17 @@ describe('§3 acceptance: SLO breach fails, compliance passes', () => {
   })
 
   test('healthy candidate within every configured limit → PASSED', async () => {
-    const r = await new CanaryRunner(tracker(10, 20, 30, 40)).start('proposal_x', {
-      trafficPct: 5,
-      durationMs: FAST,
-      slo: SLO,
-      minSamples: 3,
-    })
+    // traffic arrives DURING the observation window, which is what the canary
+    // is supposed to measure
+    const r = await observingRunner(new LatencyTracker(), [
+      { ms: 10 },
+      { ms: 20 },
+      { ms: 30 },
+      { ms: 40 },
+    ]).start('proposal_x', { trafficPct: 5, durationMs: 60, slo: SLO, minSamples: 3 })
     expect(r.passed).toBe(true)
     expect(outcomeOf(r)).toBe('PASSED')
-    expect(r.metrics!.count).toBe(4)
+    expect(Number(r.metrics!.count)).toBeGreaterThanOrEqual(3)
   })
 })
 
@@ -521,5 +524,118 @@ describe('§3.5: the configured duration is actually observed', () => {
     })
     expect(out.outcome).toBe('FAILED')
     expect(out.reason).toContain('exceeds limit')
+  })
+})
+
+// ── benchmark measurement seam ───────────────────────────────────────
+
+describe('benchmark measurement source', () => {
+  test('returns null when the candidate was never observed', async () => {
+    const t = new LatencyTracker()
+    t.record(100, 'baseline', 'b') // baseline traffic exists…
+    // …but nothing was routed to the candidate
+    const src = new TrackerMeasurementSource({ tracker: t })
+    const out = await src.measure({ id: 'prop_1' } as never)
+    expect(out).toBeNull()
+  })
+
+  test('returns a real pair when both sides were observed', async () => {
+    const t = new LatencyTracker()
+    t.record(200, 'baseline', 'b')
+    t.record(150, 'prop_1', 'c')
+    const src = new TrackerMeasurementSource({ tracker: t })
+    const out = await src.measure({ id: 'prop_1' } as never)
+    expect(out).not.toBeNull()
+    expect(out!.before).toEqual({ p50: 200, p95: 200 })
+    expect(out!.after).toEqual({ p50: 150, p95: 150 })
+  })
+
+  test('returns null when the baseline is missing (both sides are required)', async () => {
+    const t = new LatencyTracker()
+    t.record(150, 'prop_1', 'c')
+    const src = new TrackerMeasurementSource({ tracker: t })
+    expect(await src.measure({ id: 'prop_1' } as never)).toBeNull()
+  })
+
+  test('the production source reports unavailable rather than inventing numbers', async () => {
+    expect(await new UnavailableMeasurementSource().measure()).toBeNull()
+  })
+
+  test('a real measured pair drives the benchmark stage through advance()', async () => {
+    const { createDatabase, migrate } = await import('../../storage/db.js')
+    const { Bus } = await import('../../bus/index.js')
+    const { createGovernanceGate } = await import('./index.js')
+    const db = createDatabase(':memory:')
+    await migrate(db)
+
+    const t = new LatencyTracker()
+    t.record(200, 'baseline', 'b')
+
+    const gate = createGovernanceGate({
+      db,
+      bus: new Bus(),
+      rootDir: process.cwd(),
+      benchmark: new BenchmarkRunner(t),
+      measurements: new TrackerMeasurementSource({ tracker: t }),
+    })
+    await gate.init()
+    const p = await gate.createProposal(
+      {
+        id: 'p1',
+        painPointId: 'latency',
+        kind: 'latency',
+        targetFile: 'a.ts',
+        reason: 'r',
+        change: 'c',
+        severity: 'low',
+        score: 1,
+      } as never,
+      { verified: true, reason: 'ok' } as never,
+    )
+    // attribute candidate traffic to the proposal's real id, then advance
+    t.record(150, p.id, 'c')
+    const after = await gate.advance(p.id)
+    expect(after?.state).toBe('BENCHMARK_PASSED')
+    expect(after?.metadata.benchmark?.outcome).toBe('PASSED')
+    // the recorded evidence is the real measurement, not a placeholder
+    expect(after?.metadata.benchmark?.before).toEqual({ p50: 200, p95: 200 })
+    expect(after?.metadata.benchmark?.after).toEqual({ p50: 150, p95: 150 })
+    db.sqlite.close()
+  })
+
+  test('with no measurement source the stage BLOCKS with an actionable reason', async () => {
+    const { createDatabase, migrate } = await import('../../storage/db.js')
+    const { Bus } = await import('../../bus/index.js')
+    const { createGovernanceGate } = await import('./index.js')
+    const db = createDatabase(':memory:')
+    await migrate(db)
+    const gate = createGovernanceGate({
+      db,
+      bus: new Bus(),
+      rootDir: process.cwd(),
+      benchmark: new BenchmarkRunner(new LatencyTracker()),
+      // no measurements → UnavailableMeasurementSource
+    })
+    await gate.init()
+    const p = await gate.createProposal(
+      {
+        id: 'p2',
+        painPointId: 'latency',
+        kind: 'latency',
+        targetFile: 'a.ts',
+        reason: 'r',
+        change: 'c',
+        severity: 'low',
+        score: 1,
+      } as never,
+      { verified: true, reason: 'ok' } as never,
+    )
+    const after = await gate.advance(p.id)
+    expect(after?.state).toBe('PROPOSED') // did not advance
+    expect(after?.metadata.benchmark?.outcome).toBe('BLOCKED')
+    expect(after?.metadata.benchmark?.reason).toContain(
+      'baseline and candidate measurements are required',
+    )
+    db.sqlite.close()
   })
 })

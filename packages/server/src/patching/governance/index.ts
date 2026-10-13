@@ -11,6 +11,7 @@ import {
   type RegressionResult,
   type MetricPoint,
 } from './regression.js'
+import { UnavailableMeasurementSource, type MeasurementSource } from './measurement.js'
 import type { PatchProposal, ProposalState, GovernanceOutcome } from './types.js'
 import { outcomeOf } from './types.js'
 import type { Patch } from '../patcher.js'
@@ -37,6 +38,12 @@ export interface GovernanceGateDeps {
   canary?: CanaryStage
   promoter?: PromoteStage
   rollback?: RollbackStage
+  /**
+   * Produces the baseline/candidate snapshots the benchmark stage compares.
+   * Defaults to a source that reports "unavailable", so the stage BLOCKS with
+   * an actionable reason instead of advancing on nothing.
+   */
+  measurements?: MeasurementSource
   /** Called when a stage passes — used to stamp memories with elevated provenance. */
   onStagePass?: (proposalId: string, stage: 'benchmark' | 'security' | 'canary') => void
 }
@@ -69,6 +76,7 @@ export class GovernanceGate implements GovernanceGateLike {
   private promoter: PromoteStage
   private rollbackManager: RollbackStage
   private regression: RegressionDetector
+  private readonly measurements: MeasurementSource
   private onStagePass?: GovernanceGateDeps['onStagePass']
 
   constructor(deps: GovernanceGateDeps) {
@@ -82,6 +90,7 @@ export class GovernanceGate implements GovernanceGateLike {
     this.promoter = deps.promoter ?? new Promoter(deps.rootDir)
     this.rollbackManager = deps.rollback ?? new RollbackManager({ bus: deps.bus })
     this.regression = new RegressionDetector()
+    this.measurements = deps.measurements ?? new UnavailableMeasurementSource()
     this.onStagePass = deps.onStagePass
   }
 
@@ -144,10 +153,12 @@ export class GovernanceGate implements GovernanceGateLike {
 
     if (from === 'PROPOSED' || from === 'BENCHMARK_PENDING') {
       stage = 'benchmark'
-      // Measures candidate-vs-baseline latency. A stage that could not
-      // measure returns BLOCKED (see benchmark.ts) — previously it returned
-      // `passed: true` and advanced an unmeasured proposal to BENCHMARK_PASSED.
-      const result = await this.benchmark.run()
+      // Capture a real baseline/candidate pair. run() used to be called with
+      // NO arguments at all, so it could only ever return the vacuous
+      // "skipped" pass. The measurement source is a seam: when no independent
+      // candidate measurement exists it reports that, rather than inventing one.
+      const observed = (await this.measurements?.measure(proposal)) ?? undefined
+      const result = await this.benchmark.run(observed?.before, observed?.after)
       proposal.metadata = { ...proposal.metadata, benchmark: result }
       outcome = outcomeOf(result)
       passed = outcome === 'PASSED'
