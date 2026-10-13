@@ -2,6 +2,7 @@ import { createSignal, onMount, Show, For, createMemo } from 'solid-js'
 import { api, req, type PatchProposal, type ProposalState } from '../api/client'
 import { toast } from '../components/Toast'
 import { DataStateBadge } from '../components/DataState'
+import { ApprovalQueue } from '../components/ApprovalQueue'
 
 type EngineHealth = { id: string; status: string; healthy: boolean }
 type LedgerEntry = {
@@ -901,6 +902,11 @@ export default function EvolutionPage() {
                 MIRA_STRICT_AUTH gate for promote/canary · ledger verdicts pending_approval
               </div>
             </section>
+
+            {/* Operator Approval Queue — §18: the surface for the human
+                approval authority. Renders the server's durable pending
+                queue; approve/deny carry the session token server-side. */}
+            <ApprovalQueue />
 
             {/* Recent Improvements */}
             <section

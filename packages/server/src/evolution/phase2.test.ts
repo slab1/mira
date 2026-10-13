@@ -448,6 +448,66 @@ describe('Phase 2 Safety — wired routes (Risk→Autonomy→Approval→Resource
     expect(rbBody.verdict).toBe('rolledback')
   })
 
+  test('operator queue + deny: GET /evolution/approvals lists pending, POST /evolution/deny/:id denies with identity', async () => {
+    const bus = new Bus()
+    const app = new Hono()
+    mountEvolutionRoutes(app as unknown as Hono<{ Variables: { requestId: string } }>, {
+      db: db as unknown as import('../storage/db.js').MiraDB,
+      bus,
+      resolveOwner: (t: string) => (t === 'tok' ? 'test-human' : undefined),
+    })
+    // high-risk observe → pending approval, appears in the operator queue
+    const obsRes = await app.request('/evolution/observe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        failure: 'guardrail permission denied on auth',
+        changedFiles: ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts', 'f.ts'],
+        permissionScope: 'guardrails',
+        cost: 0.05,
+      }),
+    })
+    expect(obsRes.status).toBe(200)
+    const obsBody = (await obsRes.json()) as { ledger: { id: string } }
+
+    // unauthenticated queue read is fine (read-only), deny is not
+    const qRes = await app.request('/evolution/approvals')
+    expect(qRes.status).toBe(200)
+    const qBody = (await qRes.json()) as {
+      count: number
+      pending: Array<{ id: string; risk?: string; riskReasons?: string[]; level?: number }>
+    }
+    expect(qBody.count).toBe(1)
+    expect(qBody.pending[0].id).toBe(obsBody.ledger.id)
+    expect(qBody.pending[0].risk).toBe('high')
+    expect(qBody.pending[0].riskReasons?.length).toBeGreaterThan(0)
+
+    const unauthDeny = await app.request(`/evolution/deny/${obsBody.ledger.id}`, { method: 'POST' })
+    expect(unauthDeny.status).toBe(401)
+
+    const denyRes = await app.request(`/evolution/deny/${obsBody.ledger.id}`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer tok' },
+    })
+    expect(denyRes.status).toBe(200)
+    const denyBody = (await denyRes.json()) as {
+      approved: boolean
+      approverKind: string
+      approver?: string
+    }
+    expect(denyBody.approved).toBe(false)
+    expect(denyBody.approverKind).toBe('human-operator')
+    expect(denyBody.approver).toBe('test-human')
+    // queue is now empty; ledger records the rejection
+    const q2 = (await (await app.request('/evolution/approvals')).json()) as { count: number }
+    expect(q2.count).toBe(0)
+    const lr = (await (await app.request('/evolution/ledger?limit=10')).json()) as {
+      entries: Array<{ id: string; verdict: string }>
+    }
+    const entry = lr.entries.find((e) => e.id === obsBody.ledger.id)
+    expect(entry?.verdict).toBe('rejected')
+  })
+
   test('GET /evolution/metrics — longitudinal §16: derives baseline from accepted ledger history', async () => {
     const bus = new Bus()
     const ledger = new ImprovementLedger(db as unknown as import('../storage/db.js').MiraDB, bus)

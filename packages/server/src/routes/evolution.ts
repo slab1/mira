@@ -389,7 +389,9 @@ export function mountEvolutionRoutes(
         'GET /evolution/metrics',
         'GET /evolution/complexity',
         'GET /evolution/risk/:id',
+        'GET /evolution/approvals',
         'POST /evolution/approve/:id',
+        'POST /evolution/deny/:id',
         'POST /evolution/rollback/:id',
         'GET /evolution/rollback/:id/metadata',
         'POST /evolution/loop/acknowledge',
@@ -1198,6 +1200,70 @@ export function mountEvolutionRoutes(
       id,
       approved: result.approved,
       approver: result.approver,
+      approverKind: result.approverKind,
+      reason: result.reason,
+    })
+  })
+
+  // ── GET /evolution/approvals — the operator's pending queue ─────
+  // The UI is a surface, not an authority: this reads gate state (durable),
+  // approve/deny still require the operator's authenticated credentials.
+  app.get('/evolution/approvals', (c) => {
+    const pending = approvalGate.listPending()
+    return c.json({
+      ok: true,
+      count: pending.length,
+      pending: pending.map((p) => ({
+        id: p.id,
+        title: p.proposal?.title,
+        affectedEngine: p.proposal?.affectedEngine,
+        risk: p.risk?.level,
+        riskScore: p.risk?.score,
+        riskReasons: p.risk?.reasons,
+        level: p.level,
+        requestedAt: p.requestedAt,
+      })),
+    })
+  })
+
+  // ── POST /evolution/deny/:id — operator denial (mirror of approve) ──
+  app.post('/evolution/deny/:id', async (c) => {
+    const id = c.req.param('id')
+    const entry = ledger.get(id)
+    if (!entry) return c.json({ error: 'not found', id }, 404)
+    const bearer = c.req.header('authorization')?.startsWith('Bearer ')
+      ? c.req.header('authorization')!.slice(7)
+      : ''
+    const owner = deps.resolveOwner?.(bearer)
+    const identity = {
+      owner: owner ?? 'unauthenticated',
+      authenticated: Boolean(owner),
+    }
+    if (!identity.authenticated) {
+      return c.json({ error: 'denial requires an authenticated caller', denied: false, id }, 401)
+    }
+    const result = approvalGate.deny(id, identity)
+    // record the denial in the ledger (fail-closed verdict)
+    try {
+      const ev = entry.evidence as Record<string, unknown> | null
+      ledger.remember({
+        id: entry.id,
+        proposal: entry.proposal,
+        verdict: 'rejected' as unknown as import('../evolution/ledger.js').LedgerVerdict,
+        evidence: {
+          ...(ev ?? {}),
+          denial: result,
+          deniedAt: Date.now(),
+          denier: result.approver ?? identity.owner,
+        } as unknown as JsonValue,
+      })
+    } catch {}
+    return c.json({
+      ok: true,
+      id,
+      approved: result.approved,
+      approver: result.approver,
+      approverKind: result.approverKind,
       reason: result.reason,
     })
   })
