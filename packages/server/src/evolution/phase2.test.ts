@@ -1035,6 +1035,60 @@ describe('§24: real candidates flow from observe into a measured variant', () =
     }
     expect(body.count).toBe(0)
   })
+
+  test('§24: a ledger write failure is a 500, never a phantom "recorded" verdict', async () => {
+    const bus = new Bus()
+    const app = new Hono()
+    const real = new ImprovementLedger(db as unknown as import('../storage/db.js').MiraDB, bus)
+    // A ledger whose write fails — simulating storage exhaustion. remember() is
+    // synchronous in the real ledger, so the stub must match that signature.
+    const broken = Object.create(real) as Record<string, unknown>
+    broken['remember'] = () => {
+      throw new Error('disk full')
+    }
+    mountEvolutionRoutes(app as unknown as Hono<{ Variables: { requestId: string } }>, {
+      db: db as unknown as import('../storage/db.js').MiraDB,
+      bus,
+      ledger: broken as unknown as ImprovementLedger,
+    })
+    const res = await app.request('/evolution/observe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ failure: 'timeout on lane default', evidence: { x: 1 } }),
+    })
+    // Previously this answered 200 with ok:true and ledger:{verdict:'verified'},
+    // telling the operator the decision was recorded while nothing was stored.
+    expect(res.status).toBe(500)
+    const body = (await res.json()) as { error: string; verdict?: string; ledger?: unknown }
+    expect(body.error).toContain('could not be recorded')
+    expect(body.ledger).toBeUndefined()
+  })
+
+  test('a successful observe DOES record its verdict', async () => {
+    const bus = new Bus()
+    const ledger = new ImprovementLedger(db as unknown as import('../storage/db.js').MiraDB, bus)
+    const app = new Hono()
+    mountEvolutionRoutes(app as unknown as Hono<{ Variables: { requestId: string } }>, {
+      db: db as unknown as import('../storage/db.js').MiraDB,
+      bus,
+      ledger,
+    })
+    const res = await app.request('/evolution/observe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        failure: 'a distinct failure shape for the ledger check',
+        evidence: { k: 9 },
+      }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      ledger: { verdict: import('./ledger.js').LedgerVerdict; id: string }
+    }
+    const stored = ledger.get(body.ledger.id)
+    expect(stored).not.toBeNull()
+    expect(stored?.verdict).toBe(body.ledger.verdict)
+  })
 })
 
 describe('§11 + §10 + §20 — loop guard, research boundary, complexity (wired routes)', () => {

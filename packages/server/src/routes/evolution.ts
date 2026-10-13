@@ -964,6 +964,13 @@ export function mountEvolutionRoutes(
       }
     }
 
+    // §24: "record the entire evolution history" — a decision that is not
+    // persisted is not a decision. This used to swallow a ledger write failure
+    // and still answer 200 with `ledger: {verdict, id}`, telling the operator
+    // it was recorded while nothing was stored — which then silently starves
+    // every downstream reader (approvals, investigations, metrics, the
+    // longitudinal baseline). A storage failure is a server error, not a
+    // successful run with a phantom entry.
     try {
       ledger.remember({
         id: proposal.id,
@@ -1010,7 +1017,21 @@ export function mountEvolutionRoutes(
             null,
         } as unknown as JsonValue,
       })
-    } catch {}
+    } catch (e) {
+      try {
+        variantWorkspace?.disposeAll()
+      } catch {}
+      return c.json(
+        {
+          error:
+            'evolution decision could not be recorded — the ledger write failed, so nothing was persisted',
+          id: proposal.id,
+          verdict,
+          detail: String(e).slice(0, 300),
+        },
+        500,
+      )
+    }
 
     // Candidate trees are disposable — remove after the pipeline measured it.
     try {
