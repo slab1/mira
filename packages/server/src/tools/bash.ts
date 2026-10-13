@@ -17,8 +17,14 @@ const bashSchema = z.object({
   description: z.string().optional().describe('Human-readable description for TUI'),
 })
 
-// Module-level sandbox singleton — reads MIRA_SANDBOX at construction.
+// Module-level sandbox singleton — reads MIRA_SANDBOX / MIRA_SANDBOX_PROFILE
+// at construction. Under a container-requiring profile every command goes
+// through the sandbox (and therefore fails closed if no runtime is present);
+// under a host profile the sandbox still applies env scrubbing and timeouts.
 let sandbox: ContainerSandbox = createSandbox()
+
+/** True when this sandbox demands a container rather than host execution. */
+const requiresContainer = (): boolean => sandbox.status().requiresContainer
 
 /** Test hook: swap the sandbox instance (e.g. for a mock). Pass null to reset. */
 export function __setSandbox(s: ContainerSandbox | null): void {
@@ -47,7 +53,7 @@ export const bashTool = {
     // Sandboxed path — MIRA_SANDBOX=1: run inside a container with the session
     // cwd mounted at /work. SandboxError (e.g. no container runtime) fails
     // closed: the error is returned to the agent, never a silent host run.
-    if (sandbox.status().enabled) {
+    if (sandbox.status().enabled || requiresContainer()) {
       try {
         const result = await sandbox.run(['bash', '-c', command], { cwd })
         return {
