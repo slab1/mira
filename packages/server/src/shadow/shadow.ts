@@ -28,6 +28,7 @@ import type { JsonValue, BusEventType } from '../types/index.js'
 import { TelemetryCollector, type ShadowTelemetry } from './telemetry.js'
 import { ShadowBenchmark, type ShadowBenchmarkReport } from './benchmark.js'
 import { ShadowComparison, type ShadowComparisonResult } from './comparison.js'
+import { measureVariant } from './variant-benchmark.js'
 import { createDatabase, migrate } from '../storage/db.js'
 
 export interface ShadowResult {
@@ -143,6 +144,11 @@ export class ShadowMira {
       latencyMs: number
       successRate: number
       costDelta: number
+      /** Optional materialized, patched tree. When present the candidate is
+       *  measured by RUNNING REAL CHECKS inside that tree
+       *  (shadow/variant-benchmark.ts) rather than trusting caller numbers —
+       *  the measurement comes from executing the candidate. */
+      variantDir?: string
     },
   ): Promise<{
     shadowId: string
@@ -175,18 +181,35 @@ export class ShadowMira {
       this.telemetryCollector.ingest(this.metrics, this.gatewaySnapshot())
     } catch {}
 
+    // Candidate measurement precedence (§3 — never fabricate):
+    //   1. variant tree execution — real checks run inside the patched tree
+    //   2. caller-supplied experiment measurement (verifier sandbox run)
+    //   3. parity benchmark (candidate == production, honestly labelled)
+    let candidateMeasurement:
+      { version: string; latencyMs: number; successRate: number; costDelta: number } | undefined
+    if (candidate?.variantDir) {
+      try {
+        const measured = await measureVariant({
+          dir: candidate.variantDir,
+          version: `${eng.version}+exp:${candidate.versionSuffix}`,
+        })
+        if (measured) candidateMeasurement = measured
+      } catch {}
+    }
+    if (!candidateMeasurement && candidate) {
+      candidateMeasurement = {
+        version: `${eng.version}+exp:${candidate.versionSuffix}`,
+        latencyMs: candidate.latencyMs,
+        successRate: candidate.successRate,
+        costDelta: candidate.costDelta,
+      }
+    }
+
     // Run benchmark on both Production vs Candidate
     const benchmark = await this.benchmarker.benchmarkAll(
       this.registry,
       candidateEngineId,
-      candidate
-        ? {
-            version: candidateVersion,
-            latencyMs: candidate.latencyMs,
-            successRate: candidate.successRate,
-            costDelta: candidate.costDelta,
-          }
-        : undefined,
+      candidateMeasurement,
     )
 
     // Comparison per §16 (+20%/-0.5pp gates)

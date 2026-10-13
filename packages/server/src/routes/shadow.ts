@@ -22,6 +22,7 @@
 
 import type { Hono } from 'hono'
 import type { ShadowMira } from '../shadow/shadow.js'
+import { VariantWorkspace } from '../patching/governance/variant.js'
 
 export interface ShadowRouteDeps {
   shadow: ShadowMira
@@ -39,7 +40,8 @@ export function mountShadowRoutes(
     const h = shadow.health()
     return c.json({
       ok: true,
-      status: 'Target→Implemented per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_EVOLUTION_SPEC.md Phase 4 + MIRA_SYSTEM_DOCUMENTATION.md:11 Shadow Mira',
+      status:
+        'Target→Implemented per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_EVOLUTION_SPEC.md Phase 4 + MIRA_SYSTEM_DOCUMENTATION.md:11 Shadow Mira',
       phase: 'Phase 4 Shadow Mira',
       primary: 'nvidia',
       fallback: 'colibri',
@@ -60,16 +62,59 @@ export function mountShadowRoutes(
     })
   })
 
-  // ── POST /shadow/start {candidateEngineId} ─────────────────────────
+  // ── POST /shadow/start {candidateEngineId, patch?} ────────────────
+  // With `patch`, the candidate is a REAL materialized, patched tree
+  // (governance/variant.ts) measured by executing checks inside it
+  // (shadow/variant-benchmark.ts) — not the registry engine benchmarked
+  // against itself. Without a patch it stays a parity benchmark, honestly
+  // labelled. Fail-closed: a patch that won't materialize produces no
+  // candidate measurement (never a fabricated one).
   app.post('/shadow/start', async (c) => {
     let body: Record<string, unknown> | null = null
-    try { body = (await c.req.json() as unknown) as Record<string, unknown> } catch { body = null }
-    const candidateEngineId = typeof body?.['candidateEngineId'] === 'string' ? (body['candidateEngineId'] as string).trim() : ''
+    try {
+      body = (await c.req.json()) as unknown as Record<string, unknown>
+    } catch {
+      body = null
+    }
+    const candidateEngineId =
+      typeof body?.['candidateEngineId'] === 'string'
+        ? (body['candidateEngineId'] as string).trim()
+        : ''
     if (!candidateEngineId) {
-      return c.json({ error: 'body.candidateEngineId string required (e.g., "tool" | "agent" | "memory")' }, 400)
+      return c.json(
+        { error: 'body.candidateEngineId string required (e.g., "tool" | "agent" | "memory")' },
+        400,
+      )
+    }
+    // Optional patch → real candidate tree. Materialization + measurement are
+    // best-effort: any failure falls back to the parity path, never to a lie.
+    let variantDir: string | undefined
+    let disposeVariant: (() => void) | null = null
+    let variantNote = 'no patch supplied — parity benchmark (candidate == production)'
+    const patch = body?.['patch']
+    if (patch && typeof patch === 'object') {
+      try {
+        const ws = new VariantWorkspace()
+        const proposalId = `${candidateEngineId}_shadow_${Date.now().toString(36)}`
+        const mat = await ws.materialize(proposalId, patch as never)
+        if (mat.candidate) {
+          variantDir = mat.candidate.dir
+          variantNote = `materialized ${mat.candidate.origin} candidate tree — measured by executing checks inside it`
+          disposeVariant = () => ws.disposeAll()
+        } else {
+          variantNote = `no candidate tree (${mat.reason.slice(0, 160)}) — parity benchmark`
+        }
+      } catch (e) {
+        variantNote = `materialization error (${String(e).slice(0, 120)}) — parity benchmark`
+      }
     }
     try {
-      const out = await shadow.startShadow(candidateEngineId)
+      const out = await shadow.startShadow(
+        candidateEngineId,
+        variantDir
+          ? { versionSuffix: 'variant', latencyMs: 0, successRate: 0, costDelta: 0, variantDir }
+          : undefined,
+      )
       return c.json({
         ok: true,
         shadowId: out.shadowId,
@@ -85,12 +130,18 @@ export function mountShadowRoutes(
         },
         telemetry: out.telemetry,
         isolated: true,
+        candidateSource: variantNote,
         timestamp: Date.now(),
       })
     } catch (e) {
       const msg = String((e as Error)?.message ?? e)
       if (msg.includes('not found')) return c.json({ error: msg }, 404)
       return c.json({ error: msg.slice(0, 500) }, 500)
+    } finally {
+      // Variants are disposable — remove the tree once measured.
+      try {
+        disposeVariant?.()
+      } catch {}
     }
   })
 
@@ -133,7 +184,13 @@ export function mountShadowRoutes(
           ? {
               aggregated: rec.benchmark.aggregated,
               delta: rec.benchmark.delta,
-              verifier: rec.benchmark.verifier ? { verified: rec.benchmark.verifier.verified, regression: rec.benchmark.verifier.regression, security: rec.benchmark.verifier.security } : null,
+              verifier: rec.benchmark.verifier
+                ? {
+                    verified: rec.benchmark.verifier.verified,
+                    regression: rec.benchmark.verifier.regression,
+                    security: rec.benchmark.verifier.security,
+                  }
+                : null,
             }
           : null,
         result: rec.result,
