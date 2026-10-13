@@ -964,6 +964,77 @@ describe('§24: real candidates flow from observe into a measured variant', () =
     const body = (await res.json()) as { candidate: { real: boolean } }
     expect(body.candidate.real).toBe(false)
   })
+
+  test('GET /evolution/investigations — the follow-up queue surfaces what to act on', async () => {
+    const bus = new Bus()
+    const app = new Hono()
+    mountEvolutionRoutes(app as unknown as Hono<{ Variables: { requestId: string } }>, {
+      db: db as unknown as import('../storage/db.js').MiraDB,
+      bus,
+      repoRoot: repoDir,
+    })
+    // an observation with no proposed change → investigation, not a failure
+    const res = await observe(app, {
+      failure: 'edit failed on src/mod.ts (stale anchor)',
+      changedFiles: ['src/mod.ts'],
+      research: {
+        source: 'docs:editing',
+        content:
+          'A stale anchor failure on an edit usually means the file changed since the read. Reading the file again before applying the anchored edit resolves most stale-anchor failures.',
+      },
+    })
+    expect(res.status).toBe(200)
+
+    const q = await app.request('/evolution/investigations')
+    expect(q.status).toBe(200)
+    const body = (await q.json()) as {
+      count: number
+      investigations: Array<{
+        title?: string
+        cause?: string
+        failure?: string
+        risk?: string
+        why: string
+        next: string
+        researchHints: Array<{ claim: string; corroboratedBy: number }>
+      }>
+    }
+    expect(body.count).toBe(1)
+    const inv = body.investigations[0]
+    // everything needed to act on it
+    expect(inv.failure).toContain('stale anchor')
+    expect(inv.why).toContain('investigation')
+    expect(inv.next).toContain('unified diff')
+    // research evidence rides along when it validated against the diagnosis
+    expect(inv.researchHints.length).toBeGreaterThanOrEqual(0)
+  })
+
+  test('a real candidate does NOT appear in the investigation queue', async () => {
+    const bus = new Bus()
+    const app = new Hono()
+    mountEvolutionRoutes(app as unknown as Hono<{ Variables: { requestId: string } }>, {
+      db: db as unknown as import('../storage/db.js').MiraDB,
+      bus,
+      repoRoot: repoDir,
+    })
+    const diff = [
+      '--- a/src/mod.ts',
+      '+++ b/src/mod.ts',
+      '@@ -1,1 +1,1 @@',
+      '-export const value = 1',
+      '+export const value = 42',
+    ].join('\n')
+    const res = await observe(app, {
+      failure: 'edit failed on src/mod.ts (stale anchor)',
+      changedFiles: ['src/mod.ts'],
+      patch: diff,
+    })
+    expect(res.status).toBe(200)
+    const body = (await (await app.request('/evolution/investigations')).json()) as {
+      count: number
+    }
+    expect(body.count).toBe(0)
+  })
 })
 
 describe('§11 + §10 + §20 — loop guard, research boundary, complexity (wired routes)', () => {

@@ -3,6 +3,7 @@ import { api, req, type PatchProposal, type ProposalState } from '../api/client'
 import { toast } from '../components/Toast'
 import { DataStateBadge } from '../components/DataState'
 import { ApprovalQueue } from '../components/ApprovalQueue'
+import { InvestigationQueue } from '../components/InvestigationQueue'
 
 type EngineHealth = { id: string; status: string; healthy: boolean }
 type LedgerEntry = {
@@ -907,6 +908,10 @@ export default function EvolutionPage() {
                 approval authority. Renders the server's durable pending
                 queue; approve/deny carry the session token server-side. */}
             <ApprovalQueue />
+
+            {/* §24: open investigations — proposals with no honest fix yet,
+                surfaced with what is needed to act on them. */}
+            <InvestigationQueue />
 
             {/* Recent Improvements */}
             <section

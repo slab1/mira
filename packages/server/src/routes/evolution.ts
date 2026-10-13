@@ -419,6 +419,7 @@ export function mountEvolutionRoutes(
         'GET /evolution/complexity',
         'GET /evolution/risk/:id',
         'GET /evolution/approvals',
+        'GET /evolution/investigations',
         'POST /evolution/approve/:id',
         'POST /evolution/deny/:id',
         'POST /evolution/rollback/:id',
@@ -969,7 +970,20 @@ export function mountEvolutionRoutes(
             id: experiment.simulationId,
             sandboxPath: experiment.sandboxPath,
             riskScore: experiment.riskScore,
+            // §24: whether a real appliable change existed. Investigations
+            // (appliable:false) are queryable via GET /evolution/investigations
+            // so a human/model can produce the missing fix.
+            appliable: experiment.appliable,
+            ...(experiment.targetFile ? { targetFile: experiment.targetFile } : {}),
           },
+          candidate: candidate
+            ? { real: true, targetFile: candidate.targetFile, basis: candidate.basis }
+            : {
+                real: false,
+                basis: patch
+                  ? 'proposed change is not an appliable unified diff against an existing claimed file'
+                  : 'no change proposed — this is an investigation',
+              },
           risk,
           autonomy: { level, effectiveLevel, needsApproval },
           confidenceGate,
@@ -1327,6 +1341,81 @@ export function mountEvolutionRoutes(
         approvers: p.approvers ?? [],
         requiredApprovals: p.requiredApprovals ?? 1,
       })),
+    })
+  })
+
+  // ── GET /evolution/investigations — the follow-up queue (§24) ────
+  // A proposal with no real change is not a failure — it is an open question
+  // awaiting a fix. This surfaces those questions with everything needed to
+  // act: the diagnosis, the observed failure, the risk, and any research hints
+  // already validated against it (§10). Acting on one means producing a real
+  // unified diff and re-posting it to /evolution/observe, which then flows
+  // through variant → shadow → canary like any candidate.
+  app.get('/evolution/investigations', (c) => {
+    const limitRaw = c.req.query('limit')
+    const limit = limitRaw ? Math.min(200, Math.max(1, Number(limitRaw) || 50)) : 50
+    const entries = ledger.list(500)
+
+    const investigations = entries
+      .map((e) => {
+        const ev = e.evidence as {
+          experiment?: { appliable?: boolean; targetFile?: string }
+          candidate?: { real?: boolean; basis?: string }
+          diagnosis?: {
+            cause?: string
+            confidence?: number
+            affectedEngine?: string
+            failure?: string
+          }
+          observed?: { failure?: string; evidence?: unknown }
+          risk?: { level?: string; score?: number; reasons?: string[] }
+          research?: {
+            knowledge?: Array<{
+              claim?: string
+              validated?: boolean
+              confidence?: number
+              corroboratedSources?: string[]
+            }>
+          }
+        } | null
+        // Only proposals that produced no appliable change, and were not
+        // already resolved by an operator decision.
+        if (ev?.experiment?.appliable !== false) return null
+        if (e.verdict === 'rolledback' || e.verdict === 'promoted') return null
+        const hints = (ev?.research?.knowledge ?? [])
+          .filter((k) => k.validated)
+          .map((k) => ({
+            claim: k.claim ?? '',
+            confidence: k.confidence ?? 0,
+            corroboratedBy: k.corroboratedSources?.length ?? 1,
+          }))
+        return {
+          id: e.id,
+          title: e.proposal?.title,
+          verdict: e.verdict,
+          createdAt: e.createdAt,
+          cause: ev?.diagnosis?.cause ?? e.proposal?.cause,
+          failure: ev?.diagnosis?.failure ?? ev?.observed?.failure,
+          affectedEngine: ev?.diagnosis?.affectedEngine ?? e.proposal?.affectedEngine,
+          confidence: ev?.diagnosis?.confidence ?? e.proposal?.confidence,
+          risk: ev?.risk?.level ?? e.proposal?.risk,
+          riskReasons: ev?.risk?.reasons ?? [],
+          evidence: ev?.observed?.evidence ?? null,
+          why: ev?.candidate?.basis ?? 'no change proposed — investigation',
+          researchHints: hints,
+          next: 'produce a real unified diff against an existing file, then POST /evolution/observe with { failure, changedFiles, patch }',
+        }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+      .slice(0, limit)
+
+    return c.json({
+      ok: true,
+      count: investigations.length,
+      window: { limit, scanned: entries.length },
+      investigations,
+      note: '§24: an investigation is an open question, not a failure — resolve it by producing a real diff and re-observing',
     })
   })
 
