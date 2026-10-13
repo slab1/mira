@@ -12,7 +12,7 @@
  * approval was requested.
  */
 
-import { createSignal, onMount, Show, For } from 'solid-js'
+import { createSignal, onMount, onCleanup, Show, For } from 'solid-js'
 import { req } from '../api/client'
 import { toast } from './Toast'
 
@@ -90,7 +90,18 @@ export function ApprovalQueue(props: { onDecided?: () => void }) {
     }
   }
 
-  onMount(refresh)
+  onMount(() => {
+    void refresh()
+    // Poll drives the server's aging tick (checkAging runs on queue reads) and
+    // keeps the queue live without a second WebSocket — the surface stays thin.
+    const timer = window.setInterval(() => void refresh(), 30_000)
+    const onFocus = () => void refresh()
+    window.addEventListener('focus', onFocus)
+    onCleanup(() => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', onFocus)
+    })
+  })
 
   return (
     <section

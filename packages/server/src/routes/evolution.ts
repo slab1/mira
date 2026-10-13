@@ -1241,6 +1241,7 @@ export function mountEvolutionRoutes(
       ok: true,
       count: pending.length,
       agingEmitted,
+      policyFingerprint: approvalGate.policyFingerprint(),
       pending: pending.map((p) => ({
         id: p.id,
         title: p.proposal?.title,

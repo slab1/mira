@@ -278,18 +278,69 @@ describe('two-person rule — high-risk needs two distinct operators (§18)', ()
   })
 })
 
+describe('§18 meta-rule — policy changes invalidate in-flight approvals', () => {
+  test('policy change between request and decision refuses the approval', () => {
+    const g = new ApprovalGate({ operators: ['op-a'] })
+    g.requestApproval(proposal(), 3, HIGH)
+    // the operator set changes mid-flight (a policy edit)
+    ;(g as unknown as { operators: Set<string> }).operators = new Set(['op-a', 'op-b'])
+    g.refreshPolicy()
+    const r = g.approve(proposal().id, { owner: 'op-a', authenticated: true })
+    expect(r.approved).toBe(false)
+    expect(r.pending).toBe(true)
+    expect(r.reason).toContain('policy changed')
+  })
+
+  test('unchanged policy still approves normally', () => {
+    const g = new ApprovalGate({ operators: ['op-a'] })
+    g.requestApproval(proposal(), 3, HIGH)
+    const r = g.approve(proposal().id, { owner: 'op-a', authenticated: true })
+    expect(r.approved).toBe(true)
+  })
+
+  test('deny also refuses under stale policy', () => {
+    const g = new ApprovalGate({ operators: ['op-a'] })
+    g.requestApproval(proposal(), 3, HIGH)
+    ;(g as unknown as { autoApproveLowRisk: boolean }).autoApproveLowRisk = false
+    g.refreshPolicy()
+    const r = g.deny(proposal().id, { owner: 'op-a', authenticated: true })
+    expect(r.approved).toBe(false)
+    expect(r.reason).toContain('policy changed')
+  })
+
+  test('policyFingerprint is stable for equal policies and differs otherwise', async () => {
+    const { policyFingerprint } = await import('./approval.js')
+    const a = policyFingerprint({
+      autoApproveLowRisk: true,
+      operators: ['x', 'y'],
+      twoPersonRule: true,
+    })
+    const b = policyFingerprint({
+      autoApproveLowRisk: true,
+      operators: ['y', 'x'],
+      twoPersonRule: true,
+    })
+    expect(a).toBe(b) // operator order is not policy
+    const c = policyFingerprint({
+      autoApproveLowRisk: true,
+      operators: ['x', 'y'],
+      twoPersonRule: false,
+    })
+    expect(a).not.toBe(c)
+  })
+})
+
 describe('aging notifications — escalation is awareness, never approval', () => {
   test('aging emits once per window, re-emits next bucket; young items stay quiet', async () => {
     const { Bus } = await import('../bus/index.js')
     const bus = new Bus()
     const seen: Array<{ id: string; bucket: number }> = []
-    bus.subscribeAll?.(
-      (e: { type: string; payload?: { proposalId?: string; bucket?: number } }) => {
-        if (e.type === 'evolution.approval_aging') {
-          seen.push({ id: e.payload?.proposalId ?? '', bucket: e.payload?.bucket ?? 0 })
-        }
-      },
-    )
+    bus.subscribeAll?.((event: { type: string; payload?: unknown }) => {
+      if (event.type === 'evolution.approval_aging') {
+        const payload = event.payload as { proposalId?: string; bucket?: number } | null
+        seen.push({ id: payload?.proposalId ?? '', bucket: payload?.bucket ?? 0 })
+      }
+    })
     const g = new ApprovalGate({ bus, agingMs: 1000 })
     g.requestApproval(proposal(), 3, HIGH)
     const t0 = Date.now()

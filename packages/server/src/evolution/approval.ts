@@ -30,6 +30,7 @@ import type { RiskAssessment } from './risk.js'
 import { requiresApproval, AutonomyLevels } from './autonomy.js'
 import { appendDecision } from '../learning/ledger.js'
 import type { MiraDB } from '../storage/db.js'
+import { createHash } from 'node:crypto'
 
 export interface ApprovalRequest {
   id: string // proposal.id
@@ -44,6 +45,11 @@ export interface ApprovalRequest {
   /** How many distinct operator approvals this request needs (1 unless the
    *  two-person rule applies to this risk tier). */
   requiredApprovals?: number
+  /** §18 meta-rule: fingerprint of the approval policy in force when this was
+   *  raised. If the policy changes while the request pends, the decision must
+   *  be re-evaluated under the NEW rules rather than the ones it was raised
+   *  under — a policy edit can never smuggle an approval through. */
+  policyFingerprint?: string
 }
 
 export interface ApprovalResult {
@@ -158,6 +164,23 @@ function proposalAuthor(proposal: ImprovementProposal): string | undefined {
   return undefined
 }
 
+/** §18 meta-rule: stable fingerprint of the active approval policy. Any change
+ *  to the rules (autoLowRisk / operators / two-person rule) invalidates in-flight
+ *  approvals raised under the old rules — a policy edit cannot be used to let a
+ *  pending high-risk change through. */
+export function policyFingerprint(p: {
+  autoApproveLowRisk: boolean
+  operators: string[] | null
+  twoPersonRule: boolean
+}): string {
+  const canonical = JSON.stringify({
+    a: p.autoApproveLowRisk,
+    o: p.operators ? [...p.operators].sort() : null,
+    t: p.twoPersonRule,
+  })
+  return createHash('sha256').update(canonical).digest('hex').slice(0, 16)
+}
+
 export class ApprovalGate {
   private bus?: Bus
   private pending = new Map<string, ApprovalRequest>()
@@ -174,6 +197,26 @@ export class ApprovalGate {
    *  per aging window, not on every queue read. */
   private agingEmitted = new Map<string, number>()
   private store?: ApprovalStore
+
+  /** §18 meta-rule: fingerprint of the policy in force right now. Requests
+   *  stamp it; approve/deny refuse when it no longer matches. */
+  private fingerprint: string = 'unset'
+
+  /** Recompute + swap the policy fingerprint; existing pending requests keep
+   *  their stale stamp and will be refused on decision until re-raised. */
+  refreshPolicy(): void {
+    this.fingerprint = policyFingerprint({
+      autoApproveLowRisk: this.autoApproveLowRisk,
+      operators: this.operators ? [...this.operators].sort() : null,
+      twoPersonRule: this.twoPersonRule,
+    })
+  }
+
+  /** Current policy fingerprint — exposed so the UI can show which rules a
+   *  pending decision was raised under. */
+  policyFingerprint(): string {
+    return this.fingerprint
+  }
 
   /**
    * @param allowMockApproval when true, medium-risk approvals may be
@@ -220,6 +263,7 @@ export class ApprovalGate {
     // single operator a quorum of 2 is a deadlock, not a rule.
     this.twoPersonRule = opts?.twoPersonRule ?? (this.operators?.size ?? 0) >= 2
     this.agingMs = opts?.agingMs ?? 3_600_000
+    this.refreshPolicy()
     if (opts?.store) {
       this.store = opts.store
       try {
@@ -295,6 +339,7 @@ export class ApprovalGate {
         status: 'pending',
         approvers: [],
         requiredApprovals: this.twoPersonRule ? 2 : 1,
+        policyFingerprint: this.fingerprint,
       }
       this.pending.set(proposal.id, req)
       try {
@@ -386,6 +431,18 @@ export class ApprovalGate {
         approved: false,
         pending: true,
         reason: 'approval rejected: approver identity is not authenticated',
+      }
+    }
+
+    // §18 meta-rule: the approval policy changed while this request was
+    // pending — decide nothing under stale rules; the change must be re-raised
+    // so the operator sees the new policy on the case.
+    if (req.policyFingerprint && req.policyFingerprint !== this.fingerprint) {
+      return {
+        approved: false,
+        pending: true,
+        reason:
+          'approval refused: the approval policy changed while this request was pending — re-raise the proposal to be decided under the current rules (meta-rule)',
       }
     }
 
@@ -494,8 +551,18 @@ export class ApprovalGate {
         reason: `denial rejected: "${approver}" is not a designated operator (MIRA_OPERATORS)`,
       }
     }
+    // Same meta-rule as approve(): a policy edit mid-flight invalidates the
+    // case, so a denial cannot be recorded under stale rules either.
     const req = this.pending.get(id)
     if (!req) return { approved: false, approver, reason: 'no pending' }
+    if (req.policyFingerprint && req.policyFingerprint !== this.fingerprint) {
+      return {
+        approved: false,
+        approver,
+        reason:
+          'denial refused: the approval policy changed while this request was pending (meta-rule)',
+      }
+    }
     req.status = 'denied'
     req.approver = approver
     this.emit(req.proposal, req.level, req.risk, 'denied', approver)
