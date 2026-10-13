@@ -24,8 +24,32 @@
  * | 10 | Known limitations | Implemented | Phase 1 heuristic + tsc/typecheck opportunistic; full runEval canary Phase 4/5 |
  */
 
-import type { JsonValue } from "../types/index.js"
-import type { Experiment } from "./experiment.js"
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import type { JsonValue } from '../types/index.js'
+import type { Experiment } from './experiment.js'
+
+/**
+ * Resolve the REAL TypeScript compiler.
+ *
+ * Bare `npx tsc` in a tree without node_modules resolves the unrelated `tsc`
+ * placeholder npm package, which prints a warning and EXITS 0 — so a broken
+ * candidate "passes". Same trap already fixed in shadow/variant-benchmark.ts;
+ * the verifier had the same latent defect.
+ */
+function resolveTsc(): string[] | null {
+  let dir = process.cwd()
+  const seen = new Set<string>()
+  for (let i = 0; i < 8 && dir; i++) {
+    if (seen.has(dir)) break
+    seen.add(dir)
+    const local = join(dir, 'node_modules', '.bin', 'tsc')
+    if (existsSync(local)) return [local, '--noEmit']
+    const parent = join(dir, '..')
+    dir = parent === dir ? '' : parent
+  }
+  return null
+}
 
 export interface VerificationResult {
   verified: boolean
@@ -41,6 +65,12 @@ export interface VerifierOpts {
   // optional independent checks — when true, attempt real static/lint
   runStatic?: boolean
   timeoutMs?: number
+  /**
+   * The materialized CANDIDATE tree to verify (repo-relative or absolute).
+   * Static analysis runs HERE. Without it there is nothing to verify and the
+   * result says so — it never falls back to checking the repository.
+   */
+  treeDir?: string
 }
 
 export async function verify(
@@ -60,37 +90,78 @@ export async function verify(
   }
   // heuristic: patch size
   if (experiment.patch.length > 5000) {
-    issues.push("patch >5k chars — large blast radius")
+    issues.push('patch >5k chars — large blast radius')
     staticPassed = false
   }
 
-  // opportunistic tsc --noEmit if requested (independent verification per §4)
+  // Static analysis against the CANDIDATE, not the repository.
+  //
+  // This previously ran `npx tsc --noEmit` with cwd = process.cwd(), i.e. the
+  // untouched repository. A candidate that replaced a number with a string —
+  // code that cannot compile — was measured as `static.passed: true` with zero
+  // issues, because the repo it checked was not the code under review. Two
+  // compounding defects: wrong tree, and bare `npx tsc` resolving the
+  // deprecated placeholder package that exits 0 (see shadow/variant-benchmark).
+  //
+  // Now: run the real workspace compiler against `opts.treeDir` (the
+  // materialized candidate). Without a candidate tree there is nothing to
+  // verify — say so instead of passing.
   if (opts.runStatic) {
-    try {
-      const proc = Bun.spawn(["npx", "tsc", "--noEmit"], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe", timeout: opts.timeoutMs ?? 8000 })
-      const code = await proc.exited
-      if (code !== 0) {
-        const err = await new Response(proc.stderr).text().catch(() => "")
-        issues.push(`tsc --noEmit failed (code ${code}): ${err.slice(0, 400)}`)
+    const treeDir = opts.treeDir
+    if (!treeDir) {
+      issues.push(
+        'static check not performed — no candidate tree to verify (opts.treeDir unset); the patch itself is unverified',
+      )
+      staticPassed = false
+    } else {
+      const tsc = resolveTsc()
+      if (!tsc) {
+        issues.push(
+          'static check skipped — no real TypeScript compiler resolvable; bare npx tsc is the deprecated placeholder package and exits 0',
+        )
         staticPassed = false
+      } else {
+        try {
+          const proc = Bun.spawn(tsc, {
+            cwd: treeDir,
+            stdout: 'pipe',
+            stderr: 'pipe',
+            timeout: opts.timeoutMs ?? 60_000,
+          })
+          const code = await proc.exited
+          if (code !== 0) {
+            const err = await new Response(proc.stderr).text().catch(() => '')
+            issues.push(`candidate tree fails typecheck (code ${code}): ${err.slice(0, 400)}`)
+            staticPassed = false
+          }
+        } catch (e) {
+          issues.push(`static check failed to run: ${String(e).slice(0, 200)}`)
+          staticPassed = false
+        }
       }
-    } catch (e) {
-      // tsc unavailable is not a failure — heuristic fallback per no-hardware policy
-      issues.push(`static tsc skipped: ${String(e).slice(0, 200)}`)
     }
+  } else if (opts.treeDir) {
+    // A candidate tree exists but nobody asked for a real check: the candidate
+    // is unverified. Never let "verification was not run" read as "it passed".
+    issues.push(
+      'candidate tree present but static analysis was not run (opts.runStatic) — the patch is unverified',
+    )
+    staticPassed = false
   }
 
   // 2. Security checks — never promote patches touching guardrails/secrets without review (§18 boundaries)
   let securityPassed = true
   const patchLower = experiment.patch.toLowerCase()
-  for (const needle of ["mira_token", "api_key", ".mira/mira.env", "secret", "password"]) {
+  for (const needle of ['mira_token', 'api_key', '.mira/mira.env', 'secret', 'password']) {
     if (patchLower.includes(needle) && experiment.patch.includes(needle)) {
-      securityIssues.push(`patch touches secret-adjacent "${needle}" — requires human approval (§18)`)
+      securityIssues.push(
+        `patch touches secret-adjacent "${needle}" — requires human approval (§18)`,
+      )
       securityPassed = false
     }
   }
-  if (patchLower.includes("guardrails") && risk >= 0.7) {
-    securityIssues.push("guardrail mutation with medium+ risk — high-risk (§18)")
+  if (patchLower.includes('guardrails') && risk >= 0.7) {
+    securityIssues.push('guardrail mutation with medium+ risk — high-risk (§18)')
     securityPassed = false
   }
 
@@ -98,7 +169,7 @@ export async function verify(
   let regression = false
   if (!experiment.patch || experiment.patch.trim().length < 10) {
     regression = true
-    issues.push("empty/trivial patch — regression risk")
+    issues.push('empty/trivial patch — regression risk')
   }
 
   // 4. Unit+integration pattern reuse — brio.test mock pattern: we verify independently
@@ -109,7 +180,9 @@ export async function verify(
     costDelta: 0,
   }
 
-  const verified = securityPassed && !regression && (staticPassed || risk < 0.9)
+  // A failed static check is a failed verification, full stop. The old
+  // expression allowed a typecheck failure through whenever risk < 0.9.
+  const verified = securityPassed && !regression && staticPassed
 
   const details: JsonValue = {
     experimentId: experiment.proposalId,
@@ -121,7 +194,8 @@ export async function verify(
     security: { passed: securityPassed, issues: securityIssues },
     regression,
     benchmark,
-    independent: "unit+integration+regression+static+security per MIRA_WEAKNESSES §4 — brio.test pattern reused",
+    independent:
+      'unit+integration+regression+static+security per MIRA_WEAKNESSES §4 — brio.test pattern reused',
   } as JsonValue
 
   return {

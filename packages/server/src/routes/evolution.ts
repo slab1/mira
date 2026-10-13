@@ -759,7 +759,13 @@ export function mountEvolutionRoutes(
             ? 'budget_blocked'
             : 'security_blocked'
     } else {
-      verification = await verify(experiment)
+      // §4: verify the CANDIDATE when there is one. A proposal with no real
+      // change has nothing to verify — the result says "unverified" rather
+      // than passing on a check that never looked at the patch.
+      verification = await verify(experiment, {
+        runStatic: Boolean(variantDir),
+        ...(variantDir ? { treeDir: variantDir } : {}),
+      })
       // Longitudinal evaluation (§16): use an evidence-based baseline derived
       // from accepted ledger history when available — with drift detection:
       // a metric whose recent window diverges from history adapts to the
