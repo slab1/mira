@@ -1,21 +1,26 @@
 /**
- * Approval Gate — Phase 2 Safety per MIRA_WEAKNESSES_AND_OBSTACLES.md:18 Approval Gates + :23
+ * Approval Gate — §18 human approval boundaries (P0) per MIRA_WEAKNESSES_AND_OBSTACLES.md:18 + :23
  *
- * Mock human for now, emits evolution.approval BusEvent. Respect nvidia primary, no hardware.
+ * §18 Level 5 (Autonomous) allows promoting LOW-risk improvements "within
+ * strict policy" — auto-approval of low-risk IS that policy, and it is now
+ * explicit + configurable: MIRA_APPROVAL_AUTO_LOW=0 (or autoApproveLowRisk:
+ * false) requires an explicit authenticated POST /evolution/approve/:id even
+ * for low risk. Medium risk auto-approves ONLY with allowMockApproval and the
+ * result is non-authoritative; HIGH risk ALWAYS waits for a real human.
  *
  * Documentation Maintenance — 10 items:
  * | # | Item | Status | Evidence |
  * |---|------|--------|----------|
  * | 1 | Implementation path | Implemented | packages/server/src/evolution/approval.ts |
- * | 2 | Public interfaces | Implemented | ApprovalGate.requestApproval(proposal, level): {approved, approver?} + approve/pending |
+ * | 2 | Public interfaces | Implemented | ApprovalGate.requestApproval(proposal, level): {approved, approver?, pending?, authoritative?, policyAuto?} + approve/deny(identity) |
  * | 3 | Events | Implemented | emits evolution.approval BusEvent |
- * | 4 | Configuration | Implemented | no config; MIRA_NO_AUTOPROVISION respected |
- * | 5 | Tests | Implemented | evolution/*.test.ts approval |
+ * | 4 | Configuration | Implemented | MIRA_APPROVAL_AUTO_LOW (default on = §18 Level 5; '0' → explicit approval for low risk too); MIRA_NO_AUTOPROVISION respected |
+ * | 5 | Tests | Implemented | evolution/*.test.ts approval + phase2 low-risk policy-off test |
  * | 6 | Security boundaries | Implemented | fail-closed: unknown id denies, approver must be authenticated and must not be the proposal's own author, mock approvals are non-authoritative |
  * | 7 | Operational procedures | Implemented | approve via POST /evolution/approve/:id |
- * | 8 | Migration strategy | Implemented | additive, in-memory pending store |
+ * | 8 | Migration strategy | Implemented | additive, in-memory pending store; default unchanged for existing callers |
  * | 9 | Rollback strategy | Implemented | clear pending, no DB |
- * | 10 | Known limitations | Implemented | mock human auto-approves low; real human UI Target Phase 6 |
+ * | 10 | Known limitations | Implemented | no human UI yet (approve/deny via API); real human UI Target Phase 6 |
  */
 
 import type { Bus } from '../bus/index.js'
@@ -45,6 +50,8 @@ export interface ApprovalResult {
    * unauthenticated approval is never authoritative, however `approved` reads.
    */
   authoritative?: boolean
+  /** True when approved by §18 Level 5 low-risk policy rather than a human. */
+  policyAuto?: boolean
 }
 
 /**
@@ -77,6 +84,7 @@ export class ApprovalGate {
   private pending = new Map<string, ApprovalRequest>()
   private rootDir?: string
   private allowMockApproval: boolean
+  private autoApproveLowRisk: boolean
   /** Completed decisions, so a replay returns the recorded answer. */
   private decided = new Map<string, ApprovalResult>()
 
@@ -84,11 +92,20 @@ export class ApprovalGate {
    * @param allowMockApproval when true, medium-risk approvals may be
    * auto-granted by a mock approver. OFF by default, and even then the result
    * is marked `authoritative: false` so it cannot authorize a high-risk change.
+   * @param autoApproveLowRisk §18 Level 5 policy: low-risk improvements may be
+   * promoted autonomously. Default reads MIRA_APPROVAL_AUTO_LOW (on unless
+   * '0'); when OFF, even low risk waits for an authenticated human approval.
    */
-  constructor(opts?: { bus?: Bus; rootDir?: string; allowMockApproval?: boolean }) {
+  constructor(opts?: {
+    bus?: Bus
+    rootDir?: string
+    allowMockApproval?: boolean
+    autoApproveLowRisk?: boolean
+  }) {
     this.bus = opts?.bus
     this.rootDir = opts?.rootDir
     this.allowMockApproval = opts?.allowMockApproval ?? false
+    this.autoApproveLowRisk = opts?.autoApproveLowRisk ?? process.env.MIRA_APPROVAL_AUTO_LOW !== '0'
   }
 
   requestApproval(
@@ -103,10 +120,39 @@ export class ApprovalGate {
     }
     const needs = requiresApproval(level as AutonomyLevels, r)
 
-    // low-risk not needing approval → auto-approved
+    // low-risk not needing approval → §18 Level 5 auto-approval (configurable)
     if (!needs) {
+      if (!this.autoApproveLowRisk) {
+        // Stricter policy: no autonomous promotion at all — every change
+        // requires an explicit authenticated human decision (§18 default hardening).
+        const req: ApprovalRequest = {
+          id: proposal.id,
+          level,
+          risk: r,
+          proposal,
+          requestedAt: Date.now(),
+          status: 'pending',
+        }
+        this.pending.set(proposal.id, req)
+        this.emit(proposal, level, r, 'pending', undefined)
+        return {
+          approved: false,
+          pending: true,
+          reason:
+            'low-risk approval required by policy (MIRA_APPROVAL_AUTO_LOW=0) — POST /evolution/approve/:id',
+        }
+      }
       this.emit(proposal, level, r, 'approved', 'auto')
-      return { approved: true, approver: 'auto', reason: 'low-risk auto-approved' }
+      return {
+        approved: true,
+        approver: 'auto',
+        // A policy decision is not a human decision — it never counts as
+        // `authoritative` (that is reserved for authenticated humans, §5/§18);
+        // `policyAuto` marks that it proceeded via §18 Level 5 low-risk policy.
+        authoritative: false,
+        policyAuto: true,
+        reason: 'low-risk auto-approved per §18 Level 5 (MIRA_APPROVAL_AUTO_LOW unset/1)',
+      }
     }
 
     // For mock human: low/medium auto-approved, high stays pending

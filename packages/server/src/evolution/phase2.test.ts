@@ -682,6 +682,116 @@ describe('Longitudinal evaluation (§16) — deriveLongitudinalBaseline', () => 
   })
 })
 
+describe('Longitudinal drift detection (§16) — deriveLongitudinalBaselineDetailed', () => {
+  let dir: string
+  let db: ReturnType<typeof createDatabase>
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'mira-evo-drift-'))
+    process.env.MIRA_NO_AUTOPROVISION = '1'
+    db = createDatabase(join(dir, 'test.db'))
+    await migrate(db as unknown as Parameters<typeof migrate>[0])
+  })
+  afterEach(() => {
+    try {
+      db.sqlite?.close?.()
+    } catch {}
+    try {
+      rmSync(dir, { recursive: true, force: true })
+    } catch {}
+  })
+
+  test('no drift → identical to the plain baseline, empty alarms', async () => {
+    const { deriveLongitudinalBaseline, deriveLongitudinalBaselineDetailed } =
+      await import('../routes/evolution.js')
+    const mk = (id: string, success: number) => ({
+      verdict: 'verified',
+      evidence: {
+        evaluation: { scores: { success: { baseline: 0.87, candidate: success, pass: true } } },
+      },
+    })
+    const entries = [mk('a', 0.9), mk('b', 0.91), mk('c', 0.9), mk('d', 0.9)]
+    const plain = deriveLongitudinalBaseline(entries)
+    const detailed = deriveLongitudinalBaselineDetailed(entries)
+    expect(detailed.baseline!.successRate).toBeCloseTo(plain!.successRate)
+    expect(detailed.drift).toHaveLength(0)
+  })
+
+  test('recent window diverges >25% → adaptive baseline + drift alarm', async () => {
+    const { deriveLongitudinalBaselineDetailed } = await import('../routes/evolution.js')
+    const { defaultBaseline } = await import('./evaluator.js')
+    // 5 entries: older four ~0.10 cost, newest (recent window = 25% → 1 sample) 0.50
+    const mk = (id: string, cost: number) => ({
+      verdict: 'verified',
+      evidence: {
+        evaluation: { scores: { cost: { baseline: 0.18, candidate: cost, pass: true } } },
+      },
+    })
+    const entries = [
+      mk('new', 0.5),
+      mk('old1', 0.1),
+      mk('old2', 0.1),
+      mk('old3', 0.1),
+      mk('old4', 0.1),
+    ]
+    const { baseline, drift } = deriveLongitudinalBaselineDetailed(entries)
+    expect(drift).toHaveLength(1)
+    expect(drift[0].metric).toBe('costPerTask')
+    expect(drift[0].adaptive).toBe(true)
+    expect(drift[0].deltaPct).toBeGreaterThan(25)
+    // baseline uses the RECENT window (0.5), not the stale full mean (0.18)
+    expect(baseline!.costPerTask).toBeCloseTo(0.5)
+    // metrics without samples fall back to defaults
+    expect(baseline!.successRate).toBe(defaultBaseline().successRate)
+  })
+
+  test('GET /evolution/metrics exposes drift alarms', async () => {
+    const bus = new Bus()
+    const ledger = new ImprovementLedger(db as unknown as import('../storage/db.js').MiraDB, bus)
+    const app = new Hono()
+    mountEvolutionRoutes(app as unknown as Hono<{ Variables: { requestId: string } }>, {
+      db: db as unknown as import('../storage/db.js').MiraDB,
+      bus,
+      ledger,
+    })
+    const base = Date.now() - 20_000
+    const mk = (id: string, success: number, offset: number) =>
+      ledger.remember({
+        id,
+        proposal: {
+          id,
+          title: id,
+          type: 'bugfix',
+          risk: 'low',
+          priority: 'P1',
+          affectedEngine: 'tool',
+        } as unknown as import('./proposal.js').ImprovementProposal,
+        verdict: 'verified' as import('./ledger.js').LedgerVerdict,
+        evidence: {
+          evaluation: { scores: { success: { baseline: 0.87, candidate: success, pass: true } } },
+        } as unknown as import('../types/index.js').JsonValue,
+        createdAt: base + offset,
+      })
+    // 4 accepted: stable 0.70 ×4 then latest 0.99 → +41% success drift (> 25%)
+    mk('d1', 0.7, 0)
+    mk('d2', 0.7, 1000)
+    mk('d3', 0.7, 2000)
+    mk('d4', 0.7, 3000)
+    mk('d5', 0.99, 4000)
+    const res = await app.request('/evolution/metrics')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      drift: Array<{ metric: string; adaptive: boolean; deltaPct: number }>
+      derivedBaseline: Record<string, number | null>
+    }
+    expect(body.drift.length).toBe(1)
+    expect(body.drift[0].metric).toBe('successRate')
+    expect(body.drift[0].adaptive).toBe(true)
+    // adaptive baseline pinned to recent window, not the full mean
+    expect(body.derivedBaseline.successRate).toBeCloseTo(0.99)
+  })
+})
+
 describe('§11 + §10 + §20 — loop guard, research boundary, complexity (wired routes)', () => {
   let dir: string
   let db: ReturnType<typeof createDatabase>

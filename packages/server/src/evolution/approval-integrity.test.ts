@@ -147,6 +147,21 @@ describe('§5: a mock approval is never presented as a human one', () => {
     expect(r.approved).toBe(true)
     expect(r.approver).toBe('auto')
     expect(r.authoritative).toBeFalsy()
+    // but it is explicitly marked as a §18 Level 5 policy decision
+    expect(r.policyAuto).toBe(true)
+  })
+
+  test('MIRA_APPROVAL_AUTO_LOW=0: even low risk waits for an authenticated human', () => {
+    const g = new ApprovalGate({ autoApproveLowRisk: false })
+    const r = g.requestApproval(proposal(), 0, { level: 'low', score: 0.1, reasons: [] })
+    expect(r.approved).toBe(false)
+    expect(r.pending).toBe(true)
+    expect(r.policyAuto).toBeUndefined()
+    expect(r.reason).toContain('MIRA_APPROVAL_AUTO_LOW=0')
+    // and an authenticated non-author human can then approve it
+    const a = g.approve(proposal().id, { owner: 'human', authenticated: true })
+    expect(a.approved).toBe(true)
+    expect(a.authoritative).toBe(true)
   })
 
   test('high risk always goes pending, even with mock approval enabled', () => {

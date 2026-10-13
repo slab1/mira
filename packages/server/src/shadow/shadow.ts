@@ -105,12 +105,15 @@ export class ShadowMira {
     try {
       const snap = this.gatewayRegistry?.healthSnapshot?.() as Record<string, unknown> | undefined
       return snap
-    } catch { return undefined }
+    } catch {
+      return undefined
+    }
   }
 
   private async initShadowDb(): Promise<void> {
     if (this.shadowDb) return
-    const path = this.shadowDbPath === ':memory:' ? ':memory:' : (this.shadowDbPath || 'data/shadow.db')
+    const path =
+      this.shadowDbPath === ':memory:' ? ':memory:' : this.shadowDbPath || 'data/shadow.db'
     try {
       this.shadowDb = createDatabase(path)
       await migrate(this.shadowDb as unknown as Parameters<typeof migrate>[0])
@@ -125,29 +128,66 @@ export class ShadowMira {
   }
 
   /**
-   * startShadow(candidateEngineId): {shadowId, candidateVersion, parentVersion}
+   * startShadow(candidateEngineId): {shadowId,candidateVersion,parentVersion}
    * Runs candidate engine in isolated shadow env (separate DB, separate Bus, no prod side-effects),
    * ingests Production telemetry, runs benchmark() on both Production vs Candidate, returns ShadowResult.
+   * With `candidate` (REAL measured results of the candidate experiment — e.g.
+   * the verifier's sandbox run), the candidate is a genuinely different
+   * measurement and candidateVersion reflects the experiment; without it the
+   * run is a parity benchmark (candidate == production, reported honestly).
    */
-  async startShadow(candidateEngineId: string): Promise<{ shadowId: string; candidateVersion: string; parentVersion: string; result: ShadowResult; benchmark: ShadowBenchmarkReport; telemetry: ShadowTelemetry }> {
+  async startShadow(
+    candidateEngineId: string,
+    candidate?: {
+      versionSuffix: string
+      latencyMs: number
+      successRate: number
+      costDelta: number
+    },
+  ): Promise<{
+    shadowId: string
+    candidateVersion: string
+    parentVersion: string
+    result: ShadowResult
+    benchmark: ShadowBenchmarkReport
+    telemetry: ShadowTelemetry
+  }> {
     const eng = this.registry.get(candidateEngineId)
     if (!eng) throw new Error(`Engine ${candidateEngineId} not found`)
 
     // Isolate: ensure shadowBus is fresh for this run
     this.shadowBus = new Bus()
 
-    const candidateVersion = eng.version
-    // parentVersion: prior version if any, else candidateVersion -1 patch
-    const parentVersion = (this.registry as unknown as { priorOf?: (id: string) => string | undefined }).priorOf?.(candidateEngineId) ?? candidateVersion
+    const candidateVersion = candidate
+      ? `${eng.version}+exp:${candidate.versionSuffix}`
+      : eng.version
+    // parentVersion: prior version if any, else the engine's production version
+    const parentVersion =
+      (this.registry as unknown as { priorOf?: (id: string) => string | undefined }).priorOf?.(
+        candidateEngineId,
+      ) ?? eng.version
 
     const shadowId = randomId('shdw')
     const startedAt = Date.now()
 
     // Ingest latest production telemetry before benchmark
-    try { this.telemetryCollector.ingest(this.metrics, this.gatewaySnapshot()) } catch {}
+    try {
+      this.telemetryCollector.ingest(this.metrics, this.gatewaySnapshot())
+    } catch {}
 
     // Run benchmark on both Production vs Candidate
-    const benchmark = await this.benchmarker.benchmarkAll(this.registry, candidateEngineId)
+    const benchmark = await this.benchmarker.benchmarkAll(
+      this.registry,
+      candidateEngineId,
+      candidate
+        ? {
+            version: candidateVersion,
+            latencyMs: candidate.latencyMs,
+            successRate: candidate.successRate,
+            costDelta: candidate.costDelta,
+          }
+        : undefined,
+    )
 
     // Comparison per §16 (+20%/-0.5pp gates)
     const cmp = this.comparator.compare(
@@ -202,7 +242,14 @@ export class ShadowMira {
     try {
       this.bus.publish({
         type: 'evolution.shadowed' as unknown as BusEventType,
-        payload: { shadowId, candidateEngineId, candidateVersion, parentVersion, verdict: cmp.verdict, reasoning: cmp.reasoning } as unknown as JsonValue,
+        payload: {
+          shadowId,
+          candidateEngineId,
+          candidateVersion,
+          parentVersion,
+          verdict: cmp.verdict,
+          reasoning: cmp.reasoning,
+        } as unknown as JsonValue,
         timestamp: Date.now(),
       } as unknown as import('../types/index.js').BusEvent)
     } catch {}
@@ -211,7 +258,11 @@ export class ShadowMira {
   }
 
   /** Run benchmark+comparison on existing shadow (POST /shadow/:id/compare) */
-  async compareShadow(shadowId: string): Promise<{ shadow: ShadowRecord; comparison: ShadowComparisonResult; benchmark: ShadowBenchmarkReport }> {
+  async compareShadow(shadowId: string): Promise<{
+    shadow: ShadowRecord
+    comparison: ShadowComparisonResult
+    benchmark: ShadowBenchmarkReport
+  }> {
     const rec = this.shadows.get(shadowId)
     if (!rec) throw new Error(`Shadow ${shadowId} not found`)
     // Re-benchmark for fresh comparison
@@ -270,7 +321,15 @@ export class ShadowMira {
     this.shadows.clear()
   }
 
-  health(): { ok: boolean; phase: string; count: number; engines: number; telemetry: ShadowTelemetry; shadowDb: string; isolated: boolean } {
+  health(): {
+    ok: boolean
+    phase: string
+    count: number
+    engines: number
+    telemetry: ShadowTelemetry
+    shadowDb: string
+    isolated: boolean
+  } {
     return {
       ok: true,
       phase: 'Phase 4 Shadow Mira',
@@ -287,5 +346,7 @@ export class ShadowMira {
   }
 
   // For routes/tests
-  get registryRef(): EngineRegistry { return this.registry }
+  get registryRef(): EngineRegistry {
+    return this.registry
+  }
 }

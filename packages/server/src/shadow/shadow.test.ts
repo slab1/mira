@@ -33,7 +33,14 @@ function buildRegistry(): EngineRegistry {
   r.register(new LearningEngine())
   r.register(new ToolEngine({ count: () => 22 }))
   r.register(new SecurityEngine())
-  r.register(new ModelEngine({ providerKeys: () => ['nvidia', 'colibri', 'anthropic'], hasKey: (k) => k === 'nvidia', primary: 'nvidia', fallback: 'colibri' }))
+  r.register(
+    new ModelEngine({
+      providerKeys: () => ['nvidia', 'colibri', 'anthropic'],
+      hasKey: (k) => k === 'nvidia',
+      primary: 'nvidia',
+      fallback: 'colibri',
+    }),
+  )
   return r
 }
 
@@ -42,9 +49,21 @@ describe('shadow telemetry (isolated, ingests Bus)', () => {
     const bus = new Bus()
     const tc = new TelemetryCollector()
     tc.subscribe(bus)
-    bus.publish({ type: 'server.error' as import('../types/index.js').BusEventType, payload: { error: 'boom' } as import('../types/index.js').JsonValue, timestamp: Date.now() } as unknown as import('../types/index.js').BusEvent)
-    bus.publish({ type: 'gateway.fallback' as import('../types/index.js').BusEventType, payload: {} as import('../types/index.js').JsonValue, timestamp: Date.now() } as unknown as import('../types/index.js').BusEvent)
-    bus.publish({ type: 'evolution.observed' as unknown as import('../types/index.js').BusEventType, payload: {} as import('../types/index.js').JsonValue, timestamp: Date.now() } as unknown as import('../types/index.js').BusEvent)
+    bus.publish({
+      type: 'server.error' as import('../types/index.js').BusEventType,
+      payload: { error: 'boom' } as import('../types/index.js').JsonValue,
+      timestamp: Date.now(),
+    } as unknown as import('../types/index.js').BusEvent)
+    bus.publish({
+      type: 'gateway.fallback' as import('../types/index.js').BusEventType,
+      payload: {} as import('../types/index.js').JsonValue,
+      timestamp: Date.now(),
+    } as unknown as import('../types/index.js').BusEvent)
+    bus.publish({
+      type: 'evolution.observed' as unknown as import('../types/index.js').BusEventType,
+      payload: {} as import('../types/index.js').JsonValue,
+      timestamp: Date.now(),
+    } as unknown as import('../types/index.js').BusEvent)
     const snap = tc.snapshot()
     expect(snap.serverErrors).toBe(1)
     expect(snap.gatewayFallbacks).toBe(1)
@@ -73,7 +92,14 @@ describe('shadow benchmark (EngineRegistry.benchmarkAll + verifier)', () => {
 describe('shadow comparison (§16 gates +20%/-0.5pp)', () => {
   it('verdict better / worse / neutral with reasoning', () => {
     const c = new ShadowComparison()
-    const base = { successRate: 0.87, latencyMs: 12000, costPerTask: 0.18, regressionRate: 0.04, securityViolations: 0, securityPassed: true }
+    const base = {
+      successRate: 0.87,
+      latencyMs: 12000,
+      costPerTask: 0.18,
+      regressionRate: 0.04,
+      securityViolations: 0,
+      securityPassed: true,
+    }
     // better: improved success + lower latency
     const better = c.compare(base, { ...base, successRate: 0.91, latencyMs: 9000 })
     expect(better.verdict).toBe('better')
@@ -127,7 +153,14 @@ describe('shadow routes (Hono fetch 3 endpoints 200)', () => {
       body: JSON.stringify({ candidateEngineId: 'tool' }),
     })
     expect(res.status).toBe(200)
-    const start = (await res.json()) as { ok: boolean; shadowId: string; candidateVersion: string; parentVersion: string; result: { production: unknown; candidate: unknown; comparison: unknown; verdict: string }; benchmark: unknown }
+    const start = (await res.json()) as {
+      ok: boolean
+      shadowId: string
+      candidateVersion: string
+      parentVersion: string
+      result: { production: unknown; candidate: unknown; comparison: unknown; verdict: string }
+      benchmark: unknown
+    }
     expect(start.ok).toBe(true)
     expect(start.shadowId).toMatch(/^shdw_/)
     expect(start.candidateVersion).toBeDefined()
@@ -137,7 +170,7 @@ describe('shadow routes (Hono fetch 3 endpoints 200)', () => {
     expect(start.result.candidate).toBeDefined()
     expect(start.result.comparison).toBeDefined()
     // comparison must have success/latency/cost/regression/security
-    const comp = (start.result.comparison as Record<string, unknown>)
+    const comp = start.result.comparison as Record<string, unknown>
     expect(comp.success).toBeDefined()
     expect(comp.latency).toBeDefined()
     expect(comp.cost).toBeDefined()
@@ -162,7 +195,13 @@ describe('shadow routes (Hono fetch 3 endpoints 200)', () => {
     // POST /shadow/:id/compare — 200 with verdict better|worse|neutral
     res = await app.request(`/shadow/${shadowId}/compare`, { method: 'POST' })
     expect(res.status).toBe(200)
-    const cmpRes = (await res.json()) as { ok: boolean; verdict: string; reasoning: string; scores: unknown; gates: unknown }
+    const cmpRes = (await res.json()) as {
+      ok: boolean
+      verdict: string
+      reasoning: string
+      scores: unknown
+      gates: unknown
+    }
     expect(cmpRes.ok).toBe(true)
     expect(['better', 'worse', 'neutral']).toContain(cmpRes.verdict)
     expect(cmpRes.reasoning.length).toBeGreaterThan(10)
@@ -170,13 +209,52 @@ describe('shadow routes (Hono fetch 3 endpoints 200)', () => {
     expect(cmpRes.gates).toBeDefined()
 
     // 400 on missing candidateEngineId
-    res = await app.request('/shadow/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}) })
+    res = await app.request('/shadow/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    })
     expect(res.status).toBe(400)
     // 404 on unknown engine
-    res = await app.request('/shadow/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ candidateEngineId: 'unknown_engine' }) })
+    res = await app.request('/shadow/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ candidateEngineId: 'unknown_engine' }),
+    })
     expect(res.status).toBe(404)
     // 404 on unknown shadow
     res = await app.request('/shadow/not_exist')
     expect(res.status).toBe(404)
+  })
+})
+
+describe('shadow candidate versioning (§5 candidate ≠ production by measurement)', () => {
+  it('with a real experiment measurement, candidateVersion reflects the experiment and candidate report is that measurement', async () => {
+    const registry = buildRegistry()
+    const shadow = new ShadowMira({ registry, bus: new Bus(), metrics: new MetricsCollector() })
+    const run = await shadow.startShadow('tool', {
+      versionSuffix: 'sim_test123',
+      latencyMs: 42, // real verifier-measured value in production usage
+      successRate: 0.95,
+      costDelta: 0,
+    })
+    expect(run.candidateVersion).toContain('+exp:sim_test123')
+    expect(run.candidateVersion).toContain(registry.get('tool')!.version)
+    expect(run.parentVersion).toBe(registry.get('tool')!.version)
+    // the candidate report for the shadowed engine IS the measurement
+    const toolCandidate = run.benchmark.candidate.tool
+    expect(toolCandidate.version).toBe(run.candidateVersion)
+    expect(toolCandidate.latencyMs).toBe(42)
+    expect(toolCandidate.successRate).toBe(0.95)
+  })
+
+  it('without a measurement, startShadow stays an honest parity benchmark', async () => {
+    const registry = buildRegistry()
+    const shadow = new ShadowMira({ registry, bus: new Bus(), metrics: new MetricsCollector() })
+    const run = await shadow.startShadow('tool')
+    expect(run.candidateVersion).toBe(registry.get('tool')!.version)
+    expect(run.parentVersion).toBe(registry.get('tool')!.version)
+    // parity: candidate == production for the shadowed engine
+    expect(run.benchmark.candidate.tool.latencyMs).toBe(run.benchmark.production.tool.latencyMs)
   })
 })

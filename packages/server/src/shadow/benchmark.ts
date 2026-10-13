@@ -33,8 +33,20 @@ export interface ShadowBenchmarkReport {
   candidate: Record<string, BenchmarkReport>
   delta: Record<string, { latencyDeltaPct: number; successDelta: number; costDelta: number }>
   aggregated: {
-    production: { latencyMs: number; successRate: number; costPerTask: number; regressionRate: number; securityViolations: number }
-    candidate: { latencyMs: number; successRate: number; costPerTask: number; regressionRate: number; securityViolations: number }
+    production: {
+      latencyMs: number
+      successRate: number
+      costPerTask: number
+      regressionRate: number
+      securityViolations: number
+    }
+    candidate: {
+      latencyMs: number
+      successRate: number
+      costPerTask: number
+      regressionRate: number
+      securityViolations: number
+    }
     delta: { latencyPct: number; successDelta: number; costPct: number }
   }
   verifier: Awaited<ReturnType<typeof verify>> | null
@@ -46,13 +58,21 @@ function pctDelta(candidate: number, baseline: number): number {
   return ((candidate - baseline) / baseline) * 100
 }
 
-function avgReports(reports: Record<string, BenchmarkReport>): { latencyMs: number; successRate: number; costPerTask: number } {
+function avgReports(reports: Record<string, BenchmarkReport>): {
+  latencyMs: number
+  successRate: number
+  costPerTask: number
+} {
   const vals = Object.values(reports)
   if (vals.length === 0) return { latencyMs: 0, successRate: 0.87, costPerTask: 0.18 }
   const latencyMs = Math.round(vals.reduce((a, r) => a + (r.latencyMs ?? 0), 0) / vals.length)
   const successRate = vals.reduce((a, r) => a + (r.successRate ?? 0.87), 0) / vals.length
   const costPerTask = vals.reduce((a, r) => a + (r.costDelta ?? 0), 0) / vals.length + 0.18
-  return { latencyMs, successRate: Math.round(successRate * 1000) / 1000, costPerTask: Math.round(costPerTask * 1000) / 1000 }
+  return {
+    latencyMs,
+    successRate: Math.round(successRate * 1000) / 1000,
+    costPerTask: Math.round(costPerTask * 1000) / 1000,
+  }
 }
 
 export class ShadowBenchmark {
@@ -63,14 +83,41 @@ export class ShadowBenchmark {
   }
 
   /** Run EngineRegistry.benchmarkAll() for both Production and Candidate + verifier suite */
-  async benchmarkAll(registry: EngineRegistry, candidateEngineId?: string): Promise<ShadowBenchmarkReport> {
+  async benchmarkAll(
+    registry: EngineRegistry,
+    candidateEngineId?: string,
+    /** §5 candidate versioning: REAL measured results of the candidate
+     *  experiment (e.g. the verifier's sandbox run) — replaces the
+     *  same-instance parity benchmark so candidate ≠ production by
+     *  measurement, not by invention. Numbers MUST come from a real run. */
+    candidateMeasurement?: {
+      version: string
+      latencyMs: number
+      successRate: number
+      costDelta: number
+    },
+  ): Promise<ShadowBenchmarkReport> {
     const production = await registry.benchmarkAll()
 
     // Candidate: same registry for now (isolated shadow env is same process).
-    // When candidateEngineId is given, we benchmark that engine separately and overlay
-    // to simulate a candidate variant. Until Phase 5 canary, this is a parity benchmark.
+    // With a candidateMeasurement (real experiment results), the shadowed
+    // engine's candidate report IS that measurement — two genuinely different
+    // observations. Without it, this stays a parity benchmark.
     let candidate: Record<string, BenchmarkReport>
-    if (candidateEngineId && registry.get(candidateEngineId)) {
+    if (candidateMeasurement && candidateEngineId && registry.get(candidateEngineId)) {
+      const eng = registry.get(candidateEngineId)!
+      candidate = { ...production }
+      candidate[candidateEngineId] = {
+        id: candidateEngineId,
+        version: candidateMeasurement.version,
+        latencyMs: candidateMeasurement.latencyMs,
+        successRate: candidateMeasurement.successRate,
+        costDelta: candidateMeasurement.costDelta,
+        timestamp: Date.now(),
+        details: { source: 'experiment-measurement' } as unknown as JsonValue,
+      }
+      void eng
+    } else if (candidateEngineId && registry.get(candidateEngineId)) {
       // Benchmark candidate engine individually then merge
       candidate = { ...production }
       const eng = registry.get(candidateEngineId)!
@@ -94,7 +141,10 @@ export class ShadowBenchmark {
     }
 
     // Per-engine delta
-    const delta: Record<string, { latencyDeltaPct: number; successDelta: number; costDelta: number }> = {}
+    const delta: Record<
+      string,
+      { latencyDeltaPct: number; successDelta: number; costDelta: number }
+    > = {}
     for (const id of new Set([...Object.keys(production), ...Object.keys(candidate)])) {
       const p = production[id]
       const c = candidate[id]
@@ -109,8 +159,20 @@ export class ShadowBenchmark {
     // Verifier suite: independent unit+integration+regression+static+security per §4
     let verifier: Awaited<ReturnType<typeof verify>> | null = null
     try {
-      const obs = new EvolutionObserver({ bus: this.bus ?? ({ subscribe: () => () => {}, publish: () => {}, subscribeAll: () => () => {} } as unknown as Bus) })
-      const observed = obs.observe(`shadow benchmark ${candidateEngineId ?? 'all'}`, { shadow: true }, undefined)
+      const obs = new EvolutionObserver({
+        bus:
+          this.bus ??
+          ({
+            subscribe: () => () => {},
+            publish: () => {},
+            subscribeAll: () => () => {},
+          } as unknown as Bus),
+      })
+      const observed = obs.observe(
+        `shadow benchmark ${candidateEngineId ?? 'all'}`,
+        { shadow: true },
+        undefined,
+      )
       const d = diagnose(observed)
       const p = propose(d)
       const exp = createExperiment(p, `shadow:${candidateEngineId ?? 'all'}`)
@@ -148,7 +210,8 @@ export class ShadowBenchmark {
           securityViolations: candSec,
         },
         delta: {
-          latencyPct: Math.round(pctDelta(candAgg.latencyMs || 1, prodAgg.latencyMs || 1) * 10) / 10,
+          latencyPct:
+            Math.round(pctDelta(candAgg.latencyMs || 1, prodAgg.latencyMs || 1) * 10) / 10,
           successDelta: Math.round((candAgg.successRate - prodAgg.successRate) * 1000) / 1000,
           costPct: Math.round(pctDelta(candAgg.costPerTask, prodAgg.costPerTask) * 10) / 10,
         },

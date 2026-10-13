@@ -20,7 +20,7 @@
  * | 7 | Operational procedures | Implemented | mountEvolutionRoutes(app, {db,bus,ledger,observer}) on boot |
  * | 8 | Migration strategy | Implemented | additive routes + evolution_rollbacks table, safe to disable |
  * | 9 | Rollback strategy | Implemented | RollbackManager via POST /evolution/rollback/:id + git revert |
- * | 10 | Known limitations | Implemented | mock human approval; shadow engine mapping via SHADOW_ENGINE_BY_AFFECTED (diagnosis names → registry ids, every known diagnosis maps); shadow error → heuristic fallback recorded but 'verified' refused (fail-closed §5); longitudinal baseline mean-based, blocked-entry-guarded (windowing/drift Target); §10 research gate token-overlap heuristic (multi-source corroboration Target); §11 loop guard in-memory (cross-restart persistence Target); §6 system rollback metadata in-memory, migration-state capture Target |
+ * | 10 | Known limitations | Implemented | mock human approval; shadow engine mapping via SHADOW_ENGINE_BY_AFFECTED (diagnosis names → registry ids, every known diagnosis maps); shadow error → heuristic fallback recorded but 'verified' refused (fail-closed §5); longitudinal baseline windowed with drift alarms (MIRA_BASELINE_DRIFT_PCT, adaptive recent-window baselines), blocked-entry-guarded; §10 research gate token-overlap heuristic (multi-source corroboration Target); §11 loop guard in-memory (cross-restart persistence Target); §6 system rollback metadata in-memory, migration-state capture Target |
  */
 
 import type { Hono } from 'hono'
@@ -210,6 +210,83 @@ function extractCandidateMetricSeries(
   return series
 }
 
+export interface DriftAlarm {
+  metric: keyof BaselineMetrics
+  /** Relative change between the older window and the recent window. */
+  deltaPct: number
+  recentMean: number
+  historicalMean: number
+  /** Whether the baseline for this metric now uses the recent window. */
+  adaptive: boolean
+  reason: string
+}
+
+/**
+ * Longitudinal evaluation (§16) with drift detection: derive an evidence-based
+ * baseline from accepted ledger history AND alarm when a metric's recent
+ * window diverges from its older history (the system's operating point moved —
+ * e.g. after a promoted improvement). A drifted metric's baseline uses the
+ * RECENT window (adaptive) so stale history cannot pin the gate to yesterday's
+ * operating point; every adaptation is reported as a DriftAlarm for audit.
+ * Returns null baseline when no accepted entry carries evaluation scores
+ * (caller falls back to the hardcoded DEFAULT_BASELINE).
+ */
+export function deriveLongitudinalBaselineDetailed(
+  entries: Array<{
+    verdict: string
+    evidence: unknown
+  }>,
+): { baseline: BaselineMetrics | null; drift: DriftAlarm[] } {
+  const metricSeries = extractCandidateMetricSeries(entries)
+  const hasAnySamples = Object.values(metricSeries).some((xs) => xs.length > 0)
+  if (!hasAnySamples) return { baseline: null, drift: [] }
+
+  const driftPct = (() => {
+    const raw = Number(process.env.MIRA_BASELINE_DRIFT_PCT)
+    return Number.isFinite(raw) && raw > 0 ? raw : 25
+  })()
+
+  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
+  const def = defaultBaseline()
+  const drift: DriftAlarm[] = []
+  const pick = (k: keyof BaselineMetrics): number => {
+    const xs = metricSeries[k]
+    if (xs.length === 0) return def[k]
+    // series is newest-first (ledger.list is reverse-chronological)
+    // Drift needs enough samples to split meaningfully: ≥4 → 25% recent window
+    if (xs.length >= 4) {
+      const recentN = Math.max(1, Math.floor(xs.length * 0.25))
+      const recent = xs.slice(0, recentN)
+      const historical = xs.slice(recentN)
+      const recentMean = mean(recent)
+      const histMean = mean(historical)
+      const deltaPct = histMean !== 0 ? ((recentMean - histMean) / histMean) * 100 : 0
+      if (Math.abs(deltaPct) > driftPct) {
+        drift.push({
+          metric: k,
+          deltaPct: Math.round(deltaPct * 10) / 10,
+          recentMean,
+          historicalMean: histMean,
+          adaptive: true,
+          reason: `drift >${driftPct}% (${deltaPct.toFixed(1)}%) — baseline for ${k} adapted to recent window (${recent.length} of ${xs.length} samples)`,
+        })
+        return recentMean
+      }
+    }
+    return mean(xs)
+  }
+  return {
+    baseline: {
+      successRate: pick('successRate'),
+      latencyMs: pick('latencyMs'),
+      costPerTask: pick('costPerTask'),
+      regressionRate: pick('regressionRate'),
+      securityViolations: pick('securityViolations'),
+    },
+    drift,
+  }
+}
+
 /**
  * Longitudinal evaluation (§16): derive an evidence-based baseline from
  * accepted/verified ledger history — candidate metrics of past accepted
@@ -224,21 +301,7 @@ export function deriveLongitudinalBaseline(
     evidence: unknown
   }>,
 ): BaselineMetrics | null {
-  const metricSeries = extractCandidateMetricSeries(entries)
-  if (metricSeries.successRate.length === 0) return null
-  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
-  const def = defaultBaseline()
-  const pick = (k: string) => {
-    const xs = metricSeries[k]
-    return xs.length > 0 ? mean(xs) : def[k as keyof BaselineMetrics]
-  }
-  return {
-    successRate: pick('successRate'),
-    latencyMs: pick('latencyMs'),
-    costPerTask: pick('costPerTask'),
-    regressionRate: pick('regressionRate'),
-    securityViolations: pick('securityViolations'),
-  }
+  return deriveLongitudinalBaselineDetailed(entries).baseline
 }
 
 export function mountEvolutionRoutes(
@@ -522,6 +585,10 @@ export function mountEvolutionRoutes(
     let verification: Awaited<ReturnType<typeof verify>> | null = null
     let evaluation: ReturnType<typeof evaluate> | null = null
     let shadowMeta: ShadowMeta | null = null
+    // §16 drift alarms — filled by the longitudinal baseline derivation in the
+    // unblocked branch; empty for blocked proposals (declared here so the
+    // ledger evidence + response can reference it on every path).
+    let baselineDrift: DriftAlarm[] = []
     let verdict: string
 
     if (blocked) {
@@ -565,9 +632,13 @@ export function mountEvolutionRoutes(
     } else {
       verification = await verify(experiment)
       // Longitudinal evaluation (§16): use an evidence-based baseline derived
-      // from accepted ledger history when available; otherwise the evaluator's
+      // from accepted ledger history when available — with drift detection:
+      // a metric whose recent window diverges from history adapts to the
+      // recent window and raises an alarm. Otherwise the evaluator's
       // hardcoded DEFAULT_BASELINE applies.
-      const longitudinalBaseline = deriveLongitudinalBaseline(ledger.list(200))
+      const derived = deriveLongitudinalBaselineDetailed(ledger.list(200))
+      const longitudinalBaseline = derived.baseline
+      baselineDrift = derived.drift
       evaluation = evaluate(verification, longitudinalBaseline ?? undefined)
 
       // ── Shadow Mira (P0) — full shadow comparison with isolated benchmarking ──
@@ -581,7 +652,16 @@ export function mountEvolutionRoutes(
       if (shadowMira && evaluation.decision === 'accept') {
         const engineId = SHADOW_ENGINE_BY_AFFECTED[proposal.affectedEngine] ?? 'agent'
         try {
-          const shadowRun = await shadowMira.startShadow(engineId)
+          // §5 candidate versioning: the candidate's benchmark numbers are the
+          // VERIFIER's real measurements of the sandbox experiment — the
+          // verify run IS the candidate executing, so candidate ≠ production
+          // by measurement, not by invention.
+          const shadowRun = await shadowMira.startShadow(engineId, {
+            versionSuffix: experiment.simulationId,
+            latencyMs: verification.benchmark?.latencyMs ?? 0,
+            successRate: verification.benchmark?.successRate ?? 0.9,
+            costDelta: verification.benchmark?.costDelta ?? 0,
+          })
           shadowMeta = {
             source: 'full',
             shadowId: shadowRun.shadowId,
@@ -768,6 +848,7 @@ export function mountEvolutionRoutes(
           verification,
           evaluation,
           research: researchEvidence,
+          baselineDrift: baselineDrift.length > 0 ? baselineDrift : null,
           systemRollbackMetadata: systemRollback.metadata(proposal.id) ?? null,
           // Prefer the richer per-path shadow record stored in evaluation.details
           // (benchmark/telemetry/gates) — falls back to the normalized meta.
@@ -935,7 +1016,8 @@ export function mountEvolutionRoutes(
       }
     }
     // Evidence-based baseline (same math the observe pipeline feeds evaluate())
-    const baseline = deriveLongitudinalBaseline(entries)
+    // + drift alarms: metrics whose recent window diverged from history
+    const { baseline, drift } = deriveLongitudinalBaselineDetailed(entries)
     const derivedBaseline: Record<string, number | null> = baseline
       ? {
           successRate: baseline.successRate,
@@ -960,8 +1042,9 @@ export function mountEvolutionRoutes(
       acceptedCount: accepted.length,
       trend,
       derivedBaseline,
+      drift,
       longitudinal:
-        '§16 Before vs Candidate vs After — derivedBaseline is what evaluate() uses when accepted history exists',
+        '§16 Before vs Candidate vs After — derivedBaseline is what evaluate() uses when accepted history exists; drifted metrics use their recent window (adaptive)',
       timestamp: Date.now(),
     })
   })
