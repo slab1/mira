@@ -22,7 +22,7 @@ export interface RegressionInput {
   tolerances?: Partial<Record<RegressionAxis, number>>
 }
 
-export type RegressionAxis = 'quality' | 'latency' | 'cost' | 'memory'
+export type RegressionAxis = 'quality' | 'latency' | 'cost' | 'memory' | 'inverseQuality'
 
 export interface RegressionFinding {
   axis: RegressionAxis
@@ -43,24 +43,60 @@ const DEFAULT_TOLERANCE: Record<RegressionAxis, number> = {
   latency: 0.05,
   cost: 0.1,
   memory: 0.2,
+  // error/failure rates are quality metrics that go DOWN when things improve —
+  // so "regressed" means RISING, the opposite direction from successRate.
+  inverseQuality: 0.0,
 }
 
-/** Classify a metric name into an axis (quality/latency/cost/memory). */
+/** Classify a metric name into an axis (quality/latency/cost/memory).
+ *
+ *  Unclassified metrics are NEVER COMPARED, so a metric this misses cannot
+ *  regress — it is invisible to the gate. That makes this list a safety
+ *  surface, not a convenience: `successRate` — the primary quality metric
+ *  used by evaluator.ts, shadow/comparison.ts and the longitudinal baseline —
+ *  was previously unclassified, so a candidate halving its success rate
+ *  passed regression detection cleanly. Explicit names are checked first
+ *  (so `errorRate` reads as quality, not as some unhandled axis), then
+ *  substring patterns.
+ */
 export function classifyAxis(metric: string): RegressionAxis | null {
   const m = metric.toLowerCase()
   // A bare sample/observation count is evidence *about* the measurement, not a
   // quantity that can regress — it must never be compared on the memory axis
   // (the previous `/count$/` rule did exactly that, so a canary's sample count
   // would have been scored as if it were heap growth).
-  if (m === 'count' || m === 'samples' || m === 'errorcount') return null
-  if (/quality|pass|eval|score/.test(m)) return 'quality'
+  if (m === 'count' || m === 'samples') return null
+
+  // Explicit quality names first: these must not fall through to latency
+  // (e.g. `successRateMs`) or to memory (`errorRateEntries`).
+  if (/^(success|successrate|success_rate|accuracy|tasksuccess|passrate|pass_rate)/.test(m))
+    return 'quality'
+  if (/^(error|errorrate|error_rate|fail|failure|failrate|failure_rate)/.test(m)) {
+    return 'inverseQuality'
+  }
+  if (/^(regressionrate|regression_rate|securityviolations|violations)/.test(m))
+    return 'inverseQuality'
+  if (/^(quality|eval|score|completion|taskcompletion|completionrate|winrate|win_rate)/.test(m)) {
+    return 'quality'
+  }
+
+  // Explicit latency/cost/memory anchors before generic substrings.
+  if (/^(latency|duration|p50|p95|p99|ttft|tpot)/.test(m)) return 'latency'
+  if (/^(cost|price|tokens|tokensin|tokensout)/.test(m)) return 'cost'
+  if (/^(memory|heap|rss|entries)/.test(m)) return 'memory'
+
+  // Generic substrings for compound names (e.g. `avg_latency_ms`).
+  if (/quality|pass|eval|score|success|accuracy|completing|resolution|error/.test(m))
+    return 'quality'
   if (/latency|p50|p95|p99|duration|ms$/.test(m)) return 'latency'
   if (/cost|token|price/.test(m)) return 'cost'
   if (/memory|heap|rss|entries/.test(m)) return 'memory'
   return null
 }
 
-/** Lower-is-better for latency/cost/memory; higher-is-better for quality. */
+/** Direction per axis: higher-is-better (quality), lower-is-better
+ *  (latency/cost/memory), and lower-is-better for inverseQuality (error and
+ *  failure RATE, which improve by falling). */
 function regressed(
   axis: RegressionAxis,
   baseline: number,
@@ -69,7 +105,10 @@ function regressed(
 ): { bad: boolean; deltaPct: number } {
   if (baseline === 0) return { bad: false, deltaPct: 0 }
   const deltaPct = (candidate - baseline) / baseline
-  const bad = axis === 'quality' ? deltaPct < -tolerance : deltaPct > tolerance
+  const bad =
+    axis === 'quality'
+      ? deltaPct < -tolerance // quality fell
+      : deltaPct > tolerance // latency/cost/memory rose, or error rate rose
   return { bad, deltaPct }
 }
 
