@@ -97,3 +97,78 @@ describe('LoopGuard — §11 controls', () => {
     expect(s.maxAttempts).toBe(1)
   })
 })
+
+describe('LoopGuard — durable store (§11 restart survival)', () => {
+  /** In-memory fake of the SQLite store — simulates a restart. */
+  const fakeStore = () => {
+    const rows = new Map<string, { attempts: number[]; escalatedAt?: number }>()
+    return {
+      load: () => [...rows.entries()].map(([fingerprint, record]) => ({ fingerprint, record })),
+      save: (fp: string, r: { attempts: number[]; escalatedAt?: number }) => {
+        rows.set(fp, JSON.parse(JSON.stringify(r)))
+      },
+      clear: (fp: string) => rows.delete(fp),
+      rows,
+    }
+  }
+
+  test('escalation survives a restart: fresh guard loads state from the store', () => {
+    const store = fakeStore()
+    const g1 = new LoopGuard({ maxAttempts: 1, cooldownMs: 60_000, store })
+    g1.check('rate limit storm', undefined)
+    g1.check('rate limit storm', undefined) // escalated
+    expect(store.rows.size).toBe(1)
+
+    // "restart": brand-new guard over the same store
+    const g2 = new LoopGuard({ maxAttempts: 1, cooldownMs: 60_000, store })
+    const d = g2.check('rate limit storm', undefined)
+    expect(d.allowed).toBe(false)
+    expect(d.escalated).toBe(true)
+    expect(d.reason).toContain('human ack')
+  })
+
+  test('attempt cap itself persists — restart cannot reset the count', () => {
+    const store = fakeStore()
+    const g1 = new LoopGuard({ maxAttempts: 3, cooldownMs: 60_000, store })
+    g1.check('timeout on lane default', { a: 1 })
+    g1.check('timeout on lane default', { a: 1 })
+    const g2 = new LoopGuard({ maxAttempts: 3, cooldownMs: 60_000, store })
+    const d = g2.check('timeout on lane default', { a: 1 })
+    // third incident across the restart → blocked (attempts=3), not a fresh first occurrence
+    expect(d.attempts).toBe(3)
+    expect(d.allowed).toBe(false)
+  })
+
+  test('acknowledge clears the durable row — restart does not resurrect escalation', () => {
+    const store = fakeStore()
+    const g1 = new LoopGuard({ maxAttempts: 1, cooldownMs: 60_000, store })
+    g1.check('edit hash anchor failed', undefined)
+    g1.check('edit hash anchor failed', undefined)
+    expect(g1.acknowledge()).toBe(1)
+    expect(store.rows.size).toBe(0)
+    const g2 = new LoopGuard({ maxAttempts: 1, cooldownMs: 60_000, store })
+    const d = g2.check('edit hash anchor failed', undefined)
+    expect(d.allowed).toBe(true)
+    expect(d.escalated).toBe(false)
+  })
+
+  test('store failures never block check() (fail-soft)', () => {
+    const throwingStore = {
+      load: () => {
+        throw new Error('db gone')
+      },
+      save: () => {
+        throw new Error('db gone')
+      },
+      clear: () => {
+        throw new Error('db gone')
+      },
+    }
+    const g = new LoopGuard({ maxAttempts: 1, cooldownMs: 60_000, store: throwingStore })
+    const d1 = g.check('failure X', undefined)
+    expect(d1.allowed).toBe(true)
+    const d2 = g.check('failure X', undefined)
+    expect(d2.allowed).toBe(false)
+    expect(g.acknowledge()).toBe(1) // still works in memory
+  })
+})

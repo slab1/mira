@@ -30,7 +30,7 @@
  * | 7 | Operational procedures | Implemented | POST /evolution/observe body.research → gate.ingest+validate → hints appended to proposal evidence |
  * | 8 | Migration strategy | Implemented | additive, pure module, no DB — safe to disable by not passing body.research |
  * | 9 | Rollback strategy | Implemented | delete module + route wiring; no persisted state |
- * | 10 | Known limitations | Implemented | heuristic token-overlap validation; no cross-source corroboration yet (multi-source agreement is Target) |
+ * | 10 | Known limitations | Implemented | heuristic token-overlap validation; multi-source corroboration implemented (corroborate(): ≥2 distinct sources agreeing on a claim → confidence bump, capped 0.75); cross-source dedup is Jaccard-heuristic |
  */
 
 import type { JsonValue } from '../types/index.js'
@@ -66,14 +66,22 @@ export interface ValidatedKnowledge {
   confidence: number
   validated: boolean
   reason: string
+  /** §10 multi-source corroboration: distinct sources agreeing on this claim. */
+  corroboratedSources?: string[]
   createdAt: number
 }
 
 const DEFAULT_MAX_CHARS = 4000
 /** Confidence cap for web-derived knowledge even when validated (§10: research is advisory). */
 const MAX_VALIDATED_CONFIDENCE = 0.6
+/** Confidence cap for MULTI-SOURCE corroborated knowledge (still advisory). */
+const MAX_CORROBORATED_CONFIDENCE = 0.75
+/** Corroboration bump applied when ≥2 independent sources agree on a claim. */
+const CORROBORATION_BONUS = 0.15
 /** Minimum token overlap with diagnosis evidence for a claim to validate. */
 const MIN_OVERLAP = 2
+/** Minimum token-set Jaccard for two claims to count as the SAME claim. */
+const CLAIM_SIMILARITY = 0.6
 
 function maxChars(): number {
   const raw = Number(process.env.MIRA_RESEARCH_MAX_CHARS)
@@ -161,6 +169,16 @@ function tokenize(s: string): string[] {
     .slice(0, 200)
 }
 
+/** Token-set Jaccard similarity between two signature strings. */
+function jaccard(a: string, b: string): number {
+  const A = new Set(a ? a.split('|') : [])
+  const B = new Set(b ? b.split('|') : [])
+  if (A.size === 0 && B.size === 0) return 0
+  let inter = 0
+  for (const t of A) if (B.has(t)) inter++
+  return inter / (A.size + B.size - inter)
+}
+
 /** Split sanitized content into candidate claims (sentence-ish segments). */
 function extractClaims(sanitized: string): string[] {
   return sanitized
@@ -227,6 +245,52 @@ export class ResearchGate {
           : `insufficient overlap (${uniqueOverlap.length} < ${MIN_OVERLAP}) — unvalidated, advisory-excluded`,
         createdAt: Date.now(),
       })
+    }
+    return out
+  }
+
+  /**
+   * §10 multi-source corroboration: validate every item against the diagnosis,
+   * then group validated claims by token-set similarity. A claim agreeing
+   * across ≥2 DISTINCT sources earns a confidence bump (still capped —
+   * corroboration raises trust but research stays advisory). Claims from one
+   * source keep the single-source cap; unvalidated claims never corroborate.
+   */
+  corroborate(items: ResearchItem[], diagnosis: Diagnosis): ValidatedKnowledge[] {
+    const all = items.flatMap((item) => this.validate(item, diagnosis))
+    const groups = new Map<string, ValidatedKnowledge[]>()
+    for (const k of all) {
+      if (!k.validated) continue
+      const sig = [...new Set(tokenize(k.claim))].sort().join('|')
+      let placed = false
+      for (const [existingSig, group] of groups) {
+        if (jaccard(existingSig, sig) >= CLAIM_SIMILARITY) {
+          group.push(k)
+          placed = true
+          break
+        }
+      }
+      if (!placed) groups.set(sig, [k])
+    }
+    const out: ValidatedKnowledge[] = []
+    for (const group of groups.values()) {
+      const distinctSources = [...new Set(group.map((k) => k.source))]
+      const corroborated = distinctSources.length >= 2
+      for (const k of group) {
+        out.push(
+          corroborated
+            ? {
+                ...k,
+                confidence: Math.min(
+                  MAX_CORROBORATED_CONFIDENCE,
+                  k.confidence + CORROBORATION_BONUS,
+                ),
+                corroboratedSources: distinctSources,
+                reason: `${k.reason} — corroborated by ${distinctSources.length} independent sources`,
+              }
+            : k,
+        )
+      }
     }
     return out
   }

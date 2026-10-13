@@ -42,7 +42,7 @@ import { ResourceLimits } from '../evolution/resources.js'
 import { SecurityValidator } from '../evolution/security.js'
 import { RollbackManager } from '../evolution/rollback.js'
 import { ResearchGate } from '../evolution/research.js'
-import { LoopGuard } from '../evolution/loop-guard.js'
+import { LoopGuard, createSqliteLoopGuardStore } from '../evolution/loop-guard.js'
 import { ComplexityTracker, type ComplexityMetrics } from '../evolution/complexity.js'
 import {
   SystemRollbackManager,
@@ -318,7 +318,16 @@ export function mountEvolutionRoutes(
   const rollbackManager = deps.rollbackManager ?? new RollbackManager({ db, bus, ledger })
   // ── §10 + §11 + §20 controls ─────────────────────────────────────
   const researchGate = new ResearchGate()
-  const loopGuard = new LoopGuard()
+  // §11 durability: persist loop state so a restart cannot bypass the
+  // attempt cap (a doom-looping agent must not escape by crashing/restarting).
+  // Fail-soft to the in-memory guard if the DB handle is unavailable.
+  const loopGuard = (() => {
+    try {
+      return new LoopGuard({ store: createSqliteLoopGuardStore(db) })
+    } catch {
+      return new LoopGuard()
+    }
+  })()
   const complexityTracker = new ComplexityTracker()
   complexityTracker.registerProvider('autonomousActions', () => ledger.count())
   for (const [k, fn] of Object.entries(deps.complexityProviders ?? {})) {
@@ -374,7 +383,7 @@ export function mountEvolutionRoutes(
   })
 
   // ── POST /evolution/observe ──────────────────────────────────────
-  // Body: { failure: string, evidence?: JsonValue, sessionID?: string, changedFiles?: string[], patch?: string, permissionScope?: string, cost?: number, research?: { source: string, title?: string, content: string } }
+  // Body: { failure: string, evidence?: JsonValue, sessionID?: string, changedFiles?: string[], patch?: string, permissionScope?: string, cost?: number, research?: { source: string, title?: string, content: string } | Array<same> }
   app.post('/evolution/observe', async (c) => {
     let body: {
       failure?: unknown
@@ -480,33 +489,62 @@ export function mountEvolutionRoutes(
     const proposal = propose(diagnosis)
 
     // ── §10 research trust boundary — Research → Validate → advisory evidence ──
-    // body.research is untrusted web content: sanitized on ingest, validated
-    // against the diagnosis's OWN evidence, and attached to the proposal as
-    // advisory evidence strings. It can never become executable instruction.
+    // body.research is untrusted web content (single object or array for
+    // multi-source corroboration): sanitized on ingest, validated against the
+    // diagnosis's OWN evidence, and attached to the proposal as advisory
+    // evidence strings. It can never become executable instruction.
     let researchEvidence: JsonValue | null = null
-    if (
-      b.research &&
-      typeof b.research === 'object' &&
-      typeof (b.research as { content?: unknown }).content === 'string'
-    ) {
+    const researchInputs: Array<{ source?: unknown; title?: unknown; content?: unknown }> =
+      Array.isArray(b.research)
+        ? (b.research as Array<{ source?: unknown; title?: unknown; content?: unknown }>).slice(
+            0,
+            5,
+          )
+        : b.research && typeof b.research === 'object'
+          ? [b.research as { source?: unknown; title?: unknown; content?: unknown }]
+          : []
+    if (researchInputs.length > 0) {
       try {
-        const item = researchGate.ingest({
-          source: String((b.research as { source?: unknown }).source ?? 'unknown').slice(0, 200),
-          title:
-            typeof (b.research as { title?: unknown }).title === 'string'
-              ? String((b.research as { title?: unknown }).title).slice(0, 200)
-              : undefined,
-          content: String((b.research as { content?: unknown }).content),
-        })
-        const knowledge = researchGate.validate(item, diagnosis)
+        const items = researchInputs
+          .filter((r) => r && typeof r.content === 'string')
+          .map((r) =>
+            researchGate.ingest({
+              source: String(r.source ?? 'unknown').slice(0, 200),
+              title: typeof r.title === 'string' ? String(r.title).slice(0, 200) : undefined,
+              content: String(r.content),
+            }),
+          )
+        // ≥2 items → multi-source corroboration (§10); single → plain validate
+        const knowledge =
+          items.length >= 2
+            ? researchGate.corroborate(items, diagnosis)
+            : items.flatMap((item) => researchGate.validate(item, diagnosis))
         const hints = researchGate.toProposalHints(knowledge)
-        researchEvidence = researchGate.evidenceFor(item, diagnosis)
+        const first = items[0]
+        const perItemKnowledge = items.flatMap((item) =>
+          researchGate.validate(item, diagnosis).filter((k) => k.validated),
+        )
+        researchEvidence = {
+          items: items.map((i) => ({
+            id: i.id,
+            source: i.source,
+            title: i.title,
+            untrusted: i.untrusted,
+          })),
+          knowledge,
+          validatedCount: perItemKnowledge.length,
+          corroboratedCount: knowledge.filter((k) => (k.corroboratedSources?.length ?? 0) >= 2)
+            .length,
+          boundary: '§10 research→advisory-evidence only; never executable instruction',
+        } as unknown as JsonValue
+        void first
         // Advisory hints inform the proposal's evidence — strings only, no execution path
         proposal.evidence = {
           ...(proposal.evidence as object),
           research: {
             hints,
             validated: knowledge.filter((k) => k.validated).length,
+            corroborated: knowledge.filter((k) => (k.corroboratedSources?.length ?? 0) >= 2).length,
             boundary: '§10 advisory-only',
           },
         } as unknown as JsonValue

@@ -872,17 +872,49 @@ describe('§11 + §10 + §20 — loop guard, research boundary, complexity (wire
     expect(res.status).toBe(200)
     const body = (await res.json()) as {
       research: {
-        item: { source: string; untrusted: boolean }
+        items: Array<{ source: string; untrusted: boolean }>
         validatedCount: number
+        corroboratedCount: number
         boundary: string
       } | null
       ledger: { verdict: string }
     }
     expect(body.research).not.toBeNull()
-    expect(body.research!.item.untrusted).toBe(true)
+    expect(body.research!.items[0].untrusted).toBe(true)
     expect(body.research!.boundary).toContain('never executable')
     // timeouts diagnose to engine gateway, so evidence overlap should validate
     expect(body.research!.validatedCount).toBeGreaterThanOrEqual(0)
+    // single source → no corroboration
+    expect(body.research!.corroboratedCount).toBe(0)
+  })
+
+  test('§10: multi-source research corroborates agreeing claims', async () => {
+    const bus = new Bus()
+    const app = new Hono()
+    mountEvolutionRoutes(app as unknown as Hono<{ Variables: { requestId: string } }>, {
+      db: db as unknown as import('../storage/db.js').MiraDB,
+      bus,
+    })
+    const claim =
+      'Gateway circuit-breaker open behavior on the timeout lane is usually caused by a failure threshold that is too low. Extend the cooldown window.'
+    const res = await app.request('/evolution/observe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        failure: 'timeout on lane default',
+        research: [
+          { source: 'docs:gateway', content: claim },
+          { source: 'blog:ops', content: claim },
+        ],
+      }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      research: { corroboratedCount: number; items: Array<{ source: string }> } | null
+    }
+    expect(body.research).not.toBeNull()
+    expect(body.research!.items).toHaveLength(2)
+    expect(body.research!.corroboratedCount).toBeGreaterThanOrEqual(1)
   })
 
   test('§10: injection payload in research content is sanitized', async () => {

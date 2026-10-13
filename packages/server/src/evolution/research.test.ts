@@ -106,3 +106,54 @@ describe('ResearchGate — toProposalHints (advisory strings only, never executa
     expect(ev.validatedCount).toBeGreaterThanOrEqual(0)
   })
 })
+
+describe('ResearchGate — multi-source corroboration (§10)', () => {
+  const sameClaimFrom = (gate: ResearchGate, source: string) =>
+    gate.ingest({
+      source,
+      content:
+        'Gateway circuit-breaker open behavior is usually caused by a failure threshold that is too low for the lane. Raise the threshold or extend the cooldown window.',
+    })
+
+  test('two independent sources agreeing → corroborated with capped confidence bump', () => {
+    const gate = new ResearchGate()
+    const items = [sameClaimFrom(gate, 'docs:gateway'), sameClaimFrom(gate, 'blog:ops')]
+    const ks = gate.corroborate(items, diag)
+    const corroborated = ks.filter((k) => (k.corroboratedSources?.length ?? 0) >= 2)
+    expect(corroborated.length).toBeGreaterThan(0)
+    for (const k of corroborated) {
+      expect(k.corroboratedSources).toContain('docs:gateway')
+      expect(k.corroboratedSources).toContain('blog:ops')
+      expect(k.confidence).toBeGreaterThan(0.3)
+      expect(k.confidence).toBeLessThanOrEqual(0.75) // corroborated ceiling
+      expect(k.reason).toContain('corroborated')
+    }
+  })
+
+  test('single source → no corroboration bump, base cap applies', () => {
+    const gate = new ResearchGate()
+    const ks = gate.corroborate([sameClaimFrom(gate, 'docs:gateway')], diag)
+    expect(ks.every((k) => k.corroboratedSources === undefined)).toBe(true)
+    expect(ks.every((k) => k.confidence <= 0.6)).toBe(true)
+  })
+
+  test('unvalidated claims never corroborate even with multiple sources', () => {
+    const gate = new ResearchGate()
+    const unrelated = (source: string) =>
+      gate.ingest({
+        source,
+        content: 'Quantum embeddings improve kubernetes pod scheduling fairness dramatically.',
+      })
+    const ks = gate.corroborate([unrelated('a'), unrelated('b')], diag)
+    expect(ks.every((k) => !k.validated && k.confidence === 0)).toBe(true)
+  })
+
+  test('hints include corroborated knowledge and stay advisory strings', () => {
+    const gate = new ResearchGate()
+    const items = [sameClaimFrom(gate, 'docs:gateway'), sameClaimFrom(gate, 'blog:ops')]
+    const hints = gate.toProposalHints(gate.corroborate(items, diag))
+    expect(hints.length).toBeGreaterThan(0)
+    expect(hints.every((h) => typeof h === 'string')).toBe(true)
+    expect(hints.some((h) => /```|function\s+\w+\(|await\s+/.test(h))).toBe(false)
+  })
+})
