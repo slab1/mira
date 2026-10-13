@@ -1,6 +1,9 @@
 import type { CanaryResult, CanaryConfig } from './types.js'
 import type { LatencyTracker } from '../latency.js'
 import { getVariantRouter, type VariantRouter } from './traffic.js'
+import type { VariantWorkspace } from './variant.js'
+import type { Patch } from '../patcher.js'
+import type { VerifyResult } from '../verifier.js'
 
 const DEFAULT_MIN_SAMPLES = 1
 
@@ -23,12 +26,18 @@ const DEFAULT_MIN_SAMPLES = 1
 export interface CanaryDeps {
   latency?: LatencyTracker
   router?: VariantRouter
+  /**
+   * Materializes the candidate so it can actually receive traffic. Without one
+   * the canary has nothing to observe and blocks — the honest outcome.
+   */
+  workspace?: VariantWorkspace
   /** Injected for tests; defaults to a real timer. */
   sleep?: (ms: number) => Promise<void>
 }
 
 export class CanaryRunner {
   private readonly router?: VariantRouter
+  private readonly workspace?: VariantWorkspace
   private readonly sleep: (ms: number) => Promise<void>
 
   constructor(
@@ -36,7 +45,42 @@ export class CanaryRunner {
     deps: CanaryDeps = {},
   ) {
     this.router = deps.router
+    this.workspace = deps.workspace
     this.sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)))
+  }
+
+  /**
+   * Materialize the candidate and register it for routing.
+   *
+   * Returns false when no variant could be produced, in which case traffic
+   * stays on baseline and the canary blocks on insufficient candidate traffic.
+   * The repository working tree is never modified.
+   */
+  async prepare(
+    proposalId: string,
+    patch: Patch,
+    config: Pick<CanaryConfig, 'trafficPct'>,
+    verifyResult?: VerifyResult,
+  ): Promise<boolean> {
+    if (!this.workspace) return false
+    const { candidate, reason } = await this.workspace.materialize(proposalId, patch, verifyResult)
+    if (!candidate) {
+      console.warn(`[governance] no candidate variant for ${proposalId}: ${reason}`)
+      return false
+    }
+    const router = this.router ?? getVariantRouter()
+    router.register({
+      proposalId,
+      trafficPct: config.trafficPct,
+      resolveVariant: (id) => (this.workspace?.get(id) ? candidate.dir : null),
+    })
+    return true
+  }
+
+  /** Remove the candidate tree and stop routing to it. */
+  async teardown(proposalId: string): Promise<void> {
+    ;(this.router ?? getVariantRouter()).unregister(proposalId)
+    this.workspace?.dispose(proposalId)
   }
 
   /**
