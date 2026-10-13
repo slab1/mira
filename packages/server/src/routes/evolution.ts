@@ -4,15 +4,15 @@
  * Docs: Status Target→Implemented per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 Phase 2 (Safety: Risk+Autonomy+Approval+Resources+Security+Rollback),
  *       MIRA_EVOLUTION_SPEC.md Phase 2 + §12 Definition of Done, MIRA_SYSTEM_DOCUMENTATION.md:8 Tool Security.
  *
- * Pipeline per observe: Risk → Autonomy → Approval → Resources → Security → Verifier → Evaluator → Ledger
- * Adds POST /evolution/approve/:id + POST /evolution/rollback/:id + GET /evolution/risk/:id + GET /evolution/health phase:"Phase 2 Safety"
+ * Pipeline per observe: Risk → Autonomy → Approval → Resources → Security → Verifier → Evaluator(longitudinal baseline §16) → ShadowMira (Phase 4) → Modification Gate → Ledger
+ * Adds POST /evolution/approve/:id + POST /evolution/rollback/:id + GET /evolution/risk/:id + GET /evolution/metrics + GET /evolution/health phase:"Phase 2 Safety"
  * Keeps nvidia primary + colibri opportunistic — health probes colibri but never requires it. No local hardware.
  *
  * Documentation Maintenance — 10 items:
  * | # | Item | Status | Evidence |
  * |---|------|--------|----------|
- * | 1 | Implementation path | Implemented | packages/server/src/routes/evolution.ts + packages/server/src/evolution/{risk,autonomy,approval,resources,security,rollback}.ts |
- * | 2 | Public interfaces | Implemented | GET /evolution/health, POST /evolution/observe (gated), GET /evolution/ledger, POST /evolution/approve/:id, POST /evolution/rollback/:id, GET /evolution/risk/:id |
+ * | 1 | Implementation path | Implemented | packages/server/src/routes/evolution.ts + packages/server/src/evolution/{risk,autonomy,approval,resources,security,rollback}.ts + shadow/shadow.ts late-bound |
+ * | 2 | Public interfaces | Implemented | GET /evolution/health, POST /evolution/observe (gated+shadow), GET /evolution/ledger, GET /evolution/metrics (longitudinal §16), POST /evolution/approve/:id, POST /evolution/rollback/:id, GET /evolution/risk/:id |
  * | 3 | Events | Implemented | evolution.observed, evolution.approval, evolution.budget, evolution.security, evolution.rollback, evolution.ledger |
  * | 4 | Configuration | Implemented | respects MIRA_NO_AUTOPROVISION + MIRA_BUDGET_* + MIRA_RISK_*; nvidia primary |
  * | 5 | Tests | Implemented | evolution/*.test.ts (Phase 1 + Phase 2) |
@@ -20,19 +20,20 @@
  * | 7 | Operational procedures | Implemented | mountEvolutionRoutes(app, {db,bus,ledger,observer}) on boot |
  * | 8 | Migration strategy | Implemented | additive routes + evolution_rollbacks table, safe to disable |
  * | 9 | Rollback strategy | Implemented | RollbackManager via POST /evolution/rollback/:id + git revert |
- * | 10 | Known limitations | Implemented | mock human approval; Phase 4 shadow/canary still Target |
+ * | 10 | Known limitations | Implemented | mock human approval; shadow engine mapping via SHADOW_ENGINE_BY_AFFECTED (diagnosis names → registry ids, every known diagnosis maps); shadow error → heuristic fallback recorded but 'verified' refused (fail-closed §5); longitudinal baseline mean-based, blocked-entry-guarded (windowing/drift Target); §10 research gate token-overlap heuristic (multi-source corroboration Target); §11 loop guard in-memory (cross-restart persistence Target); §6 system rollback metadata in-memory, migration-state capture Target |
  */
 
 import type { Hono } from 'hono'
 import type { MiraDB } from '../storage/db.js'
 import type { Bus } from '../bus/index.js'
 import type { JsonValue } from '../types/index.js'
+import type { ShadowMira } from '../shadow/shadow.js'
 import { EvolutionObserver } from '../evolution/observer.js'
 import { diagnose } from '../evolution/diagnosis.js'
 import { propose } from '../evolution/proposal.js'
 import { createExperiment } from '../evolution/experiment.js'
 import { verify } from '../evolution/verifier.js'
-import { evaluate } from '../evolution/evaluator.js'
+import { evaluate, defaultBaseline, type BaselineMetrics } from '../evolution/evaluator.js'
 import { ImprovementLedger } from '../evolution/ledger.js'
 import { RiskEngine } from '../evolution/risk.js'
 import { selectLevel, requiresApproval, AutonomyLevels } from '../evolution/autonomy.js'
@@ -40,6 +41,13 @@ import { ApprovalGate } from '../evolution/approval.js'
 import { ResourceLimits } from '../evolution/resources.js'
 import { SecurityValidator } from '../evolution/security.js'
 import { RollbackManager } from '../evolution/rollback.js'
+import { ResearchGate } from '../evolution/research.js'
+import { LoopGuard } from '../evolution/loop-guard.js'
+import { ComplexityTracker, type ComplexityMetrics } from '../evolution/complexity.js'
+import {
+  SystemRollbackManager,
+  type SystemRollbackCollectors,
+} from '../evolution/system-rollback.js'
 import {
   checkSelfModificationGate,
   gateByConfidence,
@@ -47,6 +55,7 @@ import {
 } from '../evolution/modification-gate.js'
 import { isProposalState, type ProposalState } from '../patching/governance/types.js'
 import type { GovernanceGateLike } from '../patching/governance/index.js'
+import { ShadowComparison } from '../shadow/comparison.js'
 
 export interface EvolutionRouteDeps {
   db: MiraDB
@@ -58,6 +67,7 @@ export interface EvolutionRouteDeps {
   resourceLimits?: ResourceLimits
   securityValidator?: SecurityValidator
   rollbackManager?: RollbackManager
+  shadowMira?: ShadowMira
   /** Governance gate from learning/index.ts — when set, the
    *  /evolution/proposals* routes are mounted on this app too. */
   governance?: GovernanceGateLike
@@ -69,6 +79,166 @@ export interface EvolutionRouteDeps {
   resolveOwner?: (token: string) => string | undefined
   /** Auto-canary: forwarded to the proposal-routes promote handler */
   canaryStart?: (affectedEngine: string) => { canaryId: string } | null
+  /** §20 complexity counters over live systems (engines, tools, deps, …) —
+   *  resolved lazily at snapshot time; missing metrics report 0. */
+  complexityProviders?: Partial<Record<keyof ComplexityMetrics, () => number>>
+  /** §6 system-state collectors (component versions, dependency versions,
+   *  config paths) for system-level rollback metadata. */
+  systemRollbackCollectors?: SystemRollbackCollectors
+}
+
+/** Normalized shadow outcome recorded in ledger evidence + observe response.
+ *  source: 'full' (isolated ShadowMira benchmark) | 'heuristic' (score-derived
+ *  fallback) | 'error' (startShadow failed) | 'skipped' (evaluation already rejected). */
+interface ShadowMeta {
+  source: 'full' | 'heuristic' | 'error' | 'skipped'
+  shadowId?: string
+  candidateEngineId?: string
+  verdict: string
+  reasoning?: string
+}
+
+/**
+ * Diagnosis engine names (AffectedEngine per diagnosis.ts) do not match the
+ * EngineRegistry ids (engines/*.ts) — map every diagnosis engine to the
+ * registry engine whose benchmark is the closest proxy, so startShadow never
+ * throws "Engine not found" for a known diagnosis.
+ */
+const SHADOW_ENGINE_BY_AFFECTED: Record<string, string> = {
+  gateway: 'model', // gateway failures are model-routing/subgateway failures
+  memory: 'memory',
+  tool: 'tool',
+  session: 'agent',
+  guardrails: 'security',
+  model: 'model',
+  metric: 'evaluation',
+  unknown: 'agent',
+}
+
+/**
+ * Heuristic shadow comparison derived from the evaluator's own scores — the
+ * production baseline comes from the same evaluation, so this is weak,
+ * self-referential evidence. Used only when ShadowMira is unavailable or
+ * failed; it can downgrade but never stamp a candidate as verified.
+ * Returns null when scores are absent (e.g. blocked proposals).
+ */
+function compareHeuristicShadow(
+  evaluation: ReturnType<typeof evaluate>,
+  securityPassed: boolean,
+): {
+  verdict: 'better' | 'worse' | 'neutral'
+  reasoning: string
+  gates?: Record<string, boolean>
+  improved?: string[]
+  regressed?: string[]
+} | null {
+  if (!evaluation) return null
+  const s = evaluation.scores
+  if (!s?.success || !s?.latency || !s?.cost || !s?.regression || !s?.security) return null
+  const production = {
+    successRate: s.success.baseline ?? 0.87,
+    latencyMs: s.latency.baseline ?? 12_000,
+    costPerTask: s.cost.baseline ?? 0.18,
+    regressionRate: s.regression.baseline ?? 0.08,
+    securityViolations: s.security.baseline ?? 2,
+    securityPassed,
+  }
+  const candidate = {
+    successRate: s.success.candidate,
+    latencyMs: s.latency.candidate,
+    costPerTask: s.cost.candidate,
+    regressionRate: s.regression.candidate,
+    securityViolations: s.security.candidate,
+    securityPassed,
+  }
+  const r = new ShadowComparison().compare(production, candidate)
+  return {
+    verdict: r.verdict,
+    reasoning: r.reasoning,
+    gates: r.gates,
+    improved: r.improved,
+    regressed: r.regressed,
+  }
+}
+
+/** Evaluation score keys (evaluator.ts) mapped to canonical metric names. */
+const SCORE_KEY_BY_METRIC: Record<string, string> = {
+  successRate: 'success',
+  latencyMs: 'latency',
+  costPerTask: 'cost',
+  regressionRate: 'regression',
+  securityViolations: 'security',
+}
+
+/**
+ * Extract per-metric candidate series from accepted/verified ledger entries —
+ * shared by deriveLongitudinalBaseline and GET /evolution/metrics.
+ * Skips entries whose evaluation is the synthetic blocked-reject
+ * (details.blocked === true): those carry placeholder scores (success 0,
+ * security 99) that would poison the baseline once an approval flips the
+ * entry's verdict to 'verified' while preserving the blocked evidence.
+ */
+function extractCandidateMetricSeries(
+  entries: Array<{
+    verdict: string
+    evidence: unknown
+  }>,
+): Record<string, number[]> {
+  const series: Record<string, number[]> = {
+    successRate: [],
+    latencyMs: [],
+    costPerTask: [],
+    regressionRate: [],
+    securityViolations: [],
+  }
+  for (const e of entries) {
+    if (e.verdict !== 'verified' && e.verdict !== 'accepted') continue
+    const ev = e.evidence as {
+      evaluation?: {
+        scores?: Record<string, { candidate?: number }>
+        details?: { blocked?: boolean }
+      } | null
+    } | null
+    if (ev?.evaluation?.details?.blocked === true) continue
+    const scores = ev?.evaluation?.scores
+    if (!scores) continue
+    for (const k of Object.keys(series)) {
+      const v = scores[SCORE_KEY_BY_METRIC[k]]?.candidate
+      if (typeof v === 'number' && Number.isFinite(v)) series[k].push(v)
+    }
+  }
+  return series
+}
+
+/**
+ * Longitudinal evaluation (§16): derive an evidence-based baseline from
+ * accepted/verified ledger history — candidate metrics of past accepted
+ * improvements. Returns null when no accepted entry carries evaluation
+ * scores (caller falls back to the hardcoded DEFAULT_BASELINE).
+ * Evaluation scores use short keys (success/latency/cost/regression/security)
+ * mapped to canonical metric names per evaluator.ts.
+ */
+export function deriveLongitudinalBaseline(
+  entries: Array<{
+    verdict: string
+    evidence: unknown
+  }>,
+): BaselineMetrics | null {
+  const metricSeries = extractCandidateMetricSeries(entries)
+  if (metricSeries.successRate.length === 0) return null
+  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
+  const def = defaultBaseline()
+  const pick = (k: string) => {
+    const xs = metricSeries[k]
+    return xs.length > 0 ? mean(xs) : def[k as keyof BaselineMetrics]
+  }
+  return {
+    successRate: pick('successRate'),
+    latencyMs: pick('latencyMs'),
+    costPerTask: pick('costPerTask'),
+    regressionRate: pick('regressionRate'),
+    securityViolations: pick('securityViolations'),
+  }
 }
 
 export function mountEvolutionRoutes(
@@ -83,6 +253,15 @@ export function mountEvolutionRoutes(
   const resourceLimits = deps.resourceLimits ?? new ResourceLimits({ bus, db })
   const securityValidator = deps.securityValidator ?? new SecurityValidator({ bus })
   const rollbackManager = deps.rollbackManager ?? new RollbackManager({ db, bus, ledger })
+  // ── §10 + §11 + §20 controls ─────────────────────────────────────
+  const researchGate = new ResearchGate()
+  const loopGuard = new LoopGuard()
+  const complexityTracker = new ComplexityTracker()
+  complexityTracker.registerProvider('autonomousActions', () => ledger.count())
+  for (const [k, fn] of Object.entries(deps.complexityProviders ?? {})) {
+    complexityTracker.registerProvider(k as keyof ComplexityMetrics, fn)
+  }
+  const systemRollback = new SystemRollbackManager(deps.systemRollbackCollectors ?? {})
 
   // ── GET /evolution/health ────────────────────────────────────────
   app.get('/evolution/health', (c) => {
@@ -102,13 +281,24 @@ export function mountEvolutionRoutes(
       resources: 'ResourceLimits wired (per-task/per-agent/per-mission/daily)',
       security: 'SecurityValidator wired',
       rollback: 'RollbackManager wired',
+      research: researchGate.health(),
+      loopGuard: loopGuard.stats(),
+      complexity: { tracked: true, endpoint: 'GET /evolution/complexity' },
+      systemRollback: {
+        tracked: systemRollback.count(),
+        endpoint: 'GET /evolution/rollback/:id/metadata',
+      },
       routes: [
         'GET /evolution/health',
         'POST /evolution/observe',
         'GET /evolution/ledger',
+        'GET /evolution/metrics',
+        'GET /evolution/complexity',
         'GET /evolution/risk/:id',
         'POST /evolution/approve/:id',
         'POST /evolution/rollback/:id',
+        'GET /evolution/rollback/:id/metadata',
+        'POST /evolution/loop/acknowledge',
         'GET /evolution/proposals?state=',
         'POST /evolution/proposals/:id/advance',
         'POST /evolution/proposals/:id/promote',
@@ -121,7 +311,7 @@ export function mountEvolutionRoutes(
   })
 
   // ── POST /evolution/observe ──────────────────────────────────────
-  // Body: { failure: string, evidence?: JsonValue, sessionID?: string, changedFiles?: string[], patch?: string, permissionScope?: string, cost?: number }
+  // Body: { failure: string, evidence?: JsonValue, sessionID?: string, changedFiles?: string[], patch?: string, permissionScope?: string, cost?: number, research?: { source: string, title?: string, content: string } }
   app.post('/evolution/observe', async (c) => {
     let body: {
       failure?: unknown
@@ -131,6 +321,7 @@ export function mountEvolutionRoutes(
       patch?: unknown
       permissionScope?: unknown
       cost?: unknown
+      research?: unknown
     } | null = null
     try {
       body = (await c.req.json()) as unknown as typeof body
@@ -152,6 +343,7 @@ export function mountEvolutionRoutes(
       patch?: unknown
       permissionScope?: unknown
       cost?: unknown
+      research?: { source?: unknown; title?: unknown; content?: unknown }
     }
     const failure = String(b.failure).slice(0, 500)
     const evidence = (b.evidence ?? null) as JsonValue
@@ -166,9 +358,98 @@ export function mountEvolutionRoutes(
 
     const observed = observer.observe(failure, evidence, sessionID)
 
+    // ShadowMira binds late (constructed after route mount in index.ts) —
+    // resolve per-request so the observe pipeline uses it once available.
+    const shadowMira = deps.shadowMira
+
+    // ── §11 loop guard — doom-loop prevention BEFORE any proposal work ──
+    // Duplicate failure inside cooldown or an escalated fingerprint: record
+    // the decision and stop — no diagnosis/proposal/experiment churn.
+    const loop = loopGuard.check(failure, evidence)
+    if (!loop.allowed) {
+      const loopVerdict = loop.escalated ? 'loop_escalated' : 'loop_blocked'
+      try {
+        bus?.publish({
+          type: loop.escalated
+            ? ('evolution.loop_escalated' as unknown as import('../types/index.js').BusEventType)
+            : ('evolution.loop_blocked' as unknown as import('../types/index.js').BusEventType),
+          payload: {
+            fingerprint: loop.fingerprint,
+            attempts: loop.attempts,
+            failure: failure.slice(0, 200),
+            reason: loop.reason,
+            sessionID,
+          } as unknown as JsonValue,
+          timestamp: Date.now(),
+        } as unknown as import('../types/index.js').BusEvent)
+      } catch {}
+      try {
+        ledger.remember({
+          id: `loop_${loop.fingerprint}_${Date.now().toString(36)}`,
+          proposal: {
+            id: `loop_${loop.fingerprint}`,
+            title: `loop-guard: ${failure.slice(0, 80)}`,
+            type: 'experiment',
+            risk: 'low',
+            priority: 'P1',
+            affectedEngine: 'unknown',
+            evidence: null,
+            expectedImpact: 'none — §11 loop prevention',
+            cause: failure.slice(0, 200),
+            confidence: 0,
+            createdAt: Date.now(),
+          } as unknown as import('../evolution/proposal.js').ImprovementProposal,
+          verdict: loopVerdict as unknown as import('../evolution/ledger.js').LedgerVerdict,
+          evidence: { loop, sessionID } as unknown as JsonValue,
+        })
+      } catch {}
+      return c.json({
+        ok: true,
+        loopBlocked: true,
+        loop,
+        ledger: { verdict: loopVerdict, id: `loop_${loop.fingerprint}` },
+        note: loop.reason,
+      })
+    }
+
     // Pipeline: Diagnosis → Proposal
     const diagnosis = diagnose(observed)
     const proposal = propose(diagnosis)
+
+    // ── §10 research trust boundary — Research → Validate → advisory evidence ──
+    // body.research is untrusted web content: sanitized on ingest, validated
+    // against the diagnosis's OWN evidence, and attached to the proposal as
+    // advisory evidence strings. It can never become executable instruction.
+    let researchEvidence: JsonValue | null = null
+    if (
+      b.research &&
+      typeof b.research === 'object' &&
+      typeof (b.research as { content?: unknown }).content === 'string'
+    ) {
+      try {
+        const item = researchGate.ingest({
+          source: String((b.research as { source?: unknown }).source ?? 'unknown').slice(0, 200),
+          title:
+            typeof (b.research as { title?: unknown }).title === 'string'
+              ? String((b.research as { title?: unknown }).title).slice(0, 200)
+              : undefined,
+          content: String((b.research as { content?: unknown }).content),
+        })
+        const knowledge = researchGate.validate(item, diagnosis)
+        const hints = researchGate.toProposalHints(knowledge)
+        researchEvidence = researchGate.evidenceFor(item, diagnosis)
+        // Advisory hints inform the proposal's evidence — strings only, no execution path
+        proposal.evidence = {
+          ...(proposal.evidence as object),
+          research: {
+            hints,
+            validated: knowledge.filter((k) => k.validated).length,
+            boundary: '§10 advisory-only',
+          },
+        } as unknown as JsonValue
+      } catch {}
+    }
+
     const experiment = createExperiment(proposal, patch)
 
     // ── Phase 2 gates: Risk → Autonomy → Approval → Resources → Security → Verifier
@@ -209,6 +490,13 @@ export function mountEvolutionRoutes(
     // The EXACT point (patchId-linked snapshots) is captured at promote time,
     // after the applier records pre-images under the evolution marker session.
     const rollbackPoint = rollbackManager.createRollbackPoint(proposal.id)
+    // §6 system rollback: capture system state BEFORE the candidate is applied
+    // — components/deps/config hashes drive diff + restore steps.
+    let systemBefore: ReturnType<typeof systemRollback.capture> | null = null
+    try {
+      systemBefore = systemRollback.capture()
+      systemRollback.recordCandidate(proposal.id, systemBefore)
+    } catch {}
 
     // Gate decisions — fail-closed: block verifier if any gate fails
     const gatedReason: string[] = []
@@ -233,6 +521,7 @@ export function mountEvolutionRoutes(
 
     let verification: Awaited<ReturnType<typeof verify>> | null = null
     let evaluation: ReturnType<typeof evaluate> | null = null
+    let shadowMeta: ShadowMeta | null = null
     let verdict: string
 
     if (blocked) {
@@ -275,13 +564,142 @@ export function mountEvolutionRoutes(
             : 'security_blocked'
     } else {
       verification = await verify(experiment)
-      // merge pre-security result into verification security (fail-closed)
-      if (!securityPre.passed) {
-        verification.security.passed = false
-        verification.security.issues = [...verification.security.issues, ...securityPre.findings]
-        verification.verified = false
+      // Longitudinal evaluation (§16): use an evidence-based baseline derived
+      // from accepted ledger history when available; otherwise the evaluator's
+      // hardcoded DEFAULT_BASELINE applies.
+      const longitudinalBaseline = deriveLongitudinalBaseline(ledger.list(200))
+      evaluation = evaluate(verification, longitudinalBaseline ?? undefined)
+
+      // ── Shadow Mira (P0) — full shadow comparison with isolated benchmarking ──
+      // Only runs when the evaluator accepts: shadow can only downgrade an
+      // accept (worse→reject, neutral→annotate) — running a full isolated
+      // benchmark on an already-rejected candidate is wasted cost.
+      // On shadow error we fall back to the heuristic comparison AND mark the
+      // run failed — the unified gate below then refuses 'verified' (fail-closed:
+      // missing independent evidence must not stamp a candidate as verified).
+      let shadowErrored = false
+      if (shadowMira && evaluation.decision === 'accept') {
+        const engineId = SHADOW_ENGINE_BY_AFFECTED[proposal.affectedEngine] ?? 'agent'
+        try {
+          const shadowRun = await shadowMira.startShadow(engineId)
+          shadowMeta = {
+            source: 'full',
+            shadowId: shadowRun.shadowId,
+            candidateEngineId: engineId,
+            verdict: shadowRun.result.verdict,
+            reasoning: shadowRun.result.reasoning,
+          }
+          if (shadowRun.result.verdict === 'worse') {
+            evaluation = {
+              ...evaluation,
+              decision: 'reject',
+              reason: `${evaluation.reason} — shadow: ${shadowRun.result.reasoning}`,
+              details: {
+                ...(evaluation.details as object),
+                shadow: {
+                  ...shadowMeta,
+                  benchmark: shadowRun.benchmark,
+                  telemetry: shadowRun.telemetry,
+                } as unknown as JsonValue,
+              } as unknown as JsonValue,
+            }
+            verdict = 'rejected'
+          } else if (shadowRun.result.verdict === 'neutral') {
+            evaluation = {
+              ...evaluation,
+              reason: `${evaluation.reason} — shadow: neutral, ${shadowRun.result.reasoning}`,
+              details: {
+                ...(evaluation.details as object),
+                shadow: { ...shadowMeta, benchmark: shadowRun.benchmark } as unknown as JsonValue,
+              } as unknown as JsonValue,
+            }
+          }
+          // verdict 'better' → evaluation decision stands
+        } catch (e) {
+          shadowErrored = true
+          const errorReason = String(e).slice(0, 300)
+          shadowMeta = {
+            source: 'error',
+            candidateEngineId: engineId,
+            verdict: 'error',
+            reasoning: errorReason,
+          }
+          try {
+            bus?.publish({
+              type: 'evolution.shadow_error' as unknown as import('../types/index.js').BusEventType,
+              payload: {
+                engineId,
+                error: errorReason,
+                proposalId: proposal.id,
+              } as unknown as JsonValue,
+              timestamp: Date.now(),
+            } as unknown as import('../types/index.js').BusEvent)
+          } catch {}
+          // Heuristic comparison from evaluation scores — weak, self-referential
+          // evidence, recorded for observability only (never stamps verified).
+          const heuristic = compareHeuristicShadow(evaluation, verification.security.passed)
+          if (heuristic)
+            shadowMeta = {
+              ...shadowMeta,
+              verdict: heuristic.verdict,
+              reasoning: `${shadowMeta.reasoning} | heuristic: ${heuristic.reasoning}`,
+            }
+        }
+      } else if (shadowMira) {
+        // Evaluator already rejected — no shadow needed for the decision
+        shadowMeta = {
+          source: 'skipped',
+          candidateEngineId: SHADOW_ENGINE_BY_AFFECTED[proposal.affectedEngine] ?? 'agent',
+          verdict: 'skipped',
+        }
+      } else {
+        // Shadow not bound (early boot / tests) — heuristic comparison only
+        const heuristic = compareHeuristicShadow(evaluation, verification.security.passed)
+        if (heuristic) {
+          shadowMeta = {
+            source: 'heuristic',
+            verdict: heuristic.verdict,
+            reasoning: heuristic.reasoning,
+          }
+          if (heuristic.verdict === 'worse') {
+            if (evaluation.decision === 'accept') {
+              evaluation = {
+                ...evaluation,
+                decision: 'reject',
+                reason: `${evaluation.reason} — shadow: ${heuristic.reasoning}`,
+                details: {
+                  ...(evaluation.details as object),
+                  shadow: {
+                    ...shadowMeta,
+                    gates: heuristic.gates,
+                    improved: heuristic.improved,
+                    regressed: heuristic.regressed,
+                  } as unknown as JsonValue,
+                } as unknown as JsonValue,
+              }
+              verdict = 'rejected'
+            } else {
+              verdict = 'rejected'
+            }
+          } else if (heuristic.verdict === 'neutral') {
+            evaluation = {
+              ...evaluation,
+              reason: `${evaluation.reason} — shadow: neutral (no improvement detected), ${heuristic.reasoning}`,
+              details: {
+                ...(evaluation.details as object),
+                shadow: {
+                  ...shadowMeta,
+                  gates: heuristic.gates,
+                  improved: heuristic.improved,
+                  regressed: heuristic.regressed,
+                } as unknown as JsonValue,
+              } as unknown as JsonValue,
+            }
+          }
+        } else {
+          shadowMeta = { source: 'heuristic', verdict: 'unavailable' }
+        }
       }
-      evaluation = evaluate(verification)
 
       // ── Unified self-modification gate (P1.1) — final arm ──
       // Even when verification + evaluation pass, never mark "verified"
@@ -312,6 +730,19 @@ export function mountEvolutionRoutes(
       } else {
         verdict = 'rejected'
       }
+
+      // Fail-closed on shadow error (§5): 'verified' stamps independent
+      // evidence — a shadow run that failed to produce any must not earn it.
+      // Heuristic fallback evidence (self-referential) is recorded but is not
+      // independent, so the strongest downgrade is to 'gated' (pending evidence).
+      if (shadowErrored && verdict === 'verified') {
+        verdict = 'gated'
+        evaluation = {
+          ...evaluation,
+          decision: 'reject',
+          reason: `${evaluation.reason} — shadow unavailable (fail-closed): ${shadowMeta?.reasoning ?? 'startShadow failed'}`,
+        }
+      }
     }
 
     try {
@@ -336,6 +767,14 @@ export function mountEvolutionRoutes(
           rollbackPoint,
           verification,
           evaluation,
+          research: researchEvidence,
+          systemRollbackMetadata: systemRollback.metadata(proposal.id) ?? null,
+          // Prefer the richer per-path shadow record stored in evaluation.details
+          // (benchmark/telemetry/gates) — falls back to the normalized meta.
+          shadow:
+            (evaluation.details as { shadow?: JsonValue } | null | undefined)?.shadow ??
+            (shadowMeta as unknown as JsonValue) ??
+            null,
         } as unknown as JsonValue,
       })
     } catch {}
@@ -368,6 +807,12 @@ export function mountEvolutionRoutes(
       budget,
       security: securityPre,
       rollbackPoint,
+      research: researchEvidence,
+      loop: { allowed: loop.allowed, fingerprint: loop.fingerprint, attempts: loop.attempts },
+      shadow:
+        (evaluation.details as { shadow?: JsonValue } | null | undefined)?.shadow ??
+        (shadowMeta as unknown as JsonValue) ??
+        null,
       verification: verification
         ? {
             verified: verification.verified,
@@ -381,7 +826,9 @@ export function mountEvolutionRoutes(
       ledger: { verdict, id: proposal.id },
       note: blocked
         ? `blocked by ${blockedBy} — POST /evolution/approve/${proposal.id} or fix and retry`
-        : 'Phase 2 gated — Risk→Autonomy→Approval→Resources→Security before Verifier',
+        : shadowMira
+          ? 'Phase 2+4 Shadow — Risk→Autonomy→Approval→Resources→Security→Verifier→Evaluator→ShadowMira→Ledger'
+          : 'Phase 2 gated — Risk→Autonomy→Approval→Resources→Security before Verifier (ShadowComparison heuristic)',
     })
   })
 
@@ -443,6 +890,121 @@ export function mountEvolutionRoutes(
       autonomy: { level, needsApproval: requiresApproval(level, risk) },
       proposal: entry.proposal,
       fallback: true,
+    })
+  })
+
+  // ── GET /evolution/metrics — longitudinal evaluation (§16) ──────
+  // Aggregates ledger history into longitudinal stats and derives a REAL
+  // baseline from the most recent accepted entries — replacing reliance on
+  // the hardcoded DEFAULT_BASELINE (§16: Before vs Candidate vs After).
+  app.get('/evolution/metrics', (c) => {
+    const limitRaw = c.req.query('limit')
+    const limit = limitRaw ? Math.min(500, Math.max(1, Number(limitRaw) || 200)) : 200
+    const entries = ledger.list(limit)
+    const byVerdict: Record<string, number> = {}
+    for (const e of entries) byVerdict[e.verdict] = (byVerdict[e.verdict] ?? 0) + 1
+    const accepted = entries.filter((e) => e.verdict === 'verified' || e.verdict === 'accepted')
+
+    // Candidate metric trend from accepted entries (chronological), via the
+    // same extractor the observe pipeline uses for its evidence-based baseline.
+    const metricSeries = extractCandidateMetricSeries(entries)
+    const meanOf = (xs: number[]) =>
+      xs.length === 0 ? null : xs.reduce((a, b) => a + b, 0) / xs.length
+    const trend: Record<
+      string,
+      {
+        mean: number | null
+        n: number
+        first: number | null
+        last: number | null
+        delta: number | null
+      }
+    > = {}
+    for (const [k, xs] of Object.entries(metricSeries)) {
+      // series is newest-first (ledger.list is reverse-chronological) — flip for first/last
+      const chrono = [...xs].reverse()
+      const first = chrono.length > 0 ? chrono[0] : null
+      const last = chrono.length > 0 ? chrono[chrono.length - 1] : null
+      trend[k] = {
+        mean: meanOf(xs),
+        n: xs.length,
+        first,
+        last,
+        delta:
+          first !== null && last !== null && first !== 0 ? ((last - first) / first) * 100 : null,
+      }
+    }
+    // Evidence-based baseline (same math the observe pipeline feeds evaluate())
+    const baseline = deriveLongitudinalBaseline(entries)
+    const derivedBaseline: Record<string, number | null> = baseline
+      ? {
+          successRate: baseline.successRate,
+          latencyMs: baseline.latencyMs,
+          costPerTask: baseline.costPerTask,
+          regressionRate: baseline.regressionRate,
+          securityViolations: baseline.securityViolations,
+        }
+      : {
+          successRate: null,
+          latencyMs: null,
+          costPerTask: null,
+          regressionRate: null,
+          securityViolations: null,
+        }
+
+    return c.json({
+      ok: true,
+      window: { limit, observed: entries.length },
+      byVerdict,
+      acceptanceRate: entries.length > 0 ? accepted.length / entries.length : null,
+      acceptedCount: accepted.length,
+      trend,
+      derivedBaseline,
+      longitudinal:
+        '§16 Before vs Candidate vs After — derivedBaseline is what evaluate() uses when accepted history exists',
+      timestamp: Date.now(),
+    })
+  })
+
+  // ── GET /evolution/complexity — §20 complexity as an engineering metric ──
+  app.get('/evolution/complexity', (c) => {
+    const snap = complexityTracker.snapshot()
+    const trend = complexityTracker.trend()
+    return c.json({
+      ok: true,
+      current: snap,
+      trend,
+      history: complexityTracker.history(20),
+      note: '§20: complexity tracked as engines/tools/deps/agents/permissions/actions/transitions/failure-paths — growth is a risk signal, not a feature',
+      timestamp: Date.now(),
+    })
+  })
+
+  // ── POST /evolution/loop/acknowledge — §11 escalation ack ────────
+  // Body: { fingerprint?: string } — clears escalation state (human or
+  // higher-level agent decision per §11 RECOVERY FAILED → ESCALATE).
+  app.post('/evolution/loop/acknowledge', async (c) => {
+    let body: { fingerprint?: unknown } | null = null
+    try {
+      body = (await c.req.json()) as unknown as { fingerprint?: unknown }
+    } catch {
+      body = null
+    }
+    const fingerprint =
+      typeof body?.fingerprint === 'string' ? body.fingerprint.slice(0, 64) : undefined
+    const cleared = loopGuard.acknowledge(fingerprint)
+    try {
+      bus?.publish({
+        type: 'evolution.loop_acknowledged' as unknown as import('../types/index.js').BusEventType,
+        payload: { fingerprint, cleared } as unknown as JsonValue,
+        timestamp: Date.now(),
+      } as unknown as import('../types/index.js').BusEvent)
+    } catch {}
+    return c.json({
+      ok: true,
+      cleared,
+      fingerprint: fingerprint ?? 'all',
+      loopGuard: loopGuard.stats(),
     })
   })
 
@@ -509,6 +1071,18 @@ export function mountEvolutionRoutes(
     }
     const after = ledger.get(id)
     return c.json({ ok: true, id, rolledBack: true, verdict: after?.verdict ?? 'rolledback' })
+  })
+
+  // ── GET /evolution/rollback/:id/metadata — §6 system rollback metadata ──
+  app.get('/evolution/rollback/:id/metadata', (c) => {
+    const id = c.req.param('id')
+    const meta = systemRollback.metadata(id)
+    if (!meta) return c.json({ error: 'no system rollback metadata recorded', id }, 404)
+    return c.json({
+      ok: true,
+      metadata: meta,
+      note: '§6: file rollback ≠ system rollback — this metadata drives engine rollback()/config restore; systemRollbackMetadata is recorded in ledger evidence',
+    })
   })
 
   // Governance pipeline (patch proposals) — only when a gate was passed in;

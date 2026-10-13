@@ -23,12 +23,25 @@
  * | 10 | Known limitations | Implemented | Phase 1 single DB; Phase 6 adds cross-project memory evolution + provenance |
  */
 
-import type { MiraDB } from "../storage/db.js"
-import type { JsonValue } from "../types/index.js"
-import type { Bus } from "../bus/index.js"
-import type { ImprovementProposal } from "./proposal.js"
+import type { MiraDB } from '../storage/db.js'
+import type { JsonValue } from '../types/index.js'
+import type { Bus } from '../bus/index.js'
+import type { ImprovementProposal } from './proposal.js'
 
-export type LedgerVerdict = "verified" | "rejected" | "accepted" | "pending" | "pending_approval" | "budget_blocked" | "security_blocked" | "rolledback" | "promoted" | "canary" | "canary_failed"
+export type LedgerVerdict =
+  | 'verified'
+  | 'rejected'
+  | 'accepted'
+  | 'pending'
+  | 'pending_approval'
+  | 'budget_blocked'
+  | 'security_blocked'
+  | 'rolledback'
+  | 'promoted'
+  | 'canary'
+  | 'canary_failed'
+  | 'loop_blocked'
+  | 'loop_escalated'
 
 export interface LedgerEntry {
   id: string // proposal.id
@@ -65,23 +78,29 @@ export class ImprovementLedger {
   }
 
   /** Remember after verify — per spec: remember() after verify, before evaluator decision is also valid. */
-  remember(entry: Omit<LedgerEntry, "createdAt"> & { createdAt?: number }): LedgerEntry {
+  remember(entry: Omit<LedgerEntry, 'createdAt'> & { createdAt?: number }): LedgerEntry {
     this.ensureTable()
     const sqlite = this.db.sqlite
     const createdAt = entry.createdAt ?? Date.now()
     const full: LedgerEntry = { ...entry, createdAt }
     const proposalJson = JSON.stringify(full.proposal)
     const evidenceJson = JSON.stringify(full.evidence ?? null)
-    sqlite.prepare(
-      `INSERT OR REPLACE INTO evolution_ledger (id, proposal, verdict, evidence, created_at) VALUES (?, ?, ?, ?, ?)`
-    ).run(full.id, proposalJson, full.verdict, evidenceJson, full.createdAt)
+    sqlite
+      .prepare(
+        `INSERT OR REPLACE INTO evolution_ledger (id, proposal, verdict, evidence, created_at) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(full.id, proposalJson, full.verdict, evidenceJson, full.createdAt)
 
     try {
       this.bus?.publish({
-        type: "evolution.ledger" as unknown as import("../types/index.js").BusEventType,
-        payload: { id: full.id, verdict: full.verdict, proposal: full.proposal as unknown as JsonValue } as JsonValue,
+        type: 'evolution.ledger' as unknown as import('../types/index.js').BusEventType,
+        payload: {
+          id: full.id,
+          verdict: full.verdict,
+          proposal: full.proposal as unknown as JsonValue,
+        } as JsonValue,
         timestamp: full.createdAt,
-      } as unknown as import("../types/index.js").BusEvent)
+      } as unknown as import('../types/index.js').BusEvent)
     } catch {}
 
     return full
@@ -91,15 +110,51 @@ export class ImprovementLedger {
     this.ensureTable()
     const sqlite = this.db.sqlite
     if (!sqlite) return []
-    const rows = sqlite.prepare(
-      `SELECT id, proposal, verdict, evidence, created_at FROM evolution_ledger ORDER BY created_at DESC LIMIT ?`
-    ).all(limit) as Array<{ id: string; proposal: string; verdict: string; evidence: string | null; created_at: number }>
+    const rows = sqlite
+      .prepare(
+        `SELECT id, proposal, verdict, evidence, created_at FROM evolution_ledger ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(limit) as Array<{
+      id: string
+      proposal: string
+      verdict: string
+      evidence: string | null
+      created_at: number
+    }>
     return rows.map((r) => {
       let proposal: ImprovementProposal
-      try { proposal = JSON.parse(r.proposal) as ImprovementProposal } catch { proposal = { id: r.id, title: r.id, type: "experiment", risk: "low", priority: "P1", affectedEngine: "unknown", evidence: null, expectedImpact: "", cause: "", confidence: 0, createdAt: r.created_at } as ImprovementProposal }
+      try {
+        proposal = JSON.parse(r.proposal) as ImprovementProposal
+      } catch {
+        proposal = {
+          id: r.id,
+          title: r.id,
+          type: 'experiment',
+          risk: 'low',
+          priority: 'P1',
+          affectedEngine: 'unknown',
+          evidence: null,
+          expectedImpact: '',
+          cause: '',
+          confidence: 0,
+          createdAt: r.created_at,
+        } as ImprovementProposal
+      }
       let evidence: JsonValue
-      try { evidence = r.evidence ? JSON.parse(r.evidence) as JsonValue : null as unknown as JsonValue } catch { evidence = r.evidence as unknown as JsonValue }
-      return { id: r.id, proposal, verdict: r.verdict as LedgerVerdict, evidence, createdAt: r.created_at }
+      try {
+        evidence = r.evidence
+          ? (JSON.parse(r.evidence) as JsonValue)
+          : (null as unknown as JsonValue)
+      } catch {
+        evidence = r.evidence as unknown as JsonValue
+      }
+      return {
+        id: r.id,
+        proposal,
+        verdict: r.verdict as LedgerVerdict,
+        evidence,
+        createdAt: r.created_at,
+      }
     })
   }
 
@@ -107,26 +162,65 @@ export class ImprovementLedger {
     this.ensureTable()
     const sqlite = this.db.sqlite
     if (!sqlite) return null
-    const row = sqlite.prepare(
-      `SELECT id, proposal, verdict, evidence, created_at FROM evolution_ledger WHERE id = ?`
-    ).get(id) as { id: string; proposal: string; verdict: string; evidence: string | null; created_at: number } | undefined
+    const row = sqlite
+      .prepare(
+        `SELECT id, proposal, verdict, evidence, created_at FROM evolution_ledger WHERE id = ?`,
+      )
+      .get(id) as
+      | {
+          id: string
+          proposal: string
+          verdict: string
+          evidence: string | null
+          created_at: number
+        }
+      | undefined
     if (!row) return null
     let proposal: ImprovementProposal
-    try { proposal = JSON.parse(row.proposal) as ImprovementProposal } catch { proposal = { id: row.id, title: row.id, type: "experiment", risk: "low", priority: "P1", affectedEngine: "unknown", evidence: null, expectedImpact: "", cause: "", confidence: 0, createdAt: row.created_at } as ImprovementProposal }
+    try {
+      proposal = JSON.parse(row.proposal) as ImprovementProposal
+    } catch {
+      proposal = {
+        id: row.id,
+        title: row.id,
+        type: 'experiment',
+        risk: 'low',
+        priority: 'P1',
+        affectedEngine: 'unknown',
+        evidence: null,
+        expectedImpact: '',
+        cause: '',
+        confidence: 0,
+        createdAt: row.created_at,
+      } as ImprovementProposal
+    }
     let evidence: JsonValue
-    try { evidence = row.evidence ? JSON.parse(row.evidence) as JsonValue : null as unknown as JsonValue } catch { evidence = row.evidence as unknown as JsonValue }
-    return { id: row.id, proposal, verdict: row.verdict as LedgerVerdict, evidence, createdAt: row.created_at }
+    try {
+      evidence = row.evidence
+        ? (JSON.parse(row.evidence) as JsonValue)
+        : (null as unknown as JsonValue)
+    } catch {
+      evidence = row.evidence as unknown as JsonValue
+    }
+    return {
+      id: row.id,
+      proposal,
+      verdict: row.verdict as LedgerVerdict,
+      evidence,
+      createdAt: row.created_at,
+    }
   }
 
   count(): number {
     this.ensureTable()
     const sqlite = this.db.sqlite
     if (!sqlite) return 0
-    const row = sqlite.prepare(`SELECT COUNT(*) as c FROM evolution_ledger`).get() as { c: number } | undefined
+    const row = sqlite.prepare(`SELECT COUNT(*) as c FROM evolution_ledger`).get() as
+      { c: number } | undefined
     return row?.c ?? 0
   }
 
   health(): { table: string; count: number } {
-    return { table: "evolution_ledger", count: this.count() }
+    return { table: 'evolution_ledger', count: this.count() }
   }
 }

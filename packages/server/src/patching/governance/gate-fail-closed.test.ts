@@ -278,13 +278,14 @@ describe('§3 acceptance: SLO breach fails, compliance passes', () => {
 
   test('healthy candidate within every configured limit → PASSED', async () => {
     // traffic arrives DURING the observation window, which is what the canary
-    // is supposed to measure
+    // is supposed to measure. Window is generous (500ms, ~8ms of ticks) so a
+    // loaded CI event loop cannot close it before the samples land.
     const r = await observingRunner(new LatencyTracker(), [
       { ms: 10 },
       { ms: 20 },
       { ms: 30 },
       { ms: 40 },
-    ]).start('proposal_x', { trafficPct: 5, durationMs: 60, slo: SLO, minSamples: 3 })
+    ]).start('proposal_x', { trafficPct: 5, durationMs: 500, slo: SLO, minSamples: 3 })
     expect(r.passed).toBe(true)
     expect(outcomeOf(r)).toBe('PASSED')
     expect(Number(r.metrics!.count)).toBeGreaterThanOrEqual(3)

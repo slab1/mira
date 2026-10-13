@@ -19,7 +19,7 @@
  *   bun src/index.ts --port 3000  # custom port
  */
 
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { timingSafeEqual, randomBytes, createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -40,6 +40,8 @@ import { createSemanticGraph } from './repo/semantic.js'
 import { codeGraphFor } from './codegraph/index.js'
 import type { Database } from 'bun:sqlite'
 import { createSandbox } from './sandbox/isolation.js'
+import { canaryAttribution } from './patching/governance/attribution.js'
+import { LatencyTracker } from './patching/latency.js'
 import { evictStaleMemories } from './memory/eviction.js'
 import { setSharedKnowledge } from './learning/knowledge.js'
 import {
@@ -80,6 +82,14 @@ import { CanaryManager } from './canary/canary.js'
 import { mountCanaryRoutes } from './routes/canary.js'
 /** Auto-canary hook: set inside main() when MIRA_CANARY_AUTO_START=1 (Phase 5 automation) */
 let canaryStartAfterPromote: ((affectedEngine: string) => { canaryId: string } | null) | null = null
+/** Late-bound ShadowMira: constructed in the Phase 4 block, after mountEvolutionRoutes
+ *  — the observe route resolves it per-request so POST /evolution/observe gains
+ *  full isolated benchmarking once shadow is ready. */
+let shadowMiraForEvolution: ShadowMira | null = null
+/** Late-bound canary attribution tracker: constructed with the attribution
+ *  middleware, consumed by the governance gate's measurement source (learning)
+ *  so benchmark evidence comes from real routed traffic when it exists. */
+let canaryAttributionTrackerRef: LatencyTracker | null = null
 import { EngineRegistry } from './engines/registry.js'
 import { AgentEngine } from './engines/agent.js'
 import { MemoryEngine } from './engines/memory.js'
@@ -634,7 +644,12 @@ async function main() {
     }
   })
 
-  const learning = createLearningSystem({ db, bus, gateway })
+  const learning = createLearningSystem({
+    db,
+    bus,
+    gateway,
+    measurementTracker: () => canaryAttributionTrackerRef ?? undefined,
+  })
   await learning.knowledge.load()
   setSharedKnowledge(learning.knowledge)
   learning.scheduler.start()
@@ -727,6 +742,25 @@ async function main() {
     bearerOf,
     getBunServer: () => bunServer,
   })
+
+  // Canary attribution middleware — opt-in, fail-safe: with no router targets
+  // registered it is a no-op, and it never throws into the request path.
+  // Dedicated tracker (self-pruning, 2k samples) holds candidate-lane latency
+  // samples for governance measurement stats(windowMs, proposalId).
+  const canaryAttributionTracker = new LatencyTracker()
+  canaryAttributionTrackerRef = canaryAttributionTracker
+  app.use(
+    '*',
+    canaryAttribution({
+      proposalId: undefined,
+      paths: undefined,
+      tracker: canaryAttributionTracker,
+      // Stickiness key: the requestId set by middleware — sessionID is never
+      // set on the context, and an undefined key would throw inside
+      // bucketOf(), silently disabling attribution.
+      keyOf: (c: Context) => c.get('requestId' as never) ?? c.req.header('x-request-id') ?? 'anon',
+    }),
+  )
 
   // Mount route modules
   // (static/SPA fallback mounted LAST below — see mountStaticRoutes call
@@ -882,6 +916,69 @@ async function main() {
       // field cannot claim to be an approver (section 5).
       resolveOwner,
       canaryStart: (affectedEngine: string) => canaryStartAfterPromote?.(affectedEngine) ?? null,
+      // ShadowMira binds late (Phase 4 block below) — getter defers to request time.
+      get shadowMira() {
+        return shadowMiraForEvolution ?? undefined
+      },
+      // §20 complexity counters over live systems — resolved lazily at
+      // snapshot time; engine registry binds late via its globalThis ref.
+      complexityProviders: {
+        engines: () => {
+          try {
+            return (
+              (
+                globalThis as unknown as { __miraEngineRegistry?: { count?: () => number } }
+              ).__miraEngineRegistry?.count?.() ?? 0
+            )
+          } catch {
+            return 0
+          }
+        },
+        tools: () => {
+          try {
+            return tools.count()
+          } catch {
+            return 0
+          }
+        },
+        dependencies: () => {
+          try {
+            const pkg = JSON.parse(
+              readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'),
+            ) as { dependencies?: Record<string, string> }
+            return Object.keys(pkg.dependencies ?? {}).length
+          } catch {
+            return 0
+          }
+        },
+      },
+      // §6 system rollback collectors — component versions from the (late-bound)
+      // engine registry, dependency versions + config hashes from disk.
+      systemRollbackCollectors: {
+        componentVersions: () => {
+          try {
+            const reg = (
+              globalThis as unknown as {
+                __miraEngineRegistry?: { list?: () => Array<{ id: string; version: string }> }
+              }
+            ).__miraEngineRegistry
+            return Object.fromEntries((reg?.list?.() ?? []).map((e) => [e.id, e.version]))
+          } catch {
+            return {}
+          }
+        },
+        dependencyVersions: () => {
+          try {
+            const pkg = JSON.parse(
+              readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'),
+            ) as { dependencies?: Record<string, string> }
+            return pkg.dependencies ?? {}
+          } catch {
+            return {}
+          }
+        },
+        configPaths: ['mira.json'],
+      },
     })
 
     log(
@@ -987,6 +1084,8 @@ async function main() {
         metrics,
         gatewayRegistry: registry as unknown as { healthSnapshot: () => unknown },
       })
+      // Late-bind into evolution observe pipeline (see shadowMiraForEvolution above)
+      shadowMiraForEvolution = shadowMira
       mountShadowRoutes(app, { shadow: shadowMira })
       ;(globalThis as unknown as Record<string, unknown>).__miraShadow = shadowMira
       log(

@@ -41,6 +41,11 @@ import { ImprovementEngine } from './improvement.js'
 import { LearningScheduler } from './scheduler.js'
 import { createPatchingSystem, type PatchingEngine } from '../patching/index.js'
 import { createGovernanceGate } from '../patching/governance/index.js'
+import {
+  TrackerMeasurementSource,
+  type MeasurementSource,
+} from '../patching/governance/measurement.js'
+import type { LatencyTracker } from '../patching/latency.js'
 import { RollbackManager } from '../evolution/rollback.js'
 import { createAgentMetrics } from '../agents/metrics.js'
 import { createMemoryQualityTracker } from './quality.js'
@@ -73,6 +78,14 @@ export interface LearningSystemDeps {
   gateway?: Gateway
   /** override repo root for ImprovementEngine (default process.cwd()) */
   rootDir?: string
+  /**
+   * Late-bound accessor for the canary attribution LatencyTracker. When it
+   * yields a tracker, the governance benchmark stage measures REAL routed
+   * traffic (TrackerMeasurementSource); when it yields undefined (tracker not
+   * constructed yet / no attribution), measure() returns null and the stage
+   * BLOCKS — fail-closed unchanged.
+   */
+  measurementTracker?: () => LatencyTracker | undefined
 }
 
 export interface LearningSystem {
@@ -121,6 +134,15 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
     db: deps.db,
     bus: deps.bus,
     rootDir: deps.rootDir ?? process.cwd(),
+    measurements: deps.measurementTracker
+      ? ({
+          measure: async (proposal: Parameters<MeasurementSource['measure']>[0]) => {
+            const tracker = deps.measurementTracker?.()
+            if (!tracker) return null
+            return new TrackerMeasurementSource({ tracker }).measure(proposal)
+          },
+        } satisfies MeasurementSource)
+      : undefined,
     onStagePass: (proposalId, stage) => {
       // Stamp related memories with elevated provenance when a stage passes
       const provenanceLevel = stage === 'benchmark' ? 'benchmark-verified' : 'ci-verified'
