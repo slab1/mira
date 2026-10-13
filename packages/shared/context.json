@@ -7,6 +7,81 @@
       "context": "gap 12-15 fixer",
       "at": "2026-09-08T08:49:26.903Z",
       "by": "fixer"
+    },
+    {
+      "id": "dec_mv4xx4po_7fkr",
+      "decision": "mirror:mv4xx4pm:promoted",
+      "context": "Proposal p1 promoted",
+      "at": "2026-10-12T07:38:20.316Z",
+      "by": "governance",
+      "evidence": ["stage=canary", "metrics pass"],
+      "alternatives": ["remain in CANARY_PASSED"]
+    },
+    {
+      "id": "dec_mv4xx4pt_qkqm",
+      "decision": "routed:mv4xx4ps",
+      "context": "goes to explicit dir",
+      "at": "2026-10-12T07:38:20.321Z"
+    },
+    {
+      "id": "dec_mv4y0e0j_yonq",
+      "decision": "mirror:mv4y0e0i:promoted",
+      "context": "Proposal p1 promoted",
+      "at": "2026-10-12T07:40:52.339Z",
+      "by": "governance",
+      "evidence": ["stage=canary", "metrics pass"],
+      "alternatives": ["remain in CANARY_PASSED"]
+    },
+    {
+      "id": "dec_mv4y0f6x_hjej",
+      "decision": "routed:mv4y0f6x",
+      "context": "goes to explicit dir",
+      "at": "2026-10-12T07:40:53.865Z"
+    },
+    {
+      "id": "dec_mv5x7zqm_o6ms",
+      "decision": "mirror:mv5x7zqk:promoted",
+      "context": "Proposal p1 promoted",
+      "at": "2026-10-13T00:06:33.646Z",
+      "by": "governance",
+      "evidence": ["stage=canary", "metrics pass"],
+      "alternatives": ["remain in CANARY_PASSED"]
+    },
+    {
+      "id": "dec_mv5x80wz_9i0v",
+      "decision": "routed:mv5x80wy",
+      "context": "goes to explicit dir",
+      "at": "2026-10-13T00:06:35.171Z"
+    },
+    {
+      "id": "dec_mv5xavez_h4wt",
+      "decision": "mirror:mv5xavew:promoted",
+      "context": "Proposal p1 promoted",
+      "at": "2026-10-13T00:08:48.011Z",
+      "by": "governance",
+      "evidence": ["stage=canary", "metrics pass"],
+      "alternatives": ["remain in CANARY_PASSED"]
+    },
+    {
+      "id": "dec_mv5xavf6_504p",
+      "decision": "routed:mv5xavf5",
+      "context": "goes to explicit dir",
+      "at": "2026-10-13T00:08:48.018Z"
+    },
+    {
+      "id": "dec_mv5xb62a_ofiv",
+      "decision": "mirror:mv5xb629:promoted",
+      "context": "Proposal p1 promoted",
+      "at": "2026-10-13T00:09:01.810Z",
+      "by": "governance",
+      "evidence": ["stage=canary", "metrics pass"],
+      "alternatives": ["remain in CANARY_PASSED"]
+    },
+    {
+      "id": "dec_mv5xb633_k7dm",
+      "decision": "routed:mv5xb632",
+      "context": "goes to explicit dir",
+      "at": "2026-10-13T00:09:01.839Z"
     }
   ],
   "strategy_log": [
@@ -14,7 +89,7 @@
       "strategy_chosen": "critic",
       "agent_target": "critic",
       "outcome": "APPROVE",
-      "reason": "packages/server/src/tools/edit.ts:23 \u2014 safe rename",
+      "reason": "packages/server/src/tools/edit.ts:23 — safe rename",
       "file_line": null,
       "sim_id": "sim_test123",
       "durationMs": 120,
@@ -24,7 +99,7 @@
       "strategy_chosen": "critic",
       "agent_target": "critic",
       "outcome": "REJECT",
-      "reason": "packages/server/src/storage/snapshots.ts:36 \u2014 would bypass snapshot",
+      "reason": "packages/server/src/storage/snapshots.ts:36 — would bypass snapshot",
       "file_line": null,
       "sim_id": null,
       "durationMs": 80,
@@ -34,7 +109,7 @@
       "strategy_chosen": "critic",
       "agent_target": "critic",
       "outcome": "REVISE",
-      "reason": "shared/simulation_sandbox.ts:15 \u2014 add bounds check at file:line",
+      "reason": "shared/simulation_sandbox.ts:15 — add bounds check at file:line",
       "file_line": null,
       "sim_id": null,
       "durationMs": 95,
@@ -74,7 +149,7 @@
       "strategy_chosen": "fixer",
       "agent_target": "fixer",
       "outcome": "success",
-      "reason": "Bug A: patch-tool diff-derived snapshots + snapshot-failure warn + bash unsnapshotted debug notice; Bug B: /workspace/tree explicit cwd allowedRoots 403 \u2014 verified via stash-baseline typecheck (0 new errors), 3 existing test files + 7/7 scratch e2e",
+      "reason": "Bug A: patch-tool diff-derived snapshots + snapshot-failure warn + bash unsnapshotted debug notice; Bug B: /workspace/tree explicit cwd allowedRoots 403 — verified via stash-baseline typecheck (0 new errors), 3 existing test files + 7/7 scratch e2e",
       "file_line": null,
       "sim_id": null,
       "durationMs": 1500,
@@ -129,6 +204,222 @@
       "sim_id": null,
       "durationMs": 1800,
       "at": "2026-09-27T19:39:18.867875+00:00"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-12T07:42:52.460Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-12T07:42:52.500Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-12T07:42:52.513Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-10-12T07:42:52.615Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-12T07:42:52.655Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-12T07:42:52.678Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-12T07:42:52.700Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-12T07:42:52.704Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-12T07:42:52.710Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T00:04:15.007Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-13T00:04:15.027Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T00:04:15.075Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-10-13T00:04:15.163Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T00:04:15.187Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T00:04:15.207Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T00:04:15.260Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T00:04:15.269Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T00:04:15.285Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T00:07:07.014Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-13T00:07:07.032Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T00:07:07.045Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-10-13T00:07:07.095Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T00:07:07.116Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T00:07:07.140Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T00:07:07.160Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T00:07:07.163Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T00:07:07.170Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T00:09:36.028Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-13T00:09:36.040Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T00:09:36.065Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-10-13T00:09:36.116Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T00:09:36.136Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T00:09:36.155Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T00:09:36.180Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-13T00:09:36.189Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-13T00:09:36.200Z"
     }
   ],
   "active_tasks": [
@@ -141,21 +432,19 @@
     }
   ],
   "artifacts": {
-    "files_created": [
-      "shared/simulation_sandbox.ts"
-    ],
+    "files_created": ["shared/simulation_sandbox.ts"],
     "files_modified": [
       "packages/server/src/learning/ledger.ts",
       "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
       "packages/server/src/mcp/mock-http-mcp-server.ts:168-189 non-legacy GET /mcp 404 + HEAD /mcp 200 + await Bun.sleep(10) before ready",
       "packages/server/src/mcp/http-client.test.ts:1-80 startMock await Bun.sleep(50) + poll HEAD fallback GET 10x20ms",
-      "packages/server/src/routes/workspace.ts (new) \u2014 GET /workspace/tree via Bun.Glob('**/*') + isPathAllowed/sanitizePath, .gitignore + defaults (.git, node_modules, dist, .turbo, data, *.db, .mira, coverage), sorted 500",
-      "packages/server/src/index.ts \u2014 import mountWorkspaceRoutes + mountWorkspaceRoutes(app)",
-      "packages/web/src/api/client.ts \u2014 getWorkspaceTree: () => req<{files:string[]}>('/workspace/tree').then(r=>r.files)",
-      "packages/web/src/components/PromptInput.tsx \u2014 keep MOCK_FILES fallback, workspaceFiles signal + fetchWorkspaceFiles once via api.getWorkspaceTree, createEffect atVisible, onMount prefetch, onFocus, atFiltered uses workspaceFiles()",
+      "packages/server/src/routes/workspace.ts (new) — GET /workspace/tree via Bun.Glob('**/*') + isPathAllowed/sanitizePath, .gitignore + defaults (.git, node_modules, dist, .turbo, data, *.db, .mira, coverage), sorted 500",
+      "packages/server/src/index.ts — import mountWorkspaceRoutes + mountWorkspaceRoutes(app)",
+      "packages/web/src/api/client.ts — getWorkspaceTree: () => req<{files:string[]}>('/workspace/tree').then(r=>r.files)",
+      "packages/web/src/components/PromptInput.tsx — keep MOCK_FILES fallback, workspaceFiles signal + fetchWorkspaceFiles once via api.getWorkspaceTree, createEffect atVisible, onMount prefetch, onFocus, atFiltered uses workspaceFiles()",
       "packages/server/src/middleware/index.ts:36-64 corsOrigin function with MIRA_ALLOW_LOCALHOST gate + normalizedAllowSet + header-smuggling protection",
       ".env.example:28-35 CORS docs dev default (empty=allow localhost) vs prod (list set=deny localhost unless MIRA_ALLOW_LOCALHOST=1)",
-      "packages/web/src/components/QueueRail.tsx:1-35 polling 3s visibility-aware onCleanup + \u2191\u2193 reorder and \u2715 cancel per-item (existing styling)",
+      "packages/web/src/components/QueueRail.tsx:1-35 polling 3s visibility-aware onCleanup + ↑↓ reorder and ✕ cancel per-item (existing styling)",
       "packages/web/src/App.tsx:895 QueueRail outside <Show when={store.state.cost}> verified (already outside, preserved)",
       "packages/web/src/api/client.ts:967-976 reorderQueue/deleteQueueItem signatures verified vs session-extras.ts POST /session/:id/queue/reorder {texts} + DELETE /session/:id/queue/item {text}",
       "packages/server/e2e/gaps.test.ts: beforeAll MIRA_TOKEN=test-gaps-token + AUTH headers + WS auth + 15s timeout",
@@ -166,14 +455,14 @@
       "packages/tui/src/rpc/client.ts:679 getWorkspaceTree: () => req<{files:string[]}>('/workspace/tree').then(r=>r.files)",
       "packages/tui/src/rpc/client.ts:13-23 Session costUsd/tokensIn/tokensOut",
       "packages/tui/src/stores/session.ts:405-427 loadCost costCap+session refresh 15s visibility-aware + costCap state",
-      "packages/tui/src/components/Layout.tsx:144-156 per-session $ pill cap bar sparkline \u26a0 costCap",
+      "packages/tui/src/components/Layout.tsx:144-156 per-session $ pill cap bar sparkline ⚠ costCap",
       "packages/tui/src/App.tsx:368-379 budget per-session fallback + Header costCap/tokens",
       "packages/tui/src/components/QueueRail.tsx:41-49 3s polling visibility guard onCleanup",
       "packages/tui/vite.config.ts:43-48 13 proxies /workspace/tree /config /providers /commands /agents /skills /mcp /dev /learning /knowledge /finding /job /guardrails",
       "packages/server/src/storage/schema.ts: apiKeys table added (key TEXT PK, owner TEXT, created_at INTEGER, created_by TEXT DEFAULT default) + index api_keys_owner_idx, schema export includes apiKeys",
       "packages/server/src/index.ts:137-155 placeholder token strict handling (let REQUIRED_TOKEN, prod error+exit, non-prod error/warn+empty)",
       "packages/server/src/index.ts:186-205 WS isOriginAllowed aligned to MIRA_ALLOW_LOCALHOST==='1' strict (https + ::1, prod gate, dev early return)",
-      "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
+      "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + ↩ rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
       "packages/tui/src/components/Inspector.tsx:70-89 grouped history same as HistoryView + toast + line counts, consistent",
       "packages/tui/src/stores/session.ts:586-589 stopStream now void rpc.abortPrompt(id).catch(()=>{}) + abort?.abort() + setState(streaming:false)",
       "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))",
@@ -204,11 +493,11 @@
       "packages/tui/vite.config.ts:43-48 replace /workspace/tree with /workspace + add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + add WS catch-all '/' ws:true last",
       "packages/server/src/routes/static.ts:10-20 API_ROUTE_PREFIXES add /workspaces /workspace",
       "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
-      "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials \u2014 skipping\"; exit 0; fi; bun --watch src/bot.ts",
-      "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1",
+      "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials — skipping\"; exit 0; fi; bun --watch src/bot.ts",
+      "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials — bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1",
       "packages/server/src/middleware/index.ts:32-101 isLocalDevOrigin now ws/wss + isVscodeOrigin + corsOrigin vscode allowlist both branches",
-      "packages/server/src/index.ts:212-250 isOriginAllowed now mirrors corsOrigin (empty list \u2192 only isLocalDevOrigin, prod allowlist normalized + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes)",
-      "packages/server/src/middleware/cors.test.ts (new) \u2014 5 tests parity: empty list only localhost, prod allowlist + gate, vscode always, isLocalDevOrigin ws/wss, parity true iff cors non-empty"
+      "packages/server/src/index.ts:212-250 isOriginAllowed now mirrors corsOrigin (empty list → only isLocalDevOrigin, prod allowlist normalized + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes)",
+      "packages/server/src/middleware/cors.test.ts (new) — 5 tests parity: empty list only localhost, prod allowlist + gate, vscode always, isLocalDevOrigin ws/wss, parity true iff cors non-empty"
     ]
   },
   "checkpoints": {
@@ -232,32 +521,39 @@
       "count": 6,
       "completed": 6,
       "successes": 6,
-      "success_rate": 1.0,
+      "success_rate": 1,
       "last_updated": "2026-09-27T17:43:13.529642+00:00"
     },
     "designer": {
       "count": 1,
       "completed": 1,
       "successes": 1,
-      "success_rate": 1.0,
+      "success_rate": 1,
       "last_updated": "2026-09-27T13:36:08.579525+00:00"
     },
     "design_done": {
       "count": 1,
       "completed": 1,
       "successes": 0,
-      "success_rate": 0.0,
+      "success_rate": 0,
       "last_updated": "2026-09-27T19:11:12.321791+00:00"
     },
     "architect": {
       "count": 1,
       "completed": 1,
       "successes": 1,
-      "success_rate": 1.0,
+      "success_rate": 1,
       "last_updated": "2026-09-27T19:39:18.867875+00:00"
+    },
+    "agent:general": {
+      "count": 36,
+      "completed": 36,
+      "successes": 20,
+      "success_rate": 0.56,
+      "last_updated": "2026-10-13T00:09:36.198Z"
     }
   },
-  "last_updated": "2026-09-27T19:39:18.867875+00:00",
+  "last_updated": "2026-10-13T00:09:36.200Z",
   "workflow_trace": [
     {
       "agent": "fixer",
@@ -265,11 +561,7 @@
       "task": "P1 MCP CI flake Legacy SSE listen failed (HTTP 200)",
       "status": "completed",
       "timestamp": "2026-09-09T18:05:26.207624+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -292,11 +584,7 @@
       "task": "P1 MCP CI flake Legacy SSE listen failed (HTTP 200)",
       "status": "completed",
       "timestamp": "2026-09-09T19:30:00.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -315,23 +603,19 @@
     {
       "agent": "fixer",
       "run_id": "run_20260909_alz3gg",
-      "task": "P1 workspace @ mentions \u2014 real workspace tree via GET /workspace/tree",
+      "task": "P1 workspace @ mentions — real workspace tree via GET /workspace/tree",
       "status": "completed",
       "timestamp": "2026-09-09T19:06:28.241103+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
-          "packages/server/src/routes/workspace.ts (new) \u2014 GET /workspace/tree via Bun.Glob('**/*') + isPathAllowed/sanitizePath, .gitignore + defaults (.git, node_modules, dist, .turbo, data, *.db, .mira, coverage), sorted 500",
-          "packages/server/src/index.ts \u2014 import mountWorkspaceRoutes + mountWorkspaceRoutes(app)",
-          "packages/web/src/api/client.ts \u2014 getWorkspaceTree: () => req<{files:string[]}>('/workspace/tree').then(r=>r.files)",
-          "packages/web/src/components/PromptInput.tsx \u2014 keep MOCK_FILES fallback, workspaceFiles signal + fetchWorkspaceFiles once via api.getWorkspaceTree, createEffect atVisible, onMount prefetch, onFocus, atFiltered uses workspaceFiles()"
+          "packages/server/src/routes/workspace.ts (new) — GET /workspace/tree via Bun.Glob('**/*') + isPathAllowed/sanitizePath, .gitignore + defaults (.git, node_modules, dist, .turbo, data, *.db, .mira, coverage), sorted 500",
+          "packages/server/src/index.ts — import mountWorkspaceRoutes + mountWorkspaceRoutes(app)",
+          "packages/web/src/api/client.ts — getWorkspaceTree: () => req<{files:string[]}>('/workspace/tree').then(r=>r.files)",
+          "packages/web/src/components/PromptInput.tsx — keep MOCK_FILES fallback, workspaceFiles signal + fetchWorkspaceFiles once via api.getWorkspaceTree, createEffect atVisible, onMount prefetch, onFocus, atFiltered uses workspaceFiles()"
         ],
         "verify": {
-          "typecheck": "turbo typecheck 6 successful (server+web) \u2014 tsc --noEmit pass",
+          "typecheck": "turbo typecheck 6 successful (server+web) — tsc --noEmit pass",
           "vite_build": "vite build 31 modules, 300.38kB (gzip 80.65kB), built 11.82s"
         },
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_alz3gg"
@@ -344,11 +628,7 @@
       "task": "P1 CORS MIRA_ALLOW_LOCALHOST gate",
       "status": "completed",
       "timestamp": "2026-09-09T20:05:06.509550+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/middleware/index.ts:36-64 corsOrigin function with MIRA_ALLOW_LOCALHOST gate + normalizedAllowSet + header-smuggling protection",
@@ -365,17 +645,13 @@
     {
       "agent": "fixer",
       "run_id": "run_20260909_hdh8ak",
-      "task": "P2 queue rail reorder/cancel \u2014 QueueRail polling + App.tsx placement + api/client verification",
+      "task": "P2 queue rail reorder/cancel — QueueRail polling + App.tsx placement + api/client verification",
       "status": "completed",
       "timestamp": "2026-09-09T20:58:58.684555+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
-          "packages/web/src/components/QueueRail.tsx:1-35 polling 3s visibility-aware onCleanup + \u2191\u2193 reorder and \u2715 cancel per-item (existing styling)",
+          "packages/web/src/components/QueueRail.tsx:1-35 polling 3s visibility-aware onCleanup + ↑↓ reorder and ✕ cancel per-item (existing styling)",
           "packages/web/src/App.tsx:895 QueueRail outside <Show when={store.state.cost}> verified (already outside, preserved)",
           "packages/web/src/api/client.ts:967-976 reorderQueue/deleteQueueItem signatures verified vs session-extras.ts POST /session/:id/queue/reorder {texts} + DELETE /session/:id/queue/item {text}"
         ],
@@ -385,7 +661,7 @@
         },
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_hdh8ak"
       },
-      "outcome": "P2 fix complete: QueueRail now polls GET /session/:id/queue every 3s (visibility-aware, onCleanup clear) + existing \u2191\u2193 reorder (api.reorderQueue) and \u2715 cancel (api.deleteQueueItem) per-item buttons preserved with existing styling; App.tsx QueueRail verified outside cost Show (visible regardless of cost); api/client signatures verified match server routes POST /session/:id/queue/reorder {texts} and DELETE /session/:id/queue/item {text}; typecheck + vite build green, minimal diff preserved design, no PromptInput/ChatView/mcp/workspace/middleware/cost UI touched"
+      "outcome": "P2 fix complete: QueueRail now polls GET /session/:id/queue every 3s (visibility-aware, onCleanup clear) + existing ↑↓ reorder (api.reorderQueue) and ✕ cancel (api.deleteQueueItem) per-item buttons preserved with existing styling; App.tsx QueueRail verified outside cost Show (visible regardless of cost); api/client signatures verified match server routes POST /session/:id/queue/reorder {texts} and DELETE /session/:id/queue/item {text}; typecheck + vite build green, minimal diff preserved design, no PromptInput/ChatView/mcp/workspace/middleware/cost UI touched"
     },
     {
       "agent": "oracle",
@@ -393,32 +669,23 @@
       "task": "TUI vs web parity crosscheck @80a6e743 (8 fixes)",
       "status": "completed",
       "timestamp": "2026-09-09T21:44:43Z",
-      "stages": [
-        "parse_context",
-        "examine_tui",
-        "examine_web",
-        "verify"
-      ],
+      "stages": ["parse_context", "examine_tui", "examine_web", "verify"],
       "verdict": "REVISE",
       "artifacts": {
         "report": "/tmp/report_tui_crosscheck.md",
         "parity": "3 missing (slash, workspace, cost), 3 partial (composer, queue, time-travel), 2 N/A (MCP, CORS)",
         "typecheck": "tui tsc --noEmit EXIT 0, 0 TODOs, 0 tests",
-        "fix_list": "P0 slash preload (S), P1 workspace @ (M), P1 per-session cost (M), P1 queue polling+proxy (S), P2 history grouping+abort (S) \u2014 total ~8.5h"
+        "fix_list": "P0 slash preload (S), P1 workspace @ (M), P1 per-session cost (M), P1 queue polling+proxy (S), P2 history grouping+abort (S) — total ~8.5h"
       },
-      "outcome": "REVISE \u2014 TUI not regressed but left behind on 3/8 fixes; 5 concrete fixes prioritized (P0 slash double-gate, P1 workspace @, P1 cost cap, P1 queue polling, P2 history grouping); shared rpc/client duplication is drift risk; vite proxy missing 11 routes"
+      "outcome": "REVISE — TUI not regressed but left behind on 3/8 fixes; 5 concrete fixes prioritized (P0 slash double-gate, P1 workspace @, P1 cost cap, P1 queue polling, P2 history grouping); shared rpc/client duplication is drift risk; vite proxy missing 11 routes"
     },
     {
       "agent": "fixer",
       "run_id": "run_20260909_4416b3",
-      "task": "Fix CI gaps.test.ts auth 401 \u2014 GET /providers hasKey",
+      "task": "Fix CI gaps.test.ts auth 401 — GET /providers hasKey",
       "status": "completed",
       "timestamp": "2026-09-09T22:30:00.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/e2e/gaps.test.ts: beforeAll MIRA_TOKEN=test-gaps-token deterministic + AUTH headers on GET /providers, POST /providers/:id/test, GET /terminal, GET /health, WS /terminal + WS vscode-webview (header + auth message fallback), WS timeout 15s",
@@ -441,11 +708,7 @@
       "task": "TUI P0 slash preload + skeleton + P1 workspace @",
       "status": "completed",
       "timestamp": "2026-09-10T06:00:24.509200+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/App.tsx:95-96 slashVisible fix + preload createEffect + workspace @ (MOCK_FILES, workspaceFiles, fetchWorkspaceFiles, atVisible/atFiltered, AtMentionAutocomplete, onInput/onFocus/onKeyDown)",
@@ -463,19 +726,15 @@
     {
       "agent": "fixer",
       "run_id": "run_20260909_o8ybgp",
-      "task": "TUI P1 cost + queue \u2014 per-session cost/cap bar + queue polling + proxy",
+      "task": "TUI P1 cost + queue — per-session cost/cap bar + queue polling + proxy",
       "status": "completed",
       "timestamp": "2026-09-10T06:33:51.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/rpc/client.ts:13-23 Session costUsd/tokensIn/tokensOut",
           "packages/tui/src/stores/session.ts:405-427 loadCost costCap+session refresh 15s visibility-aware + costCap state",
-          "packages/tui/src/components/Layout.tsx:144-156 per-session $ pill cap bar sparkline \u26a0 costCap",
+          "packages/tui/src/components/Layout.tsx:144-156 per-session $ pill cap bar sparkline ⚠ costCap",
           "packages/tui/src/App.tsx:368-379 budget per-session fallback + Header costCap/tokens",
           "packages/tui/src/components/QueueRail.tsx:41-49 3s polling visibility guard onCleanup",
           "packages/tui/vite.config.ts:43-48 13 proxies /workspace/tree /config /providers /commands /agents /skills /mcp /dev /learning /knowledge /finding /job /guardrails"
@@ -486,7 +745,7 @@
         },
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_o8ybgp"
       },
-      "outcome": "P1 fix complete: Session type now costUsd/tokensIn/tokensOut, store loadCost fetches /config costCap + /session/:id per-session cost 15s visibility-aware, Layout Header per-session $ pill with cap bar/sparkline + \u26a0 when cost>=cap, App budget uses per-session fallback, QueueRail 3s polling with visibility+sessionId guard, vite 13 proxies added; typecheck + vite build green, minimal diff preserved design, no web/server/mcp/slash/workspace/history touched"
+      "outcome": "P1 fix complete: Session type now costUsd/tokensIn/tokensOut, store loadCost fetches /config costCap + /session/:id per-session cost 15s visibility-aware, Layout Header per-session $ pill with cap bar/sparkline + ⚠ when cost>=cap, App budget uses per-session fallback, QueueRail 3s polling with visibility+sessionId guard, vite 13 proxies added; typecheck + vite build green, minimal diff preserved design, no web/server/mcp/slash/workspace/history touched"
     },
     {
       "agent": "fixer",
@@ -494,11 +753,7 @@
       "task": "P1 auth gaps ora-3: CORS WS vs HTTP, api_keys schema, placeholder token",
       "status": "completed",
       "timestamp": "2026-09-10T07:25:25.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/storage/schema.ts: apiKeys table added (key TEXT PK, owner TEXT, created_at INTEGER, created_by TEXT DEFAULT default) + index api_keys_owner_idx, schema export includes apiKeys",
@@ -523,14 +778,10 @@
       "task": "TUI P2 history grouping + abortPrompt",
       "status": "completed",
       "timestamp": "2026-09-10T07:40:00.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
-          "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
+          "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + ↩ rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
           "packages/tui/src/components/Inspector.tsx:70-89 grouped history same as HistoryView + toast + line counts, consistent",
           "packages/tui/src/stores/session.ts:586-589 stopStream now void rpc.abortPrompt(id).catch(()=>{}) + abort?.abort() + setState(streaming:false)",
           "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))"
@@ -541,7 +792,7 @@
         },
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_q7x9k2"
       },
-      "outcome": "P2 fix complete: HistoryView + Inspector now grouped by messageID (__no_message__ sentinel) with per-group header (msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> revertSession + refetch + toast), per-file card (path+time+edit/new file+diff -> getSnapshot -> DiffViewer before/after + line-count delta); rpc abortPrompt added (POST /session/:id/abort catch 404), store stopStream now fire-and-forget abortPrompt + abort + streaming:false; typecheck + vite build green, minimal diff preserved design, no web/server/mcp/slash/workspace/cost/queue touched"
+      "outcome": "P2 fix complete: HistoryView + Inspector now grouped by messageID (__no_message__ sentinel) with per-group header (msg 8chars/no message + earliest timestamp + file count + ↩ rewind to here -> revertSession + refetch + toast), per-file card (path+time+edit/new file+diff -> getSnapshot -> DiffViewer before/after + line-count delta); rpc abortPrompt added (POST /session/:id/abort catch 404), store stopStream now fire-and-forget abortPrompt + abort + streaming:false; typecheck + vite build green, minimal diff preserved design, no web/server/mcp/slash/workspace/cost/queue touched"
     },
     {
       "agent": "fixer",
@@ -549,14 +800,10 @@
       "task": "TUI P2 history grouping + abortPrompt",
       "status": "completed",
       "timestamp": "2026-09-10T08:35:23.513735+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
-          "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
+          "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + ↩ rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
           "packages/tui/src/components/Inspector.tsx:70-89 grouped history same as HistoryView + toast + line counts, consistent",
           "packages/tui/src/stores/session.ts:586-589 stopStream now void rpc.abortPrompt(id).catch(()=>{}) + abort?.abort() + setState(streaming:false)",
           "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))"
@@ -567,7 +814,7 @@
         },
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ed9ad5"
       },
-      "outcome": "P2 fix complete: HistoryView + Inspector now grouped by messageID (__no_message__ sentinel) with per-group header (msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> revertSession + refetch + toast), per-file card (path+time+edit/new file+diff -> getSnapshot -> DiffViewer before/after + line-count delta); rpc abortPrompt added (POST /session/:id/abort catch 404), store stopStream now fire-and-forget abortPrompt + abort + streaming:false; typecheck + vite build green, minimal diff preserved design, no web/server/mcp/slash/workspace/cost/queue touched"
+      "outcome": "P2 fix complete: HistoryView + Inspector now grouped by messageID (__no_message__ sentinel) with per-group header (msg 8chars/no message + earliest timestamp + file count + ↩ rewind to here -> revertSession + refetch + toast), per-file card (path+time+edit/new file+diff -> getSnapshot -> DiffViewer before/after + line-count delta); rpc abortPrompt added (POST /session/:id/abort catch 404), store stopStream now fire-and-forget abortPrompt + abort + streaming:false; typecheck + vite build green, minimal diff preserved design, no web/server/mcp/slash/workspace/cost/queue touched"
     },
     {
       "agent": "fixer",
@@ -575,11 +822,7 @@
       "task": "P0-2 workspace tree project-aware + prod bug",
       "status": "completed",
       "timestamp": "2026-09-10T10:35:44.628986+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/routes/workspace.ts:63-82 project-aware with cwd/projectId/limit/cursor/includeDirs, sanitizePath+isPathAllowed with real allowedRoots, pagination, return {files:[{path,isDir,size,mtime}], truncated, cwd}",
@@ -601,11 +844,7 @@
       "task": "P0-1 Add projectId/cwd to sessions + thread through prompt/tools",
       "status": "completed",
       "timestamp": "2026-09-10T11:08:50.872685+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/storage/schema.ts:11 cwd: text(\"cwd\"), projectId: text(\"project_id\") + index sessions_project_id_idx",
@@ -634,11 +873,7 @@
       "run_id": "run_20260909_96b605",
       "task": "P2-1 Workspace-aware symbols/LSP/memory",
       "status": "completed",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "timestamp": "2026-09-10T20:45:00.000000+00:00",
       "artifacts": {
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_96b605",
@@ -660,14 +895,10 @@
     {
       "agent": "fixer",
       "run_id": "run_20260909_7cf010",
-      "task": "P2-2 project lifecycle \u2014 create/switch/templates/recent",
+      "task": "P2-2 project lifecycle — create/switch/templates/recent",
       "status": "completed",
       "timestamp": "2026-09-11T00:29:53.681711+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/routes/workspace.ts (already had GET/POST/DELETE /workspaces with sanitizePath+isPathAllowed+getConfig guardrails, ~/.mira/workspaces.json + MIRA_WORKSPACE_ROOTS)",
@@ -692,11 +923,7 @@
       "task": "P2-3 CLI env-only + P3-3 VITE_MIRA_TOKEN prod bake",
       "status": "completed",
       "timestamp": "2026-09-11T06:54:36.238176+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/cli/src/cli.ts:68-95 readMiraEnvFile() (MIRA_DIR, XDG_CONFIG_HOME/mira/mira.env, ~/.mira/mira.env) + token() now process.env.MIRA_TOKEN ?? readMiraEnvFile() ?? \"\"",
@@ -705,27 +932,23 @@
           "packages/web/.env removed (was baking VITE_MIRA_TOKEN=01df... into prod dist)"
         ],
         "verify": {
-          "typecheck": "turbo typecheck 6 successful (server+web+tui+shared+slack+cli) \u2014 tsc --noEmit pass",
+          "typecheck": "turbo typecheck 6 successful (server+web+tui+shared+slack+cli) — tsc --noEmit pass",
           "cli": "MIRA_DIR=/tmp/test-mira-dir token fallback PASS, XDG_CONFIG_HOME fallback PASS, env precedence PASS, mira session list without source now works via file read",
-          "vite_prod": "NODE_ENV=production vite build 31 modules 309.14kB \u2014 dist/assets/*.js no VITE_MIRA_TOKEN value (bl without token, Hn() returns \"\"), prod clean",
+          "vite_prod": "NODE_ENV=production vite build 31 modules 309.14kB — dist/assets/*.js no VITE_MIRA_TOKEN value (bl without token, Hn() returns \"\"), prod clean",
           "vite_dev": "dev still injects via mira.env when NODE_ENV != production",
           "server_tests": "bun test packages/server 250+ pass 1 fail LIVE expected (pre-existing), gaps 7 pass, queue 1 pass"
         },
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ecb0ef"
       },
-      "outcome": "P2-3+P3-3 complete: CLI now reads ~/.mira/mira.env (MIRA_DIR > XDG_CONFIG_HOME/mira/mira.env > ~/.mira/mira.env) via readMiraEnvFile() (15 LOC, copy index.ts:91-101 logic) and token() falls back to file when env not set \u2014 mira session list without source now works; vite.config FIRST_RUN_TOKEN and define now gated by NODE_ENV !== 'production' (DEV ONLY) \u2014 prod build no longer bakes token (verified dist clean, .env removed), client getToken marked DEV ONLY; typecheck green, minimal diff preserved design, no validateToken/api_keys/admin/tokenEquals/isPublicUiPath/?api= touched"
+      "outcome": "P2-3+P3-3 complete: CLI now reads ~/.mira/mira.env (MIRA_DIR > XDG_CONFIG_HOME/mira/mira.env > ~/.mira/mira.env) via readMiraEnvFile() (15 LOC, copy index.ts:91-101 logic) and token() falls back to file when env not set — mira session list without source now works; vite.config FIRST_RUN_TOKEN and define now gated by NODE_ENV !== 'production' (DEV ONLY) — prod build no longer bakes token (verified dist clean, .env removed), client getToken marked DEV ONLY; typecheck green, minimal diff preserved design, no validateToken/api_keys/admin/tokenEquals/isPublicUiPath/?api= touched"
     },
     {
       "agent": "fixer",
       "run_id": "run_20260909_ad3821",
-      "task": "P2-2 validateToken double 401 \u2014 single gated endpoint",
+      "task": "P2-2 validateToken double 401 — single gated endpoint",
       "status": "completed",
       "timestamp": "2026-09-11T08:16:50.719522+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/web/src/api/client.ts:440-449 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)",
@@ -739,19 +962,15 @@
         },
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ad3821"
       },
-      "outcome": "P2-2 fix complete: web/api/client.ts:440 and tui/rpc/client.ts:498 now single GET /config (gated, requires auth) instead of /health then /config double 401 \u2014 saves 1 RTT on invalid token, AuthGate shows Invalid token after single 401; typecheck green (web+tui+server), gaps 7 pass, minimal diff preserved design, no cli/vite/api_keys/admin/tokenEquals/isPublicUiPath/?api= touched"
+      "outcome": "P2-2 fix complete: web/api/client.ts:440 and tui/rpc/client.ts:498 now single GET /config (gated, requires auth) instead of /health then /config double 401 — saves 1 RTT on invalid token, AuthGate shows Invalid token after single 401; typecheck green (web+tui+server), gaps 7 pass, minimal diff preserved design, no cli/vite/api_keys/admin/tokenEquals/isPublicUiPath/?api= touched"
     },
     {
       "agent": "fixer",
       "run_id": "run_20260909_38b045",
-      "task": "P3 auth gaps \u2014 api_keys hash, admin loopback gate, tokenEquals hash, isPublicUiPath normalize, ?api= validate",
+      "task": "P3 auth gaps — api_keys hash, admin loopback gate, tokenEquals hash, isPublicUiPath normalize, ?api= validate",
       "status": "completed",
       "timestamp": "2026-09-11T10:11:59.270194+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/index.ts: tokenEquals hash-then-compare (createHash sha256 32B constant time, P3-4)",
@@ -779,11 +998,7 @@
       "task": "F1 Sync Vite proxies to server route table",
       "status": "completed",
       "timestamp": "2026-09-11T15:33:35.462703+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/web/vite.config.ts:79-99 add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + keep WS catch-all last",
@@ -807,27 +1022,23 @@
       "task": "F2 Make slack#dev opt-in, not persistent",
       "status": "completed",
       "timestamp": "2026-09-11T20:15:00.000000+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
-          "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials \u2014 skipping\"; exit 0; fi; bun --watch src/bot.ts",
-          "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
+          "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials — skipping\"; exit 0; fi; bun --watch src/bot.ts",
+          "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials — bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
         ],
         "verify": {
           "typecheck": "turbo typecheck 6 successful (server tsc --noEmit pass, slack tsc --noEmit pass)",
           "turbo_dev_filter": "turbo dev --filter=!@mira/slack --dry shows 6 packages without slack, turbo dev --filter=@mira/slack --dry shows slack only, turbo dev --dry shows 7 packages with slack",
-          "slack_bot": "SLACK_BOT_TOKEN=\"\" bun src/bot.ts exits 0 with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', MIRA_SLACK_STRICT=1 exits 1, NODE_ENV=production parks (timeout 124), with creds via .env runs",
-          "slack_dev_guard": "if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then skip else run \u2014 handles .env creds",
+          "slack_bot": "SLACK_BOT_TOKEN=\"\" bun src/bot.ts exits 0 with 'No Slack credentials — bot idle (set SLACK_BOT_TOKEN to enable)', MIRA_SLACK_STRICT=1 exits 1, NODE_ENV=production parks (timeout 124), with creds via .env runs",
+          "slack_dev_guard": "if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then skip else run — handles .env creds",
           "sigint": "turbo dev --filter=!@mira/slack runs 4 tasks (server, web, tui, cli) without slack, SIGINT draining fast (4 tasks shutting down, no 25m50s park)"
         },
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_98abc0"
       },
-      "outcome": "F2 fix complete: slack#dev now opt-in \u2014 root dev filters out @mira/slack (dev:all keeps it), slack package dev guards missing creds via shell + .env check, bot.ts exits 0 in dev (not park) with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still fails fast; turbo dev with 4 tasks runs cleanly without slack, turbo dev --filter=@mira/slack still works, SIGINT fast, typecheck green, minimal diff preserved design"
+      "outcome": "F2 fix complete: slack#dev now opt-in — root dev filters out @mira/slack (dev:all keeps it), slack package dev guards missing creds via shell + .env check, bot.ts exits 0 in dev (not park) with 'No Slack credentials — bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still fails fast; turbo dev with 4 tasks runs cleanly without slack, turbo dev --filter=@mira/slack still works, SIGINT fast, typecheck green, minimal diff preserved design"
     },
     {
       "agent": "fixer",
@@ -835,27 +1046,23 @@
       "task": "F2 Make slack#dev opt-in, not persistent",
       "status": "completed",
       "timestamp": "2026-09-12T01:35:47.379650+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
-          "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials \u2014 skipping\"; exit 0; fi; bun --watch src/bot.ts",
-          "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
+          "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials — skipping\"; exit 0; fi; bun --watch src/bot.ts",
+          "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials — bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
         ],
         "verify": {
           "typecheck": "turbo typecheck 6 successful (server tsc --noEmit pass, slack tsc --noEmit pass)",
           "turbo_dev_filter": "turbo dev --filter=!@mira/slack --dry shows 6 packages without slack, turbo dev --filter=@mira/slack --dry shows slack only, turbo dev --dry shows 7 packages with slack",
-          "slack_bot": "SLACK_BOT_TOKEN=\"\" bun src/bot.ts exits 0 with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', MIRA_SLACK_STRICT=1 exits 1, NODE_ENV=production parks (timeout 124), with creds via .env runs",
-          "slack_dev_guard": "if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then skip else run \u2014 handles .env creds",
+          "slack_bot": "SLACK_BOT_TOKEN=\"\" bun src/bot.ts exits 0 with 'No Slack credentials — bot idle (set SLACK_BOT_TOKEN to enable)', MIRA_SLACK_STRICT=1 exits 1, NODE_ENV=production parks (timeout 124), with creds via .env runs",
+          "slack_dev_guard": "if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then skip else run — handles .env creds",
           "sigint": "turbo dev --filter=!@mira/slack runs 4 tasks (server, web, tui, cli) without slack, SIGINT draining fast (4 tasks shutting down, no 25m50s park)"
         },
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_cf1c5c"
       },
-      "outcome": "F2 fix complete: slack#dev now opt-in \u2014 root dev filters out @mira/slack (dev:all keeps it), slack package dev guards missing creds via shell + .env check, bot.ts exits 0 in dev (not park) with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still fails fast; turbo dev with 4 tasks runs cleanly without slack, turbo dev --filter=@mira/slack still works, SIGINT fast, typecheck green, minimal diff preserved design"
+      "outcome": "F2 fix complete: slack#dev now opt-in — root dev filters out @mira/slack (dev:all keeps it), slack package dev guards missing creds via shell + .env check, bot.ts exits 0 in dev (not park) with 'No Slack credentials — bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still fails fast; turbo dev with 4 tasks runs cleanly without slack, turbo dev --filter=@mira/slack still works, SIGINT fast, typecheck green, minimal diff preserved design"
     },
     {
       "agent": "fixer",
@@ -863,16 +1070,12 @@
       "task": "F5 Align WS isOriginAllowed with HTTP CORS",
       "status": "completed",
       "timestamp": "2026-09-12T04:26:16.115820+00:00",
-      "stages": [
-        "parse_context",
-        "apply_changes",
-        "verify_changes"
-      ],
+      "stages": ["parse_context", "apply_changes", "verify_changes"],
       "artifacts": {
         "files_modified": [
           "packages/server/src/middleware/index.ts:32-101 isLocalDevOrigin now ws/wss + isVscodeOrigin + corsOrigin vscode allowlist both branches",
-          "packages/server/src/index.ts:212-250 isOriginAllowed now mirrors corsOrigin (empty list \u2192 only isLocalDevOrigin, prod allowlist normalized + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes)",
-          "packages/server/src/middleware/cors.test.ts (new) \u2014 5 tests parity: empty list only localhost, prod allowlist + gate, vscode always, isLocalDevOrigin ws/wss, parity true iff cors non-empty"
+          "packages/server/src/index.ts:212-250 isOriginAllowed now mirrors corsOrigin (empty list → only isLocalDevOrigin, prod allowlist normalized + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes)",
+          "packages/server/src/middleware/cors.test.ts (new) — 5 tests parity: empty list only localhost, prod allowlist + gate, vscode always, isLocalDevOrigin ws/wss, parity true iff cors non-empty"
         ],
         "verify": {
           "typecheck": "turbo typecheck 6 successful (server tsc --noEmit pass)",
@@ -884,7 +1087,7 @@
         },
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_650858"
       },
-      "outcome": "F5 fix complete: isOriginAllowed now mirrors corsOrigin (empty list \u2192 only isLocalDevOrigin not any origin, prod allowlist normalized + MIRA_ALLOW_LOCALHOST=1 gate, vscode-webview:// always allowed, isLocalDevOrigin now http/https/ws/wss for localhost/127.0.0.1/[::1]); middleware corsOrigin updated with isVscodeOrigin + ws/wss; parity test 5 pass, typecheck green, HTTP dev localhost 200 with CORS, evil blocked, prod evil blocked, WS vscode true, localhost true in dev/gate, evil false, minimal diff preserved design, no web/vite.config.ts, tui/vite.config.ts, server/routes/static.ts, turbo.json, slack/bot.ts, server/index.ts WS writeAfterFIN, web/vite.config.ts VITE_MIRA_TOKEN touched"
+      "outcome": "F5 fix complete: isOriginAllowed now mirrors corsOrigin (empty list → only isLocalDevOrigin not any origin, prod allowlist normalized + MIRA_ALLOW_LOCALHOST=1 gate, vscode-webview:// always allowed, isLocalDevOrigin now http/https/ws/wss for localhost/127.0.0.1/[::1]); middleware corsOrigin updated with isVscodeOrigin + ws/wss; parity test 5 pass, typecheck green, HTTP dev localhost 200 with CORS, evil blocked, prod evil blocked, WS vscode true, localhost true in dev/gate, evil false, minimal diff preserved design, no web/vite.config.ts, tui/vite.config.ts, server/routes/static.ts, turbo.json, slack/bot.ts, server/index.ts WS writeAfterFIN, web/vite.config.ts VITE_MIRA_TOKEN touched"
     }
   ],
   "findings": {
@@ -935,17 +1138,17 @@
       {
         "run_id": "run_20260909_o8ybgp",
         "at": "2026-09-10T06:33:51.000000+00:00",
-        "task": "TUI P1 cost + queue \u2014 per-session cost/cap bar + queue polling + proxy",
+        "task": "TUI P1 cost + queue — per-session cost/cap bar + queue polling + proxy",
         "files_modified": [
           "packages/tui/src/rpc/client.ts:13-23 Session costUsd/tokensIn/tokensOut",
           "packages/tui/src/stores/session.ts:405-427 loadCost costCap+session refresh 15s visibility-aware + costCap state",
-          "packages/tui/src/components/Layout.tsx:144-156 per-session $ pill cap bar sparkline \u26a0 costCap",
+          "packages/tui/src/components/Layout.tsx:144-156 per-session $ pill cap bar sparkline ⚠ costCap",
           "packages/tui/src/App.tsx:368-379 budget per-session fallback + Header costCap/tokens",
           "packages/tui/src/components/QueueRail.tsx:41-49 3s polling visibility guard onCleanup",
           "packages/tui/vite.config.ts:43-48 13 proxies /workspace/tree /config /providers /commands /agents /skills /mcp /dev /learning /knowledge /finding /job /guardrails"
         ],
         "root_cause": "TUI Session missing costUsd/tokens, store loadCost only gateway no costCap/per-session, Layout global pill only, App budget global costUSD, QueueRail no polling, vite 4 proxies vs web 15+",
-        "fix": "rpc Session add costUsd/tokensIn/tokensOut; store loadCost GET /config costCap + GET /session/:id refresh 15s visibility-aware + costCap state; Layout per-session $ pill cap bar/sparkline \u26a0 when cost>=cap; App budget per-session fallback; QueueRail 3s polling visibility+sessionId guard onCleanup; vite 13 proxies added",
+        "fix": "rpc Session add costUsd/tokensIn/tokensOut; store loadCost GET /config costCap + GET /session/:id refresh 15s visibility-aware + costCap state; Layout per-session $ pill cap bar/sparkline ⚠ when cost>=cap; App budget per-session fallback; QueueRail 3s polling visibility+sessionId guard onCleanup; vite 13 proxies added",
         "verify": "bun run typecheck (tui) tsc --noEmit exit 0, vite build 39 modules 335.47kB gzip 84.64kB",
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_o8ybgp"
       },
@@ -968,7 +1171,7 @@
         "at": "2026-09-10T07:40:00.000000+00:00",
         "task": "TUI P2 history grouping + abortPrompt",
         "files_modified": [
-          "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
+          "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + ↩ rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
           "packages/tui/src/components/Inspector.tsx:70-89 grouped history same as HistoryView + toast + line counts, consistent",
           "packages/tui/src/stores/session.ts:586-589 stopStream now void rpc.abortPrompt(id).catch(()=>{}) + abort?.abort() + setState(streaming:false)",
           "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))"
@@ -983,7 +1186,7 @@
         "at": "2026-09-10T08:35:23.513735+00:00",
         "task": "TUI P2 history grouping + abortPrompt",
         "files_modified": [
-          "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + \u21a9 rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
+          "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + ↩ rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
           "packages/tui/src/components/Inspector.tsx:70-89 grouped history same as HistoryView + toast + line counts, consistent",
           "packages/tui/src/stores/session.ts:586-589 stopStream now void rpc.abortPrompt(id).catch(()=>{}) + abort?.abort() + setState(streaming:false)",
           "packages/tui/src/rpc/client.ts:616 abortPrompt: (id) => req<{ok:boolean}>(`/session/${id}/abort`, {method:'POST'}).catch(()=>({ok:false}))"
@@ -1002,7 +1205,7 @@
           "packages/server/src/guardrails/index.ts:105 isPathAllowed per-project roots fix normalize ./ prefix, enforce logic correct for prod vs dev",
           "packages/server/src/config/store.ts:328 getConfig(cwd) per-project cache with sync fallback, getConfigLayers already supports 6 layers"
         ],
-        "root_cause": "workspace.ts:63 no query, cwd=process.cwd(), isPathAllowed(file, []) with [] \u2192 prod returns 0 files (fail-closed bug, guardrails:106-109 if(roots.length===0 && prod) return false); store.ts:8 single cwd cache; guardrails isPathAllowed mishandled ./ prefix (./data vs /data)",
+        "root_cause": "workspace.ts:63 no query, cwd=process.cwd(), isPathAllowed(file, []) with [] → prod returns 0 files (fail-closed bug, guardrails:106-109 if(roots.length===0 && prod) return false); store.ts:8 single cwd cache; guardrails isPathAllowed mishandled ./ prefix (./data vs /data)",
         "fix": "workspace.ts:63-82 accept ?cwd=&projectId=&limit&cursor&includeDirs (validate via sanitizePath, default to process.cwd(), pass allowedRoots from getConfig(cwd), pagination, return {files:[{path,isDir,size,mtime}], truncated, cwd}); guardrails/index.ts:105 fix normalize ./ prefix and enforce logic; config/store.ts:328 per-project cache Map + getConfig(cwd) sync fallback, getConfigLayers already supports 6 layers",
         "verify": "turbo typecheck 6 successful, GET /workspace/tree?cwd=/tmp/other_test returns 3 files, prod with CORS_ORIGINS returns 277 files (not 0), limit/cursor/includeDirs pagination works, bun test config 18 pass",
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ea1b0b"
@@ -1044,20 +1247,20 @@
       {
         "run_id": "run_20260909_ad3821",
         "at": "2026-09-11T08:16:50.719522+00:00",
-        "task": "P2-2 validateToken double 401 \u2014 single gated endpoint",
+        "task": "P2-2 validateToken double 401 — single gated endpoint",
         "files_modified": [
           "packages/web/src/api/client.ts:440-449 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)",
           "packages/tui/src/rpc/client.ts:498-506 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)"
         ],
-        "root_cause": "validateToken tried GET /health (public when no auth, gated when auth) then GET /config on non-401 \u2014 invalid token triggered 2\u00d7401 before AuthGate showed error, wasting 1 RTT",
-        "fix": "Changed web/api/client.ts:440 and tui/rpc/client.ts:498 to single GET /config (gated, requires auth) \u2014 single 401, AuthGate shows Invalid token immediately, saves 1 RTT, minimal diff preserved design",
+        "root_cause": "validateToken tried GET /health (public when no auth, gated when auth) then GET /config on non-401 — invalid token triggered 2×401 before AuthGate showed error, wasting 1 RTT",
+        "fix": "Changed web/api/client.ts:440 and tui/rpc/client.ts:498 to single GET /config (gated, requires auth) — single 401, AuthGate shows Invalid token immediately, saves 1 RTT, minimal diff preserved design",
         "verify": "web tsc --noEmit exit 0, tui tsc --noEmit exit 0, gaps 7 pass, manual grep 0 /health 1 /config PASS, AuthGate Invalid token PASS",
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_ad3821"
       },
       {
         "run_id": "run_20260909_38b045",
         "at": "2026-09-11T10:11:59.270194+00:00",
-        "task": "P3 auth gaps \u2014 api_keys hash, admin loopback gate, tokenEquals hash, isPublicUiPath normalize, ?api= validate",
+        "task": "P3 auth gaps — api_keys hash, admin loopback gate, tokenEquals hash, isPublicUiPath normalize, ?api= validate",
         "files_modified": [
           "packages/server/src/index.ts: tokenEquals hash-then-compare (createHash sha256 32B constant time, P3-4)",
           "packages/server/src/storage/schema.ts: apiKeys key_hash/key_prefix columns (P3-1)",
@@ -1091,11 +1294,11 @@
         "task": "F2 Make slack#dev opt-in, not persistent",
         "files_modified": [
           "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
-          "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials \u2014 skipping\"; exit 0; fi; bun --watch src/bot.ts",
-          "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
+          "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials — skipping\"; exit 0; fi; bun --watch src/bot.ts",
+          "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials — bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
         ],
         "root_cause": "slack/bot.ts:60-80 isMissingCreds() parked event loop forever via setInterval when creds missing and MIRA_SLACK_STRICT!=1, holding turbo dev (5 tasks persistent --continue) until SIGINT draining 25m50s; turbo dev ran all 5 packages in parallel with no filter",
-        "fix": "Option A+B: root package.json dev now --filter=!@mira/slack (dev:all keeps slack), slack package dev adds shell guard with .env check, bot.ts now exits 0 in dev (NODE_ENV!=production) with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still exits 1",
+        "fix": "Option A+B: root package.json dev now --filter=!@mira/slack (dev:all keeps slack), slack package dev adds shell guard with .env check, bot.ts now exits 0 in dev (NODE_ENV!=production) with 'No Slack credentials — bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still exits 1",
         "verify": "turbo typecheck 6 successful, turbo dev --filter=!@mira/slack 6 packages without slack, --filter=@mira/slack slack only, bot exits 0/1/park verified, SIGINT fast (4 tasks)",
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_98abc0"
       },
@@ -1105,11 +1308,11 @@
         "task": "F2 Make slack#dev opt-in, not persistent",
         "files_modified": [
           "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
-          "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials \u2014 skipping\"; exit 0; fi; bun --watch src/bot.ts",
-          "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
+          "packages/slack/package.json: dev -> if [ -z \"$SLACK_BOT_TOKEN\" ] && ! grep -q \"^SLACK_BOT_TOKEN=.\\+\" .env 2>/dev/null; then echo \"[mira-slack] No Slack credentials — skipping\"; exit 0; fi; bun --watch src/bot.ts",
+          "packages/slack/src/bot.ts:60-95 isMissingCreds() now exits 0 in dev (NODE_ENV!=production) with log \"No Slack credentials — bot idle (set SLACK_BOT_TOKEN to enable)\", parks only in production, MIRA_SLACK_STRICT=1 still exits 1"
         ],
         "root_cause": "slack/bot.ts:60-80 isMissingCreds() parked event loop forever via setInterval when creds missing and MIRA_SLACK_STRICT!=1, holding turbo dev (5 tasks persistent --continue) until SIGINT draining 25m50s; turbo dev ran all 5 packages in parallel with no filter",
-        "fix": "Option A+B: root package.json dev now --filter=!@mira/slack (dev:all keeps slack), slack package dev adds shell guard with .env check, bot.ts now exits 0 in dev (NODE_ENV!=production) with 'No Slack credentials \u2014 bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still exits 1",
+        "fix": "Option A+B: root package.json dev now --filter=!@mira/slack (dev:all keeps slack), slack package dev adds shell guard with .env check, bot.ts now exits 0 in dev (NODE_ENV!=production) with 'No Slack credentials — bot idle (set SLACK_BOT_TOKEN to enable)', parks only in production, MIRA_SLACK_STRICT=1 still exits 1",
         "verify": "turbo typecheck 6 successful, turbo dev --filter=!@mira/slack 6 packages without slack, --filter=@mira/slack slack only, bot exits 0/1/park verified, SIGINT fast (4 tasks)",
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_cf1c5c"
       },
@@ -1119,11 +1322,11 @@
         "task": "F5 Align WS isOriginAllowed with HTTP CORS",
         "files_modified": [
           "packages/server/src/middleware/index.ts:32-101 isLocalDevOrigin now ws/wss + isVscodeOrigin + corsOrigin vscode allowlist both branches",
-          "packages/server/src/index.ts:212-250 isOriginAllowed now mirrors corsOrigin (empty list \u2192 only isLocalDevOrigin, prod allowlist normalized + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes)",
-          "packages/server/src/middleware/cors.test.ts (new) \u2014 5 tests parity: empty list only localhost, prod allowlist + gate, vscode always, isLocalDevOrigin ws/wss, parity true iff cors non-empty"
+          "packages/server/src/index.ts:212-250 isOriginAllowed now mirrors corsOrigin (empty list → only isLocalDevOrigin, prod allowlist normalized + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes)",
+          "packages/server/src/middleware/cors.test.ts (new) — 5 tests parity: empty list only localhost, prod allowlist + gate, vscode always, isLocalDevOrigin ws/wss, parity true iff cors non-empty"
         ],
         "root_cause": "WS isOriginAllowed empty list returned true for any origin (no localhost check) vs HTTP corsOrigin empty list only isLocalDevOrigin; WS used string prefix checks not normalized, missed ws/wss schemes, no vscode allowlist in HTTP; prod localhost gate inconsistent",
-        "fix": "middleware isLocalDevOrigin now http/https/ws/wss + isVscodeOrigin helper, corsOrigin both branches handle vscode (return origin directly, not URL.origin null) and ws/wss; index.ts isOriginAllowed now mirrors corsOrigin: empty list \u2192 only isLocalDevOrigin, prod normalizedAllowSet + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes; added cors.test.ts 5 tests parity",
+        "fix": "middleware isLocalDevOrigin now http/https/ws/wss + isVscodeOrigin helper, corsOrigin both branches handle vscode (return origin directly, not URL.origin null) and ws/wss; index.ts isOriginAllowed now mirrors corsOrigin: empty list → only isLocalDevOrigin, prod normalizedAllowSet + MIRA_ALLOW_LOCALHOST gate, vscode always, ws/wss schemes; added cors.test.ts 5 tests parity",
         "verify": "turbo typecheck 6 successful, bun test cors.test.ts 5 pass 69 expect, gaps 7 pass, HTTP dev localhost 200 with CORS, evil blocked, prod evil blocked, WS vscode true, localhost true dev/gate, evil false",
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_650858"
       },

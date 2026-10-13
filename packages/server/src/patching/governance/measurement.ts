@@ -41,6 +41,9 @@ export interface TrackerMeasurementOptions {
   minBaselineSamples?: number
 }
 
+/** Default minimum baseline samples for measurement, configurable via MIRA_MIN_BASELINE_SAMPLES. */
+const DEFAULT_MIN_BASELINE_SAMPLES = Number(process.env.MIRA_MIN_BASELINE_SAMPLES ?? 1)
+
 /**
  * Measures whatever real traffic exists, split by attribution key.
  *
@@ -57,7 +60,7 @@ export class TrackerMeasurementSource implements MeasurementSource {
 
   async measure(proposal: PatchProposal): Promise<MeasurementPair | null> {
     const windowMs = this.opts.baselineWindowMs ?? 300_000
-    const minSamples = this.opts.minBaselineSamples ?? 1
+    const minSamples = this.opts.minBaselineSamples ?? DEFAULT_MIN_BASELINE_SAMPLES
 
     const baseline = this.opts.tracker.stats(windowMs, BASELINE_KEY)
     const candidate = this.opts.tracker.stats(windowMs, proposal.id)

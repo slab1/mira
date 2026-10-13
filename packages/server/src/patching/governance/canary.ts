@@ -5,7 +5,7 @@ import type { VariantWorkspace } from './variant.js'
 import type { Patch } from '../patcher.js'
 import type { VerifyResult } from '../verifier.js'
 
-const DEFAULT_MIN_SAMPLES = 1
+const DEFAULT_MIN_SAMPLES = Number(process.env.MIRA_CANARY_MIN_SAMPLES ?? 1)
 
 /**
  * Canary gate — fail closed.

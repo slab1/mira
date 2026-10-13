@@ -306,7 +306,11 @@ function resolveProfile(config: SandboxConfig): ExecutionProfile {
   const env = process.env.MIRA_SANDBOX_PROFILE?.trim()
   if (env && env in EXECUTION_PROFILES) return env as ExecutionProfile
   if (config.enabled ?? process.env.MIRA_SANDBOX === '1') return 'isolated-experiment'
-  return 'trusted-local'
+  // Fail closed: default to isolated-experiment when no profile specified.
+  // Callers that need trusted-local should explicitly set profile:'trusted-local'
+  // or MIRA_SANDBOX=0. This prevents untrusted code from silently running on
+  // the host when no isolation configuration is provided.
+  return 'isolated-experiment'
 }
 
 export function createSandbox(config?: SandboxConfig): ContainerSandbox {
