@@ -99,7 +99,11 @@ afterEach(() => {
 
 describe('GovernanceGate state machine — happy path', () => {
   test('PROPOSED → BENCHMARK_PASSED → SECURITY_PASSED → CANARY_PASSED, one stage per advance(), persisted', async () => {
-    const g = gate()
+    // Injected evidenced stages: this test exercises the STATE MACHINE, not the
+    // benchmark/canary implementations. The real runners now fail closed when
+    // they cannot measure (see gate-fail-closed.test.ts), so relying on them
+    // here would test the placeholder rather than the transitions.
+    const g = gate(EVIDENCED_STAGES)
     const created = await g.createProposal(PATCH, VERIFY)
     expect(created.state).toBe('PROPOSED')
 
@@ -141,7 +145,7 @@ describe('GovernanceGate state machine — happy path', () => {
   })
 
   test('terminal state CANARY_PASSED: advance() is a no-op (no write, no event)', async () => {
-    const g = gate()
+    const g = gate(EVIDENCED_STAGES)
     const p = await g.createProposal(PATCH, VERIFY)
     await g.advance(p.id)
     await g.advance(p.id)
@@ -171,7 +175,7 @@ describe('GovernanceGate state machine — happy path', () => {
   })
 
   test('list(state) filters by state', async () => {
-    const g = gate()
+    const g = gate(EVIDENCED_STAGES)
     const a = await g.createProposal(PATCH, VERIFY)
     await g.createProposal({ ...PATCH, id: 'patch_2' }, VERIFY)
     await g.advance(a.id)
@@ -185,7 +189,7 @@ describe('GovernanceGate state machine — happy path', () => {
   })
 
   test('*_PENDING rows resume their own stage; *_FAILED is terminal for advance()', async () => {
-    const g = gate()
+    const g = gate(EVIDENCED_STAGES)
     const p = await g.createProposal(PATCH, VERIFY)
 
     // simulate a proposal parked mid-pipeline in a legacy *_PENDING state
@@ -206,7 +210,9 @@ describe('GovernanceGate state machine — happy path', () => {
 
 describe('GovernanceGate state machine — failure branches', () => {
   test('security stage fails (critical finding) → BENCHMARK_PASSED → REJECTED', async () => {
-    const g = gate()
+    // benchmark injected (real runners block without measurement); security
+    // stays REAL so the malicious change is actually scanned.
+    const g = gate(EVIDENCED_STAGES)
     const p = await g.createProposal(MALICIOUS_PATCH, VERIFY)
     expect(p.change).toContain('ignore previous instructions')
 
@@ -220,7 +226,12 @@ describe('GovernanceGate state machine — failure branches', () => {
     expect(sec.reason?.toLowerCase()).toContain('security')
 
     const t = transitions()
-    expect(t.at(-1)).toMatchObject({ from: 'BENCHMARK_PASSED', to: 'REJECTED', passed: false, stage: 'security' })
+    expect(t.at(-1)).toMatchObject({
+      from: 'BENCHMARK_PASSED',
+      to: 'REJECTED',
+      passed: false,
+      stage: 'security',
+    })
     expect((await g.get(p.id))?.state).toBe('REJECTED')
   })
 
@@ -234,12 +245,20 @@ describe('GovernanceGate state machine — failure branches', () => {
     expect(after?.state).toBe('REJECTED')
     expect(after?.metadata.benchmark?.passed).toBe(false)
     expect(after?.metadata.benchmark?.reason).toContain('p95')
-    expect(transitions().at(-1)).toMatchObject({ from: 'PROPOSED', to: 'REJECTED', passed: false, stage: 'benchmark' })
+    expect(transitions().at(-1)).toMatchObject({
+      from: 'PROPOSED',
+      to: 'REJECTED',
+      passed: false,
+      stage: 'benchmark',
+    })
     expect((await g.get(p.id))?.state).toBe('REJECTED')
   })
 
   test('canary stage fails (injected runner) → SECURITY_PASSED → REJECTED', async () => {
-    const g = gate({ canary: { start: async () => ({ passed: false, reason: 'error rate 12% > slo' }) } })
+    const g = gate({
+      ...EVIDENCED_STAGES,
+      canary: { start: async () => ({ passed: false, reason: 'error rate 12% > slo' }) },
+    })
     const p = await g.createProposal(PATCH, VERIFY)
     await g.advance(p.id)
     await g.advance(p.id)
@@ -247,7 +266,11 @@ describe('GovernanceGate state machine — failure branches', () => {
 
     expect(after?.state).toBe('REJECTED')
     expect(after?.metadata.canary?.passed).toBe(false)
-    expect(transitions().at(-1)).toMatchObject({ from: 'SECURITY_PASSED', to: 'REJECTED', stage: 'canary' })
+    expect(transitions().at(-1)).toMatchObject({
+      from: 'SECURITY_PASSED',
+      to: 'REJECTED',
+      stage: 'canary',
+    })
   })
 })
 
@@ -255,7 +278,9 @@ describe('GovernanceGate promote — enforced lifecycle', () => {
   test('happy path: auto-derives baseline/candidate from stage metadata → PROMOTED + prUrl + transition', async () => {
     const g = gate({
       ...EVIDENCED_STAGES,
-      promoter: { promote: async () => ({ applied: true, prUrl: 'https://github.com/slab1/mira/pull/99' }) },
+      promoter: {
+        promote: async () => ({ applied: true, prUrl: 'https://github.com/slab1/mira/pull/99' }),
+      },
     })
     const p = await g.createProposal(PATCH, VERIFY)
     await g.advance(p.id)
@@ -280,7 +305,12 @@ describe('GovernanceGate promote — enforced lifecycle', () => {
     let promoterRan = false
     const g = gate({
       ...EVIDENCED_STAGES,
-      promoter: { promote: async () => { promoterRan = true; return { applied: true, prUrl: 'https://x/pr/1' } } },
+      promoter: {
+        promote: async () => {
+          promoterRan = true
+          return { applied: true, prUrl: 'https://x/pr/1' }
+        },
+      },
     })
     const p = await g.createProposal(PATCH, VERIFY) // PROPOSED
 
@@ -289,10 +319,16 @@ describe('GovernanceGate promote — enforced lifecycle', () => {
     expect((await g.get(p.id))?.state).toBe('PROPOSED')
 
     await g.advance(p.id) // BENCHMARK_PASSED
-    expect(await g.promote(p.id)).toEqual({ applied: false, reason: 'invalid_state:BENCHMARK_PASSED' })
+    expect(await g.promote(p.id)).toEqual({
+      applied: false,
+      reason: 'invalid_state:BENCHMARK_PASSED',
+    })
 
     await g.advance(p.id) // SECURITY_PASSED
-    expect(await g.promote(p.id)).toEqual({ applied: false, reason: 'invalid_state:SECURITY_PASSED' })
+    expect(await g.promote(p.id)).toEqual({
+      applied: false,
+      reason: 'invalid_state:SECURITY_PASSED',
+    })
 
     expect(promoterRan).toBe(false)
     expect(transitions().some((t) => t.to === 'PROMOTED')).toBe(false)
@@ -300,37 +336,117 @@ describe('GovernanceGate promote — enforced lifecycle', () => {
 
   test('regression gate fail-closed: metrics absent from metadata → metrics_missing (promoter never runs)', async () => {
     let promoterRan = false
-    const g = gate({ promoter: { promote: async () => { promoterRan = true; return { applied: true, prUrl: 'https://x/pr/1' } } } })
+    const g = gate({
+      promoter: {
+        promote: async () => {
+          promoterRan = true
+          return { applied: true, prUrl: 'https://x/pr/1' }
+        },
+      },
+    })
 
-    // (a) full pipeline with the DEFAULT placeholder runners — they record no
-    // numbers, so there is no regression evidence to promote on
+    // (a) DEFAULT production runners — they cannot measure, so the pipeline now
+    // STOPS at PROPOSED instead of advancing an unmeasured proposal to
+    // CANARY_PASSED. Previously all three stages returned `passed: true` with a
+    // "skipped" reason; that vacuous success is what this change removes.
     const p = await g.createProposal(PATCH, VERIFY)
-    await g.advance(p.id)
-    await g.advance(p.id)
-    await g.advance(p.id)
-    expect((await g.get(p.id))?.state).toBe('CANARY_PASSED')
-    expect((await g.get(p.id))?.metadata.benchmark?.before).toBeUndefined()
+    const blocked = await g.advance(p.id)
+    expect(blocked?.state).toBe('PROPOSED')
+    expect(blocked?.metadata.benchmark?.outcome).toBe('BLOCKED')
+    expect(blocked?.metadata.benchmark?.passed).toBe(false)
+    expect((await g.advance(p.id))?.state).toBe('PROPOSED') // still stuck
+    expect((await g.get(p.id))?.metadata.canary).toBeUndefined() // canary never ran
 
-    const r1 = await g.promote(p.id)
-    expect(r1).toEqual({ applied: false, reason: 'metrics_missing' })
-    expect((await g.get(p.id))?.state).toBe('CANARY_PASSED') // not promoted, not rolled back
+    // ...and a blocked proposal can never reach the promoter
+    const r0 = await g.promote(p.id)
+    expect(r0).toEqual({ applied: false, reason: 'invalid_state:PROPOSED' })
 
-    // (b) legacy row parked at CANARY_PASSED with no stage metadata at all
+    // (b) all stages genuinely PASSED but no comparable metric pair exists
     const q = await g.createProposal({ ...PATCH, id: 'patch_legacy' }, VERIFY)
-    g.store.update(q.id, { state: 'CANARY_PASSED', metadata: { verifyResult: VERIFY }, updatedAt: Date.now() })
-    const r2 = await g.promote(q.id)
-    expect(r2).toEqual({ applied: false, reason: 'metrics_missing' })
+    g.store.update(q.id, {
+      state: 'CANARY_PASSED',
+      metadata: {
+        verifyResult: VERIFY,
+        security: { passed: true, reason: 'ok', at: Date.now() },
+        benchmark: { passed: true, reason: 'ok', before: { unclassifiable: 1 } },
+        canary: { passed: true, reason: 'ok', metrics: { trafficPct: 5 } },
+      },
+      updatedAt: Date.now(),
+    })
+    const r1 = await g.promote(q.id)
+    expect(r1).toEqual({ applied: false, reason: 'metrics_missing' })
     expect((await g.get(q.id))?.state).toBe('CANARY_PASSED')
+
+    // (c) legacy row parked at CANARY_PASSED with no stage metadata at all
+    const z = await g.createProposal({ ...PATCH, id: 'patch_noevidence' }, VERIFY)
+    g.store.update(z.id, {
+      state: 'CANARY_PASSED',
+      metadata: { verifyResult: VERIFY },
+      updatedAt: Date.now(),
+    })
+    const r2 = await g.promote(z.id)
+    expect(r2).toEqual({ applied: false, reason: 'stage_missing:benchmark' })
+    expect((await g.get(z.id))?.state).toBe('CANARY_PASSED')
 
     expect(promoterRan).toBe(false)
     expect(transitions().some((t) => t.to === 'PROMOTED')).toBe(false)
+  })
+
+  test('a BLOCKED stage records its reason but does not advance or reject (recoverable)', async () => {
+    const g = gate() // default runners — cannot measure
+    const p = await g.createProposal(PATCH, VERIFY)
+    const r = await g.advance(p.id)
+
+    // Blocked is NOT a finding about the candidate, so it must not REJECT.
+    // It also must not advance. The proposal parks, retryable once instrumented.
+    expect(r?.state).toBe('PROPOSED')
+    expect(r?.metadata.benchmark?.outcome).toBe('BLOCKED')
+    expect(r?.metadata.benchmark?.reason).toContain('blocked')
+
+    const t = transitions().at(-1)
+    expect(t).toMatchObject({
+      stage: 'benchmark',
+      from: 'PROPOSED',
+      to: 'PROPOSED',
+      passed: false,
+      outcome: 'BLOCKED',
+      advanced: false,
+    })
+  })
+
+  test('a stage that reports BLOCKED cannot promote even if state is forced to CANARY_PASSED', async () => {
+    let promoterRan = false
+    const g = gate({
+      promoter: {
+        promote: async () => {
+          promoterRan = true
+          return { applied: true }
+        },
+      },
+    })
+    const p = await g.createProposal(PATCH, VERIFY)
+    await g.advance(p.id) // records a BLOCKED benchmark
+
+    // force the state a legacy writer might have left behind
+    g.store.update(p.id, { state: 'CANARY_PASSED', updatedAt: Date.now() })
+    const r = await g.promote(p.id, {
+      baseline: { p95Ms: { value: 100, unit: 'ms' } },
+      candidate: { p95Ms: { value: 101, unit: 'ms' } },
+    })
+    expect(r).toEqual({ applied: false, reason: 'stage_not_passed:benchmark:BLOCKED' })
+    expect(promoterRan).toBe(false)
   })
 
   test('regression in metadata exceeds tolerance → rollback + regressionBlocked + reason', async () => {
     let promoterRan = false
     const g = gate({
       ...EVIDENCED_STAGES,
-      promoter: { promote: async () => { promoterRan = true; return { applied: true, prUrl: 'https://x/pr/1' } } },
+      promoter: {
+        promote: async () => {
+          promoterRan = true
+          return { applied: true, prUrl: 'https://x/pr/1' }
+        },
+      },
     })
     const p = await g.createProposal(PATCH, VERIFY)
     // canary p95Ms 200 vs baseline 100 = +100% > latency tolerance (5%)
@@ -338,6 +454,7 @@ describe('GovernanceGate promote — enforced lifecycle', () => {
       state: 'CANARY_PASSED',
       metadata: {
         verifyResult: VERIFY,
+        security: { passed: true, reason: 'ok', at: Date.now() },
         benchmark: { passed: true, reason: 'ok', before: { p95Ms: 100, evalScore: 0.9 } },
         canary: { passed: true, reason: 'ok', metrics: { p95Ms: 200, evalScore: 0.9 } },
       },
@@ -353,15 +470,47 @@ describe('GovernanceGate promote — enforced lifecycle', () => {
 
     // the regression gate rolls the proposal back
     expect((await g.get(p.id))?.state).toBe('ROLLED_BACK')
-    expect(transitions().at(-1)).toMatchObject({ stage: 'rollback', to: 'ROLLED_BACK', passed: false })
+    expect(transitions().at(-1)).toMatchObject({
+      stage: 'rollback',
+      to: 'ROLLED_BACK',
+      passed: false,
+    })
   })
 
-  test('explicit opts.baseline/candidate override still works (tests/manual runs)', async () => {
-    const g = gate({ promoter: { promote: async () => ({ applied: true, prUrl: 'https://x/pr/2' }) } })
+  test('explicit opts.baseline/candidate cannot manufacture stage evidence (tests/manual runs)', async () => {
+    const g = gate({
+      promoter: { promote: async () => ({ applied: true, prUrl: 'https://x/pr/2' }) },
+    })
     const p = await g.createProposal(PATCH, VERIFY)
-    g.store.update(p.id, { state: 'CANARY_PASSED', metadata: { verifyResult: VERIFY }, updatedAt: Date.now() })
+    // A row sitting at CANARY_PASSED with NO stage metadata at all (legacy
+    // writer / older build / direct store write). Supplying explicit metrics
+    // used to promote it — the override has since been narrowed to metrics
+    // derivation only, so it can no longer stand in for missing stages.
+    g.store.update(p.id, {
+      state: 'CANARY_PASSED',
+      metadata: { verifyResult: VERIFY },
+      updatedAt: Date.now(),
+    })
 
-    // no metrics in metadata, but the caller supplies evidence explicitly
+    const denied = await g.promote(p.id, {
+      baseline: { p95Ms: { value: 100, unit: 'ms' } },
+      candidate: { p95Ms: { value: 104, unit: 'ms' } },
+    })
+    expect(denied).toEqual({ applied: false, reason: 'stage_missing:benchmark' })
+    expect((await g.get(p.id))?.state).toBe('CANARY_PASSED')
+
+    // With the stages genuinely recorded as PASSED, the override still works —
+    // it replaces metric DERIVATION, it does not replace the gates.
+    g.store.update(p.id, {
+      state: 'CANARY_PASSED',
+      metadata: {
+        verifyResult: VERIFY,
+        security: { passed: true, reason: 'ok', at: Date.now() },
+        benchmark: { passed: true, reason: 'ok' },
+        canary: { passed: true, reason: 'ok' },
+      },
+      updatedAt: Date.now(),
+    })
     const r = await g.promote(p.id, {
       baseline: { p95Ms: { value: 100, unit: 'ms' } },
       candidate: { p95Ms: { value: 104, unit: 'ms' } }, // +4% ≤ 5% tolerance
@@ -371,7 +520,10 @@ describe('GovernanceGate promote — enforced lifecycle', () => {
   })
 
   test('promote returns applied:false when the promoter declines (state unchanged)', async () => {
-    const g = gate({ ...EVIDENCED_STAGES, promoter: { promote: async () => ({ applied: false, prUrl: undefined }) } })
+    const g = gate({
+      ...EVIDENCED_STAGES,
+      promoter: { promote: async () => ({ applied: false, prUrl: undefined }) },
+    })
     const p = await g.createProposal(PATCH, VERIFY)
     await g.advance(p.id)
     await g.advance(p.id)
@@ -393,7 +545,10 @@ describe('GovernanceGate promote — enforced lifecycle', () => {
 
 describe('GovernanceGate rollback', () => {
   test('rollback from PROMOTED → ROLLED_BACK, records + emits governance events', async () => {
-    const g = gate({ ...EVIDENCED_STAGES, promoter: { promote: async () => ({ applied: true, prUrl: 'https://x/pr/1' }) } })
+    const g = gate({
+      ...EVIDENCED_STAGES,
+      promoter: { promote: async () => ({ applied: true, prUrl: 'https://x/pr/1' }) },
+    })
     const p = await g.createProposal(PATCH, VERIFY)
     await g.advance(p.id)
     await g.advance(p.id)
@@ -409,7 +564,15 @@ describe('GovernanceGate rollback', () => {
 
     // RollbackManager audit event (kind: governance.rollback)
     const rollbackEvents = events
-      .map((e) => e.payload as Record<string, JsonValue> as { kind?: string; proposalId?: string; reason?: string; state?: string })
+      .map(
+        (e) =>
+          e.payload as Record<string, JsonValue> as {
+            kind?: string
+            proposalId?: string
+            reason?: string
+            state?: string
+          },
+      )
       .filter((p2) => p2.kind === 'governance.rollback')
     expect(rollbackEvents.length).toBe(1)
     expect(rollbackEvents[0]).toMatchObject({
@@ -419,7 +582,11 @@ describe('GovernanceGate rollback', () => {
     })
 
     // state-machine transition event
-    expect(transitions().at(-1)).toMatchObject({ stage: 'rollback', from: 'PROMOTED', to: 'ROLLED_BACK' })
+    expect(transitions().at(-1)).toMatchObject({
+      stage: 'rollback',
+      from: 'PROMOTED',
+      to: 'ROLLED_BACK',
+    })
   })
 
   test('rollback on unknown id is a no-op (no events)', async () => {
@@ -431,7 +598,7 @@ describe('GovernanceGate rollback', () => {
 
 describe('GovernanceGate wiring', () => {
   test('governance bus is optional — no bus → no throw', async () => {
-    const g = createGovernanceGate({ db, rootDir: process.cwd() })
+    const g = createGovernanceGate({ db, rootDir: process.cwd(), ...EVIDENCED_STAGES })
     const p = await g.createProposal(PATCH, VERIFY)
     expect((await g.advance(p.id))?.state).toBe('BENCHMARK_PASSED')
     expect(events.length).toBe(0)
