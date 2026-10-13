@@ -76,6 +76,8 @@ import { mountEvolutionRoutes } from './routes/evolution.js'
 import { ImprovementLedger } from './evolution/ledger.js'
 import { EvolutionObserver } from './evolution/observer.js'
 import { mountShadowRoutes } from './routes/shadow.js'
+import { mountCoordinationRoutes } from './routes/coordination.js'
+import { CoordinationHub } from './agents/coordination.js'
 import { ShadowMira } from './shadow/shadow.js'
 import { mountEngineRoutes } from './routes/engines.js'
 import { CanaryManager } from './canary/canary.js'
@@ -1087,6 +1089,9 @@ async function main() {
       // Late-bind into evolution observe pipeline (see shadowMiraForEvolution above)
       shadowMiraForEvolution = shadowMira
       mountShadowRoutes(app, { shadow: shadowMira })
+      // §12 Multi-Agent Coordination — task ownership, TTL file locks,
+      // conflict detection, version-aware patches, transaction boundaries.
+      mountCoordinationRoutes(app, { hub: new CoordinationHub() })
       ;(globalThis as unknown as Record<string, unknown>).__miraShadow = shadowMira
       log(
         `shadow ready — isolated shadow env (shadow.db or :memory:), Bus isolated, telemetry ingesting`,
