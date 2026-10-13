@@ -44,9 +44,23 @@ let bus: Bus
 let gate: GovernanceGate
 let app: App
 
-async function json(path: string, init?: RequestInit): Promise<{ status: number; body: any }> {
+/** JSON shapes these route tests assert on (kept explicit — no `any` in tests). */
+interface RouteBody {
+  applied?: boolean
+  error?: string
+  prUrl?: string
+  reason?: string
+  regressionBlocked?: boolean
+  proposal: { state: string; metadata?: { benchmark?: { outcome?: string } } }
+  proposals: Array<Record<string, unknown>>
+}
+
+async function json(
+  path: string,
+  init?: RequestInit,
+): Promise<{ status: number; body: RouteBody }> {
   const res = await app.request(path, init)
-  return { status: res.status, body: await res.json() }
+  return { status: res.status, body: (await res.json()) as RouteBody }
 }
 
 function post(body: Record<string, JsonValue>): RequestInit {
@@ -66,7 +80,9 @@ beforeEach(async () => {
     bus,
     rootDir: process.cwd(),
     // deterministic promote — no git/gh in tests
-    promoter: { promote: async () => ({ applied: true, prUrl: 'https://github.com/slab1/mira/pull/1' }) },
+    promoter: {
+      promote: async () => ({ applied: true, prUrl: 'https://github.com/slab1/mira/pull/1' }),
+    },
     // instrumented stage fakes — promote() auto-derives regression evidence
     // (baseline=metadata.benchmark.before, candidate=metadata.canary.metrics)
     // from what advance() stores; p95Ms 100 → 100 = no regression
@@ -131,7 +147,7 @@ describe('POST /evolution/proposals/:id/advance', () => {
 
     // persisted — visible through the list route
     const list = await json('/evolution/proposals?state=CANARY_PASSED')
-    expect(list.body.proposals.map((x: { id: string }) => x.id)).toEqual([p.id])
+    expect(list.body.proposals.map((x) => String(x.id))).toEqual([p.id])
   })
 
   test('404 for an unknown proposal id', async () => {
@@ -164,21 +180,81 @@ describe('POST /evolution/proposals/:id/promote', () => {
     const p = await gate.createProposal(PATCH, VERIFY) // PROPOSED — no skip to PROMOTED
     const res = await json(`/evolution/proposals/${p.id}/promote`, post({}))
     expect(res.status).toBe(200)
-    expect(res.body).toEqual({ applied: false, reason: 'invalid_state:PROPOSED' })
+    expect(res.body).toEqual({
+      applied: false,
+      reason: 'invalid_state:PROPOSED',
+    } as unknown as RouteBody)
     expect((await gate.get(p.id))?.state).toBe('PROPOSED')
   })
 
-  test('failure reasons reach the client: metrics missing → reason: metrics_missing', async () => {
+  test('failure reasons reach the client: a bare CANARY_PASSED row is denied before metrics', async () => {
     const p = await gate.createProposal(PATCH, VERIFY)
-    // park at CANARY_PASSED with NO stage metrics (legacy/unevidenced row)
-    gate.store.update(p.id, { state: 'CANARY_PASSED', metadata: { verifyResult: VERIFY }, updatedAt: Date.now() })
+    // park at CANARY_PASSED with NO stage metadata at all (legacy/unevidenced
+    // row). The stage-evidence gate rejects it before metrics are even derived.
+    gate.store.update(p.id, {
+      state: 'CANARY_PASSED',
+      metadata: { verifyResult: VERIFY },
+      updatedAt: Date.now(),
+    })
+
+    const res = await json(`/evolution/proposals/${p.id}/promote`, post({}))
+    expect(res.status).toBe(200)
+    expect(res.body.applied).toBe(false)
+    expect(res.body.reason).toBe('stage_missing:benchmark')
+    expect(res.body.regressionBlocked).toBeUndefined()
+    expect((await gate.get(p.id))?.state).toBe('CANARY_PASSED')
+  })
+
+  test('failure reasons reach the client: evidenced stages but no comparable pair → metrics_missing', async () => {
+    const p = await gate.createProposal(PATCH, VERIFY)
+    // every stage genuinely PASSED, but the metrics don't line up on any
+    // axis-classifiable key — an uncomparable pair proves nothing.
+    gate.store.update(p.id, {
+      state: 'CANARY_PASSED',
+      metadata: {
+        verifyResult: VERIFY,
+        security: { passed: true, reason: 'ok', at: Date.now() },
+        benchmark: { passed: true, reason: 'ok', before: { unrelated: 1 } },
+        canary: { passed: true, reason: 'ok', metrics: { alsoUnrelated: 2 } },
+      },
+      updatedAt: Date.now(),
+    })
 
     const res = await json(`/evolution/proposals/${p.id}/promote`, post({}))
     expect(res.status).toBe(200)
     expect(res.body.applied).toBe(false)
     expect(res.body.reason).toBe('metrics_missing')
-    expect(res.body.regressionBlocked).toBeUndefined()
     expect((await gate.get(p.id))?.state).toBe('CANARY_PASSED')
+  })
+
+  test('a blocked stage cannot promote even from a forced CANARY_PASSED state', async () => {
+    // The shared `gate` injects stage fakes, so build one with the REAL
+    // default runners to prove the BLOCKED reason survives the HTTP boundary.
+    const realGate = createGovernanceGate({
+      db,
+      bus,
+      rootDir: process.cwd(),
+      promoter: {
+        promote: async () => ({ applied: true, prUrl: 'https://x/pr/should-not-happen' }),
+      },
+    })
+    const realApp = new Hono<{ Variables: { requestId: string } }>()
+    mountEvolutionRoutes(realApp, { db, bus, governance: realGate })
+
+    const p = await realGate.createProposal(PATCH, VERIFY)
+    // real default runners cannot measure without an injected tracker
+    const afterAdvance = await realGate.advance(p.id)
+    expect(afterAdvance?.state).toBe('PROPOSED')
+    expect(afterAdvance?.metadata.benchmark?.outcome).toBe('BLOCKED')
+
+    // force the state a legacy writer could have left behind
+    realGate.store.update(p.id, { state: 'CANARY_PASSED', updatedAt: Date.now() })
+    const res = await realApp.request(`/evolution/proposals/${p.id}/promote`, post({}))
+    const body = (await res.json()) as { applied: boolean; reason: string }
+    expect(res.status).toBe(200)
+    expect(body.applied).toBe(false)
+    expect(body.reason).toBe('stage_not_passed:benchmark:BLOCKED')
+    expect((await realGate.get(p.id))?.state).toBe('CANARY_PASSED')
   })
 
   test('regression gate: { applied:false, regressionBlocked:true, reason } + rollback', async () => {
@@ -188,6 +264,7 @@ describe('POST /evolution/proposals/:id/promote', () => {
       state: 'CANARY_PASSED',
       metadata: {
         verifyResult: VERIFY,
+        security: { passed: true, reason: 'ok', at: Date.now() },
         benchmark: { passed: true, reason: 'ok', before: { p95Ms: 100 } },
         canary: { passed: true, reason: 'ok', metrics: { p95Ms: 250 } },
       },
@@ -201,7 +278,7 @@ describe('POST /evolution/proposals/:id/promote', () => {
     expect(String(res.body.reason)).toContain('regression: latency/p95Ms')
 
     const list = await json('/evolution/proposals?state=ROLLED_BACK')
-    expect(list.body.proposals.map((x: { id: string }) => x.id)).toEqual([p.id])
+    expect(list.body.proposals.map((x) => String(x.id))).toEqual([p.id])
   })
 
   test('404 for an unknown proposal id', async () => {
@@ -221,18 +298,24 @@ describe('POST /evolution/proposals/:id/rollback', () => {
   })
 
   test('404 for an unknown proposal id', async () => {
-    const res = await json('/evolution/proposals/proposal_missing/rollback', post({ reason: 'bad' }))
+    const res = await json(
+      '/evolution/proposals/proposal_missing/rollback',
+      post({ reason: 'bad' }),
+    )
     expect(res.status).toBe(404)
   })
 
   test('valid rollback → { ok: true } and state ROLLED_BACK', async () => {
     const p = await gate.createProposal(PATCH, VERIFY)
-    const res = await json(`/evolution/proposals/${p.id}/rollback`, post({ reason: 'latency regression' }))
+    const res = await json(
+      `/evolution/proposals/${p.id}/rollback`,
+      post({ reason: 'latency regression' }),
+    )
     expect(res.status).toBe(200)
-    expect(res.body).toEqual({ ok: true })
+    expect(res.body).toEqual({ ok: true } as unknown as RouteBody)
 
     const list = await json('/evolution/proposals?state=ROLLED_BACK')
-    expect(list.body.proposals.map((x: { id: string }) => x.id)).toEqual([p.id])
+    expect(list.body.proposals.map((x) => String(x.id))).toEqual([p.id])
   })
 })
 
@@ -247,6 +330,9 @@ describe('route wiring', () => {
   })
 
   test('mountLearningRoutes mounts proposal routes with learning’s gate instance', async () => {
+    // learning's gate uses the real default runners, which cannot measure
+    // without an injected tracker — so advance() BLOCKS at PROPOSED rather
+    // than advancing on no evidence. The route is still mounted and serving.
     const system = createLearningSystem({ db, bus })
     const learningApp = new Hono<{ Variables: { requestId: string } }>()
     mountLearningRoutes(learningApp, system)
@@ -264,8 +350,11 @@ describe('route wiring', () => {
       body: '{}',
     })
     expect(res2.status).toBe(200)
-    const body2 = (await res2.json()) as { proposal: { state: string } }
-    expect(body2.proposal.state).toBe('BENCHMARK_PASSED')
-    expect((await system.governance.get(p.id))?.state).toBe('BENCHMARK_PASSED')
+    const body2 = (await res2.json()) as {
+      proposal: { state: string; metadata: { benchmark?: { outcome?: string } } }
+    }
+    expect(body2.proposal.state).toBe('PROPOSED')
+    expect(body2.proposal.metadata.benchmark?.outcome).toBe('BLOCKED')
+    expect((await system.governance.get(p.id))?.state).toBe('PROPOSED')
   })
 })
