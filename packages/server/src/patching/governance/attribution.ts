@@ -13,12 +13,15 @@
 
 import type { Context, MiddlewareHandler, Next } from 'hono'
 import { getVariantRouter, type VariantRouter, type RoutingDecision } from './traffic.js'
+import { getVariantScope, type VariantScope } from './variant-scope.js'
 import type { LatencyTracker } from '../latency.js'
 
 export interface CanaryAttributionOptions {
   /** Proposal to route; omit to attribute everything to baseline. */
   proposalId?: string
   router?: VariantRouter
+  /** Maps the candidate arm to its working root for tools and path policy. */
+  scope?: VariantScope
   tracker: LatencyTracker
   /** Restrict attribution to these request paths (prefix match). */
   paths?: string[]
@@ -43,6 +46,7 @@ export function canaryAttribution(opts: CanaryAttributionOptions): MiddlewareHan
 
   return async (c: Context, next: Next) => {
     if (!router.list().length) return next()
+    const scope = opts.scope ?? getVariantScope()
 
     let decision: RoutingDecision
     try {
@@ -59,6 +63,19 @@ export function canaryAttribution(opts: CanaryAttributionOptions): MiddlewareHan
     // so the whole request uses one lane, not just the recorded metric.
     c.set('miraVariantLane' as never, decision.lane as never)
     if (decision.variant) c.set('miraVariant' as never, decision.variant as never)
+
+    // Bind this request to the candidate root so tools operate on the patched
+    // tree instead of production. Keyed by session when available so every turn
+    // of a session stays on the same arm.
+    const scopeKey = `${opts.proposalId ?? 'none'}:${keyOf(c)}`
+    if (decision.lane === 'candidate' && decision.variant) {
+      scope.attach(scopeKey, decision.variant)
+      c.set('miraVariantScopeKey' as never, scopeKey as never)
+    } else if (scope.isCandidate(scopeKey)) {
+      // Same key, now on the baseline arm — stop redirecting its tools.
+      scope.detach(scopeKey)
+    }
+    c.set('miraVariantRoot' as never, scope.rootFor(scopeKey) as never)
 
     const start = Date.now()
     try {
