@@ -74,7 +74,7 @@ export function mountEvolutionRoutes(
   const observer = deps.observer ?? new EvolutionObserver({ bus })
   const riskEngine = deps.riskEngine ?? new RiskEngine()
   const approvalGate = deps.approvalGate ?? new ApprovalGate({ bus })
-  const resourceLimits = deps.resourceLimits ?? new ResourceLimits({ bus })
+  const resourceLimits = deps.resourceLimits ?? new ResourceLimits({ bus, db })
   const securityValidator = deps.securityValidator ?? new SecurityValidator({ bus })
   const rollbackManager = deps.rollbackManager ?? new RollbackManager({ db, bus, ledger })
 

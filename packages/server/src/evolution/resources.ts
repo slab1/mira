@@ -13,14 +13,16 @@
  * | 5 | Tests | Implemented | evolution/*.test.ts resources |
  * | 6 | Security boundaries | Implemented | fail-closed on breach, no auto-promote |
  * | 7 | Operational procedures | Implemented | check before verifier in POST /evolution/observe |
- * | 8 | Migration strategy | Implemented | additive, in-memory counters, no DB migration |
- * | 9 | Rollback strategy | Implemented | reset counters, revert file |
- * | 10 | Known limitations | Implemented | in-memory only; daily resets on process restart (Phase 6 persistent) |
+ * | 8 | Migration strategy | Implemented | additive budget_reservations table (budget-ledger.ts) |
+ * | 9 | Rollback strategy | Implemented | release() an unsettled reservation; the ledger is append-only |
+ * | 10 | Known limitations | Implemented | with a DurableBudgetLedger the counters survive restart; without one, see failClosed |
  */
 
-import type { Bus } from "../bus/index.js"
-import type { JsonValue } from "../types/index.js"
-import type { ImprovementProposal } from "./proposal.js"
+import type { Bus } from '../bus/index.js'
+import type { JsonValue } from '../types/index.js'
+import type { ImprovementProposal } from './proposal.js'
+import type { MiraDB } from '../storage/db.js'
+import { DurableBudgetLedger, type ReservationDecision } from './budget-ledger.js'
 
 export interface BudgetCaps {
   perTask: number
@@ -35,11 +37,15 @@ export interface BudgetCheck {
   caps?: BudgetCaps
   cost?: number
   remaining?: Partial<BudgetCaps>
+  /** Durable reservation id — settle/release with it when the work completes. */
+  reservationId?: string
 }
 
 function defaultCaps(): BudgetCaps {
   // per §13 + §16 cost baseline 0.18/task; keep generous defaults so Phase 1 smoke not blocked
-  const perTask = Number(process.env.MIRA_BUDGET_PER_TASK ?? process.env.MIRA_COST_CAP_PER_TASK ?? 0.5)
+  const perTask = Number(
+    process.env.MIRA_BUDGET_PER_TASK ?? process.env.MIRA_COST_CAP_PER_TASK ?? 0.5,
+  )
   const perAgent = Number(process.env.MIRA_BUDGET_PER_AGENT ?? 10)
   const perMission = Number(process.env.MIRA_BUDGET_PER_MISSION ?? 20)
   const daily = Number(process.env.MIRA_BUDGET_DAILY ?? 50)
@@ -54,26 +60,46 @@ function defaultCaps(): BudgetCaps {
 export class ResourceLimits {
   private caps: BudgetCaps
   private bus?: Bus
-  // tracking — in-memory counters per day (Phase 6 would persist)
+  // Durable accounting. When a DB is supplied the ledger is authoritative and
+  // survives restart; the in-memory counters below are only a fallback for
+  // callers with no store.
+  private ledger?: DurableBudgetLedger
+  private failClosed: boolean
   private dailySpent = 0
   private dailyKey = new Date().toISOString().slice(0, 10)
   private perAgentSpent = new Map<string, number>()
   private perMissionSpent = new Map<string, number>()
 
-  constructor(opts?: { caps?: Partial<BudgetCaps>; bus?: Bus }) {
+  constructor(opts?: { caps?: Partial<BudgetCaps>; bus?: Bus; db?: MiraDB; failClosed?: boolean }) {
     const d = defaultCaps()
     this.caps = { ...d, ...(opts?.caps ?? {}) }
     this.bus = opts?.bus
+    if (opts?.db) this.ledger = new DurableBudgetLedger(opts.db)
+    // §9: when the budget service is unavailable, autonomous high-cost actions
+    // must stop rather than assume the budget is unlimited. Off by default for
+    // callers with no DB (they keep the legacy best-effort behaviour); the
+    // production wiring passes a db, so this only matters when the store fails.
+    this.failClosed = opts?.failClosed ?? false
+  }
+
+  /** Durable ledger, when constructed with a DB. */
+  get budgetLedger(): DurableBudgetLedger | undefined {
+    return this.ledger
   }
 
   checkBudget(
     proposal: Partial<ImprovementProposal> & { cost?: number; agent?: string; missionID?: string },
     cost?: number,
+    idempotencyKey?: string,
   ): BudgetCheck {
+    if (this.ledger) return this.checkBudgetDurable(proposal, cost, idempotencyKey)
     this.rotateDailyIfNeeded()
-    const c = typeof cost === "number" ? cost : typeof proposal.cost === "number" ? proposal.cost : 0.05
-    const agent = String((proposal as { agent?: string }).agent ?? proposal.affectedEngine ?? "default")
-    const missionID = String((proposal as { missionID?: string }).missionID ?? "default")
+    const c =
+      typeof cost === 'number' ? cost : typeof proposal.cost === 'number' ? proposal.cost : 0.05
+    const agent = String(
+      (proposal as { agent?: string }).agent ?? proposal.affectedEngine ?? 'default',
+    )
+    const missionID = String((proposal as { missionID?: string }).missionID ?? 'default')
 
     // per-task
     if (c > this.caps.perTask) {
@@ -122,8 +148,87 @@ export class ResourceLimits {
     }
   }
 
-  getCaps(): BudgetCaps { return { ...this.caps } }
-  getDailySpent(): number { this.rotateDailyIfNeeded(); return this.dailySpent }
+  /**
+   * Durable path: reserve atomically, so concurrent callers cannot both observe
+   * the same headroom. The caller is expected to settle() with the real cost, or
+   * release() if the work never ran.
+   */
+  private checkBudgetDurable(
+    proposal: Partial<ImprovementProposal> & { cost?: number; agent?: string; missionID?: string },
+    cost?: number,
+    idempotencyKey?: string,
+  ): BudgetCheck {
+    const c =
+      typeof cost === 'number' ? cost : typeof proposal.cost === 'number' ? proposal.cost : 0.05
+    const agent = String(
+      (proposal as { agent?: string }).agent ?? proposal.affectedEngine ?? 'default',
+    )
+    const missionID = String((proposal as { missionID?: string }).missionID ?? 'default')
+
+    let decision: ReservationDecision
+    try {
+      decision = this.ledger!.reserve({
+        cost: c,
+        agent,
+        missionID,
+        caps: this.caps,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+      })
+    } catch (e) {
+      // The budget service itself failed. §9: stop rather than assume unlimited.
+      const reason = `budget service unavailable: ${String(e)}`
+      this.emit(proposal, c, reason)
+      return {
+        allowed: false,
+        reason,
+        caps: this.caps,
+        cost: c,
+      }
+    }
+
+    if (!decision.allowed) {
+      const reason = decision.reason ?? 'budget denied'
+      this.emit(proposal, c, reason)
+      return {
+        allowed: false,
+        reason,
+        caps: this.caps,
+        cost: c,
+        ...(decision.reservationId ? { reservationId: decision.reservationId } : {}),
+      }
+    }
+
+    const spent = this.ledger!.getSpend({ agent, missionID })
+    return {
+      allowed: true,
+      caps: this.caps,
+      cost: c,
+      ...(decision.reservationId ? { reservationId: decision.reservationId } : {}),
+      remaining: {
+        perAgent: this.caps.perAgent - spent.agent,
+        perMission: this.caps.perMission - spent.mission,
+        daily: this.caps.daily - spent.daily,
+      },
+    }
+  }
+
+  /** Settle a durable reservation with the real cost. */
+  settleReservation(id: string, actualUSD: number): boolean {
+    return this.ledger?.settle(id, actualUSD) ?? false
+  }
+
+  /** Return an unspent reservation to the budget; the reason is retained. */
+  releaseReservation(id: string, reason?: string): boolean {
+    return this.ledger?.release(id, reason) ?? false
+  }
+
+  getCaps(): BudgetCaps {
+    return { ...this.caps }
+  }
+  getDailySpent(): number {
+    this.rotateDailyIfNeeded()
+    return this.dailySpent
+  }
   reset(): void {
     this.dailySpent = 0
     this.perAgentSpent.clear()
@@ -144,10 +249,15 @@ export class ResourceLimits {
   private emit(proposal: Partial<ImprovementProposal>, cost: number, reason: string) {
     try {
       this.bus?.publish({
-        type: "evolution.budget" as unknown as import("../types/index.js").BusEventType,
-        payload: { proposalId: (proposal as ImprovementProposal).id ?? "unknown", cost, reason, timestamp: Date.now() } as unknown as JsonValue,
+        type: 'evolution.budget' as unknown as import('../types/index.js').BusEventType,
+        payload: {
+          proposalId: (proposal as ImprovementProposal).id ?? 'unknown',
+          cost,
+          reason,
+          timestamp: Date.now(),
+        } as unknown as JsonValue,
         timestamp: Date.now(),
-      } as unknown as import("../types/index.js").BusEvent)
+      } as unknown as import('../types/index.js').BusEvent)
     } catch {}
   }
 }
