@@ -76,6 +76,13 @@ export interface CanaryConfig {
    * process-wide latency telemetry is not proof that this candidate worked.
    */
   route?: string
+  /**
+   * Identifier of the executable candidate variant to route traffic to. When
+   * absent, CanaryRunner only routes if one was already registered via
+   * `route()`; with no variant at all it observes zero candidate traffic and
+   * BLOCKS rather than measuring baseline traffic and calling it the candidate.
+   */
+  variant?: string
 }
 
 /** Snapshot of scalar metrics captured at a pipeline stage. */

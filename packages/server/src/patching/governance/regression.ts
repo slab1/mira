@@ -48,15 +48,25 @@ const DEFAULT_TOLERANCE: Record<RegressionAxis, number> = {
 /** Classify a metric name into an axis (quality/latency/cost/memory). */
 export function classifyAxis(metric: string): RegressionAxis | null {
   const m = metric.toLowerCase()
+  // A bare sample/observation count is evidence *about* the measurement, not a
+  // quantity that can regress — it must never be compared on the memory axis
+  // (the previous `/count$/` rule did exactly that, so a canary's sample count
+  // would have been scored as if it were heap growth).
+  if (m === 'count' || m === 'samples' || m === 'errorcount') return null
   if (/quality|pass|eval|score/.test(m)) return 'quality'
   if (/latency|p50|p95|p99|duration|ms$/.test(m)) return 'latency'
   if (/cost|token|price/.test(m)) return 'cost'
-  if (/memory|heap|rss|entries|count$/.test(m)) return 'memory'
+  if (/memory|heap|rss|entries/.test(m)) return 'memory'
   return null
 }
 
 /** Lower-is-better for latency/cost/memory; higher-is-better for quality. */
-function regressed(axis: RegressionAxis, baseline: number, candidate: number, tolerance: number): { bad: boolean; deltaPct: number } {
+function regressed(
+  axis: RegressionAxis,
+  baseline: number,
+  candidate: number,
+  tolerance: number,
+): { bad: boolean; deltaPct: number } {
   if (baseline === 0) return { bad: false, deltaPct: 0 }
   const deltaPct = (candidate - baseline) / baseline
   const bad = axis === 'quality' ? deltaPct < -tolerance : deltaPct > tolerance

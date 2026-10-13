@@ -14,6 +14,7 @@
 import { describe, test, expect } from 'bun:test'
 import { BenchmarkRunner } from './benchmark.js'
 import { CanaryRunner } from './canary.js'
+import { VariantRouter } from './traffic.js'
 import { LatencyTracker } from '../latency.js'
 import { outcomeOf, isPassing } from './types.js'
 import { SecurityReview } from './security-review.js'
@@ -26,6 +27,45 @@ const tracker = (...ms: number[]) => {
   for (const d of ms) t.record(d, 'proposal_x', 'trace')
   return t
 }
+
+/** Canary now OBSERVES for durationMs, so tests must not wait in real time. */
+const runner = (t?: LatencyTracker, deps: Record<string, unknown> = {}) =>
+  new CanaryRunner(t, { sleep: async () => {}, router: new VariantRouter(), ...deps })
+
+/**
+ * A canary that observes for `durationMs` of REAL (but tiny) time while traffic
+ * arrives: each observation tick delivers one sample. This is the honest shape
+ * of the test — samples recorded BEFORE the canary starts are correctly ignored,
+ * because the window only covers what was observed during it.
+ */
+const observingRunner = (
+  t: LatencyTracker,
+  samples: Array<{ ms: number; error?: boolean }>,
+  opts: { trafficPct?: number } = {},
+) => {
+  const router = new VariantRouter()
+  let i = 0
+  const sleep = async () => {
+    const s = samples[i++]
+    if (s) t.record(s.ms, 'proposal_x', 'trace', s.error ?? false)
+    await new Promise((r) => setTimeout(r, 2))
+  }
+  const r = new CanaryRunner(t, { sleep, router })
+  r.route('proposal_x', { trafficPct: opts.trafficPct ?? 100, resolveVariant: () => 'variant-a' })
+  return r
+}
+
+/** A runner whose candidate variant IS routable, so the minSamples and SLO
+ *  gates are genuinely exercised rather than short-circuiting. */
+const routedRunner = (t: LatencyTracker) => {
+  const router = new VariantRouter()
+  const r = new CanaryRunner(t, { sleep: async () => {}, router })
+  r.route('proposal_x', { trafficPct: 100, resolveVariant: () => 'variant-a' })
+  return r
+}
+
+/** durationMs small enough that the real clock loop exits immediately. */
+const FAST = 1
 
 const SLO = { p50Ms: 1000, p95Ms: 5000, errorRate: 0.01 }
 
@@ -137,32 +177,34 @@ describe('§3 acceptance: canary timeout / insufficient traffic → blocked', ()
   test('no candidate samples on the proposal route is BLOCKED', async () => {
     // tracker has traffic, but none attributed to this candidate
     const t = tracker(10, 20, 30)
-    const r = await new CanaryRunner(t).start('other_proposal', {
-      trafficPct: 5,
-      durationMs: 60_000,
-      slo: SLO,
-    })
-    expect(r.passed).toBe(false)
-    expect(outcomeOf(r)).toBe('BLOCKED')
-    expect(r.reason).toContain('insufficient candidate traffic')
+    // a variant IS routable — traffic simply never arrived for this proposal
+    const r = new CanaryRunner(t, { sleep: async () => {}, router: new VariantRouter() })
+    r.route('other_proposal', { trafficPct: 5, resolveVariant: () => 'variant-a' })
+    const out = await r.start('other_proposal', { trafficPct: 5, durationMs: FAST, slo: SLO })
+    expect(out.passed).toBe(false)
+    expect(outcomeOf(out)).toBe('BLOCKED')
+    expect(out.reason).toContain('insufficient candidate traffic')
   })
 
   test('empty tracker is BLOCKED (count 0 must not look healthy)', async () => {
-    const r = await new CanaryRunner(new LatencyTracker()).start('proposal_x', {
+    const r = await routedRunner(new LatencyTracker()).start('proposal_x', {
       trafficPct: 5,
-      durationMs: 60_000,
+      durationMs: FAST,
       slo: SLO,
     })
     expect(outcomeOf(r)).toBe('BLOCKED')
   })
 
   test('fewer samples than minSamples is BLOCKED', async () => {
-    const r = await new CanaryRunner(tracker(10, 20)).start('proposal_x', {
-      trafficPct: 5,
-      durationMs: 60_000,
-      slo: SLO,
-      minSamples: 50,
-    })
+    const r = await observingRunner(new LatencyTracker(), [{ ms: 10 }, { ms: 20 }]).start(
+      'proposal_x',
+      {
+        trafficPct: 5,
+        durationMs: 40,
+        slo: SLO,
+        minSamples: 50,
+      },
+    )
     expect(outcomeOf(r)).toBe('BLOCKED')
     expect(r.reason).toContain('need >= 50')
   })
@@ -173,7 +215,7 @@ describe('§3 acceptance: canary timeout / insufficient traffic → blocked', ()
     t.record(10, 'proposal_x', 't')
     ;(t as unknown as { samples: Array<{ timestamp: number }> }).samples[0]!.timestamp =
       Date.now() - 600_000
-    const r = await new CanaryRunner(t).start('proposal_x', {
+    const r = await runner(t).start('proposal_x', {
       trafficPct: 5,
       durationMs: 1000,
       slo: SLO,
@@ -184,9 +226,9 @@ describe('§3 acceptance: canary timeout / insufficient traffic → blocked', ()
 
 describe('§3 acceptance: canary without an SLO is blocked, not auto-passed', () => {
   test('no slo object → BLOCKED', async () => {
-    const r = await new CanaryRunner(tracker(10, 20)).start('proposal_x', {
+    const r = await runner(tracker(10, 20)).start('proposal_x', {
       trafficPct: 5,
-      durationMs: 60_000,
+      durationMs: FAST,
     })
     expect(r.passed).toBe(false)
     expect(outcomeOf(r)).toBe('BLOCKED')
@@ -194,9 +236,9 @@ describe('§3 acceptance: canary without an SLO is blocked, not auto-passed', ()
   })
 
   test('empty slo object → BLOCKED', async () => {
-    const r = await new CanaryRunner(tracker(10, 20)).start('proposal_x', {
+    const r = await runner(tracker(10, 20)).start('proposal_x', {
       trafficPct: 5,
-      durationMs: 60_000,
+      durationMs: FAST,
       slo: {},
     })
     expect(outcomeOf(r)).toBe('BLOCKED')
@@ -213,7 +255,7 @@ describe('§3 acceptance: invalid canary config is blocked', () => {
   ]
   for (const [cfg, label] of cases) {
     test(`rejects ${label}`, async () => {
-      const r = await new CanaryRunner(tracker(10, 20)).start('proposal_x', cfg as never)
+      const r = await runner(tracker(10, 20)).start('proposal_x', cfg as never)
       expect(r.passed, label).toBe(false)
       expect(outcomeOf(r), label).toBe('BLOCKED')
     })
@@ -222,13 +264,12 @@ describe('§3 acceptance: invalid canary config is blocked', () => {
 
 describe('§3 acceptance: SLO breach fails, compliance passes', () => {
   test('p95 over the limit → FAILED', async () => {
-    const t = new LatencyTracker()
-    for (let i = 0; i < 20; i++) t.record(i < 18 ? 100 : 9000, 'proposal_x', 't')
-    const r = await new CanaryRunner(t).start('proposal_x', {
-      trafficPct: 5,
-      durationMs: 60_000,
-      slo: SLO,
-    })
+    const r = await observingRunner(new LatencyTracker(), [
+      ...Array.from({ length: 12 }, () => ({ ms: 100 })),
+      { ms: 9000 },
+      { ms: 9000 },
+      { ms: 9000 },
+    ]).start('proposal_x', { trafficPct: 5, durationMs: 120, slo: SLO, minSamples: 3 })
     expect(r.passed).toBe(false)
     expect(outcomeOf(r)).toBe('FAILED')
     expect(r.reason).toContain('p95')
@@ -237,7 +278,7 @@ describe('§3 acceptance: SLO breach fails, compliance passes', () => {
   test('healthy candidate within every configured limit → PASSED', async () => {
     const r = await new CanaryRunner(tracker(10, 20, 30, 40)).start('proposal_x', {
       trafficPct: 5,
-      durationMs: 60_000,
+      durationMs: FAST,
       slo: SLO,
       minSamples: 3,
     })
@@ -249,9 +290,9 @@ describe('§3 acceptance: SLO breach fails, compliance passes', () => {
 
 describe('§3 acceptance: canary evidence is candidate-specific', () => {
   test('config thresholds are NOT reported as measurements', async () => {
-    const r = await new CanaryRunner(tracker(10, 20)).start('proposal_x', {
+    const r = await runner(tracker(10, 20)).start('proposal_x', {
       trafficPct: 5,
-      durationMs: 60_000,
+      durationMs: FAST,
       slo: SLO,
       minSamples: 2,
     })
@@ -297,5 +338,188 @@ describe('§3 adjacent: security stage must also fail closed', () => {
     } as unknown as SecurityScanner
     await new SecurityReview(spy).review('const a = 1', 'config/secrets.ts')
     expect(seen[0]).toMatchObject({ route: 'config/secrets.ts', text: 'const a = 1' })
+  })
+})
+
+// ── real traffic routing (§3.5) ──────────────────────────────────────
+
+describe('§3.5: configured traffic is actually routed', () => {
+  test('a session is deterministically held on one side of the split', () => {
+    const router = new VariantRouter()
+    router.register({ proposalId: 'p1', trafficPct: 50, resolveVariant: () => 'v1' })
+
+    const a = router.resolve({ proposalId: 'p1', key: 'session-abc' })
+    const b = router.resolve({ proposalId: 'p1', key: 'session-abc' })
+    expect(a.lane).toBe(b.lane) // sticky: no mid-session flapping
+    expect(a.bucket).toBe(b.bucket)
+  })
+
+  test('the split honours trafficPct across many distinct sessions', () => {
+    const router = new VariantRouter()
+    router.register({ proposalId: 'p1', trafficPct: 30, resolveVariant: () => 'v1' })
+
+    let candidate = 0
+    const N = 4000
+    for (let i = 0; i < N; i++) {
+      if (router.resolve({ proposalId: 'p1', key: `session-${i}` }).lane === 'candidate')
+        candidate++
+    }
+    const pct = (candidate / N) * 100
+    // deterministic hash should land close to the configured 30%
+    expect(pct).toBeGreaterThan(24)
+    expect(pct).toBeLessThan(36)
+  })
+
+  test('0% traffic routes nothing; 100% routes everything', () => {
+    const zero = new VariantRouter()
+    zero.register({ proposalId: 'p', trafficPct: 0.0001, resolveVariant: () => 'v' })
+    expect(zero.resolve({ proposalId: 'p', key: 'k' }).lane).toBe('baseline')
+
+    const all = new VariantRouter()
+    all.register({ proposalId: 'p', trafficPct: 100, resolveVariant: () => 'v' })
+    for (let i = 0; i < 200; i++) {
+      expect(all.resolve({ proposalId: 'p', key: `k${i}` }).lane).toBe('candidate')
+    }
+  })
+
+  test('no registered variant means no candidate traffic — never a fake pass', () => {
+    const router = new VariantRouter()
+    router.register({ proposalId: 'p1', trafficPct: 100, resolveVariant: () => null })
+    const d = router.resolve({ proposalId: 'p1', key: 'k' })
+    expect(d.lane).toBe('baseline')
+    expect(d.reason).toBe('no-variant-registered')
+  })
+
+  test('unregistered proposal and ineligible paths stay on baseline', () => {
+    const router = new VariantRouter()
+    router.register({ proposalId: 'p1', trafficPct: 100, resolveVariant: () => 'v' })
+    expect(router.resolve({ proposalId: 'nope', key: 'k' }).reason).toBe('no-target')
+    expect(router.resolve({ key: 'k' }).reason).toBe('no-target')
+    expect(router.resolve({ proposalId: 'p1', key: 'k', eligible: false }).reason).toBe(
+      'not-eligible',
+    )
+  })
+
+  test('trafficPct outside (0,100] is rejected at registration', () => {
+    const router = new VariantRouter()
+    for (const bad of [0, -5, 101, NaN]) {
+      expect(() =>
+        router.register({ proposalId: 'p', trafficPct: bad, resolveVariant: () => 'v' }),
+      ).toThrow()
+    }
+  })
+
+  test('attribution keys separate candidate from baseline samples', () => {
+    const router = new VariantRouter()
+    router.register({ proposalId: 'p1', trafficPct: 100, resolveVariant: () => 'v' })
+    expect(router.attributionKey(router.resolve({ proposalId: 'p1', key: 'k' }))).toBe('p1')
+    expect(router.attributionKey(router.resolve({ key: 'k' }))).toBe('baseline')
+  })
+
+  test('candidate samples are retrievable in isolation, and errorRate is measured', () => {
+    const t = new LatencyTracker()
+    t.record(10, 'p1', 'x')
+    t.record(20, 'p1', 'y', true) // error
+    t.record(30, 'baseline', 'z')
+
+    const cand = t.stats(60_000, 'p1')
+    expect(cand.count).toBe(2)
+    expect(cand.errorCount).toBe(1)
+    expect(cand.errorRate).toBeCloseTo(0.5, 5)
+
+    const base = t.stats(60_000, 'baseline')
+    expect(base.count).toBe(1)
+    expect(base.errorRate).toBe(0)
+  })
+
+  test('unregistering stops candidate routing', () => {
+    const router = new VariantRouter()
+    router.register({ proposalId: 'p1', trafficPct: 100, resolveVariant: () => 'v' })
+    router.unregister('p1')
+    expect(router.resolve({ proposalId: 'p1', key: 'k' }).lane).toBe('baseline')
+  })
+
+  test('canaryConfig survives a store round-trip (else SLO is lost and it blocks forever)', async () => {
+    const { createDatabase, migrate } = await import('../../storage/db.js')
+    const db = createDatabase(':memory:')
+    await migrate(db)
+    const { ProposalStore } = await import('./proposal-store.js')
+    const store = new ProposalStore(db)
+
+    const proposal = {
+      id: 'p_cfg',
+      patchId: 'x',
+      painPointId: 'y',
+      kind: 'latency',
+      targetFile: 'a.ts',
+      reason: 'r',
+      change: 'c',
+      severity: 'minor',
+      score: 1,
+      state: 'SECURITY_PASSED' as const,
+      metadata: { verifyResult: { verified: true, reason: 'ok' } },
+      createdAt: 1,
+      updatedAt: 1,
+      canaryConfig: {
+        trafficPct: 25,
+        durationMs: 60_000,
+        slo: { p95Ms: 8000, errorRate: 0.02 },
+        minSamples: 5,
+      },
+    }
+    store.create(proposal)
+    const loaded = store.get('p_cfg')
+    expect(loaded?.canaryConfig).toEqual(proposal.canaryConfig)
+    db.sqlite.close()
+  })
+})
+
+describe('§3.5: the configured duration is actually observed', () => {
+  test('the canary keeps observing for durationMs instead of reading once', async () => {
+    const t = new LatencyTracker()
+    let ticks = 0
+    const sleep = async () => {
+      ticks++
+      if (ticks <= 3) t.record(10, 'proposal_x', 'trace', false) // traffic arrives late
+      await new Promise((r) => setTimeout(r, 3))
+    }
+    const router = new VariantRouter()
+    const r = new CanaryRunner(t, { sleep, router })
+    r.route('proposal_x', { trafficPct: 100, resolveVariant: () => 'v' })
+
+    const out = await r.start('proposal_x', {
+      trafficPct: 100,
+      durationMs: 90,
+      slo: SLO,
+      minSamples: 1,
+    })
+
+    expect(out.outcome).toBe('PASSED')
+    // a single instantaneous read before any traffic arrived would have seen
+    // count=0 and blocked; observing is what made the difference
+    expect(ticks).toBeGreaterThan(3)
+    expect(Number(out.metrics!.count)).toBeGreaterThanOrEqual(1)
+  })
+
+  test('a slow candidate is caught by observing, even when early samples look fine', async () => {
+    const t = new LatencyTracker()
+    let n = 0
+    const sleep = async () => {
+      // first two observations are fast, then it degrades
+      t.record(n++ < 2 ? 10 : 9000, 'proposal_x', 'trace', false)
+      await new Promise((r) => setTimeout(r, 3))
+    }
+    const router = new VariantRouter()
+    const r = new CanaryRunner(t, { sleep, router })
+    r.route('proposal_x', { trafficPct: 100, resolveVariant: () => 'v' })
+
+    const out = await r.start('proposal_x', {
+      trafficPct: 100,
+      durationMs: 90,
+      slo: SLO,
+      minSamples: 1,
+    })
+    expect(out.outcome).toBe('FAILED')
+    expect(out.reason).toContain('exceeds limit')
   })
 })

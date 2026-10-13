@@ -1,5 +1,6 @@
 import type { CanaryResult, CanaryConfig } from './types.js'
 import type { LatencyTracker } from '../latency.js'
+import { getVariantRouter, type VariantRouter } from './traffic.js'
 
 const DEFAULT_MIN_SAMPLES = 1
 
@@ -19,8 +20,50 @@ const DEFAULT_MIN_SAMPLES = 1
  * that THIS candidate worked. Evidence is now scoped to the candidate's route
  * over the configured window.
  */
+export interface CanaryDeps {
+  latency?: LatencyTracker
+  router?: VariantRouter
+  /** Injected for tests; defaults to a real timer. */
+  sleep?: (ms: number) => Promise<void>
+}
+
 export class CanaryRunner {
-  constructor(private latency?: LatencyTracker) {}
+  private readonly router?: VariantRouter
+  private readonly sleep: (ms: number) => Promise<void>
+
+  constructor(
+    private latency?: LatencyTracker,
+    deps: CanaryDeps = {},
+  ) {
+    this.router = deps.router
+    this.sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)))
+  }
+
+  /**
+   * Register real traffic routing for this proposal before observing it.
+   *
+   * `resolveVariant` returns the executable variant (or null when none is
+   * registered). Returns false when no variant exists — the canary will then
+   * observe zero candidate traffic and BLOCK, which is the truthful outcome
+   * rather than measuring baseline traffic and calling it the candidate.
+   */
+  route(
+    proposalId: string,
+    config: Pick<CanaryConfig, 'trafficPct'> & { resolveVariant?: (id: string) => string | null },
+  ): boolean {
+    const router = this.router ?? getVariantRouter()
+    router.register({
+      proposalId,
+      trafficPct: config.trafficPct,
+      ...(config.resolveVariant ? { resolveVariant: config.resolveVariant } : {}),
+    })
+    return router.get(proposalId) !== undefined
+  }
+
+  /** Stop routing traffic to the candidate (after observe, promote or rollback). */
+  unroute(proposalId: string): void {
+    ;(this.router ?? getVariantRouter()).unregister(proposalId)
+  }
 
   async start(proposalId: string, config?: CanaryConfig): Promise<CanaryResult> {
     const trafficPct = config?.trafficPct ?? 5
@@ -65,10 +108,40 @@ export class CanaryRunner {
       )
     }
 
-    // Candidate-specific evidence: only samples attributed to THIS candidate,
-    // inside the configured observation window.
-    const stats = this.latency.stats(durationMs, route)
-    const count = Number(stats.count ?? 0)
+    // Candidate-specific evidence: only samples attributed to THIS candidate.
+    // If nothing is routed yet, start routing before observing — the lifecycle
+    // has to actually send traffic to the candidate, not merely hope some
+    // arrives.
+    const router = this.router ?? getVariantRouter()
+    let stats = this.latency.stats(durationMs, route)
+    let count = Number(stats.count ?? 0)
+    if (count < minSamples && !router.get(proposalId) && config?.variant) {
+      router.register({ proposalId, trafficPct, resolveVariant: () => config.variant! })
+      stats = this.latency.stats(durationMs, route)
+      count = Number(stats.count ?? 0)
+    }
+
+    // No variant is reachable, so no request can be routed to the candidate.
+    // Observing for the full window would just burn the wall-clock to reach a
+    // conclusion we already know — block now, and say why.
+    const reachable =
+      router.get(proposalId)?.resolveVariant?.(proposalId) ?? config?.variant ?? null
+    if (!reachable && count < minSamples) {
+      return blocked(
+        `no candidate variant is registered to route traffic to (proposal '${proposalId}'); nothing can be observed`,
+      )
+    }
+
+    // Observe for the configured duration. Previously a single instantaneous
+    // read stood in for `durationMs`, so a canary could pass on one lucky
+    // request instead of sustained observation.
+    const deadline = Date.now() + durationMs
+    while (Date.now() < deadline) {
+      await this.sleep(Math.min(250, deadline - Date.now()))
+      stats = this.latency.stats(durationMs, route)
+      count = Number(stats.count ?? 0)
+      if (!Number.isFinite(count)) break
+    }
 
     if (!Number.isFinite(count) || count < minSamples) {
       return {
