@@ -646,7 +646,14 @@ async function main() {
     }
     if (rows.length) log(`loaded ${rows.length} issued API key(s) from db`)
   } catch (e) {
-    warn('failed to load issued API keys:', String(e))
+    // Fail loudly: swallowing this means the server comes up with an EMPTY
+    // credential store, so every issued API key 401s while the process looks healthy.
+    // Usually an un-migrated schema — `migrate()` must add the column being selected.
+    error(
+      'failed to load issued API keys — ALL issued API keys will be rejected (401). ' +
+        'Check that the api_keys schema is migrated (drizzle-kit migrate / storage migrate()). ' +
+        `Cause: ${String(e)}`,
+    )
   }
 
   // Org tenancy (P3.3) — load orgs + memberships into the live access maps.

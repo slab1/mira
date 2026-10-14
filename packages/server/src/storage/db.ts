@@ -259,6 +259,19 @@ export async function migrate(db: MiraDB) {
   // `key` holds hash for new rows; `key_hash` authoritative; legacy rows backfilled on load
   addColumn('api_keys', 'key_hash', 'TEXT')
   addColumn('api_keys', 'key_prefix', 'TEXT')
+  // Credential lifecycle + per-credential role. Without these, the boot-time
+  // `SELECT ... role, expires_at, revoked_at FROM api_keys` throws
+  // "no such column: role" on any database created before 0ce8b03, the error is
+  // swallowed, and the server silently comes up with ZERO issued API keys —
+  // every previously-issued credential stops working. Nullable, so existing rows
+  // need no backfill (role absent => legacy per-owner resolution, lifecycle null
+  // => never expires / not revoked).
+  addColumn('api_keys', 'role', 'TEXT')
+  addColumn('api_keys', 'expires_at', 'INTEGER')
+  addColumn('api_keys', 'revoked_at', 'INTEGER')
+  addColumn('api_keys', 'last_used_at', 'INTEGER')
+  // NOT NULL DEFAULT is safe on SQLite for pre-existing rows.
+  addColumn('api_keys', 'created_by', "TEXT NOT NULL DEFAULT 'default'")
   // P3.5: audit attribution columns — stamped when a session is deleted so the
   // evidence keeps its owner/org after the session row is gone.
   addColumn('audit_entries', 'owner_id', 'TEXT')
