@@ -141,7 +141,7 @@ describe('Phase 2 Safety — ApprovalGate', () => {
     expect(gate.isPending('prop_high')).toBe(true)
     expect(seen.length).toBeGreaterThanOrEqual(2)
     // approve via POST equivalent
-    const ok = gate.approve('prop_high', { owner: 'human-test', authenticated: true })
+    const ok = gate.approve('prop_high', { owner: 'human-test', authenticated: true, role: 'operator' })
     expect(ok.approved).toBe(true)
     expect(gate.isPending('prop_high')).toBe(false)
   })
@@ -310,6 +310,7 @@ describe('Phase 2 Safety — wired routes (Risk→Autonomy→Approval→Resource
       db: db as unknown as import('../storage/db.js').MiraDB,
       bus,
       resolveOwner: (t: string) => (t === 'tok' ? 'test-human' : undefined),
+      resolveRole: () => 'operator',
     })
     const res = await app.request('/evolution/health')
     expect(res.status).toBe(200)
@@ -324,6 +325,7 @@ describe('Phase 2 Safety — wired routes (Risk→Autonomy→Approval→Resource
       db: db as unknown as import('../storage/db.js').MiraDB,
       bus,
       resolveOwner: (t: string) => (t === 'tok' ? 'test-human' : undefined),
+      resolveRole: () => 'operator',
     })
 
     // low-risk observe should go through to verifier (no patch → small)
@@ -386,6 +388,7 @@ describe('Phase 2 Safety — wired routes (Risk→Autonomy→Approval→Resource
       ledger,
       approvalGate,
       resolveOwner: (t: string) => (t === 'tok' ? 'test-human' : undefined),
+      resolveRole: () => 'operator',
     })
     // Create an observe that is NOT blocked by security but pending approval (high-risk without secret)
     // Use large changedFiles + P0 + guardrails → high risk → pending at Canary? But our low default level is Autonomous.
@@ -455,6 +458,7 @@ describe('Phase 2 Safety — wired routes (Risk→Autonomy→Approval→Resource
       db: db as unknown as import('../storage/db.js').MiraDB,
       bus,
       resolveOwner: (t: string) => (t === 'tok' ? 'test-human' : undefined),
+      resolveRole: () => 'operator',
     })
     // high-risk observe → pending approval, appears in the operator queue
     const obsRes = await app.request('/evolution/observe', {
@@ -517,6 +521,7 @@ describe('Phase 2 Safety — wired routes (Risk→Autonomy→Approval→Resource
       bus,
       ledger,
       resolveOwner: (t: string) => (t === 'tok' ? 'test-human' : undefined),
+      resolveRole: () => 'operator',
     })
 
     // Seed ledger: 2 accepted with candidate metrics, 1 rejected.
@@ -608,6 +613,7 @@ describe('Phase 2 Safety — wired routes (Risk→Autonomy→Approval→Resource
       bus,
       shadowMira: stubShadow,
       resolveOwner: (t: string) => (t === 'tok' ? 'test-human' : undefined),
+      resolveRole: () => 'operator',
     })
     const res = await app.request('/evolution/observe', {
       method: 'POST',
@@ -639,6 +645,7 @@ describe('Phase 2 Safety — wired routes (Risk→Autonomy→Approval→Resource
       bus,
       shadowMira: stubShadow,
       resolveOwner: (t: string) => (t === 'tok' ? 'test-human' : undefined),
+      resolveRole: () => 'operator',
     })
     const res = await app.request('/evolution/observe', {
       method: 'POST',
@@ -675,6 +682,7 @@ describe('Phase 2 Safety — wired routes (Risk→Autonomy→Approval→Resource
       bus,
       shadowMira: stubShadow,
       resolveOwner: (t: string) => (t === 'tok' ? 'test-human' : undefined),
+      resolveRole: () => 'operator',
     })
     // High-risk guardrail observe → blocked before verifier/evaluator
     const res = await app.request('/evolution/observe', {

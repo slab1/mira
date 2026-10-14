@@ -75,7 +75,7 @@ describe('ApprovalGate decision log wiring', () => {
     gate.requestApproval(proposal, 3, risk)
     expect(gate.isPending('prop_log_1')).toBe(true)
 
-    const result = gate.approve('prop_log_1', { owner: 'alice', authenticated: true })
+    const result = gate.approve('prop_log_1', { owner: 'alice', authenticated: true, role: 'operator' })
     expect(result.approved).toBe(true)
 
     const ctx = loadContext()
@@ -88,7 +88,7 @@ describe('ApprovalGate decision log wiring', () => {
   test('human deny logs decision with alternatives', () => {
     const gate = new ApprovalGate({})
     gate.requestApproval(proposal, 3, risk)
-    gate.deny('prop_log_1', { owner: 'bob', authenticated: true })
+    gate.deny('prop_log_1', { owner: 'bob', authenticated: true, role: 'operator' })
 
     const ctx = loadContext()
     const entry = ctx.decisions?.find((d) => d.decision === 'approval:denied' && d.by === 'bob')

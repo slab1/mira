@@ -25,6 +25,7 @@ import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync } from 'node:fs'
 import { parseKeyPair, roleForOwner, isRole, type Role } from './auth/roles.js'
+import { ENV_OVERRIDES_FILE_WARNING, resolveTokenPrecedence } from './token-provisioning.js'
 import { Bus } from './bus/index.js'
 import { createDatabase, migrate } from './storage/db.js'
 import { SubgatewayRegistry } from './gateway/registry.js'
@@ -186,25 +187,23 @@ function provisionFirstRunToken(): void {
   try {
     const file = miraEnvFile()
     if (existsSync(file)) {
-      // Adopt existing file for direct runs (serve-local.sh sources it too).
+      // The file is a *fallback* for direct runs (serve-local.sh sources it too).
+      // An explicitly-set process env always wins — see token-provisioning.ts.
       const vars = readMiraEnvFile()
-      const envTokenBefore = process.env.MIRA_TOKEN
-      if (!process.env.MIRA_TOKEN && vars.MIRA_TOKEN) process.env.MIRA_TOKEN = vars.MIRA_TOKEN
-      if (!process.env.MIRA_API_KEYS && vars.MIRA_API_KEYS)
-        process.env.MIRA_API_KEYS = vars.MIRA_API_KEYS
-      if (envTokenBefore && vars.MIRA_TOKEN && envTokenBefore !== vars.MIRA_TOKEN) {
-        warn(
-          '[mira] MIRA_TOKEN in .env differs from $MIRA_ENV (~/.mira/mira.env) — using $MIRA_ENV',
-        )
-        process.env.MIRA_TOKEN = vars.MIRA_TOKEN
-      } else if (envTokenBefore && !vars.MIRA_TOKEN) {
-        warn('MIRA_TOKEN from .env — prefer ~/.mira/mira.env')
-      }
+      const resolved = resolveTokenPrecedence({
+        envToken: process.env.MIRA_TOKEN,
+        envApiKeys: process.env.MIRA_API_KEYS,
+        fileToken: vars.MIRA_TOKEN,
+        fileApiKeys: vars.MIRA_API_KEYS,
+      })
+      if (resolved.token) process.env.MIRA_TOKEN = resolved.token
+      if (resolved.apiKeys) process.env.MIRA_API_KEYS = resolved.apiKeys
+      if (resolved.conflicted) warn(ENV_OVERRIDES_FILE_WARNING)
       return
     }
     if (process.env.MIRA_TOKEN || process.env.MIRA_API_KEYS) {
       if (process.env.MIRA_TOKEN && !readMiraEnvFile().MIRA_TOKEN)
-        warn('MIRA_TOKEN from .env — prefer ~/.mira/mira.env')
+        warn('[mira] MIRA_TOKEN from env — using it')
       return
     }
     const token = randomBytes(32).toString('hex') // 64-hex, like scripts/gen-mira-token.sh
@@ -986,8 +985,10 @@ async function main() {
       ledger: evolutionLedger,
       observer: evolutionObserver,
       // Approval identity is resolved from the caller's credentials, so a body
-      // field cannot claim to be an approver (section 5).
+      // field cannot claim to be an approver (section 5). resolveRole establishes
+      // the approval capability itself — a viewer key must not be able to approve.
       resolveOwner,
+      resolveRole,
       canaryStart: (affectedEngine: string) => canaryStartAfterPromote?.(affectedEngine) ?? null,
       // ShadowMira binds late (Phase 4 block below) — getter defers to request time.
       get shadowMira() {

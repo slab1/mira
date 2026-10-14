@@ -2,11 +2,14 @@
 
 > **Status (2026-10-14):** this review is an open backlog, not a closed review.
 > Sprint 1 items **1** (ledger updates only on confirmed authoritative approval),
-> **2** (immutable `createdBy` proposal identity) and **4** (self-approval
-> rejection) were implemented in `d4454bc`. Items **3** (server-side approver
-> capability enforcement), **5** (persisted pending requests/decisions) and **6**
-> (explicit approval state machine) are still open, as are Sprints 2-4. Treat
-> everything below as unverified against current `main` unless noted otherwise.
+> **2** (immutable `createdBy` proposal identity), **3** (approver capability
+> enforced in the gate, not only in HTTP middleware), **4** (self-approval
+> rejection), **5** (persisted pending requests/decisions) and **6** (atomic
+> decision transitions + stale-request expiry) are now implemented. Sprint 1 item
+> **7** has tests for failed/unauthorized/self/duplicate/expired approvals and
+> restart survival, but not yet for a full hostile-caller matrix. All of Sprints
+> 2-4 remain open — in particular nothing yet binds an approval to an artifact
+> hash, and release governance is unbuilt.
 
 **My recommendation is to make approval a central, persistent, role-based security control in Mira—not simply an API endpoint that records whether someone approved a proposal.**
 

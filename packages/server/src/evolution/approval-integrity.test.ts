@@ -32,7 +32,7 @@ const proposal = (over: Partial<ImprovementProposal> = {}): ImprovementProposal 
 
 const HIGH: RiskAssessment = { level: 'high', score: 0.9, reasons: ['touches auth'] }
 const MEDIUM: RiskAssessment = { level: 'medium', score: 0.5, reasons: ['behaviour change'] }
-const alice: ApproverIdentity = { owner: 'alice', authenticated: true }
+const alice: ApproverIdentity = { owner: 'alice', authenticated: true, role: 'operator' }
 const unauth: ApproverIdentity = { owner: 'whoever', authenticated: false }
 
 describe('§5: an id with no pending request cannot be approved', () => {
@@ -94,7 +94,7 @@ describe('§5: a proposal may not approve itself', () => {
   test('the author cannot approve their own proposal', () => {
     const g = new ApprovalGate()
     g.requestApproval(proposal({ author: 'coder' } as never), 3, HIGH)
-    const r = g.approve('prop_1', { owner: 'coder', authenticated: true })
+    const r = g.approve('prop_1', { owner: 'coder', authenticated: true, role: 'operator' })
     expect(r.approved).toBe(false)
     expect(r.reason).toContain('may not approve it')
     expect(g.isPending('prop_1')).toBe(true)
@@ -104,7 +104,7 @@ describe('§5: a proposal may not approve itself', () => {
     for (const field of ['author', 'by', 'agent']) {
       const g = new ApprovalGate()
       g.requestApproval(proposal({ [field]: 'agent-x' } as never), 3, HIGH)
-      const r = g.approve('prop_1', { owner: 'agent-x', authenticated: true })
+      const r = g.approve('prop_1', { owner: 'agent-x', authenticated: true, role: 'operator' })
       expect(r.approved, field).toBe(false)
     }
   })
@@ -159,7 +159,7 @@ describe('§5: a mock approval is never presented as a human one', () => {
     expect(r.policyAuto).toBeUndefined()
     expect(r.reason).toContain('MIRA_APPROVAL_AUTO_LOW=0')
     // and an authenticated non-author human can then approve it
-    const a = g.approve(proposal().id, { owner: 'human', authenticated: true })
+    const a = g.approve(proposal().id, { owner: 'human', authenticated: true, role: 'operator' })
     expect(a.approved).toBe(true)
     expect(a.authoritative).toBe(true)
   })
@@ -176,7 +176,7 @@ describe('human operator is the approval authority', () => {
   test('authenticated human approval is marked approverKind "human-operator"', () => {
     const g = new ApprovalGate()
     g.requestApproval(proposal(), 3, HIGH)
-    const r = g.approve(proposal().id, { owner: 'human', authenticated: true })
+    const r = g.approve(proposal().id, { owner: 'human', authenticated: true, role: 'operator' })
     expect(r.approved).toBe(true)
     expect(r.authoritative).toBe(true)
     expect(r.approverKind).toBe('human-operator')
@@ -187,12 +187,12 @@ describe('human operator is the approval authority', () => {
     const g = new ApprovalGate({ operators: ['the-operator'] })
     g.requestApproval(proposal(), 3, HIGH)
     // authenticated but not an operator → refused, stays pending
-    const r = g.approve(proposal().id, { owner: 'random-human', authenticated: true })
+    const r = g.approve(proposal().id, { owner: 'random-human', authenticated: true, role: 'operator' })
     expect(r.approved).toBe(false)
     expect(r.pending).toBe(true)
     expect(r.reason).toContain('not a designated operator')
     // the designated operator succeeds
-    const r2 = g.approve(proposal().id, { owner: 'the-operator', authenticated: true })
+    const r2 = g.approve(proposal().id, { owner: 'the-operator', authenticated: true, role: 'operator' })
     expect(r2.approved).toBe(true)
     expect(r2.approverKind).toBe('human-operator')
   })
@@ -200,10 +200,10 @@ describe('human operator is the approval authority', () => {
   test('MIRA_OPERATORS applies to deny() as well', () => {
     const g = new ApprovalGate({ operators: ['the-operator'] })
     g.requestApproval(proposal(), 3, HIGH)
-    const r = g.deny(proposal().id, { owner: 'random-human', authenticated: true })
+    const r = g.deny(proposal().id, { owner: 'random-human', authenticated: true, role: 'operator' })
     expect(r.approved).toBe(false)
     expect(r.reason).toContain('not a designated operator')
-    const r2 = g.deny(proposal().id, { owner: 'the-operator', authenticated: true })
+    const r2 = g.deny(proposal().id, { owner: 'the-operator', authenticated: true, role: 'operator' })
     expect(r2.approved).toBe(false)
     expect(r2.approverKind).toBe('human-operator')
     expect(r2.reason).toContain('denied by human operator')
@@ -223,18 +223,18 @@ describe('two-person rule — high-risk needs two distinct operators (§18)', ()
   test('two designated operators: first approval is partial, duplicate ignored, second completes', () => {
     const g = new ApprovalGate({ operators: ['op-a', 'op-b'], twoPersonRule: true })
     g.requestApproval(proposal(), 3, HIGH)
-    const first = g.approve(proposal().id, { owner: 'op-a', authenticated: true })
+    const first = g.approve(proposal().id, { owner: 'op-a', authenticated: true, role: 'operator' })
     expect(first.approved).toBe(false)
     expect(first.pending).toBe(true)
     expect(first.approvers).toEqual(['op-a'])
     expect(first.requiredApprovals).toBe(2)
     expect(first.reason).toContain('1 of 2')
     // same operator again does not double-count
-    const dup = g.approve(proposal().id, { owner: 'op-a', authenticated: true })
+    const dup = g.approve(proposal().id, { owner: 'op-a', authenticated: true, role: 'operator' })
     expect(dup.approved).toBe(false)
     expect(dup.reason).toContain('already approved')
     // second distinct operator completes the quorum
-    const second = g.approve(proposal().id, { owner: 'op-b', authenticated: true })
+    const second = g.approve(proposal().id, { owner: 'op-b', authenticated: true, role: 'operator' })
     expect(second.approved).toBe(true)
     expect(second.approvers).toEqual(['op-a', 'op-b'])
     expect(second.reason).toContain('two-person rule')
@@ -244,14 +244,14 @@ describe('two-person rule — high-risk needs two distinct operators (§18)', ()
     const g = new ApprovalGate({ operators: ['solo'], store: undefined })
     const r = g.requestApproval(proposal(), 3, HIGH)
     expect(r.requiredApprovals).toBe(1)
-    const a = g.approve(proposal().id, { owner: 'solo', authenticated: true })
+    const a = g.approve(proposal().id, { owner: 'solo', authenticated: true, role: 'operator' })
     expect(a.approved).toBe(true)
   })
 
   test('no operators configured → rule off by default (any authenticated non-author human)', () => {
     const g = new ApprovalGate()
     g.requestApproval(proposal(), 3, HIGH)
-    const a = g.approve(proposal().id, { owner: 'human', authenticated: true })
+    const a = g.approve(proposal().id, { owner: 'human', authenticated: true, role: 'operator' })
     expect(a.approved).toBe(true)
     expect(a.requiredApprovals).toBeUndefined()
   })
@@ -269,10 +269,10 @@ describe('two-person rule — high-risk needs two distinct operators (§18)', ()
     }
     const g1 = new ApprovalGate({ operators: ['op-a', 'op-b'], twoPersonRule: true, store })
     g1.requestApproval(proposal(), 3, HIGH)
-    g1.approve(proposal().id, { owner: 'op-a', authenticated: true })
+    g1.approve(proposal().id, { owner: 'op-a', authenticated: true, role: 'operator' })
     // restart: partial quorum persisted
     const g2 = new ApprovalGate({ operators: ['op-a', 'op-b'], twoPersonRule: true, store })
-    const second = g2.approve(proposal().id, { owner: 'op-b', authenticated: true })
+    const second = g2.approve(proposal().id, { owner: 'op-b', authenticated: true, role: 'operator' })
     expect(second.approved).toBe(true)
     expect(second.approvers).toEqual(['op-a', 'op-b'])
   })
@@ -285,7 +285,7 @@ describe('§18 meta-rule — policy changes invalidate in-flight approvals', () 
     // the operator set changes mid-flight (a policy edit)
     ;(g as unknown as { operators: Set<string> }).operators = new Set(['op-a', 'op-b'])
     g.refreshPolicy()
-    const r = g.approve(proposal().id, { owner: 'op-a', authenticated: true })
+    const r = g.approve(proposal().id, { owner: 'op-a', authenticated: true, role: 'operator' })
     expect(r.approved).toBe(false)
     expect(r.pending).toBe(true)
     expect(r.reason).toContain('policy changed')
@@ -294,7 +294,7 @@ describe('§18 meta-rule — policy changes invalidate in-flight approvals', () 
   test('unchanged policy still approves normally', () => {
     const g = new ApprovalGate({ operators: ['op-a'] })
     g.requestApproval(proposal(), 3, HIGH)
-    const r = g.approve(proposal().id, { owner: 'op-a', authenticated: true })
+    const r = g.approve(proposal().id, { owner: 'op-a', authenticated: true, role: 'operator' })
     expect(r.approved).toBe(true)
   })
 
@@ -303,7 +303,7 @@ describe('§18 meta-rule — policy changes invalidate in-flight approvals', () 
     g.requestApproval(proposal(), 3, HIGH)
     ;(g as unknown as { autoApproveLowRisk: boolean }).autoApproveLowRisk = false
     g.refreshPolicy()
-    const r = g.deny(proposal().id, { owner: 'op-a', authenticated: true })
+    const r = g.deny(proposal().id, { owner: 'op-a', authenticated: true, role: 'operator' })
     expect(r.approved).toBe(false)
     expect(r.reason).toContain('policy changed')
   })
@@ -383,11 +383,11 @@ describe('durable approval state — operator queue survives restart', () => {
     // "restart": brand-new gate over the same store
     const g2 = new ApprovalGate({ store })
     expect(g2.isPending(pr.id)).toBe(true)
-    const r = g2.approve(pr.id, { owner: 'human', authenticated: true })
+    const r = g2.approve(pr.id, { owner: 'human', authenticated: true, role: 'operator' })
     expect(r.approved).toBe(true)
     expect(r.approverKind).toBe('human-operator')
     // decided replay is durable too
-    expect(g2.approve(pr.id, { owner: 'human', authenticated: true }).reason).toContain(
+    expect(g2.approve(pr.id, { owner: 'human', authenticated: true, role: 'operator' }).reason).toContain(
       'recorded decision',
     )
   })
@@ -397,9 +397,9 @@ describe('durable approval state — operator queue survives restart', () => {
     const g1 = new ApprovalGate({ store })
     const pr = proposal()
     g1.requestApproval(pr, 3, HIGH)
-    g1.approve(pr.id, { owner: 'human', authenticated: true })
+    g1.approve(pr.id, { owner: 'human', authenticated: true, role: 'operator' })
     const g2 = new ApprovalGate({ store })
-    const replay = g2.approve(pr.id, { owner: 'human', authenticated: true })
+    const replay = g2.approve(pr.id, { owner: 'human', authenticated: true, role: 'operator' })
     expect(replay.approved).toBe(true)
     expect(replay.reason).toContain('recorded decision')
   })
@@ -425,7 +425,7 @@ describe('durable approval state — operator queue survives restart', () => {
     const g = new ApprovalGate({ store: throwing })
     const pr = g.requestApproval(proposal(), 3, HIGH)
     expect(pr.pending).toBe(true)
-    const r = g.approve(proposal().id, { owner: 'human', authenticated: true })
+    const r = g.approve(proposal().id, { owner: 'human', authenticated: true, role: 'operator' })
     expect(r.approved).toBe(true) // in-memory still works
   })
 })

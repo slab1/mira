@@ -191,3 +191,162 @@ describe('gaps: static web', () => {
     expect(text).toContain('Mira')
   }, 15_000)
 })
+
+// ── WebSocket auth + /metrics access control ──────────────────────────────
+// Lives here rather than in its own file so the suite boots exactly ONE server:
+// two full server boots in parallel starved each other and pushed the
+// per-test 5s budget over on the providers test (observed flake).
+describe('gaps: WebSocket authentication', () => {
+  /** Collect messages until `pred` matches, or resolve null on timeout. */
+  function collect(
+    ws: WebSocket,
+    pred: (m: { type?: string }) => boolean,
+    timeoutMs = 5000,
+  ): Promise<{ type?: string } | null> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        ws.removeEventListener('message', onMsg)
+        resolve(null)
+      }, timeoutMs)
+      function onMsg(e: MessageEvent) {
+        let parsed: { type?: string }
+        try {
+          parsed = JSON.parse(String(e.data))
+        } catch {
+          return
+        }
+        if (!pred(parsed)) return
+        clearTimeout(timer)
+        ws.removeEventListener('message', onMsg)
+        resolve(parsed)
+      }
+      ws.addEventListener('message', onMsg)
+    })
+  }
+
+  function connected(ws: WebSocket): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('ws open timeout')), 5000)
+      ws.addEventListener('open', () => {
+        clearTimeout(t)
+        resolve()
+      })
+      ws.addEventListener('error', () => {
+        clearTimeout(t)
+        reject(new Error('ws error'))
+      })
+    })
+  }
+
+  test('valid bearer token activates the socket (heartbeat received)', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}/`, {
+      headers: { Origin: 'https://slab1.github.io', ...AUTH },
+    } as unknown as string)
+    await connected(ws)
+    expect(await collect(ws, (m) => m.type === 'server.heartbeat')).not.toBeNull()
+    ws.close()
+  })
+
+  test('invalid bearer token does NOT activate the socket', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}/`, {
+      headers: { Origin: 'https://slab1.github.io', Authorization: 'Bearer definitely-not-valid' },
+    } as unknown as string)
+    await connected(ws)
+    // No activation => no heartbeat. It stays open until the 20s auth timeout,
+    // which this test deliberately does not wait for.
+    expect(await collect(ws, (m) => m.type === 'server.heartbeat', 2000)).toBeNull()
+    ws.close()
+  })
+
+  test('absent Authorization header does NOT activate the socket', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}/`, {
+      headers: { Origin: 'https://slab1.github.io' },
+    } as unknown as string)
+    await connected(ws)
+    expect(await collect(ws, (m) => m.type === 'server.heartbeat', 2000)).toBeNull()
+    ws.close()
+  })
+
+  test('pending socket activates on a valid in-band {type:"auth"} message', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}/`, {
+      headers: { Origin: 'https://slab1.github.io' },
+    } as unknown as string)
+    await connected(ws)
+    ws.send(JSON.stringify({ type: 'auth', token: TOKEN }))
+    expect(await collect(ws, (m) => m.type === 'server.heartbeat')).not.toBeNull()
+    ws.close()
+  })
+
+  test('a bad token in an auth message leaves the socket pending', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}/`, {
+      headers: { Origin: 'https://slab1.github.io' },
+    } as unknown as string)
+    await connected(ws)
+    ws.send(JSON.stringify({ type: 'auth', token: 'nope' }))
+    expect(await collect(ws, (m) => m.type === 'server.heartbeat', 2000)).toBeNull()
+    ws.close()
+  })
+
+  test('malformed payloads neither crash nor activate the socket', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}/`, {
+      headers: { Origin: 'https://slab1.github.io' },
+    } as unknown as string)
+    await connected(ws)
+    ws.send('not json at all')
+    ws.send(JSON.stringify({ type: 'auth', token: 12345 }))
+    ws.send(JSON.stringify({ type: 'unrelated' }))
+    expect(await collect(ws, (m) => m.type === 'server.heartbeat', 2000)).toBeNull()
+    ws.close()
+  })
+
+  test('a later valid auth message still activates after junk', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}/`, {
+      headers: { Origin: 'https://slab1.github.io' },
+    } as unknown as string)
+    await connected(ws)
+    ws.send('garbage')
+    ws.send(JSON.stringify({ type: 'auth', token: 'wrong' }))
+    await new Promise((r) => setTimeout(r, 200))
+    ws.send(JSON.stringify({ type: 'auth', token: TOKEN }))
+    expect(await collect(ws, (m) => m.type === 'server.heartbeat')).not.toBeNull()
+    ws.close()
+  })
+})
+
+describe('gaps: /metrics access control', () => {
+  test('unauthenticated /metrics is 401', async () => {
+    const res = await fetch(`${BASE}/metrics`)
+    expect(res.status).toBe(401)
+  })
+
+  test('invalid token is 401', async () => {
+    const res = await fetch(`${BASE}/metrics`, {
+      headers: { Authorization: 'Bearer definitely-not-valid' },
+    })
+    expect(res.status).toBe(401)
+  })
+
+  test('/metrics with a valid token serves Prometheus text', async () => {
+    const res = await fetch(`${BASE}/metrics`, { headers: AUTH })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/plain')
+    const body = await res.text()
+    expect(body).toContain('http_requests_total')
+    expect(body).toContain('gateway_cost_total')
+  })
+
+  test('/healthz stays public for uptime probes', async () => {
+    const res = await fetch(`${BASE}/healthz`)
+    expect(res.status).toBe(200)
+  })
+
+  test('/metrics is not reachable through a health-path traversal', async () => {
+    // No credentials: /healthz is public, so if a traversal could smuggle the
+    // metrics path through the public set, it would be served.
+    for (const p of ['/healthz/../metrics', '/healthz%2f..%2fmetrics']) {
+      const res = await fetch(`${BASE}${p}`)
+      expect(res.status).toBe(401)
+      expect(await res.text()).not.toContain('gateway_cost_total')
+    }
+  })
+})

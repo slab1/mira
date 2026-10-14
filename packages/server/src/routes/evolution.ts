@@ -38,6 +38,7 @@ import { ImprovementLedger } from '../evolution/ledger.js'
 import { RiskEngine } from '../evolution/risk.js'
 import { selectLevel, requiresApproval, AutonomyLevels } from '../evolution/autonomy.js'
 import { ApprovalGate, createSqliteApprovalStore } from '../evolution/approval.js'
+import type { Role } from '../auth/roles.js'
 import { ResourceLimits } from '../evolution/resources.js'
 import { SecurityValidator } from '../evolution/security.js'
 import { RollbackManager } from '../evolution/rollback.js'
@@ -81,6 +82,12 @@ export interface EvolutionRouteDeps {
    * real, authenticated human decision.
    */
   resolveOwner?: (token: string) => string | undefined
+  /**
+   * RBAC role for the caller's bearer token. Approval is a capability: the gate
+   * enforces it, and this is how the route establishes it. A `viewer` key must
+   * never be able to authorize a change.
+   */
+  resolveRole?: (token: string) => Role
   /** Auto-canary: forwarded to the proposal-routes promote handler */
   canaryStart?: (affectedEngine: string) => { canaryId: string } | null
   /** §20 complexity counters over live systems (engines, tools, deps, …) —
@@ -1308,6 +1315,10 @@ export function mountEvolutionRoutes(
     const identity = {
       owner: owner ?? 'unauthenticated',
       authenticated: Boolean(owner),
+      // Establish the approver capability from the caller's role. Resolved only
+      // for authenticated callers; an unknown token yields no role and the gate
+      // fails closed.
+      role: owner ? deps.resolveRole?.(bearer) : undefined,
     }
     if (!identity.authenticated) {
       return c.json(
@@ -1464,6 +1475,7 @@ export function mountEvolutionRoutes(
     const identity = {
       owner: owner ?? 'unauthenticated',
       authenticated: Boolean(owner),
+      role: owner ? deps.resolveRole?.(bearer) : undefined,
     }
     if (!identity.authenticated) {
       return c.json({ error: 'denial requires an authenticated caller', denied: false, id }, 401)

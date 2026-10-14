@@ -31,6 +31,7 @@ import { requiresApproval, AutonomyLevels } from './autonomy.js'
 import { appendDecision } from '../learning/ledger.js'
 import type { MiraDB } from '../storage/db.js'
 import { createHash } from 'node:crypto'
+import { roleAtLeast, type Role } from '../auth/roles.js'
 
 export interface ApprovalRequest {
   id: string // proposal.id
@@ -80,6 +81,16 @@ export interface ApproverIdentity {
   owner: string
   /** True only when `owner` came from verified credentials. */
   authenticated: boolean
+  /**
+   * RBAC role resolved from the caller's credentials. Approval authority is a
+   * capability, so it is enforced here — in the domain object — rather than only
+   * in HTTP middleware: the gate is reachable from more than the route (tools,
+   * orchestration, future callers), and a capability that is checked in one
+   * caller is not enforced anywhere.
+   *
+   * Omitting it is treated as "capability not established" and fails closed.
+   */
+  role?: Role
 }
 
 /**
@@ -93,6 +104,16 @@ export interface ApprovalStore {
   savePending(req: ApprovalRequest): void
   deletePending(id: string): void
   saveDecided(id: string, result: ApprovalResult): void
+  /**
+   * Atomically record a decision AND clear the pending request in one
+   * transaction. Without this, a crash between `deletePending` and
+   * `saveDecided` leaves the case in neither queue: the operator's request
+   * vanishes and no decision is replayable — a silent lost approval.
+   *
+   * Optional so existing stores keep working; callers fall back to the
+   * two-step sequence when it is absent.
+   */
+  commitDecision?(id: string, result: ApprovalResult): void
 }
 
 /** SQLite-backed store — write-through, fail-soft at the call sites. */
@@ -112,6 +133,23 @@ export function createSqliteApprovalStore(db: MiraDB): ApprovalStore {
     `INSERT OR REPLACE INTO evolution_approvals (id, kind, payload, updated_at) VALUES (?, ?, ?, ?)`,
   )
   return {
+    commitDecision(id, result) {
+      // One transaction: the decision lands and the pending row disappears
+      // atomically, so a crash can never strand a request in neither queue.
+      try {
+        const tx = sqlite.transaction(() => {
+          sqlite
+            .prepare(`DELETE FROM evolution_approvals WHERE id = ? AND kind = 'pending'`)
+            .run(id)
+          sqlite
+            .prepare(
+              `INSERT OR REPLACE INTO evolution_approvals (id, kind, payload, updated_at) VALUES (?, 'decided', ?, ?)`,
+            )
+            .run(id, JSON.stringify(result), Date.now())
+        })
+        tx()
+      } catch {}
+    },
     loadPending() {
       try {
         const rows = sqlite
@@ -197,6 +235,13 @@ export class ApprovalGate {
   private decided = new Map<string, ApprovalResult>()
   private twoPersonRule: boolean
   private agingMs: number
+  /** Minimum RBAC role that may approve/deny. Approval is a capability, and it
+   *  is enforced here so it holds for every caller, not just the HTTP route. */
+  private minApproverRole: Role
+  /** Pending requests older than this can no longer be decided — a decision
+   *  must be made against current evidence, not evidence the operator last saw
+   *  months ago. 0/undefined disables expiry. */
+  private maxRequestAgeMs: number
   /** Aging dedupe: id → last emission bucket, so a pending item notifies once
    *  per aging window, not on every queue read. */
   private agingEmitted = new Map<string, number>()
@@ -249,6 +294,18 @@ export class ApprovalGate {
     twoPersonRule?: boolean
     agingMs?: number
     store?: ApprovalStore
+    /**
+     * Minimum RBAC role permitted to approve/deny. Default 'operator' — a
+     * read-only `viewer` key must never be able to authorize a change, even if
+     * the HTTP route's RBAC gate is bypassed or another caller reaches the gate.
+     * Pass 'viewer' only on deliberately open single-operator deployments.
+     */
+    minApproverRole?: Role
+    /**
+     * Pending requests older than this are refused (stale evidence). Default
+     * 24h; 0 disables.
+     */
+    maxRequestAgeMs?: number
   }) {
     this.bus = opts?.bus
     this.rootDir = opts?.rootDir
@@ -267,6 +324,8 @@ export class ApprovalGate {
     // single operator a quorum of 2 is a deadlock, not a rule.
     this.twoPersonRule = opts?.twoPersonRule ?? (this.operators?.size ?? 0) >= 2
     this.agingMs = opts?.agingMs ?? 3_600_000
+    this.minApproverRole = opts?.minApproverRole ?? 'operator'
+    this.maxRequestAgeMs = opts?.maxRequestAgeMs ?? 24 * 3_600_000
     this.refreshPolicy()
     if (opts?.store) {
       this.store = opts.store
@@ -418,6 +477,36 @@ export class ApprovalGate {
     }
   }
 
+  /**
+   * Capabilities every approver must hold, checked identically by approve() and
+   * deny() so the two paths can never drift apart.
+   *
+   * Returns null when the identity may act, or a rejection reason.
+   */
+  private checkCapabilities(
+    identity: ApproverIdentity | undefined,
+    req: ApprovalRequest | undefined,
+    verb: 'approve' | 'deny',
+  ): string | null {
+    if (!identity?.authenticated) {
+      return `${verb} rejected: approver identity is not authenticated`
+    }
+    // Capability check — fails closed when the role was never resolved, so a
+    // caller that forgets to pass it cannot approve by omission.
+    if (!identity.role) {
+      return `${verb} rejected: approver capability not established (missing role)`
+    }
+    if (!roleAtLeast(identity.role, this.minApproverRole)) {
+      return `${verb} rejected: role "${identity.role}" lacks the "${this.minApproverRole}" approval capability`
+    }
+    // Stale evidence: a decision must be made against what the operator can see
+    // now, not against a request that has been sitting for months.
+    if (req && this.maxRequestAgeMs > 0 && Date.now() - req.requestedAt > this.maxRequestAgeMs) {
+      return `${verb} refused: approval request expired (raised ${Math.round((Date.now() - req.requestedAt) / 3_600_000)}h ago, limit ${Math.round(this.maxRequestAgeMs / 3_600_000)}h) — re-raise the proposal to be decided against current evidence`
+    }
+    return null
+  }
+
   approve(id: string, identity: ApproverIdentity): ApprovalResult {
     const prior = this.decided.get(id)
     if (prior) return { ...prior, reason: `${prior.reason ?? 'decided'} (recorded decision)` }
@@ -436,6 +525,12 @@ export class ApprovalGate {
         pending: true,
         reason: 'approval rejected: approver identity is not authenticated',
       }
+    }
+
+    // Capability + staleness gate, shared with deny() so the paths cannot drift.
+    const capabilityError = this.checkCapabilities(identity, req, 'approve')
+    if (capabilityError) {
+      return { approved: false, pending: true, reason: capabilityError }
     }
 
     // §18 meta-rule: the approval policy changed while this request was
@@ -505,9 +600,6 @@ export class ApprovalGate {
     req.approver = approver
     this.emit(req.proposal, req.level, req.risk, 'approved', approver)
     this.pending.delete(id)
-    try {
-      this.store?.deletePending(id)
-    } catch {}
     // Decision log — why approved, with risk evidence; the human operator is
     // the authority of record. Two-person rule records both operators.
     try {
@@ -537,17 +629,28 @@ export class ApprovalGate {
           : 'approved by human operator',
     }
     this.decided.set(id, result)
+    // Durable transition: record the decision and clear the pending request
+    // atomically, so a crash between the two writes cannot strand the case in
+    // neither queue (a silently lost approval).
     try {
-      this.store?.saveDecided(id, result)
+      if (this.store?.commitDecision) this.store.commitDecision(id, result)
+      else {
+        this.store?.deletePending(id)
+        this.store?.saveDecided(id, result)
+      }
     } catch {}
     return result
   }
 
   deny(id: string, identity: ApproverIdentity): ApprovalResult {
-    if (!identity?.authenticated) {
-      return { approved: false, reason: 'denial rejected: approver identity is not authenticated' }
+    const approver = identity?.owner ?? 'unauthenticated'
+    const reqForCaps = this.pending.get(id)
+    // Same capability + staleness gate as approve() — an unauthorized caller must
+    // not be able to deny a proposal simply by reaching deny() first.
+    const capabilityError = this.checkCapabilities(identity, reqForCaps, 'deny')
+    if (capabilityError) {
+      return { approved: false, approver, reason: capabilityError }
     }
-    const approver = identity.owner
     // Same operator restriction as approve() — only designated operators.
     if (this.operators && !this.operators.has(approver)) {
       return {
@@ -557,7 +660,7 @@ export class ApprovalGate {
     }
     // Same meta-rule as approve(): a policy edit mid-flight invalidates the
     // case, so a denial cannot be recorded under stale rules either.
-    const req = this.pending.get(id)
+    const req = reqForCaps
     if (!req) return { approved: false, approver, reason: 'no pending' }
     if (req.policyFingerprint && req.policyFingerprint !== this.fingerprint) {
       return {
@@ -594,8 +697,13 @@ export class ApprovalGate {
       reason: 'denied by human operator',
     }
     this.decided.set(id, result)
+    // Same atomic transition as approve() — see the comment there.
     try {
-      this.store?.saveDecided(id, result)
+      if (this.store?.commitDecision) this.store.commitDecision(id, result)
+      else {
+        this.store?.deletePending(id)
+        this.store?.saveDecided(id, result)
+      }
     } catch {}
     return result
   }
