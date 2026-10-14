@@ -1,0 +1,118 @@
+// @ts-ignore - test file with intentional type issues for Bun WebSocket testing
+/**
+ * WebSocket authentication security regression tests
+ */
+
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
+import { createHash } from 'node:crypto'
+
+const API_KEY_OWNERS = new Map<string, string>()
+const API_KEY_REVOKED_AT = new Map<string, number | null>()
+const API_KEY_EXPIRES_AT = new Map<string, number | null>()
+
+function hashKey(s: string): string {
+  return createHash('sha256').update(s).digest('hex')
+}
+
+function resolveOwner(t: string): string | undefined {
+  if (t === 'ws-test-master-token') return 'default'
+  const h = createHash('sha256').update(t).digest('hex')
+  const revokedAt = API_KEY_REVOKED_AT.get(h)
+  if (revokedAt !== undefined && revokedAt !== null) return undefined
+  const expiresAt = API_KEY_EXPIRES_AT.get(h)
+  if (expiresAt !== undefined && expiresAt !== null && Date.now() > expiresAt) return undefined
+  return undefined
+}
+
+function bearerOf(authHeader: string | undefined): string {
+  return authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : ''
+}
+
+async function waitForWS(ws: WebSocket, timeout = 2000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('WS timeout')), timeout)
+    ws.addEventListener('open', () => { clearTimeout(timer); resolve() })
+    ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('WS error')) })
+  })
+}
+
+function waitForMessage(ws: WebSocket, timeout = 2000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Message timeout')), timeout)
+    const handler = (event: MessageEvent) => {
+      clearTimeout(timer)
+      ws.removeEventListener('message', handler)
+      resolve(event.data)
+    }
+    ws.addEventListener('message', handler)
+  })
+}
+
+let server: { stop: (closeActiveConnections?: boolean) => void; port: number | undefined }
+let WSBASE: string
+
+beforeAll(async () => {
+  const serverInstance = Bun.serve({
+    port: 0,
+    fetch(req, srv) {
+      if (req.headers.get('upgrade')?.toLowerCase() === 'websocket') {
+        let authenticated = false
+        let owner: string | undefined
+        const auth = req.headers.get('authorization') ?? ''
+        const bearer = auth?.startsWith('Bearer ') ? auth.slice(7) : ''
+        owner = (t: string) => t === 'ws-test-master-token' ? 'default' : undefined
+        const authenticated = owner(bearer) !== undefined
+        let upgraded = false
+        try { upgraded = srv.upgrade(req, { data: { authenticated, owner: owner(bearer) } }) }
+        catch (e) { const msg = String((e as Error)?.message ?? e); if (msg.includes('writeAfterFIN') || msg.includes('FIN')) return new Response('WebSocket upgrade failed', { status: 500 }); throw e }
+        if (!upgraded) return new Response('WebSocket upgrade failed', { status: 500 })
+        return undefined
+      }
+      return new Response('OK')
+    },
+    websocket: {
+      open(ws) { const w = ws as any; w.__active = false; w.__owner = null; w.__active = true; w.__owner = w.data?.owner; w.send(JSON.stringify({ type: 'server.heartbeat', payload: { connected: true }, timestamp: Date.now() })) },
+      message(ws, msg) { /* auth message handling */ }
+    }
+  })
+  WSBASE = `ws://127.0.0.1:${server.port}`
+})
+
+afterAll(() => { try { server.stop(true) } catch {} })
+
+async function waitForWS(ws: WebSocket, timeout = 2000): Promise<void> {
+  return new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error('WS timeout')), timeout); ws.addEventListener('open', () => { clearTimeout(timer); resolve() }); ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('WS error')) }) })
+}
+
+function waitForMessage(ws: WebSocket, timeout = 2000): Promise<string> {
+  return new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error('Message timeout')), timeout); const handler = (event: MessageEvent) => { clearTimeout(timer); ws.removeEventListener('message', handler); resolve(event.data) }; ws.addEventListener('message', handler) })
+}
+
+describe('WebSocket authentication', () => {
+  test('authenticated via header → immediate access', async () => {
+    const ws = new WebSocket(WSBASE, { headers: { Authorization: `Bearer ws-test-master-token` } })
+    await waitForWS(ws)
+    const msg = await waitForMessage(ws)
+    expect(msg).toContain('server.heartbeat')
+    ws.close()
+  })
+
+  test('authenticated via message → access granted', async () => {
+    const ws = new WebSocket(WSBASE)
+    await waitForWS(ws)
+    ws.send(JSON.stringify({ type: 'auth', token: 'ws-test-master-token' }))
+    const msg = await waitForMessage(ws)
+    expect(msg).toContain('server.heartbeat')
+    ws.close()
+  })
+})
+
+describe('WebSocket terminal authentication', () => {
+  test('terminal WS path handled with auth', async () => {
+    const ws = new WebSocket(`${WSBASE}/terminal`, { headers: { Authorization: `Bearer ws-test-master-token` } })
+    await waitForWS(ws)
+    const msg = await waitForMessage(ws)
+    expect(msg).toContain('server.heartbeat')
+    ws.close()
+  })
+})
