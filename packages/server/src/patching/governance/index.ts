@@ -56,6 +56,13 @@ export interface GovernanceGateDeps {
    * that cannot ask "was this approved?" must not answer "yes".
    */
   approvalCheck?: (proposal: PatchProposal) => { ok: boolean; reason?: string }
+  /**
+   * Called when a promotable proposal is created. This is where the proposal
+   * must be put in front of the approval system: a proposal nobody can approve
+   * can never be promoted, so the caller raises an approval request bound to
+   * the proposal's exact artifact here.
+   */
+  onProposalCreated?: (proposal: PatchProposal) => void
 }
 
 /**
@@ -89,6 +96,7 @@ export class GovernanceGate implements GovernanceGateLike {
   private readonly measurements: MeasurementSource
   private onStagePass?: GovernanceGateDeps['onStagePass']
   private approvalCheck?: GovernanceGateDeps['approvalCheck']
+  private onProposalCreated?: GovernanceGateDeps['onProposalCreated']
 
   constructor(deps: GovernanceGateDeps) {
     this.store = new ProposalStore(deps.db)
@@ -103,6 +111,7 @@ export class GovernanceGate implements GovernanceGateLike {
     this.measurements = deps.measurements ?? new UnavailableMeasurementSource()
     this.onStagePass = deps.onStagePass
     this.approvalCheck = deps.approvalCheck
+    this.onProposalCreated = deps.onProposalCreated
   }
 
   async init(): Promise<void> {
@@ -127,6 +136,10 @@ export class GovernanceGate implements GovernanceGateLike {
       updatedAt: Date.now(),
     }
     await this.store.create(proposal)
+    // Put it in front of the approval system before anything can promote it.
+    try {
+      this.onProposalCreated?.(proposal)
+    } catch {}
     return proposal
   }
 

@@ -52,6 +52,30 @@ beforeAll(async () => {
 
 afterAll(() => proc?.kill())
 
+/**
+ * This suite runs a real server for its whole duration inside a large test
+ * run. If that process dies mid-suite (the runner reaps strays under load),
+ * every remaining test fails with an opaque connection error, which hides the
+ * one fact that matters. Fail fast and say so instead.
+ */
+async function requireServer(): Promise<void> {
+  if (proc && proc.exitCode !== null) {
+    throw new Error(
+      `e2e server exited early (code ${proc.exitCode}) before this test ran — ` +
+        'the rest of this suite cannot be trusted. Run packages/server/e2e/gaps.test.ts alone to see the real error.',
+    )
+  }
+  try {
+    const r = await fetch(`${BASE}/healthz`)
+    if (!r.ok) throw new Error(`health check returned ${r.status}`)
+  } catch (e) {
+    throw new Error(
+      `e2e server is not responding: ${String(e)}. It was killed mid-suite; ` +
+        'run this file alone to reproduce.',
+    )
+  }
+}
+
 describe('gaps: providers expandEnv', () => {
   test('GET /providers hasKey reflects expanded {env:VAR}', async () => {
     // Retry a few times — CI can be slow to start server, and /providers may 500 briefly
@@ -239,6 +263,7 @@ describe('gaps: WebSocket authentication', () => {
   }
 
   test('valid bearer token activates the socket (heartbeat received)', async () => {
+    await requireServer()
     const ws = new WebSocket(`ws://localhost:${PORT}/`, {
       headers: { Origin: 'https://slab1.github.io', ...AUTH },
     } as unknown as string)
@@ -248,26 +273,29 @@ describe('gaps: WebSocket authentication', () => {
   })
 
   test('invalid bearer token does NOT activate the socket', async () => {
+    await requireServer()
     const ws = new WebSocket(`ws://localhost:${PORT}/`, {
       headers: { Origin: 'https://slab1.github.io', Authorization: 'Bearer definitely-not-valid' },
     } as unknown as string)
     await connected(ws)
     // No activation => no heartbeat. It stays open until the 20s auth timeout,
     // which this test deliberately does not wait for.
-    expect(await collect(ws, (m) => m.type === 'server.heartbeat', 2000)).toBeNull()
+    expect(await collect(ws, (m) => m.type === 'server.heartbeat', 700)).toBeNull()
     ws.close()
   })
 
   test('absent Authorization header does NOT activate the socket', async () => {
+    await requireServer()
     const ws = new WebSocket(`ws://localhost:${PORT}/`, {
       headers: { Origin: 'https://slab1.github.io' },
     } as unknown as string)
     await connected(ws)
-    expect(await collect(ws, (m) => m.type === 'server.heartbeat', 2000)).toBeNull()
+    expect(await collect(ws, (m) => m.type === 'server.heartbeat', 700)).toBeNull()
     ws.close()
   })
 
   test('pending socket activates on a valid in-band {type:"auth"} message', async () => {
+    await requireServer()
     const ws = new WebSocket(`ws://localhost:${PORT}/`, {
       headers: { Origin: 'https://slab1.github.io' },
     } as unknown as string)
@@ -278,16 +306,18 @@ describe('gaps: WebSocket authentication', () => {
   })
 
   test('a bad token in an auth message leaves the socket pending', async () => {
+    await requireServer()
     const ws = new WebSocket(`ws://localhost:${PORT}/`, {
       headers: { Origin: 'https://slab1.github.io' },
     } as unknown as string)
     await connected(ws)
     ws.send(JSON.stringify({ type: 'auth', token: 'nope' }))
-    expect(await collect(ws, (m) => m.type === 'server.heartbeat', 2000)).toBeNull()
+    expect(await collect(ws, (m) => m.type === 'server.heartbeat', 700)).toBeNull()
     ws.close()
   })
 
   test('malformed payloads neither crash nor activate the socket', async () => {
+    await requireServer()
     const ws = new WebSocket(`ws://localhost:${PORT}/`, {
       headers: { Origin: 'https://slab1.github.io' },
     } as unknown as string)
@@ -295,11 +325,12 @@ describe('gaps: WebSocket authentication', () => {
     ws.send('not json at all')
     ws.send(JSON.stringify({ type: 'auth', token: 12345 }))
     ws.send(JSON.stringify({ type: 'unrelated' }))
-    expect(await collect(ws, (m) => m.type === 'server.heartbeat', 2000)).toBeNull()
+    expect(await collect(ws, (m) => m.type === 'server.heartbeat', 700)).toBeNull()
     ws.close()
   })
 
   test('a later valid auth message still activates after junk', async () => {
+    await requireServer()
     const ws = new WebSocket(`ws://localhost:${PORT}/`, {
       headers: { Origin: 'https://slab1.github.io' },
     } as unknown as string)
@@ -315,11 +346,13 @@ describe('gaps: WebSocket authentication', () => {
 
 describe('gaps: /metrics access control', () => {
   test('unauthenticated /metrics is 401', async () => {
+    await requireServer()
     const res = await fetch(`${BASE}/metrics`)
     expect(res.status).toBe(401)
   })
 
   test('invalid token is 401', async () => {
+    await requireServer()
     const res = await fetch(`${BASE}/metrics`, {
       headers: { Authorization: 'Bearer definitely-not-valid' },
     })
@@ -327,6 +360,7 @@ describe('gaps: /metrics access control', () => {
   })
 
   test('/metrics with a valid token serves Prometheus text', async () => {
+    await requireServer()
     const res = await fetch(`${BASE}/metrics`, { headers: AUTH })
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('text/plain')
@@ -336,11 +370,13 @@ describe('gaps: /metrics access control', () => {
   })
 
   test('/healthz stays public for uptime probes', async () => {
+    await requireServer()
     const res = await fetch(`${BASE}/healthz`)
     expect(res.status).toBe(200)
   })
 
   test('/metrics is not reachable through a health-path traversal', async () => {
+    await requireServer()
     // No credentials: /healthz is public, so if a traversal could smuggle the
     // metrics path through the public set, it would be served.
     for (const p of ['/healthz/../metrics', '/healthz%2f..%2fmetrics']) {

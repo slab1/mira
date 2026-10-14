@@ -52,7 +52,8 @@ import type { LatencyTracker } from '../patching/latency.js'
 import { RollbackManager } from '../evolution/rollback.js'
 import { ResourceLimits } from '../evolution/resources.js'
 import { ImprovementLedger } from '../evolution/ledger.js'
-import { authorizePromotion } from '../evolution/approval.js'
+import { authorizePromotion, raiseApprovalForArtifact } from '../evolution/approval.js'
+import type { ImprovementProposal } from '../evolution/proposal.js'
 import { createAgentMetrics } from '../agents/metrics.js'
 import { createMemoryQualityTracker } from './quality.js'
 import {
@@ -150,6 +151,28 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
     // hashed here and matched against approvals recorded by the ApprovalGate.
     approvalCheck: (proposal) =>
       authorizePromotion({ targetFile: proposal.targetFile, change: proposal.change }),
+    // A proposal that nobody can approve can never be promoted. The patching
+    // engine creates these, so this is where the change must be raised for
+    // human approval — bound to the exact bytes that would be applied.
+    onProposalCreated: (proposal) => {
+      raiseApprovalForArtifact(
+        {
+          id: proposal.id,
+          title: proposal.reason || `promote ${proposal.targetFile ?? 'candidate'}`,
+          type: 'fix',
+          risk: 'high',
+          priority: 'P0',
+          affectedEngine: proposal.kind ?? 'unknown',
+          evidence: { patchId: proposal.patchId, severity: proposal.severity },
+          expectedImpact: 'apply a verified candidate change',
+          cause: proposal.reason ?? '',
+          confidence: 0.5,
+          createdAt: proposal.createdAt,
+          createdBy: 'patching-engine',
+        } as unknown as ImprovementProposal,
+        { targetFile: proposal.targetFile, change: proposal.change },
+      )
+    },
     // Wire CanaryRunner with workspace, router, and candidate execution enabled
     canary: latencyTracker
       ? new CanaryRunner(latencyTracker, {

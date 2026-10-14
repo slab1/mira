@@ -241,6 +241,38 @@ export function setActiveApprovalGate(gate: ApprovalGate | null): void {
   activeGate = gate
 }
 
+/** The live gate, for callers that need to act on it directly. */
+export function getActiveApprovalGate(): ApprovalGate | null {
+  return activeGate
+}
+
+/**
+ * Raise an approval request for a change that is ABOUT TO BECOME PROMOTABLE,
+ * binding the request to the exact bytes.
+ *
+ * This is the bridge between the two halves of the system. Governance
+ * proposals are created by the patching engine, which never touched the
+ * approval gate; without raising a request here, no approval could ever match
+ * a promotable artifact and the fail-closed promotion gate would block every
+ * promotion permanently.
+ *
+ * The request is raised as high-risk so it always waits for a human: this is
+ * the point where a diff becomes eligible to become a real change.
+ */
+export function raiseApprovalForArtifact(
+  proposal: ImprovementProposal,
+  artifact: ApprovalArtifact,
+): ApprovalResult | null {
+  if (!activeGate) return null
+  return activeGate.requestApproval(proposal, 1, HIGH_RISK, artifact)
+}
+
+const HIGH_RISK: RiskAssessment = {
+  level: 'high',
+  score: 0.9,
+  reasons: ['candidate change is eligible for promotion'],
+}
+
 /** Authorize promoting a candidate change. Used as GovernanceGate's approvalCheck. */
 export function authorizePromotion(artifact: ApprovalArtifact): {
   ok: boolean
