@@ -42,6 +42,8 @@ import {
   createSqliteApprovalStore,
   setActiveApprovalGate,
 } from '../evolution/approval.js'
+import { WARNING_SIGNING_DISABLED, signingEnabled } from '../evolution/approval-signing.js'
+import { warn } from '../util/logger.js'
 import type { Role } from '../auth/roles.js'
 import { ResourceLimits } from '../evolution/resources.js'
 import { SecurityValidator } from '../evolution/security.js'
@@ -368,6 +370,7 @@ export function mountEvolutionRoutes(
   // Publish the gate so the governance promotion pipeline can require an
   // approval bound to the exact change it is about to ship.
   setActiveApprovalGate(approvalGate)
+  if (!signingEnabled()) warn(WARNING_SIGNING_DISABLED)
   const resourceLimits = deps.resourceLimits ?? new ResourceLimits({ bus, db })
   const securityValidator = deps.securityValidator ?? new SecurityValidator({ bus })
   const rollbackManager = deps.rollbackManager ?? new RollbackManager({ db, bus, ledger })

@@ -33,6 +33,14 @@ import type { MiraDB } from '../storage/db.js'
 import { createHash } from 'node:crypto'
 import { roleAtLeast, type Role } from '../auth/roles.js'
 import { artifactHash, type ApprovalArtifact } from './artifact-hash.js'
+import {
+  SIGNING_KEY_ENV,
+  WARNING_SIGNING_DISABLED,
+  signReceipt,
+  signingEnabled,
+  verifyReceipt,
+  type ApprovalReceipt,
+} from './approval-signing.js'
 
 export interface ApprovalRequest {
   id: string // proposal.id
@@ -89,6 +97,14 @@ export interface ApprovalResult {
    * previously-granted approval.
    */
   artifactHash?: string
+  /** When the decision was made. Part of the signed receipt. */
+  decidedAt?: number
+  /**
+   * HMAC over the receipt (see approval-signing.ts). Present only when
+   * MIRA_APPROVAL_SIGNING_KEY is configured. Its absence is NOT a pass: an
+   * unsigned receipt never satisfies `authorizesArtifact` once signing is on.
+   */
+  signature?: string
 }
 
 /**
@@ -388,7 +404,12 @@ export class ApprovalGate {
           // Re-index the artifact binding so approvals recorded before a
           // restart still authorize the same bytes afterwards.
           if (result.artifactHash && result.approver) {
-            this.approvedArtifacts.set(result.artifactHash, { id, approver: result.approver })
+            this.approvedArtifacts.set(result.artifactHash, {
+              id,
+              approver: result.approver,
+              signature: result.signature,
+              decidedAt: result.decidedAt,
+            })
           }
         }
       } catch {}
@@ -562,7 +583,42 @@ export class ApprovalGate {
 
   /** Authenticated human approvals, indexed by the artifact they authorize.
    *  Populated on approve(); this is what the promotion path consults. */
-  private approvedArtifacts = new Map<string, { id: string; approver?: string }>()
+  private approvedArtifacts = new Map<
+    string,
+    { id: string; approver?: string; signature?: string; decidedAt?: number }
+  >()
+
+  /** True when receipts are being signed (MIRA_APPROVAL_SIGNING_KEY set). */
+  private receiptsSigned(): boolean {
+    return signingEnabled()
+  }
+
+  /**
+   * Build the signed receipt for a decision, when one can be built.
+   * Returns undefined for anything that is not an authoritative human approval
+   * of a specific artifact — policy auto-approvals, mocks and denials produce
+   * no receipt because they must never authorize a promotion.
+   */
+  private buildReceipt(
+    id: string,
+    result: ApprovalResult,
+  ): { receipt: ApprovalReceipt; signature: string } | undefined {
+    if (!result.approved || !result.authoritative || !result.approver || !result.artifactHash) {
+      return undefined
+    }
+    if (!this.receiptsSigned()) return undefined
+    const receipt: ApprovalReceipt = {
+      id,
+      approved: true,
+      authoritative: true,
+      approver: result.approver,
+      artifactHash: result.artifactHash,
+      decidedAt: result.decidedAt ?? Date.now(),
+    }
+    const signature = signReceipt(receipt)
+    if (!signature) return undefined
+    return { receipt, signature }
+  }
 
   /**
    * Confirm the request's artifact still hashes to what was recorded. Guards
@@ -602,13 +658,48 @@ export class ApprovalGate {
         reason: `no authoritative human approval for this exact change (artifact ${h}) — an operator must approve it via POST /evolution/approve/:id`,
       }
     }
+    // With signing enabled, a decision only counts if its receipt verifies
+    // against the key. This is what stops someone who can write the database
+    // from minting an approval: the signature needs a key the store does not
+    // contain. Unsigned or altered decisions are refused with an actionable
+    // reason rather than silently accepted.
+    if (this.receiptsSigned()) {
+      if (!hit.signature) {
+        return {
+          ok: false,
+          reason: `approval for ${hit.id} has no signed receipt and ${SIGNING_KEY_ENV} is set — re-approve it so the decision is signed (it was recorded before signing was enabled, or the signature was stripped)`,
+        }
+      }
+      const valid = verifyReceipt(
+        {
+          id: hit.id,
+          approved: true,
+          authoritative: true,
+          approver: hit.approver ?? '',
+          artifactHash: h,
+          decidedAt: hit.decidedAt ?? 0,
+        },
+        hit.signature,
+      )
+      if (!valid) {
+        return {
+          ok: false,
+          reason: `approval receipt for ${hit.id} failed signature verification — the decision was altered after it was recorded, or was signed with a different key`,
+        }
+      }
+    }
     return { ok: true, approver: hit.approver }
   }
 
   /** Record an authoritative approval against the artifact it authorized. */
   private indexApprovedArtifact(req: ApprovalRequest, result: ApprovalResult): void {
     if (!req.artifactHash || !result.approver) return
-    this.approvedArtifacts.set(req.artifactHash, { id: req.id, approver: result.approver })
+    this.approvedArtifacts.set(req.artifactHash, {
+      id: req.id,
+      approver: result.approver,
+      signature: result.signature,
+      decidedAt: result.decidedAt,
+    })
   }
 
   approve(id: string, identity: ApproverIdentity): ApprovalResult {
@@ -728,11 +819,18 @@ export class ApprovalGate {
       approverKind: 'human-operator',
       ...(required > 1 ? { approvers: [...collected], requiredApprovals: required } : {}),
       ...(req.artifactHash ? { artifactHash: req.artifactHash } : {}),
+      decidedAt: Date.now(),
       reason:
         required > 1
           ? 'approved by human operators (two-person rule)'
           : 'approved by human operator',
     }
+    // Sign the receipt when MIRA_APPROVAL_SIGNING_KEY is configured. The
+    // signature is computed before persisting so the stored decision is the
+    // signed one — a receipt can never be added later by whoever can write the
+    // database.
+    const signed = this.buildReceipt(id, result)
+    if (signed) result.signature = signed.signature
     this.decided.set(id, result)
     // Bind the decision to the bytes it authorized so the promotion path can
     // verify it is shipping exactly what was approved.

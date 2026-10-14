@@ -18,11 +18,28 @@
 > as do all of Sprints 3-4 — in particular nothing yet forces GitHub branch
 > protection or an external approval provider, so release governance is unbuilt.
 >
-> **Known limitation, stated plainly:** approval binds the diff by content hash,
-> but the diff is still stored in the same database row the governance pipeline
-> trusts. That is tamper *evidence*, not tamper *proof* — an actor able to write
-> to the store can still forge a row that passes. Closing that needs evidence the
-> gate cannot forge (signed receipts, append-only store, or external approval).
+> **Known limitation, updated 2026-10-14:** the artifact binding was tamper
+> *evidence* only — the diff lives in the same row the pipeline trusts, so an
+> actor who could write the store could forge a row that passed. That is now
+> narrowed: when `MIRA_APPROVAL_SIGNING_KEY` is set, every decision carries an
+> HMAC receipt keyed from the environment and never stored in the database, and
+> promotion refuses any decision whose receipt does not verify. The key is
+> comma-separated (first signs, all verify) so it can be rotated without
+> invalidating existing approvals.
+>
+> What this still does **not** cover:
+>
+> - With the key unset, receipts are unsigned and the forge scenario is fully
+>   open again. The server warns at boot but does not refuse to start, because
+>   doing so would break every existing deployment. **Set this key in any
+>   deployment that enables `MIRA_AUTOPILOT`.**
+> - An attacker who already controls the running process or its environment
+>   still wins — they can read the key. This raises the bar from "write access
+>   to a file" to "access to a secret"; it is not a defence against a
+>   compromised host.
+> - The diff itself is still supplied by the pipeline. Signing proves the
+>   approval was issued for these bytes, not that these bytes are the change
+>   that will actually be applied by a downstream applier.
 
 **My recommendation is to make approval a central, persistent, role-based security control in Mira—not simply an API endpoint that records whether someone approved a proposal.**
 

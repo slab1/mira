@@ -137,6 +137,7 @@ MIRA_API_URL=http://127.0.0.1:4096 MIRA_API_KEY=<key> SLACK_BOT_TOKEN=xoxb-... S
 | `MIRA_VISION_MODEL`                    | Vision model override (default `nvidia/meta/llama-3.2-90b-vision-instruct`)                                                    |
 | `MIRA_LSP_GO_CMD`                      | Custom Go LSP command (default `gopls`)                                                                                        |
 | `MIRA_AUTOPILOT=1`                     | Open PRs for verified self-patches                                                                                             |
+| `MIRA_APPROVAL_SIGNING_KEY`            | Comma-separated secret(s) for signing approval receipts. First key signs, all verify (rotation-safe). Unset = receipts unsigned and forgeable by anyone who can write the DB |
 | `MIRA_TOKEN`                           | Bearer auth in `~/.mira/mira.env` (0o600) — canonical; not `.env` (`.env` is HOST/PORT/CORS/PROVIDER only). An explicit env `MIRA_TOKEN` overrides the file          |
 | `MIRA_NO_AUTOPROVISION=1`              | Opt out of dev auto-provision (no `~/.mira/mira.env` created)                                                                  |
 | `VITE_MIRA_TOKEN`                      | Dev-only fallback for web (gated to `NODE_ENV !== 'production'`, never baked into prod bundle)                                 |
