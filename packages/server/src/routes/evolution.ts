@@ -1319,8 +1319,6 @@ export function mountEvolutionRoutes(
   // ── POST /evolution/approve/:id ──────────────────────────────────
   app.post('/evolution/approve/:id', async (c) => {
     const id = c.req.param('id')
-    const entry = ledger.get(id)
-    if (!entry) return c.json({ error: 'not found', id }, 404)
     // Identity comes from the caller's credentials. A body field named
     // `approver` used to be trusted verbatim, so any caller could record an
     // approval "by" whoever they liked.
@@ -1342,6 +1340,11 @@ export function mountEvolutionRoutes(
         401,
       )
     }
+    // Existence is checked AFTER authentication. Checking it first returned 404
+    // for an unknown id and 401 for a known one, which is an oracle letting an
+    // unauthenticated caller enumerate which proposal ids are real.
+    const entry = ledger.get(id)
+    if (!entry) return c.json({ error: 'not found', id }, 404)
     const result = approvalGate.approve(id, identity)
     // P0 fix: only update ledger verdict when approval is confirmed AND authoritative
     // A denied, non-authoritative, or policy/mock approval must NOT be recorded as verified
@@ -1482,8 +1485,6 @@ export function mountEvolutionRoutes(
   // ── POST /evolution/deny/:id — operator denial (mirror of approve) ──
   app.post('/evolution/deny/:id', async (c) => {
     const id = c.req.param('id')
-    const entry = ledger.get(id)
-    if (!entry) return c.json({ error: 'not found', id }, 404)
     const bearer = c.req.header('authorization')?.startsWith('Bearer ')
       ? c.req.header('authorization')!.slice(7)
       : ''
@@ -1496,6 +1497,9 @@ export function mountEvolutionRoutes(
     if (!identity.authenticated) {
       return c.json({ error: 'denial requires an authenticated caller', denied: false, id }, 401)
     }
+    // Existence after authentication — same enumeration-oracle reason as approve.
+    const entry = ledger.get(id)
+    if (!entry) return c.json({ error: 'not found', id }, 404)
     const result = approvalGate.deny(id, identity)
     // record the denial in the ledger (fail-closed verdict)
     try {
