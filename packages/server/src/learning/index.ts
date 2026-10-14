@@ -52,6 +52,7 @@ import type { LatencyTracker } from '../patching/latency.js'
 import { RollbackManager } from '../evolution/rollback.js'
 import { ResourceLimits } from '../evolution/resources.js'
 import { ImprovementLedger } from '../evolution/ledger.js'
+import { authorizePromotion } from '../evolution/approval.js'
 import { createAgentMetrics } from '../agents/metrics.js'
 import { createMemoryQualityTracker } from './quality.js'
 import {
@@ -144,6 +145,11 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
     db: deps.db,
     bus: deps.bus,
     rootDir: deps.rootDir ?? process.cwd(),
+    // Promotion applies a real change, so it requires an authoritative human
+    // approval bound to the exact diff. Content-addressed: the artifact is
+    // hashed here and matched against approvals recorded by the ApprovalGate.
+    approvalCheck: (proposal) =>
+      authorizePromotion({ targetFile: proposal.targetFile, change: proposal.change }),
     // Wire CanaryRunner with workspace, router, and candidate execution enabled
     canary: latencyTracker
       ? new CanaryRunner(latencyTracker, {

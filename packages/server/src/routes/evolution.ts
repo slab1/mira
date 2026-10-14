@@ -37,7 +37,11 @@ import { evaluate, defaultBaseline, type BaselineMetrics } from '../evolution/ev
 import { ImprovementLedger } from '../evolution/ledger.js'
 import { RiskEngine } from '../evolution/risk.js'
 import { selectLevel, requiresApproval, AutonomyLevels } from '../evolution/autonomy.js'
-import { ApprovalGate, createSqliteApprovalStore } from '../evolution/approval.js'
+import {
+  ApprovalGate,
+  createSqliteApprovalStore,
+  setActiveApprovalGate,
+} from '../evolution/approval.js'
 import type { Role } from '../auth/roles.js'
 import { ResourceLimits } from '../evolution/resources.js'
 import { SecurityValidator } from '../evolution/security.js'
@@ -361,6 +365,9 @@ export function mountEvolutionRoutes(
         return new ApprovalGate({ bus })
       }
     })()
+  // Publish the gate so the governance promotion pipeline can require an
+  // approval bound to the exact change it is about to ship.
+  setActiveApprovalGate(approvalGate)
   const resourceLimits = deps.resourceLimits ?? new ResourceLimits({ bus, db })
   const securityValidator = deps.securityValidator ?? new SecurityValidator({ bus })
   const rollbackManager = deps.rollbackManager ?? new RollbackManager({ db, bus, ledger })
@@ -672,8 +679,17 @@ export function mountEvolutionRoutes(
       effectiveLevel = AutonomyLevels.Suggest
     }
 
-    // Approval gate — emits evolution.approval (uses effectiveLevel, confidence-capped)
-    const approval = approvalGate.requestApproval(proposal, effectiveLevel, risk)
+    // Approval gate — emits evolution.approval (uses effectiveLevel, confidence-capped).
+    // The candidate diff is passed so the approval is bound to these exact
+    // bytes: promotion later asks "was an authoritative human approval
+    // recorded for exactly this change?", content-addressed, so an approval
+    // cannot be spent on a different diff.
+    const approval = approvalGate.requestApproval(
+      proposal,
+      effectiveLevel,
+      risk,
+      candidate ? { targetFile: candidate.targetFile, change: patch } : undefined,
+    )
 
     // Resource limits — per-task/per-agent/per-mission/daily (§13)
     // P1: pass stable idempotency key from proposal ID for durable reservation lifecycle

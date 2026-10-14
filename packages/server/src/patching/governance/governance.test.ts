@@ -73,6 +73,18 @@ let db: DB
 let bus: Bus
 let events: BusEvent[]
 
+/**
+ * Promotion requires an authoritative human approval, so tests that expect to
+ * reach the promoter must opt in explicitly. The default is NO checker, which
+ * is the fail-closed production behaviour — a test that forgets to opt in
+ * fails to promote rather than silently shipping.
+ */
+const approvedForPromotion: GovernanceGateDeps['approvalCheck'] = () => ({ ok: true })
+const notApprovedForPromotion: GovernanceGateDeps['approvalCheck'] = () => ({
+  ok: false,
+  reason: 'not approved',
+})
+
 function gate(overrides: Partial<GovernanceGateDeps> = {}): GovernanceGate {
   return createGovernanceGate({ db, bus, rootDir: process.cwd(), ...overrides })
 }
@@ -278,6 +290,7 @@ describe('GovernanceGate promote — enforced lifecycle', () => {
   test('happy path: auto-derives baseline/candidate from stage metadata → PROMOTED + prUrl + transition', async () => {
     const g = gate({
       ...EVIDENCED_STAGES,
+      approvalCheck: approvedForPromotion,
       promoter: {
         promote: async () => ({ applied: true, prUrl: 'https://github.com/slab1/mira/pull/99' }),
       },
@@ -479,6 +492,7 @@ describe('GovernanceGate promote — enforced lifecycle', () => {
 
   test('explicit opts.baseline/candidate cannot manufacture stage evidence (tests/manual runs)', async () => {
     const g = gate({
+      approvalCheck: approvedForPromotion,
       promoter: { promote: async () => ({ applied: true, prUrl: 'https://x/pr/2' }) },
     })
     const p = await g.createProposal(PATCH, VERIFY)
@@ -551,6 +565,7 @@ describe('GovernanceGate rollback', () => {
   test('rollback from PROMOTED → ROLLED_BACK, records + emits governance events', async () => {
     const g = gate({
       ...EVIDENCED_STAGES,
+      approvalCheck: approvedForPromotion,
       promoter: { promote: async () => ({ applied: true, prUrl: 'https://x/pr/1' }) },
     })
     const p = await g.createProposal(PATCH, VERIFY)

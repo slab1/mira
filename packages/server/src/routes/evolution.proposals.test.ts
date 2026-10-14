@@ -79,6 +79,10 @@ beforeEach(async () => {
     db,
     bus,
     rootDir: process.cwd(),
+    // Promotion requires an authoritative human approval. This suite covers
+    // route mechanics (shape, state persistence), so it opts in explicitly;
+    // the fail-closed path is covered in patching/governance/promote-approval.test.ts.
+    approvalCheck: () => ({ ok: true }),
     // deterministic promote — no git/gh in tests
     promoter: {
       promote: async () => ({ applied: true, prUrl: 'https://github.com/slab1/mira/pull/1' }),

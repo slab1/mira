@@ -7,9 +7,22 @@
 > rejection), **5** (persisted pending requests/decisions) and **6** (atomic
 > decision transitions + stale-request expiry) are now implemented. Sprint 1 item
 > **7** has tests for failed/unauthorized/self/duplicate/expired approvals and
-> restart survival, but not yet for a full hostile-caller matrix. All of Sprints
-> 2-4 remain open — in particular nothing yet binds an approval to an artifact
-> hash, and release governance is unbuilt.
+> restart survival, but not yet for a full hostile-caller matrix.
+>
+> Of Sprint 2, item **4** (bind approval to the artifact hash) and item **5**
+> (enforce approval on the execution/promotion path) are now implemented:
+> `GovernanceGate.promote()` fails closed unless an approval is recorded for the
+> exact bytes it is about to apply. Sprint 2 items **1**, **2**, **3** and **6**
+> (a single centralized risk-to-approval policy shared with the policy engine and
+> autonomy levels, and hard policies that approval cannot override) remain open,
+> as do all of Sprints 3-4 — in particular nothing yet forces GitHub branch
+> protection or an external approval provider, so release governance is unbuilt.
+>
+> **Known limitation, stated plainly:** approval binds the diff by content hash,
+> but the diff is still stored in the same database row the governance pipeline
+> trusts. That is tamper *evidence*, not tamper *proof* — an actor able to write
+> to the store can still forge a row that passes. Closing that needs evidence the
+> gate cannot forge (signed receipts, append-only store, or external approval).
 
 **My recommendation is to make approval a central, persistent, role-based security control in Mira—not simply an API endpoint that records whether someone approved a proposal.**
 

@@ -32,6 +32,7 @@ import { appendDecision } from '../learning/ledger.js'
 import type { MiraDB } from '../storage/db.js'
 import { createHash } from 'node:crypto'
 import { roleAtLeast, type Role } from '../auth/roles.js'
+import { artifactHash, type ApprovalArtifact } from './artifact-hash.js'
 
 export interface ApprovalRequest {
   id: string // proposal.id
@@ -51,6 +52,17 @@ export interface ApprovalRequest {
    *  be re-evaluated under the NEW rules rather than the ones it was raised
    *  under — a policy edit can never smuggle an approval through. */
   policyFingerprint?: string
+  /**
+   * Content hash of the artifact this request authorizes (the exact diff and
+   * target file). The approval is bound to these bytes, not just to the
+   * proposal id: a decision or a promotion whose artifact no longer hashes to
+   * this value is refused, so an approval can never be spent on different
+   * content.
+   */
+  artifactHash?: string
+  /** The artifact itself, retained so the hash can be re-verified at decision
+   *  time rather than trusted from the stored field. */
+  artifact?: { targetFile?: string | null; change?: string | null }
 }
 
 export interface ApprovalResult {
@@ -70,6 +82,13 @@ export interface ApprovalResult {
   /** Two-person rule: distinct operators that approved (mirrors request). */
   approvers?: string[]
   requiredApprovals?: number
+  /**
+   * Hash of the artifact this decision authorized. Persisted with the decision
+   * so an approval survives a restart: the promotion path resolves approvals by
+   * artifact, and without this a restart would silently invalidate every
+   * previously-granted approval.
+   */
+  artifactHash?: string
 }
 
 /**
@@ -186,6 +205,39 @@ export function createSqliteApprovalStore(db: MiraDB): ApprovalStore {
       } catch {}
     },
   }
+}
+
+/**
+ * Process-wide handle on the live ApprovalGate.
+ *
+ * The gate is constructed by mountEvolutionRoutes() while the governance
+ * pipeline is constructed independently in learning/index.ts, so the promotion
+ * path needs a way to reach the one authoritative gate. This follows the
+ * codebase's existing setShared* convention rather than threading the instance
+ * through every constructor.
+ *
+ * Fail-closed: with no gate registered, promotion is refused — a pipeline that
+ * cannot find the approval authority must not assume approval.
+ */
+let activeGate: ApprovalGate | null = null
+
+export function setActiveApprovalGate(gate: ApprovalGate | null): void {
+  activeGate = gate
+}
+
+/** Authorize promoting a candidate change. Used as GovernanceGate's approvalCheck. */
+export function authorizePromotion(artifact: ApprovalArtifact): {
+  ok: boolean
+  reason?: string
+  approver?: string
+} {
+  if (!activeGate) {
+    return {
+      ok: false,
+      reason: 'no approval gate is configured — refusing to promote an unapproved change',
+    }
+  }
+  return activeGate.authorizesArtifact(artifact)
 }
 
 /** Whoever produced the proposal — used to forbid self-approval. */
@@ -331,15 +383,58 @@ export class ApprovalGate {
       this.store = opts.store
       try {
         for (const req of this.store.loadPending()) this.pending.set(req.id, req)
-        for (const { id, result } of this.store.loadDecided()) this.decided.set(id, result)
+        for (const { id, result } of this.store.loadDecided()) {
+          this.decided.set(id, result)
+          // Re-index the artifact binding so approvals recorded before a
+          // restart still authorize the same bytes afterwards.
+          if (result.artifactHash && result.approver) {
+            this.approvedArtifacts.set(result.artifactHash, { id, approver: result.approver })
+          }
+        }
       } catch {}
     }
+  }
+
+  /**
+   * Build and register a pending request. Every request is stamped with the
+   * artifact it authorizes so a later decision — or a promotion — can prove it
+   * is acting on the same bytes the operator saw.
+   */
+  private raisePending(
+    proposal: ImprovementProposal,
+    level: number,
+    risk: RiskAssessment,
+    artifact?: ApprovalArtifact,
+    extra?: Partial<ApprovalRequest>,
+  ): ApprovalRequest {
+    const req: ApprovalRequest = {
+      id: proposal.id,
+      level,
+      risk,
+      proposal,
+      requestedAt: Date.now(),
+      status: 'pending',
+      ...(artifact ? { artifactHash: artifactHash(artifact), artifact: { ...artifact } } : {}),
+      ...extra,
+    }
+    this.pending.set(proposal.id, req)
+    try {
+      this.store?.savePending(req)
+    } catch {}
+    this.emit(proposal, level, risk, 'pending', undefined)
+    return req
   }
 
   requestApproval(
     proposal: ImprovementProposal,
     level: number,
     risk?: RiskAssessment,
+    /**
+     * The change being authorized. Supplying it binds the approval to these
+     * exact bytes; omit it and the approval is bound to the proposal record
+     * only (legacy behaviour, and the promotion path will not accept it).
+     */
+    artifact?: ApprovalArtifact,
   ): ApprovalResult {
     const r: RiskAssessment = risk ?? {
       level: (proposal.risk as RiskAssessment['level']) ?? 'low',
@@ -353,19 +448,7 @@ export class ApprovalGate {
       if (!this.autoApproveLowRisk) {
         // Stricter policy: no autonomous promotion at all — every change
         // requires an explicit authenticated human decision (§18 default hardening).
-        const req: ApprovalRequest = {
-          id: proposal.id,
-          level,
-          risk: r,
-          proposal,
-          requestedAt: Date.now(),
-          status: 'pending',
-        }
-        this.pending.set(proposal.id, req)
-        try {
-          this.store?.savePending(req)
-        } catch {}
-        this.emit(proposal, level, r, 'pending', undefined)
+        this.raisePending(proposal, level, r, artifact)
         return {
           approved: false,
           pending: true,
@@ -393,22 +476,11 @@ export class ApprovalGate {
     // High risk ALWAYS waits for a real human, whatever the mock setting.
     // With the two-person rule on, TWO distinct operators must approve.
     if (r.level === 'high') {
-      const req: ApprovalRequest = {
-        id: proposal.id,
-        level,
-        risk: r,
-        proposal,
-        requestedAt: Date.now(),
-        status: 'pending',
+      const req = this.raisePending(proposal, level, r, artifact, {
         approvers: [],
         requiredApprovals: this.twoPersonRule ? 2 : 1,
         policyFingerprint: this.fingerprint,
-      }
-      this.pending.set(proposal.id, req)
-      try {
-        this.store?.savePending(req)
-      } catch {}
-      this.emit(proposal, level, r, 'pending', undefined)
+      })
       return {
         approved: false,
         pending: true,
@@ -435,19 +507,7 @@ export class ApprovalGate {
           reason: 'mock human approved (medium risk) — not authoritative for high-risk changes',
         }
       }
-      const req: ApprovalRequest = {
-        id: proposal.id,
-        level,
-        risk: r,
-        proposal,
-        requestedAt: Date.now(),
-        status: 'pending',
-      }
-      this.pending.set(proposal.id, req)
-      try {
-        this.store?.savePending(req)
-      } catch {}
-      this.emit(proposal, level, r, 'pending', undefined)
+      this.raisePending(proposal, level, r, artifact)
       return {
         approved: false,
         pending: true,
@@ -457,19 +517,7 @@ export class ApprovalGate {
 
     // Reached when approval is required for a reason not covered above. Stay
     // pending rather than inventing an approver.
-    const req: ApprovalRequest = {
-      id: proposal.id,
-      level,
-      risk: r,
-      proposal,
-      requestedAt: Date.now(),
-      status: 'pending',
-    }
-    this.pending.set(proposal.id, req)
-    try {
-      this.store?.savePending(req)
-    } catch {}
-    this.emit(proposal, level, r, 'pending', undefined)
+    this.raisePending(proposal, level, r, artifact)
     return {
       approved: false,
       pending: true,
@@ -491,6 +539,11 @@ export class ApprovalGate {
     if (!identity?.authenticated) {
       return `${verb} rejected: approver identity is not authenticated`
     }
+    // The artifact must still be the one the operator was shown. The stored
+    // hash is recomputed from the retained artifact rather than trusted, so
+    // mutating either field is detected.
+    const artifactError = this.verifyArtifact(req, verb)
+    if (artifactError) return artifactError
     // Capability check — fails closed when the role was never resolved, so a
     // caller that forgets to pass it cannot approve by omission.
     if (!identity.role) {
@@ -505,6 +558,57 @@ export class ApprovalGate {
       return `${verb} refused: approval request expired (raised ${Math.round((Date.now() - req.requestedAt) / 3_600_000)}h ago, limit ${Math.round(this.maxRequestAgeMs / 3_600_000)}h) — re-raise the proposal to be decided against current evidence`
     }
     return null
+  }
+
+  /** Authenticated human approvals, indexed by the artifact they authorize.
+   *  Populated on approve(); this is what the promotion path consults. */
+  private approvedArtifacts = new Map<string, { id: string; approver?: string }>()
+
+  /**
+   * Confirm the request's artifact still hashes to what was recorded. Guards
+   * the window between "the operator saw this diff" and "a human decided":
+   * if the artifact or its hash is mutated in between, the decision is refused.
+   */
+  private verifyArtifact(req: ApprovalRequest | undefined, verb: string): string | null {
+    if (!req?.artifactHash) return null
+    if (!req.artifact) {
+      return `${verb} refused: the approval artifact is missing but a hash was recorded — refusing to decide on unverifiable content`
+    }
+    const actual = artifactHash(req.artifact)
+    if (actual !== req.artifactHash) {
+      return `${verb} refused: the artifact changed after this approval was raised (expected ${req.artifactHash}, got ${actual}) — re-raise the proposal so the operator reviews the current content`
+    }
+    return null
+  }
+
+  /**
+   * Whether an authoritative human approval exists for exactly this artifact.
+   *
+   * This is the check the promotion path uses. It is content-addressed on
+   * purpose: the promotion pipeline and the approval pipeline use different id
+   * spaces, so a proposal id proves nothing about which bytes are being shipped.
+   * Policy and mock approvals never count — only an authenticated human does.
+   */
+  authorizesArtifact(artifact: ApprovalArtifact): {
+    ok: boolean
+    reason?: string
+    approver?: string
+  } {
+    const h = artifactHash(artifact)
+    const hit = this.approvedArtifacts.get(h)
+    if (!hit) {
+      return {
+        ok: false,
+        reason: `no authoritative human approval for this exact change (artifact ${h}) — an operator must approve it via POST /evolution/approve/:id`,
+      }
+    }
+    return { ok: true, approver: hit.approver }
+  }
+
+  /** Record an authoritative approval against the artifact it authorized. */
+  private indexApprovedArtifact(req: ApprovalRequest, result: ApprovalResult): void {
+    if (!req.artifactHash || !result.approver) return
+    this.approvedArtifacts.set(req.artifactHash, { id: req.id, approver: result.approver })
   }
 
   approve(id: string, identity: ApproverIdentity): ApprovalResult {
@@ -623,12 +727,16 @@ export class ApprovalGate {
       authoritative: true,
       approverKind: 'human-operator',
       ...(required > 1 ? { approvers: [...collected], requiredApprovals: required } : {}),
+      ...(req.artifactHash ? { artifactHash: req.artifactHash } : {}),
       reason:
         required > 1
           ? 'approved by human operators (two-person rule)'
           : 'approved by human operator',
     }
     this.decided.set(id, result)
+    // Bind the decision to the bytes it authorized so the promotion path can
+    // verify it is shipping exactly what was approved.
+    this.indexApprovedArtifact(req, result)
     // Durable transition: record the decision and clear the pending request
     // atomically, so a crash between the two writes cannot strand the case in
     // neither queue (a silently lost approval).

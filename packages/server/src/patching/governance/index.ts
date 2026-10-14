@@ -46,6 +46,16 @@ export interface GovernanceGateDeps {
   measurements?: MeasurementSource
   /** Called when a stage passes — used to stamp memories with elevated provenance. */
   onStagePass?: (proposalId: string, stage: 'benchmark' | 'security' | 'canary') => void
+  /**
+   * Authorizes promotion of a specific candidate. Promotion applies a real
+   * change to the repository, so it must carry a human approval bound to the
+   * exact artifact being shipped.
+   *
+   * Fail-closed: when this is not supplied, promote() refuses with
+   * `approval_check_missing` rather than shipping unapproved changes. A gate
+   * that cannot ask "was this approved?" must not answer "yes".
+   */
+  approvalCheck?: (proposal: PatchProposal) => { ok: boolean; reason?: string }
 }
 
 /**
@@ -78,12 +88,12 @@ export class GovernanceGate implements GovernanceGateLike {
   private regression: RegressionDetector
   private readonly measurements: MeasurementSource
   private onStagePass?: GovernanceGateDeps['onStagePass']
+  private approvalCheck?: GovernanceGateDeps['approvalCheck']
 
   constructor(deps: GovernanceGateDeps) {
     this.store = new ProposalStore(deps.db)
     this.bus = deps.bus
-    this.benchmark = deps.benchmark ?? new BenchmarkRunner()
-    // Fail-closed: scan the proposed change for critical issues (injection,
+    this.benchmark = deps.benchmark ?? new BenchmarkRunner() // Fail-closed: scan the proposed change for critical issues (injection,
     // command injection) instead of passing unreviewed.
     this.security = deps.security ?? new SecurityReview(new SecurityScanner())
     this.canary = deps.canary ?? new CanaryRunner()
@@ -92,6 +102,7 @@ export class GovernanceGate implements GovernanceGateLike {
     this.regression = new RegressionDetector()
     this.measurements = deps.measurements ?? new UnavailableMeasurementSource()
     this.onStagePass = deps.onStagePass
+    this.approvalCheck = deps.approvalCheck
   }
 
   async init(): Promise<void> {
@@ -344,6 +355,29 @@ export class GovernanceGate implements GovernanceGateLike {
       const reason = `regression: ${rr.findings.map((f) => `${f.axis}/${f.metric} +${(f.deltaPct * 100).toFixed(1)}%`).join(', ')}`
       await this.rollback(proposalId, reason)
       return { applied: false, regressionBlocked: true, reason }
+    }
+
+    // 5) Human approval — the LAST gate before the irreversible action.
+    //
+    //    Everything above proves the change was MEASURED (state machine, stage
+    //    receipts, regression). None of it proves a human AUTHORIZED it, and
+    //    the stage evidence is stored in the same row it trusts, so it cannot
+    //    distinguish a genuine pass from a forged one. Approval is the only
+    //    thing standing between a measured candidate and a real change, so it
+    //    is checked here, immediately before the promoter runs.
+    //
+    //    Placed after the other gates on purpose: they are cheaper and their
+    //    reasons are more actionable, so an operator debugging a blocked
+    //    promotion should see the stage failure first.
+    //
+    //    Fail-closed: with no checker wired we cannot prove authorization, and
+    //    a gate that cannot ask "was this approved?" must not answer "yes".
+    if (!this.approvalCheck) {
+      return { applied: false, reason: 'approval_check_missing' }
+    }
+    const approval = this.approvalCheck(proposal)
+    if (!approval?.ok) {
+      return { applied: false, reason: `approval_required:${approval?.reason ?? 'not approved'}` }
     }
 
     const result = await this.promoter.promote(proposal)
