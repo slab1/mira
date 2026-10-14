@@ -154,7 +154,13 @@ export function mountMiddleware(
 
   // Security: optional bearer-token gate
   // /webhooks/github is HMAC-signed (X-Hub-Signature-256), not bearer-authed.
-  const PUBLIC_PATHS = new Set(['/healthz', '/metrics', '/webhooks/github'])
+  // /healthz stays public so orchestrators and uptime probes need no credential.
+  // /metrics is deliberately NOT public: it exposes per-route request counts,
+  // latency histograms, gateway spend (gateway_cost_total) and active_sessions.
+  // Scrapers must send a bearer token. Deployments with no credentials configured
+  // are unaffected — the whole gate below is skipped when REQUIRED_TOKEN is empty
+  // and no API keys are issued.
+  const PUBLIC_PATHS = new Set(['/healthz', '/webhooks/github'])
   const isPublicUiPath = (p: string) => {
     // Normalize traversal: /assets/../session -> /session (not public) (P3-5)
     let normalized = p

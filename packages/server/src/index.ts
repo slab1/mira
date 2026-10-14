@@ -66,6 +66,17 @@ import { mountSessionExtrasRoutes } from './routes/session-extras.js'
 import { mountCommunityRoutes } from './routes/community.js'
 import { mountOrgRoutes, type OrgMembership } from './routes/orgs.js'
 import { sessionVisibleTo } from './auth/session-access.js'
+import {
+  WS_AUTH_TIMEOUT_MS,
+  WS_CLOSE_UNAUTHORIZED,
+  authenticateUpgrade,
+  bearerOf,
+  credentialStillValid,
+  ownerFromAuthMessage,
+  shouldActivateOnOpen,
+  type WSAuthContext,
+} from './ws-auth.js'
+import { deliveryModeFor, referencedSessionIds } from './ws-events.js'
 import { mountToolsRoutes } from './routes/tools-routes.js'
 import { mountWorkspaceRoutes } from './routes/workspace.js'
 import { mountWorkspacesRoutes } from './routes/workspaces.js'
@@ -321,9 +332,6 @@ function resolveRole(token: string): Role {
     if (legacyRole) return legacyRole
   }
   return roleForOwner(owner, new Map()) // default operator for unknown owners
-}
-function bearerOf(authHeader: string | undefined): string {
-  return authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : ''
 }
 function tokenEquals(a: string, b: string): boolean {
   // Hash then compare — always 32 bytes, no length leak via timing (P3-4)
@@ -1267,11 +1275,12 @@ async function main() {
   })
 
   // ── WebSocket ────────────────────────────────────────────────────
-  const WS_AUTH_TIMEOUT_MS = 20_000
   interface MiraWSData {
     authenticated?: boolean
     owner?: string
     isTerminal?: boolean
+    /** Bearer credential this socket authenticated with — kept for revocation revalidation. */
+    token?: string
   }
   interface MiraWS {
     data?: MiraWSData
@@ -1279,6 +1288,8 @@ async function main() {
     __authTimer?: ReturnType<typeof setTimeout>
     __unsub?: () => void
     __owner?: string | null
+    /** Credential the socket activated with; undefined when auth is disabled. */
+    __token?: string
     __proc?: ReturnType<typeof Bun.spawn>
     __ac?: AbortController
     __idleTimer?: ReturnType<typeof setTimeout>
@@ -1287,6 +1298,13 @@ async function main() {
     close(code: number, reason?: string): void
     getBufferedAmount?(): number
   }
+
+  /** Live auth context shared by every WS auth decision (mirrors the HTTP gate). */
+  const wsAuthCtx = (): WSAuthContext => ({
+    requiredToken: REQUIRED_TOKEN,
+    apiKeyCount: API_KEY_OWNERS.size,
+    resolveOwner,
+  })
 
   function evictSlowSocket(ws: MiraWS, reason = 'client too slow') {
     try {
@@ -1306,31 +1324,43 @@ async function main() {
     if (!boundSend(ws, data)) evictSlowSocket(ws)
   }
 
-  function activateSocket(ws: MiraWS, owner?: string) {
+  function activateSocket(ws: MiraWS, owner?: string, token?: string) {
     if (ws.__active) return
     ws.__active = true
     ws.__owner = owner ?? null
+    ws.__token = token
     clearTimeout(ws.__authTimer)
+    const tenancyEnabled = API_KEY_OWNERS.size > 0
     ws.__unsub = bus.subscribeAll((event) => {
       try {
-        let json: string
-        if (API_KEY_OWNERS.size === 0 || !event.sessionID || event.type.startsWith('server.')) {
-          json = JSON.stringify(event)
-        } else {
-          const sid = event.sessionID
-          return void ownerOfSession(sid).then(async (o) => {
-            if (!ws.__active) return
-            if (o === null || o === ws.__owner) {
-              sendToSocket(ws, JSON.stringify(event))
-              return
-            }
-            // Org tenancy (P3.3): same-org members receive each other's events
-            const g = await orgOfSession(sid)
-            if (sessionVisibleTo({ ownerID: o, orgID: g }, ws.__owner, orgOfOwner))
-              sendToSocket(ws, JSON.stringify(event))
-          })
+        const mode = deliveryModeFor(
+          { type: event.type, sessionID: event.sessionID, payload: event.payload },
+          tenancyEnabled,
+        )
+        if (mode === 'drop') return
+        if (mode === 'broadcast') {
+          sendToSocket(ws, JSON.stringify(event))
+          return
         }
-        sendToSocket(ws, json)
+        // Scoped: deliver only if at least one referenced session is visible to
+        // this socket's owner (own sessions, or same-org via P3.3 tenancy).
+        const ids = referencedSessionIds({
+          type: event.type,
+          sessionID: event.sessionID,
+          payload: event.payload,
+        })
+        void Promise.all(
+          ids.map(async (sid) => {
+            const o = await ownerOfSession(sid)
+            if (!ws.__active) return false
+            if (o === null || o === ws.__owner) return true
+            const g = await orgOfSession(sid)
+            return sessionVisibleTo({ ownerID: o, orgID: g }, ws.__owner, orgOfOwner)
+          }),
+        ).then((results) => {
+          if (!ws.__active) return
+          if (results.some(Boolean)) sendToSocket(ws, JSON.stringify(event))
+        })
       } catch {}
     })
     ws.send(
@@ -1342,10 +1372,11 @@ async function main() {
     )
   }
 
-  function activateTerminalSocket(ws: MiraWS, owner?: string) {
+  function activateTerminalSocket(ws: MiraWS, owner?: string, token?: string) {
     if (ws.__active) return
     ws.__active = true
     ws.__owner = owner ?? null
+    ws.__token = token
     clearTimeout(ws.__authTimer)
     ws.send(
       JSON.stringify({
@@ -1466,18 +1497,12 @@ async function main() {
                 headers: { 'content-type': 'application/json' },
               })
             }
-            let authenticated = false
-            let owner: string | undefined
-            if (!REQUIRED_TOKEN && API_KEY_OWNERS.size === 0) {
-              authenticated = true
-            } else {
-              const auth = req.headers.get('authorization') ?? ''
-              owner = resolveOwner(bearerOf(auth))
-              authenticated = owner !== undefined
-            }
+            const authHeader = req.headers.get('authorization') ?? undefined
+            const { authenticated, owner } = authenticateUpgrade(wsAuthCtx(), authHeader)
+            const token = authenticated ? bearerOf(authHeader) : undefined
             let upgraded = false
             try {
-              upgraded = srv.upgrade(req, { data: { authenticated, owner, isTerminal } })
+              upgraded = srv.upgrade(req, { data: { authenticated, owner, isTerminal, token } })
             } catch (e) {
               const msg = String((e as Error)?.message ?? e)
               if (msg.includes('writeAfterFIN') || msg.includes('FIN')) {
@@ -1498,16 +1523,19 @@ async function main() {
           open(ws) {
             const w = ws as object as MiraWS
             w.__active = false
-            const isTerminal = (w.data as MiraWSData | undefined)?.isTerminal === true
-            const needsAuth = !!REQUIRED_TOKEN || API_KEY_OWNERS.size > 0
-            if (!needsAuth || w.data?.authenticated === true) {
-              if (isTerminal) activateTerminalSocket(w, w.data?.owner)
-              else activateSocket(w, w.data?.owner)
+            const data = w.data as MiraWSData | undefined
+            const isTerminal = data?.isTerminal === true
+            if (shouldActivateOnOpen(wsAuthCtx(), data?.authenticated === true)) {
+              if (isTerminal) activateTerminalSocket(w, data?.owner, data?.token)
+              else activateSocket(w, data?.owner, data?.token)
             } else {
               w.__authTimer = setTimeout(() => {
                 if (!w.__active) {
                   try {
-                    w.close(1008, 'unauthorized: auth message not received within timeout')
+                    w.close(
+                      WS_CLOSE_UNAUTHORIZED,
+                      'unauthorized: auth message not received within timeout',
+                    )
                   } catch {}
                 }
               }, WS_AUTH_TIMEOUT_MS)
@@ -1534,15 +1562,30 @@ async function main() {
               event = JSON.parse(raw)
             } catch {}
             if (!w.__active) {
-              const owner =
-                event?.type === 'auth' && typeof event.token === 'string'
-                  ? resolveOwner(event.token)
-                  : undefined
+              const owner = ownerFromAuthMessage(wsAuthCtx(), event)
               if (owner !== undefined) {
                 const isTerminal = (w.data as MiraWSData | undefined)?.isTerminal === true
-                if (isTerminal) activateTerminalSocket(w, owner)
-                else activateSocket(w, owner)
+                const token = (event as { token?: string } | null)?.token
+                if (isTerminal) activateTerminalSocket(w, owner, token)
+                else activateSocket(w, owner, token)
               }
+              return
+            }
+            // Revocation revalidation: an activated socket whose credential has
+            // since been revoked or expired must be closed, not left streaming.
+            if (!credentialStillValid(wsAuthCtx(), w.__token, w.__owner)) {
+              try {
+                w.__unsub?.()
+              } catch {}
+              try {
+                w.__active = false
+              } catch {}
+              try {
+                w.__proc?.kill()
+              } catch {}
+              try {
+                w.close(WS_CLOSE_UNAUTHORIZED, 'unauthorized: credential revoked or expired')
+              } catch {}
               return
             }
             if ((w.data as MiraWSData | undefined)?.isTerminal) {

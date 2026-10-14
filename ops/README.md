@@ -2,27 +2,41 @@
 
 ## Prometheus scrape
 
-`/metrics` is exposed unauthenticated (in the server's public-path set) and returns Prometheus text format `0.0.4`.
+`/metrics` returns Prometheus text format `0.0.4` and **requires a bearer token** whenever
+the server has auth enabled. It is not in the server's public-path set: it exposes
+per-route request counts, latency histograms, `gateway_cost_total` (cumulative LLM
+spend) and `active_sessions`, all of which are operational secrets.
+
+`/healthz` remains public and unauthenticated — point uptime probes there instead.
 
 ```yaml
 scrape_configs:
   - job_name: mira
     metrics_path: /metrics
+    # Required whenever MIRA_TOKEN or MIRA_API_KEYS is configured.
+    authorization:
+      type: Bearer
+      credentials: <MIRA_TOKEN or a dedicated scraper API key>
     static_configs:
-      - targets: ["mira-host:4096"]
+      - targets: ['mira-host:4096']
 ```
 
-Behind a reverse proxy that enforces auth, either route `/metrics` to the app unauthenticated, or protect it at the proxy and let Prometheus present the credential.
+Issue a dedicated read-only credential for Prometheus rather than reusing the master
+token. A `viewer`-role key is sufficient: `/metrics` is a GET, and viewer is read-only.
+
+If the server has no credentials configured (`MIRA_TOKEN` empty and no `MIRA_API_KEYS`),
+the auth gate is not installed at all and `/metrics` is reachable without a token —
+the same as every other route on that deployment.
 
 ## Exposed metrics
 
-| Metric | Type | Labels | Notes |
-|--------|------|--------|-------|
-| `http_requests_total` | counter | method, route, status | per-route request counts (LRU-capped, true-evicted at max cardinality) |
-| `http_request_duration_seconds_bucket` | histogram | method, route, `le` | cumulative per-route latency buckets `[0.05, 0.1, 0.5, 1, 5]` (+Inf) |
-| `http_request_duration_seconds_sum` / `_count` | histogram | method, route | per-route latency sum/count (strict-synced with buckets) |
-| `active_sessions` | gauge | — | in-memory; resets on restart |
-| `gateway_cost_total` | counter | — | cumulative LLM spend USD since process start |
+| Metric                                         | Type      | Labels                | Notes                                                                  |
+| ---------------------------------------------- | --------- | --------------------- | ---------------------------------------------------------------------- |
+| `http_requests_total`                          | counter   | method, route, status | per-route request counts (LRU-capped, true-evicted at max cardinality) |
+| `http_request_duration_seconds_bucket`         | histogram | method, route, `le`   | cumulative per-route latency buckets `[0.05, 0.1, 0.5, 1, 5]` (+Inf)   |
+| `http_request_duration_seconds_sum` / `_count` | histogram | method, route         | per-route latency sum/count (strict-synced with buckets)               |
+| `active_sessions`                              | gauge     | —                     | in-memory; resets on restart                                           |
+| `gateway_cost_total`                           | counter   | —                     | cumulative LLM spend USD since process start                           |
 
 Latency is a **real histogram**: query percentiles with `histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))`. SSE prompt streams dominate the slow end of the distribution.
 
@@ -64,17 +78,17 @@ groups:
             / sum(rate(http_requests_total[5m])) > 0.01
         for: 5m
         annotations:
-          summary: "Mira 5xx ratio above 1% for 5m"
+          summary: 'Mira 5xx ratio above 1% for 5m'
       - alert: MiraSpendSpike
         expr: derivative(max(gateway_cost_total)[10m:1m]) * 3600 > 10
         for: 10m
         annotations:
-          summary: "Mira LLM spend exceeding $10/hr — check for runaway agents"
+          summary: 'Mira LLM spend exceeding $10/hr — check for runaway agents'
       - alert: MiraDown
         expr: up{job="mira"} == 0
         for: 2m
         annotations:
-          summary: "Prometheus cannot reach Mira /metrics"
+          summary: 'Prometheus cannot reach Mira /metrics'
 ```
 
 ## Backups

@@ -10,7 +10,7 @@
   ],
   "uid": "mira-overview",
   "title": "Mira Server Overview",
-  "description": "Golden signals for a Mira server instance: traffic, latency, sessions, LLM spend. Scrape target exposes /metrics (unauthenticated by default).",
+  "description": "Golden signals for a Mira server instance: traffic, latency, sessions, LLM spend. Scrape target must present a bearer token on /metrics when auth is enabled.",
   "tags": ["mira", "agent-server"],
   "timezone": "browser",
   "schemaVersion": 39,
@@ -51,7 +51,12 @@
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
-          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never", "axisPlacement": "auto" },
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "axisPlacement": "auto"
+          },
           "color": { "mode": "palette-classic" }
         },
         "overrides": [
@@ -79,7 +84,7 @@
       "id": 3,
       "type": "timeseries",
       "title": "Top routes by request rate",
-           "description": "Top 8 busiest routes (method + route label).",
+      "description": "Top 8 busiest routes (method + route label).",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
       "fieldConfig": {
@@ -115,7 +120,14 @@
         "defaults": {
           "unit": "s",
           "custom": { "fillOpacity": 15, "lineWidth": 2, "showPoints": "never" },
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 2 }, { "color": "red", "value": 10 }] }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 2 },
+              { "color": "red", "value": 10 }
+            ]
+          }
         },
         "overrides": []
       },
@@ -134,10 +146,23 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "gridPos": { "h": 7, "w": 4, "x": 16, "y": 10 },
       "fieldConfig": {
-        "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }, { "color": "orange", "value": 20 }] } },
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "orange", "value": 20 }
+            ]
+          }
+        },
         "overrides": []
       },
-      "targets": [{ "expr": "max(active_sessions{instance=~\"$instance\"})", "legendFormat": "active" }]
+      "targets": [
+        { "expr": "max(active_sessions{instance=~\"$instance\"})", "legendFormat": "active" }
+      ]
     },
     {
       "id": 7,
@@ -151,7 +176,13 @@
           "unit": "percentunit",
           "decimals": 2,
           "color": { "mode": "thresholds" },
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.01 }] }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.01 }
+            ]
+          }
         },
         "overrides": []
       },
@@ -182,11 +213,20 @@
           "unit": "currencyUSD",
           "decimals": 3,
           "color": { "mode": "thresholds" },
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 5 }, { "color": "red", "value": 50 }] }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 5 },
+              { "color": "red", "value": 50 }
+            ]
+          }
         },
         "overrides": []
       },
-      "targets": [{ "expr": "max(gateway_cost_total{instance=~\"$instance\"})", "legendFormat": "spend" }]
+      "targets": [
+        { "expr": "max(gateway_cost_total{instance=~\"$instance\"})", "legendFormat": "spend" }
+      ]
     },
     {
       "id": 10,
