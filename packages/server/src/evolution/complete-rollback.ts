@@ -322,7 +322,7 @@ export class CompleteRollbackManager extends RollbackManager {
    */
   getCompleteRollbackPlan(ledgerId: string): CompleteRollbackPlan | null {
     // Check in-memory cache
-    for (const [id, plan] of this.rollbackPlans) {
+    for (const plan of this.rollbackPlans.values()) {
       if (plan.ledgerId === ledgerId) {
         return plan
       }
