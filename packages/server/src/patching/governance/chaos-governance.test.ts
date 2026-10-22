@@ -13,7 +13,7 @@
  * - Timeout scenarios
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
+import { describe, test, expect } from 'bun:test'
 import { BenchmarkRunner } from './benchmark.js'
 import { CanaryRunner } from './canary.js'
 import { createGovernanceGate } from './index.js'
