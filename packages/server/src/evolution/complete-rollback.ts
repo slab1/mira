@@ -304,6 +304,7 @@ export class CompleteRollbackManager extends RollbackManager {
     
     return {
       ...fileResult,
+      success,
       dependencyChangesRestored,
       configChangesRestored,
       databaseMigrationsRolledBack,
