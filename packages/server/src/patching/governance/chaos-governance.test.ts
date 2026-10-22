@@ -16,7 +16,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
 import { BenchmarkRunner } from './benchmark.js'
 import { CanaryRunner } from './canary.js'
-import { GovernanceGate, createGovernanceGate } from './index.js'
+import { createGovernanceGate } from './index.js'
 import { LatencyTracker } from '../latency.js'
 import { VariantRouter } from './traffic.js'
 import { UnavailableMeasurementSource } from './measurement.js'
