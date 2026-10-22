@@ -1,0 +1,285 @@
+{
+  "title": "Mira - Overview",
+  "uid": "mira-overview",
+  "tags": ["mira", "overview", "ai"],
+  "timezone": "browser",
+  "schemaVersion": 37,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "title": "System Health",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "mira_health_status{status=\"healthy\"}",
+          "legendFormat": "Healthy"
+        },
+        {
+          "expr": "mira_health_status{status=\"degraded\"}",
+          "legendFormat": "Degraded"
+        },
+        {
+          "expr": "mira_health_status{status=\"unhealthy\"}",
+          "legendFormat": "Unhealthy"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto",
+        "color": { "mode": "thresholds" },
+        "mappingType": 1,
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 1 },
+            { "color": "red", "value": 2 }
+          ]
+        }
+      }
+    },
+    {
+      "title": "Request Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(mira_requests_total[1m])) by (method)",
+          "legendFormat": "{{method}}"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": [] },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "title": "Error Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(mira_errors_total[1m])) / sum(rate(mira_requests_total[1m])) * 100",
+          "legendFormat": "Error Rate"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": [] },
+        "tooltip": { "mode": "single", "sort": "none" },
+        "thresholds": [
+          { "color": "green", "value": null },
+          { "color": "orange", "value": 1 },
+          { "color": "red", "value": 5 }
+        ]
+      }
+    },
+    {
+      "title": "Latency (p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "expr": "mira_request_duration_seconds{quantile=\"0.95\"}",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "mira_request_duration_seconds{quantile=\"0.99\"}",
+          "legendFormat": "p99"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": [] },
+        "tooltip": { "mode": "single", "sort": "none" },
+        "thresholds": [
+          { "color": "green", "value": null },
+          { "color": "orange", "value": 2 },
+          { "color": "red", "value": 5 }
+        ]
+      }
+    },
+    {
+      "title": "Resource Usage",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100",
+          "legendFormat": "Memory"
+        },
+        {
+          "expr": "avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m])) by (instance) * -1 + 100",
+          "legendFormat": "CPU"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 70 },
+            { "color": "red", "value": 90 }
+          ]
+        }
+      }
+    },
+    {
+      "title": "Governance Gate Decisions",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(mira_governance_gate_decision_total{outcome=\"PASSED\"}[1m])) by (gate)",
+          "legendFormat": "{{gate}} PASSED"
+        },
+        {
+          "expr": "sum(rate(mira_governance_gate_decision_total{outcome=\"BLOCKED\"}[1m])) by (gate)",
+          "legendFormat": "{{gate}} BLOCKED"
+        },
+        {
+          "expr": "sum(rate(mira_governance_gate_decision_total{outcome=\"FAILED\"}[1m])) by (gate)",
+          "legendFormat": "{{gate}} FAILED"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": [] },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "title": "Budget Usage",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "mira_budget_usage_percentage{budget_type=\"daily\"}",
+          "legendFormat": "Daily Budget"
+        },
+        {
+          "expr": "mira_budget_usage_percentage{budget_type=\"monthly\"}",
+          "legendFormat": "Monthly Budget"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 80 },
+            { "color": "red", "value": 95 }
+          ]
+        }
+      }
+    },
+    {
+      "title": "Memory System",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+      "targets": [
+        {
+          "expr": "mira_memory_count",
+          "legendFormat": "Total Memories"
+        },
+        {
+          "expr": "mira_memory_count{tier=\"semantic\"}",
+          "legendFormat": "Semantic"
+        },
+        {
+          "expr": "mira_memory_count{tier=\"episodic\"}",
+          "legendFormat": "Episodic"
+        },
+        {
+          "expr": "mira_memory_count{tier=\"procedural\"}",
+          "legendFormat": "Procedural"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": [] },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "title": "Provenance Distribution",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(mira_memory_count) by (provenance)",
+          "legendFormat": "{{provenance}}"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": [] },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "title": "Cost by Model",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(mira_cost_usd_total) by (model)",
+          "legendFormat": "{{model}}"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": [] },
+        "tooltip": { "mode": "single", "sort": "desc" }
+      }
+    },
+    {
+      "title": "Cost by Outcome",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(mira_cost_usd_total) by (outcome)",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": [] },
+        "tooltip": { "mode": "single", "sort": "desc" }
+      }
+    },
+    {
+      "title": "Rollback History",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(rate(mira_rollback_count[1h])) by (success)",
+          "legendFormat": "{{success}}"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": [] },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "refresh": "30s",
+  "schemaVersion": 37,
+  "style": "dark",
+  "tags": ["mira", "overview"],
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Mira - Overview",
+  "version": 1,
+  "weekStart": ""
+}
