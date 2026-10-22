@@ -218,7 +218,7 @@ export class DurableBudgetStore {
     
     // Use a transaction for atomic check-and-reserve
     try {
-      const result = await this.db.sqlite.exec({
+      await this.db.sqlite.exec({
         sql: `
           BEGIN;
           
