@@ -1711,9 +1711,11 @@ async function main() {
       if (
         msg.includes('EADDRINUSE') ||
         msg.includes('address already in use') ||
-        msg.includes('Failed to start server')
+        msg.includes('Failed to start server') ||
+        msg.includes('in use') ||
+        msg.includes('port')
       ) {
-        if (attempt < 9) {
+        if (attempt < 50) {
           warn(`port ${actualPort} in use — trying ${actualPort + 1}`)
           actualPort++
           continue

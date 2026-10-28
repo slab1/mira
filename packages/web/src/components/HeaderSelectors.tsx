@@ -980,8 +980,15 @@ export function HeaderAgentSelector(props: {
     const list: Array<{ name: string; description: string; custom: boolean }> = [
       { name: '', description: 'General — default lane', custom: false },
     ]
-    for (const a of props.agents) {
-      list.push({ name: a.name, description: a.description || '', custom: a.custom })
+    const agentsList = Array.isArray(props.agents)
+      ? props.agents
+      : Array.isArray((props.agents as any)?.agents)
+        ? (props.agents as any).agents
+        : []
+    for (const a of agentsList) {
+      if (a && typeof a === 'object') {
+        list.push({ name: a.name ?? '', description: a.description || '', custom: Boolean(a.custom) })
+      }
     }
     return list
   })

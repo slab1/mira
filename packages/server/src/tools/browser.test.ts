@@ -174,8 +174,10 @@ describe('browser tool metadata', () => {
 
 const canLaunchBrowser = async (): Promise<boolean> => {
   try {
-    const pw = await import('playwright')
-    const b = await pw.chromium.launch({ headless: true, args: ['--no-sandbox'] })
+    const pw: any = await import('playwright')
+    const chromium = pw.chromium || (pw.default && pw.default.chromium)
+    if (!chromium) return false
+    const b = await chromium.launch({ headless: true, args: ['--no-sandbox'] })
     await b.close()
     return true
   } catch {

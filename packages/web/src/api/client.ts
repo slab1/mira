@@ -806,7 +806,7 @@ const TOOL_CACHE_TTL = 30_000
 let toolCache: { data: ToolInfo[]; ts: number } | null = null
 
 async function listToolsRaw(): Promise<ToolInfo[]> {
-  return req<ToolInfo[]>('/tools')
+  return req<ToolInfo[] | { tools: ToolInfo[] }>('/tools').then((r) => (Array.isArray(r) ? r : ((r as any)?.tools ?? [])))
 }
 
 async function listToolsCached(): Promise<ToolInfo[]> {
@@ -831,14 +831,23 @@ export const api = {
       colibri?: { ok: boolean; baseURL: string; latencyMs?: number; error?: string }
     }>('/health'),
 
-  listSessions: () => req<Session[]>('/session'),
+  listSessions: () =>
+    req<Session[] | { sessions: Session[] }>('/session').then((r) =>
+      Array.isArray(r) ? r : ((r as any)?.sessions ?? []),
+    ),
   createSession: (body: Partial<Session> = {}) =>
     req<Session>('/session', { method: 'POST', body: JSON.stringify(body) }),
   getSession: (id: string) => req<Session>(`/session/${id}`),
   deleteSession: (id: string) => req<{ ok: boolean }>(`/session/${id}`, { method: 'DELETE' }),
 
-  getMessages: (id: string) => req<Message[]>(`/session/${id}/message`),
-  getTodos: (id: string) => req<Todo[]>(`/session/${id}/todo`),
+  getMessages: (id: string) =>
+    req<Message[] | { messages: Message[] }>(`/session/${id}/message`).then((r) =>
+      Array.isArray(r) ? r : ((r as any)?.messages ?? []),
+    ),
+  getTodos: (id: string) =>
+    req<Todo[] | { todos: Todo[] }>(`/session/${id}/todo`).then((r) =>
+      Array.isArray(r) ? r : ((r as any)?.todos ?? []),
+    ),
   setTodos: (id: string, todos: Todo[]) =>
     req<Todo[]>(`/session/${id}/todo`, { method: 'POST', body: JSON.stringify(todos) }),
 
@@ -903,7 +912,10 @@ export const api = {
   resolveFinding: (id: string) =>
     req<Finding>(`/finding/${encodeURIComponent(id)}/resolve`, { method: 'POST' }),
 
-  listJobs: (sessionId: string) => req<Job[]>(`/session/${encodeURIComponent(sessionId)}/jobs`),
+  listJobs: (sessionId: string) =>
+    req<Job[] | { jobs: Job[] }>(`/session/${encodeURIComponent(sessionId)}/jobs`).then((r) =>
+      Array.isArray(r) ? r : ((r as any)?.jobs ?? []),
+    ),
   getJob: (id: string) => req<Job>(`/job/${encodeURIComponent(id)}`),
   cancelJob: (id: string) => req<Job>(`/job/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
 
@@ -1208,9 +1220,18 @@ export const api = {
       { method: 'DELETE' },
     ),
 
-  listAgents: () => req<AgentEntry[]>('/agents'),
-  listCommands: () => req<CommandEntry[] | string[]>('/commands'),
-  listSkills: () => req<SkillEntry[] | string[]>('/skills'),
+  listAgents: () =>
+    req<AgentEntry[] | { agents: AgentEntry[] }>('/agents').then((r) =>
+      Array.isArray(r) ? r : ((r as any)?.agents ?? []),
+    ),
+  listCommands: () =>
+    req<CommandEntry[] | string[] | { commands: CommandEntry[] | string[] }>('/commands').then((r) =>
+      Array.isArray(r) ? r : ((r as any)?.commands ?? []),
+    ),
+  listSkills: () =>
+    req<SkillEntry[] | string[] | { skills: SkillEntry[] | string[] }>('/skills').then((r) =>
+      Array.isArray(r) ? r : ((r as any)?.skills ?? []),
+    ),
 
   // ── Audit trail (P3.2) — admin-only query + export ───────────────
   listAuditTrail: (params: AuditTrailParams = {}) => {

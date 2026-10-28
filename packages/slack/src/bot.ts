@@ -114,7 +114,7 @@ async function start() {
     await ack()
     const prompt = (command.text ?? "").trim()
     if (!prompt) {
-      await respond({ text: "Usage: `/mira <prompt>` — e.g. `/mira explain ./src/index.ts`\nOr mention @Mira in a channel.", response_type: "ephemeral" })
+      await respond({ text: "Usage: `/mira <prompt>` — e.g. `/mira explain ./src/index.ts`\nOr mention @Mira in a channel.", response_type: "ephemeral" } as any)
       return
     }
 
@@ -141,7 +141,7 @@ async function start() {
           text: reply,
         })
       } else {
-        await respond({ text: reply, response_type: "in_channel" })
+        await respond({ text: reply, response_type: "in_channel" } as any)
       }
     } catch (err) {
       const msg = String(err)
@@ -153,7 +153,7 @@ async function start() {
         if (threadTs) {
           await client.chat.update({ channel: command.channel_id, ts: threadTs, text: friendly })
         } else {
-          await respond({ text: friendly, response_type: "ephemeral" })
+          await respond({ text: friendly, response_type: "ephemeral" } as any)
         }
       } catch {}
       console.error("[mira-slack] turn failed:", err)

@@ -15,9 +15,9 @@ import { isBlockedFetchUrl } from '../guardrails/index.js'
 
 // ── Playwright lazy singleton ──────────────────────────────────────
 
-type PW = typeof import('playwright')
-type Browser = Awaited<ReturnType<PW['chromium']['launch']>>
-type Page = Awaited<ReturnType<Browser['newPage']>>
+type PW = any
+type Browser = any
+type Page = any
 
 let _pw: PW | null = null
 let _browser: Browser | null = null
@@ -40,12 +40,15 @@ async function getBrowser(): Promise<Browser | null> {
   const pw = await getPlaywright()
   if (!pw) return null
 
-  _launching = pw.chromium
+  const chromium = pw.chromium || (pw.default && pw.default.chromium)
+  if (!chromium) return null
+
+  _launching = chromium
     .launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
     })
-    .then((b) => {
+    .then((b: any) => {
       _browser = b
       _launching = null
       // Handle browser disconnect (process crash, etc.)

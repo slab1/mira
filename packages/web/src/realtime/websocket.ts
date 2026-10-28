@@ -20,8 +20,8 @@ export interface WebSocketConfig {
 
 const DEFAULT_CONFIG: WebSocketConfig = {
   url: '',
-  reconnectIntervalMs: 5000,
-  maxReconnectAttempts: 10,
+  reconnectIntervalMs: 1000,
+  maxReconnectAttempts: Infinity,
   heartbeatIntervalMs: 30000,
   heartbeatTimeoutMs: 10000,
 }
@@ -153,12 +153,14 @@ export class RealtimeLayer {
   }
 
   private scheduleReconnect(): void {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     if (this.reconnectAttempts >= this.config.maxReconnectAttempts) {
-      console.error('[realtime] max reconnect attempts reached')
+      console.warn('[realtime] max reconnect attempts reached')
       return
     }
     this.reconnectAttempts++
-    const delay = this.config.reconnectIntervalMs * Math.pow(2, this.reconnectAttempts - 1)
+    const backoff = this.config.reconnectIntervalMs * Math.pow(1.5, Math.min(this.reconnectAttempts - 1, 8))
+    const delay = Math.min(backoff, 30000)
     this.reconnectTimer = window.setTimeout(() => this.connect(), delay)
   }
 

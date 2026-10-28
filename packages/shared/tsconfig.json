@@ -7,15 +7,16 @@
     "esModuleInterop": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
+    "noEmitOnError": false,
     "skipLibCheck": true,
     "preserveSymlinks": true,
-    "types": ["bun-types"],
-  "baseUrl": ".",
-  "paths": {
-    "@/*": [
-      "./src/*"
-    ]
-  }
+    "types": ["bun-types", "node"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    }
   },
   "include": [
     "src/**/*"

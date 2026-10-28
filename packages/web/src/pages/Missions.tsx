@@ -472,7 +472,12 @@ export default function MissionsPage(props: {
 
   // ── Session tree ───────────────────────────────────────────────────
   const tree = createMemo(() => {
-    const list = sessions()
+    const raw = sessions()
+    const list = Array.isArray(raw)
+      ? raw
+      : Array.isArray((raw as any)?.sessions)
+        ? (raw as any).sessions
+        : []
     const ids = new Set(list.map((s) => s.id))
     const children = new Map<string, Session[]>()
     const roots: Session[] = []
@@ -491,7 +496,14 @@ export default function MissionsPage(props: {
 
   const selected = createMemo(() => {
     const id = selectedId()
-    return id ? (sessions().find((s) => s.id === id) ?? null) : null
+    if (!id) return null
+    const raw = sessions()
+    const list = Array.isArray(raw)
+      ? raw
+      : Array.isArray((raw as any)?.sessions)
+        ? (raw as any).sessions
+        : []
+    return list.find((s) => s.id === id) ?? null
   })
 
   const jobsFor = (id: string): Job[] => jobsBySession()[id] ?? []
@@ -508,7 +520,12 @@ export default function MissionsPage(props: {
   }
 
   const stats = createMemo(() => {
-    const list = sessions()
+    const raw = sessions()
+    const list = Array.isArray(raw)
+      ? raw
+      : Array.isArray((raw as any)?.sessions)
+        ? (raw as any).sessions
+        : []
     const ids = new Set(list.map((s) => s.id))
     let running = 0
     let failed = 0
@@ -528,19 +545,25 @@ export default function MissionsPage(props: {
     if (showSkeleton) setListLoading(true)
     setListError(null)
     try {
-      const list = await api.listSessions()
-      setSessions(list ?? [])
+      const res = await api.listSessions()
+      const list = Array.isArray(res)
+        ? res
+        : Array.isArray((res as any)?.sessions)
+          ? (res as any).sessions
+          : []
+      setSessions(list)
       setSelectedId((prev) => {
-        if (prev && (list ?? []).some((s) => s.id === prev)) return prev
-        const ids = new Set((list ?? []).map((s) => s.id))
-        const roots = (list ?? []).filter((s) => {
+        if (prev && list.some((s) => s.id === prev)) return prev
+        const ids = new Set(list.map((s) => s.id))
+        const roots = list.filter((s) => {
           const pid = sessionParentId(s)
           return !pid || !ids.has(pid)
         })
-        return roots[0]?.id ?? (list ?? [])[0]?.id ?? null
+        return roots[0]?.id ?? list[0]?.id ?? null
       })
     } catch (e) {
       setListError(errMsg(e))
+      setSessions([])
     } finally {
       setListLoading(false)
     }
@@ -626,11 +649,17 @@ export default function MissionsPage(props: {
   /** Hydrate jobs for the most recent sessions so state chips are honest on
    *  first paint (there is no global jobs endpoint — bounded fan-out). */
   const hydrateJobs = async () => {
-    const recent = sessions().slice(0, HYDRATE_LIMIT)
+    const raw = sessions()
+    const list = Array.isArray(raw)
+      ? raw
+      : Array.isArray((raw as any)?.sessions)
+        ? (raw as any).sessions
+        : []
+    const recent = list.slice(0, HYDRATE_LIMIT)
     await Promise.allSettled(
       recent.map((s) =>
-        api.listJobs(s.id).then((list) => {
-          setJobsFor(s.id, list ?? [])
+        api.listJobs(s.id).then((jobList) => {
+          setJobsFor(s.id, Array.isArray(jobList) ? jobList : ((jobList as any)?.jobs ?? []))
         }),
       ),
     )

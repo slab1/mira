@@ -74,15 +74,17 @@ export default defineConfig({
     : {}),
   // GitHub Pages serves project sites under /<repo>/ — assets must resolve there.
   // Env override keeps other hosts (tunnel, PaaS, same-origin) on "/".
-  base: process.env.VITE_BASE ?? '/mira/',
+  base: process.env.VITE_BASE ?? '/',
   server: {
     port: Number(process.env.MIRA_WEB_PORT ?? 3000),
     host: true,
     strictPort: false,
-    hmr: {
-      host: process.env.MIRA_HMR_HOST ?? 'localhost',
-      port: Number(process.env.MIRA_WEB_HMR_PORT ?? 24678),
-    },
+    hmr: process.env.DISABLE_HMR === 'true'
+      ? false
+      : {
+          host: process.env.MIRA_HMR_HOST ?? 'localhost',
+          ...(process.env.MIRA_WEB_HMR_PORT ? { port: Number(process.env.MIRA_WEB_HMR_PORT) } : {}),
+        },
     cors: true,
     // Allow Cloudflare tunnel hosts — Vite ServerOptions allows boolean true (Vite 6+)
     allowedHosts: true,
@@ -132,23 +134,10 @@ export default defineConfig({
         changeOrigin: true,
         bypass: (req, res) => {
           const upgrade = (req.headers?.upgrade || '').toLowerCase()
-          if (!res || upgrade) return null
-          const url = req.url || ''
-          if (
-            url === '/' ||
-            url.startsWith('/?') ||
-            url === '/index.html' ||
-            url === '/mira' ||
-            url === '/mira/' ||
-            url === '/mira/index.html' ||
-            url.startsWith('/src/') ||
-            url.startsWith('/@vite/') ||
-            url.startsWith('/@id/') ||
-            url.startsWith('/@fs/') ||
-            url.startsWith('/node_modules/')
-          )
-            return url
-          return null
+          // Only proxy WebSocket upgrade requests to the Hono API server.
+          // All HTTP GET/HEAD requests (HTML, JS, CSS, /assets/*, /src/*, etc.) MUST be served by Vite.
+          if (upgrade === 'websocket') return null
+          return req.url
         },
         configure: (proxy) => {
           // Gracefully ignore writeAfterFIN during bun --watch restart (HMR reconnect)

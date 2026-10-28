@@ -53,10 +53,12 @@ export default defineConfig({
     host: true,
     strictPort: false,
     cors: true,
-    hmr: {
-      host: process.env.MIRA_HMR_HOST ?? 'localhost',
-      port: Number(process.env.MIRA_TUI_HMR_PORT ?? 24679),
-    },
+    hmr: process.env.DISABLE_HMR === 'true'
+      ? false
+      : {
+          host: process.env.MIRA_HMR_HOST ?? 'localhost',
+          ...(process.env.MIRA_TUI_HMR_PORT ? { port: Number(process.env.MIRA_TUI_HMR_PORT) } : {}),
+        },
     // Allow Cloudflare tunnel hosts — Vite ServerOptions allows boolean true
     allowedHosts: true,
     proxy: {
@@ -91,6 +93,11 @@ export default defineConfig({
         target: API_TARGET,
         ws: true,
         changeOrigin: true,
+        bypass: (req) => {
+          const upgrade = (req.headers?.upgrade || '').toLowerCase()
+          if (upgrade === 'websocket') return null
+          return req.url
+        },
         configure: (proxy) => {
           // Ignore restart/rotation noise (see web vite.config.ts): the API
           // target is frozen at startup and the server may still be starting

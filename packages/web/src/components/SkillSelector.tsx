@@ -14,10 +14,17 @@ export function SkillSelector(props: { onSelect?: (skill: string) => void }) {
       return [] as Array<string | { name: string }>
     }
   })
-  const names = () =>
-    (skills() ?? [])
-      .map((s) => (typeof s === 'string' ? s : s.name))
-      .filter((n): n is string => typeof n === 'string' && n.length > 0)
+  const names = () => {
+    const raw = skills()
+    const list = Array.isArray(raw)
+      ? raw
+      : Array.isArray((raw as any)?.skills)
+        ? (raw as any).skills
+        : []
+    return list
+      .map((s: unknown) => (typeof s === 'string' ? s : (s as { name?: string })?.name))
+      .filter((n: unknown): n is string => typeof n === 'string' && n.length > 0)
+  }
 
   return (
     <span
