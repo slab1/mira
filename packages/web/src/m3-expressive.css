@@ -1,0 +1,234 @@
+/* ===========================================================================
+   Mira Web — Material 3 Expressive Design System + Google Navigation
+   =========================================================================== */
+
+:root {
+  /* Material 3 Dynamic Color — Tonal Palette (Indigo/Violet baseline) */
+  /* Primary */
+  --m3-primary-0: #000000;
+  --m3-primary-10: #1d1b2e;
+  --m3-primary-20: #2f2a42;
+  --m3-primary-30: #453f59;
+  --m3-primary-40: #5b5370;
+  --m3-primary-50: #716a88;
+  --m3-primary-60: #8a83a0;
+  --m3-primary-70: #a49db9;
+  --m3-primary-80: #c0b8d5;
+  --m3-primary-90: #e1dbf4;
+  --m3-primary-95: #f0eafe;
+  --m3-primary-99: #fffbff;
+  --m3-primary-100: #ffffff;
+
+  /* Secondary */
+  --m3-secondary-10: #1d1c25;
+  --m3-secondary-20: #302f3a;
+  --m3-secondary-30: #48464f;
+  --m3-secondary-40: #61606a;
+  --m3-secondary-80: #c5c3ce;
+  --m3-secondary-90: #e6e4ee;
+  --m3-secondary-95: #f3f1f9;
+
+  /* Tertiary */
+  --m3-tertiary-40: #6b5b75;
+  --m3-tertiary-80: #d1b8d3;
+
+  /* Neutral */
+  --m3-neutral-10: #1a1a1e;
+  --m3-neutral-20: #2b2b31;
+  --m3-neutral-30: #454449;
+  --m3-neutral-40: #5e5b61;
+  --m3-neutral-80: #c2bfc5;
+  --m3-neutral-90: #e3e0e6;
+  --m3-neutral-95: #f2eff3;
+  --m3-neutral-99: #fffbff;
+
+  /* Neutral Variant */
+  --m3-neutral-variant-30: #4b4653;
+  --m3-neutral-variant-40: #65616f;
+  --m3-neutral-variant-90: #e7e3ec;
+  --m3-neutral-variant-95: #f5f2f9;
+
+  /* Error */
+  --m3-error-40: #b3261e;
+  --m3-error-80: #f2b8b5;
+  --m3-error-90: #f9dedc;
+
+  /* Surface */
+  --m3-surface-0: #000000;
+  --m3-surface-10: #1b1b1e;
+  --m3-surface-20: #2b2b2f;
+  --m3-surface-30: #45454a;
+  --m3-surface-80: #c5c5c8;
+  --m3-surface-90: #e4e4e6;
+  --m3-surface-95: #f2f1f5;
+  --m3-surface-99: #fffbff;
+  --m3-surface-100: #ffffff;
+
+  /* Surface Dim / Bright */
+  --m3-surface-dim: #131314;
+  --m3-surface-bright: #323233;
+  --m3-surface-container-lowest: #0d0d0f;
+  --m3-surface-container-low: #1e1e22;
+  --m3-surface-container: #252529;
+  --m3-surface-container-high: #303034;
+  --m3-surface-container-highest: #3a3a40;
+
+  /* On colors */
+  --m3-on-surface: #e6e1e7;
+  --m3-on-surface-variant: #c2bcc5;
+  --m3-on-primary: #ffffff;
+  --m3-on-primary-container: #1d1b2e;
+  --m3-on-secondary: #ffffff;
+  --m3-on-tertiary: #ffffff;
+  --m3-on-error: #ffffff;
+
+  /* M3 Expressive Shapes */
+  --m3-shape-corner-extra-small: 4px;
+  --m3-shape-corner-small: 8px;
+  --m3-shape-corner-medium: 12px;
+  --m3-shape-corner-large: 16px;
+  --m3-shape-corner-extra-large: 28px;
+  --m3-shape-corner-full: 999px;
+
+  /* M3 Elevation */
+  --m3-elevation-0: none;
+  --m3-elevation-1: 0px 1px 2px rgba(0,0,0,0.3), 0px 1px 3px 1px rgba(0,0,0,0.15);
+  --m3-elevation-2: 0px 1px 2px rgba(0,0,0,0.3), 0px 2px 6px 2px rgba(0,0,0,0.15);
+  --m3-elevation-3: 0px 4px 8px 3px rgba(0,0,0,0.15), 0px 1px 3px rgba(0,0,0,0.3);
+  --m3-elevation-4: 0px 4px 8px 3px rgba(0,0,0,0.15), 0px 1px 3px rgba(0,0,0,0.3);
+  --m3-elevation-5: 0px 8px 12px 6px rgba(0,0,0,0.15), 0px 4px 4px 3px rgba(0,0,0,0.3);
+
+  /* Legacy aliases */
+  --bg-app: var(--m3-surface-container-lowest);
+  --bg-canvas: var(--m3-surface-container-low);
+  --bg-surface: var(--m3-surface-container);
+  --bg-hover: var(--m3-surface-container-high);
+  --bg-active: var(--m3-surface-container-highest);
+  --border: var(--m3-neutral-variant-40);
+  --fg: var(--m3-on-surface);
+  --fg-muted: var(--m3-on-surface-variant);
+  --accent: var(--m3-primary-40);
+  --accent-soft: color-mix(in oklab, var(--m3-primary-80) 12%, transparent);
+  --ok: #66bb6a;
+  --warn: #ffb74d;
+  --danger: #ef5350;
+}
+
+/* Light theme */
+[data-theme='light'] {
+  --m3-surface-container-lowest: #ffffff;
+  --m3-surface-container-low: #f7f7f9;
+  --m3-surface-container: #f0f0f3;
+  --m3-surface-container-high: #e8e8ee;
+  --m3-surface-container-highest: #e0e0e8;
+  --m3-on-surface: #1a1a1e;
+  --m3-on-surface-variant: #49454f;
+  --bg-app: var(--m3-surface-container-lowest);
+  --bg-canvas: var(--m3-surface-container-low);
+  --bg-surface: var(--m3-surface-container);
+  --fg: var(--m3-on-surface);
+}
+
+/* Navigation Rail */
+.m3-navigation-rail {
+  display: flex;
+  flex-direction: column;
+  width: 72px;
+  min-height: 100vh;
+  background: var(--m3-surface-container-low);
+  border-right: 1px solid var(--m3-neutral-variant-30);
+  padding: 8px 0;
+  gap: 8px;
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 100;
+}
+
+.m3-rail-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 8px;
+  border-radius: var(--m3-shape-corner-small);
+  color: var(--m3-on-surface-variant);
+  text-decoration: none;
+  transition: background 120ms ease, color 120ms ease;
+  min-height: 64px;
+  justify-content: center;
+}
+
+.m3-rail-item:hover {
+  background: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+}
+
+.m3-rail-item[aria-selected='true'] {
+  background: var(--m3-secondary-container, var(--m3-surface-container-high));
+  color: var(--m3-on-secondary-container, var(--m3-primary-40));
+}
+
+/* Top App Bar */
+.m3-top-app-bar {
+  display: flex;
+  align-items: center;
+  height: 64px;
+  padding: 0 24px;
+  background: var(--m3-surface-container-low);
+  border-bottom: 1px solid var(--m3-neutral-variant-30);
+  margin-left: 72px;
+  gap: 16px;
+}
+
+.m3-app-bar-title {
+  font-size: 22px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--m3-on-surface);
+}
+
+/* Cards */
+.m3-card {
+  background: var(--m3-surface-container);
+  border-radius: var(--m3-shape-corner-large);
+  padding: 16px;
+  box-shadow: var(--m3-elevation-1);
+  transition: box-shadow 120ms ease;
+}
+
+.m3-card:hover {
+  box-shadow: var(--m3-elevation-2);
+}
+
+/* Buttons */
+.m3-filled-button {
+  height: 40px;
+  padding: 0 24px;
+  border-radius: var(--m3-shape-corner-full);
+  background: var(--m3-primary-40);
+  color: var(--m3-on-primary);
+  border: none;
+  font-weight: 500;
+  font-size: 14px;
+  letter-spacing: 0.1px;
+  cursor: pointer;
+  transition: box-shadow 120ms ease;
+  box-shadow: var(--m3-elevation-1);
+}
+
+.m3-filled-button:hover {
+  box-shadow: var(--m3-elevation-2);
+}
+
+.m3-outlined-button {
+  height: 40px;
+  padding: 0 24px;
+  border-radius: var(--m3-shape-corner-full);
+  background: transparent;
+  color: var(--m3-primary-40);
+  border: 1px solid var(--m3-outline);
+  font-weight: 500;
+  font-size: 14px;
+  cursor: pointer;
+}
