@@ -28,7 +28,7 @@
     "hono": "^4.7.0",
     "js-tiktoken": "^1.0.21",
     "ws": "^8.18.0",
-    "zod": "^4.0.0"
+    "zod": "^4.1.0"
   },
   "devDependencies": {
     "typescript": "^5.8.0",
