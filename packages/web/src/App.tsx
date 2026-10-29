@@ -10,6 +10,7 @@ import {
   Match,
 } from 'solid-js'
 import './index.css'
+import './m3-expressive.css'
 import { createAppStore } from './stores/app'
 import { createSettingsStore } from './stores/settings'
 import { createRealtimeLayer } from './realtime/websocket'

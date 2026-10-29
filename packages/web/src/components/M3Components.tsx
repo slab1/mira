@@ -29,16 +29,16 @@ export function NavigationRail(props: {
                 props.onSelect(item.id);
               }}
             >
-              <span style={{ font-size: '24px' }}>{item.icon}</span>
-              <span style={{ font-size: '12px', font-weight: 500 }}>{item.label}</span>
+              <span style={{ 'font-size': '24px' }}>{item.icon}</span>
+              <span style={{ 'font-size': '12px', 'font-weight': '500' }}>{item.label}</span>
               <Show when={item.badge}>
                 <span style={{
-                  background: 'var(--m3-primary-40)',
-                  color: 'white',
-                  borderRadius: '10px',
-                  padding: '2px 6px',
-                  fontSize: '10px',
-                  fontWeight: '600'
+                  'background': 'var(--m3-primary-40)',
+                  'color': 'white',
+                  'border-radius': '10px',
+                  'padding': '2px 6px',
+                  'font-size': '10px',
+                  'font-weight': '600'
                 }}>
                   {item.badge}
                 </span>
@@ -60,11 +60,11 @@ export function TopAppBar(props: {
     <header class="m3-top-app-bar">
       <div class="m3-app-bar-title">{props.title}</div>
       <Show when={props.subtitle}>
-        <span style={{ color: 'var(--m3-on-surface-variant)', fontSize: '14px' }}>
+        <span style={{ 'color': 'var(--m3-on-surface-variant)', 'font-size': '14px' }}>
           {props.subtitle}
         </span>
       </Show>
-      <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+      <div style={{ 'margin-left': 'auto', 'display': 'flex', 'gap': '8px' }}>
         {props.actions}
       </div>
     </header>
