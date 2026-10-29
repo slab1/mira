@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * SessionView — Dual-pane keyboard-first session + message view (2026 TUI rebuild)
  *

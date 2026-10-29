@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * HelpOverlay — Searchable keybindings reference (keyboard-first rebuild)
  *

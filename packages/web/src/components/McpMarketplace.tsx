@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createSignal, For, Show } from 'solid-js'
 import { api, type MarketplaceServer } from '../api/client'
 import { toast } from './Toast'

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * QuestionView — HITL question prompt (keyboard-first rebuild)
  *

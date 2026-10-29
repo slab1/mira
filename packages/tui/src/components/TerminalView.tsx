@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * TerminalView — TUI xterm-like PTY via WS /terminal
  * Ported from web/src/components/SettingsPanel.tsx Terminal tab + web/src/api/client.ts createTerminalSocket

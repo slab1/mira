@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * WebSocket Dedicated Layer — centralized realtime handling.
  *

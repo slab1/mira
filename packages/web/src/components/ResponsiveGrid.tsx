@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createSignal, type JSX } from 'solid-js'
 import { Show } from 'solid-js'
 

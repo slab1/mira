@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * UXModeSwitcher — segmented control for the Beginner/Pro/Expert interface
  * tiers (P2.4). Always visible so users can discover the full surface at

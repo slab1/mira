@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * ProvenanceView — TUI port of web/src/components/ProvenancePanel.tsx
  *

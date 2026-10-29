@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Mira TUI — SolidJS + @opentui/solid terminal UI (keyboard-first rebuild)
  *

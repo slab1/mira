@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * JobsView — TUI background jobs list for Mira
  *

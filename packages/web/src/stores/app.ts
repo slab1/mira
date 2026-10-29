@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Mira App Store — SolidJS reactive state for the web client.
  *

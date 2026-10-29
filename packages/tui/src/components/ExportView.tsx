@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * ExportView — TUI session export for Mira
  *

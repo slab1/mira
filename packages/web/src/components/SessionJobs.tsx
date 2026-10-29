@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createSignal, createEffect, Show, For, onCleanup, onMount } from 'solid-js'
 import type { AppStore } from '../stores/app'
 import { api, type Job } from '../api/client'

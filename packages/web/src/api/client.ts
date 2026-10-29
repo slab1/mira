@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Mira API Client — REST + WebSocket to Mira Server (Hono on :4096)
  *

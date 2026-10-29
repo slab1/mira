@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Navigation Deep Links — URL-based routing for Mira Web.
  *

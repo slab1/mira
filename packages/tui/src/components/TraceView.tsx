@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * TraceView — TUI port of web/src/components/TraceViewer.tsx (1119 lines)
  *

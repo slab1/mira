@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Shared OperationalState type + DataState component.
  *

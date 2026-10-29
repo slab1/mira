@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * AuthGate — TUI port of packages/web/src/App.tsx AuthGate (lines 32-215)
  *

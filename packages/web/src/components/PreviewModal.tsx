@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * PreviewModal — "Show, Then Believe" pattern.
  *

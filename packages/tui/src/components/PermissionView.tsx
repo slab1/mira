@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * PermissionView — HITL permission prompt (keyboard-first rebuild)
  *

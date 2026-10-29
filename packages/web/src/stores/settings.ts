@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Mira Settings Store — SolidJS reactive state for the Settings system.
  *

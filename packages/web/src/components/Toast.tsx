@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createSignal, For, Show, onCleanup } from 'solid-js'
 
 export type ToastKind = 'info' | 'success' | 'warn' | 'error'

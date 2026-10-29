@@ -1479,13 +1479,13 @@ async function main() {
   // /engines, /shadow, /canary, /memory, /gateway, /me, /webhooks, /v1).
   mountStaticRoutes(app, { tools })
 
-  // ── Bun.serve with port rotation (4096 → 4106 if in use) ─────────
+  // ── Bun.serve with port rotation (4096 → 4145 if in use, fallback to 0) ─────────
   let server: ReturnType<typeof Bun.serve> | null = null
   let actualPort = PORT
-  for (let attempt = 0; attempt < 10; attempt++) {
+  for (let attempt = 0; attempt < 50; attempt++) {
     try {
       server = Bun.serve<MiraWSData>({
-        port: actualPort,
+        port: attempt === 49 ? 0 : actualPort,
         hostname: HOST,
         idleTimeout: 180,
         fetch(req, srv) {
@@ -1715,7 +1715,7 @@ async function main() {
         msg.includes('in use') ||
         msg.includes('port')
       ) {
-        if (attempt < 50) {
+        if (attempt < 49) {
           warn(`port ${actualPort} in use — trying ${actualPort + 1}`)
           actualPort++
           continue
@@ -1724,7 +1724,7 @@ async function main() {
       throw e
     }
   }
-  if (!server) throw new Error(`failed to bind after 10 attempts from ${PORT}`)
+  if (!server) throw new Error(`failed to bind after 50 attempts from ${PORT}`)
   // Export actual port so child processes and clients can discover rotation
   try {
     process.env.PORT = String(server.port)

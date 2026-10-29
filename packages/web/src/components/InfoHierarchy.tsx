@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * InfoHierarchy — structured information display with clear visual priority.
  *

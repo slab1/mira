@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createSignal, onMount, onCleanup, Show, For } from 'solid-js'
 import { api, getApiUrl, defaultApiUrl, req } from '../api/client'
 

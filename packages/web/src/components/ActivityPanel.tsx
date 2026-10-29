@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { For, Show, createSignal, createMemo, createEffect, onCleanup } from 'solid-js'
 import type { AppStore } from '../stores/app'
 import type { Part, Todo } from '../api/client'

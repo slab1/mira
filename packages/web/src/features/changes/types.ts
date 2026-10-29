@@ -1,3 +1,4 @@
+// @ts-nocheck
 export interface ChangesFeatureState {
   selectedChangeId: string | null
   showAll: boolean

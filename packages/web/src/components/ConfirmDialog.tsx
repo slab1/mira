@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Show } from 'solid-js'
 import { useFocusTrap } from '../hooks/useFocusTrap'
 

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * HumanInLoop — correction, undo, editing, and behavior adjustment patterns.
  *

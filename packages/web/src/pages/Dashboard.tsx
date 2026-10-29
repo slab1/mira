@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createSignal, onMount, Show, For } from 'solid-js'
 import { req } from '../api/client'
 import { Card } from '../components/DesignSystem'

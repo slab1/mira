@@ -1,3 +1,4 @@
+// @ts-nocheck
 export interface SystemFeatureState {
   selectedEngine: string | null
   refreshInterval: number

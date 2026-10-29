@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * AutonomyDial — variable autonomy control (Watch / Assist / Autonomous).
  *

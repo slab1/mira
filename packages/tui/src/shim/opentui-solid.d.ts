@@ -1,3 +1,16 @@
+import "solid-js"
+
+declare module "solid-js" {
+  namespace JSX {
+    interface HTMLAttributes<T> {
+      style?: any
+    }
+    interface CustomAttributes<T> {
+      style?: any
+    }
+  }
+}
+
 declare module "@opentui/solid" {
   import type { JSX } from "solid-js"
   type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }

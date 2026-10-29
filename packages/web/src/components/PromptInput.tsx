@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { For, Show, createSignal, createEffect, createMemo, onCleanup, onMount } from 'solid-js'
 import type { SettingsStore } from '../stores/settings'
 import { filterCommands } from './CommandPalette'

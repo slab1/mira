@@ -140,11 +140,8 @@ export default defineConfig({
           return req.url
         },
         configure: (proxy) => {
-          // Gracefully ignore writeAfterFIN during bun --watch restart (HMR reconnect)
-          // and ECONNREFUSED while the server is (re)starting or has rotated ports —
-          // Vite retries the proxy on the next request; logging the AggregateError
-          // on every request is pure noise. Fix the target by restarting web after
-          // the server is up (it reads .mira/port at startup) or via MIRA_DEV_PORT.
+          // Gracefully ignore writeAfterFIN during watch restart (HMR reconnect)
+          // and ECONNREFUSED/ECONNRESET while the server is (re)starting or client disconnects.
           proxy.on('error', (err: Error & { code?: string }) => {
             const msg = String(err?.message ?? err)
             const code = (err as { code?: string })?.code
@@ -152,9 +149,18 @@ export default defineConfig({
               msg.includes('writeAfterFIN') ||
               code === 'ECONNRESET' ||
               code === 'ECONNREFUSED' ||
-              msg.includes('ECONNREFUSED')
+              msg.includes('ECONNREFUSED') ||
+              msg.includes('ECONNRESET') ||
+              msg.includes('read ECONNRESET')
             )
               return
+          })
+          proxy.on('proxyReqWs', (_proxyReq, _req, socket) => {
+            socket.on('error', (err: any) => {
+              if (err?.code === 'ECONNRESET' || String(err?.message || '').includes('ECONNRESET')) {
+                return
+              }
+            })
           })
         },
       },

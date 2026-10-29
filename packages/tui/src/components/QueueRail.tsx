@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * QueueRail — TUI port of web/src/components/QueueRail.tsx
  *

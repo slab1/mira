@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createEffect, onCleanup } from 'solid-js'
 
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'

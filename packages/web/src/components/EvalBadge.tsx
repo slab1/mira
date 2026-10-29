@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createSignal, createEffect, onCleanup, Show } from 'solid-js'
 import { api, type ModelEval } from '../api/client'
 

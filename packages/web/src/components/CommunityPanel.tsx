@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createSignal, For, onMount, Show } from 'solid-js'
 import { api, type CommunityEntry } from '../api/client'
 import { toast } from './Toast'

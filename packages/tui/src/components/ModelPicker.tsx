@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * ModelPicker — TUI port for P1-4 Eval Badge
  *

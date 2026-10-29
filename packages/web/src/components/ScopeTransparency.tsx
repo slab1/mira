@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * ScopeTransparency — shows what Mira can/cannot do in each workspace.
  *

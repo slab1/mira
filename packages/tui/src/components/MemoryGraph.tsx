@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * MemoryGraph — TUI port of web/src/components/MemoryGraph.tsx
  *

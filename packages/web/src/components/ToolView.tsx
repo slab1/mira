@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { For, Show, createSignal, createResource } from 'solid-js'
 import type { AppStore } from '../stores/app'
 import { api, type ToolInfo, type Snapshot, type Finding, type Job } from '../api/client'

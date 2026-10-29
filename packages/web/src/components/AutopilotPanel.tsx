@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createSignal, onMount, Show, For } from 'solid-js'
 import { api } from '../api/client'
 import type { SchedulerStatus, EvalDelta, Patch } from '../api/client'

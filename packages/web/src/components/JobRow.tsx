@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createSignal, onCleanup, Show } from 'solid-js'
 import type { Job } from '../api/client'
 

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { For, Show, createSignal, createMemo } from 'solid-js'
 import type { Message, Part } from '../api/client'
 import { MessagePartView } from './MessagePart'

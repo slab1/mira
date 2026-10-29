@@ -121,6 +121,23 @@
   --confidence-low: var(--danger);
   --stream-caret: var(--accent);
   --stream-typing-dot: var(--accent);
+
+  /* Material Design 3 (M3 / Material You) Alignment Tokens */
+  --m3-surface: var(--bg-surface);
+  --m3-surface-container: var(--bg-hover);
+  --m3-surface-container-high: var(--bg-active);
+  --m3-surface-container-highest: var(--border-strong);
+  --m3-primary: var(--accent);
+  --m3-primary-container: var(--accent-soft);
+  --m3-on-primary: var(--on-accent);
+  --m3-shape-xs: 6px;
+  --m3-shape-sm: 10px;
+  --m3-shape-md: 14px;
+  --m3-shape-lg: 20px;
+  --m3-shape-xl: 28px;
+  --m3-elevation-1: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --m3-elevation-2: 0 4px 8px rgba(0, 0, 0, 0.4);
+  --m3-elevation-3: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
 /* Light theme — overrides when data-theme="light" (resolved from system or user choice) */
@@ -430,6 +447,25 @@ input:focus-visible,
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
+}
+
+.m3-card {
+  background: var(--m3-surface-container);
+  border: 1px solid var(--border);
+  border-radius: var(--m3-shape-lg);
+  box-shadow: var(--m3-elevation-1);
+  transition: box-shadow var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.m3-card:hover {
+  box-shadow: var(--m3-elevation-2);
+  background: var(--m3-surface-container-high);
+}
+
+.m3-tonal-container {
+  background: var(--m3-primary-container);
+  color: var(--m3-primary);
+  border-radius: var(--m3-shape-xl);
+  padding: 16px;
 }
 
 .alert {

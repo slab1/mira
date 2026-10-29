@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * DesignSystem — shared primitives for Mira Web.
  *

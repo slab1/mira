@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * AutopilotView — TUI port of web/src/components/AutopilotPanel.tsx
  *

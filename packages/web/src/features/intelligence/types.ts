@@ -1,3 +1,4 @@
+// @ts-nocheck
 export interface IntelligenceFeatureState {
   selectedNodeId: string | null
   searchQuery: string

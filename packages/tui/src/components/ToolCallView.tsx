@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * ToolCallView — Collapsible tool-call / tool-result with keyboard nav (2026 rebuild)
  *

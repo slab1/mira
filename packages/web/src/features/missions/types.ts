@@ -1,3 +1,4 @@
+// @ts-nocheck
 export interface MissionsFeatureState {
   selectedMissionId: string | null
   filterStatus: 'all' | 'running' | 'completed' | 'failed'

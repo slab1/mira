@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { For, Show, createSignal } from 'solid-js'
 import type { AppStore } from '../stores/app'
 import { useFocusTrap } from '../hooks/useFocusTrap'

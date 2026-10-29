@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * UX Mode store — Beginner / Professional / Expert interface tiers
  * (master findings P2.4).

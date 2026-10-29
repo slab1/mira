@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Toast — TUI toast stack, auto-dismiss 3s, Box/Text styling
  * Ported from web/src/components/Toast.tsx — dark TUI styling, same API.

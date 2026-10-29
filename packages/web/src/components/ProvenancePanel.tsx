@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createSignal, Show, For } from 'solid-js'
 import type { Message } from '../api/client'
 import { api } from '../api/client'

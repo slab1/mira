@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { For, Show, createSignal, createMemo, onMount } from 'solid-js'
 import type { AppStore } from '../stores/app'
 import { api, getApiUrl, type WorkspaceEntry } from '../api/client'

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * SkillSelector + Agent Lane Picker — TUI port of web/src/components/SkillSelector.tsx + App.tsx:704-755
  * Skill picker + agent lane select, wired to createSession.

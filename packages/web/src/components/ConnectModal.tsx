@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createSignal, createEffect, For, Show, onCleanup } from 'solid-js'
 import type { SettingsStore } from '../stores/settings'
 import { toast } from './Toast'

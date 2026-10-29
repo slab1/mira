@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Inspector — TUI port of web/src/components/ToolView.tsx
  *

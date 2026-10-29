@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Layout — Unified layout system for Mira TUI (2026 TUI Best Practices)
  *

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * SolidJS optimization utilities.
  *

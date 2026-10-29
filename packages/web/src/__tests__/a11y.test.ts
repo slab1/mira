@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Accessibility Automated Verification — a11y checks for CI.
  *

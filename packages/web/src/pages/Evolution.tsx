@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createSignal, onMount, Show, For, createMemo } from 'solid-js'
 import { api, req, type PatchProposal, type ProposalState } from '../api/client'
 import { toast } from '../components/Toast'

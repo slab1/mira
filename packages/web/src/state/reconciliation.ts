@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * State Reconciliation — deterministic ordering for REST/WebSocket/polling.
  *

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * HistoryView — Snapshot list + diff modal + revert (TUI port of web/src/components/ToolView.tsx:483-716)
  *

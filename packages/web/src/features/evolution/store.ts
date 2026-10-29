@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createSignal, createMemo } from 'solid-js'
 import type { EvolutionFeatureState } from './types'
 

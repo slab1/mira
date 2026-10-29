@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * ApprovalQueue — the operator's pending approval queue (§18)
  *

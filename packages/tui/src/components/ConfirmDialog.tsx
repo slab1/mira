@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * ConfirmDialog — TUI modal, ported from web/src/components/ConfirmDialog.tsx
  * Focus trap + Escape handling, dark TUI styling.

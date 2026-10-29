@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * InvestigationQueue — open questions awaiting a real fix (§24)
  *

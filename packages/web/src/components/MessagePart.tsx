@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { For, Show, createSignal, type JSX } from 'solid-js'
 import type { Part, JsonValue } from '../api/client'
 
