@@ -68,6 +68,7 @@ const API_TARGET =
   process.env.MIRA_DEV_API ?? `http://localhost:${process.env.MIRA_DEV_PORT ?? miraPortFallback()}`
 
 export default defineConfig({
+  root: __dirname,
   plugins: [solid()],
   ...(process.env.NODE_ENV !== 'production' && FIRST_RUN_TOKEN
     ? { define: { 'import.meta.env.VITE_MIRA_TOKEN': JSON.stringify(FIRST_RUN_TOKEN) } }
@@ -121,24 +122,10 @@ export default defineConfig({
       '/shadow': { target: API_TARGET, changeOrigin: true },
       '/canary': { target: API_TARGET, changeOrigin: true },
       '/memory': { target: API_TARGET, changeOrigin: true },
-      // WebSocket (GlobalBus) — catch-all must be last; HMR WS isolated on 24678 so it never hits this proxy.
-      // bypass() keeps Vite's own dev requests local: without it the '/'
-      // catch-all hijacks /src/*, /@vite/*, /node_modules/* etc. and forwards
-      // them to the API server (which 404/401s them) → black screen.
-      // Verified against vite 6.4.3 bundled code: bypass returning a string
-      // rewrites req.url and calls next() (Vite serves it); nullish continues
-      // to the proxy (API + WS upgrades, which arrive with res undefined).
-      '/': {
+      '/ws': {
         target: API_TARGET,
         ws: true,
         changeOrigin: true,
-        bypass: (req, res) => {
-          const upgrade = (req.headers?.upgrade || '').toLowerCase()
-          // Only proxy WebSocket upgrade requests to the Hono API server.
-          // All HTTP GET/HEAD requests (HTML, JS, CSS, /assets/*, /src/*, etc.) MUST be served by Vite.
-          if (upgrade === 'websocket') return null
-          return req.url
-        },
         configure: (proxy) => {
           // Gracefully ignore writeAfterFIN during watch restart (HMR reconnect)
           // and ECONNREFUSED/ECONNRESET while the server is (re)starting or client disconnects.

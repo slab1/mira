@@ -5,7 +5,7 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "prepare": "husky || true",
-    "dev": "turbo dev --continue --filter=!@mira/slack",
+    "dev": "bunx turbo dev --continue --filter=!@mira/slack",
     "dev:all": "turbo dev --continue",
     "build": "turbo build",
     "test": "turbo test",

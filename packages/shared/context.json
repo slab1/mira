@@ -922,6 +922,33 @@
         "deny",
         "keep pending"
       ]
+    },
+    {
+      "id": "dec_mvuofkdi_oekn",
+      "decision": "governance:promoted",
+      "context": "Proposal p1 transitioned CANARY_PASSED → PROMOTED",
+      "at": "2026-10-30T07:54:44.838Z",
+      "by": "governance",
+      "evidence": [
+        "stage=n/a"
+      ],
+      "alternatives": [
+        "remain in CANARY_PASSED"
+      ]
+    },
+    {
+      "id": "dec_mvuofkdo_aym6",
+      "decision": "governance:rejected",
+      "context": "Proposal p2 transitioned PROPOSED → REJECTED — security",
+      "at": "2026-10-30T07:54:44.844Z",
+      "by": "governance",
+      "evidence": [
+        "stage=n/a",
+        "reason=security"
+      ],
+      "alternatives": [
+        "remain in PROPOSED"
+      ]
     }
   ],
   "strategy_log": [
@@ -1854,6 +1881,144 @@
       "agent_target": "general",
       "outcome": "completed:VERIFIED",
       "at": "2026-10-13T23:02:24.045Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-30T07:54:28.073Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-30T07:54:28.118Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-30T07:54:28.143Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-10-30T07:54:28.215Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-30T07:54:28.246Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-30T07:54:28.277Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-30T07:54:28.306Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-10-30T07:54:28.311Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-10-30T07:54:28.320Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "cancelled",
+      "at": "2026-10-30T07:55:15.066Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "cancelled",
+      "at": "2026-10-30T07:55:15.088Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-30T07:55:15.125Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-30T07:55:15.148Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-30T07:55:15.176Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-30T07:55:15.197Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-30T07:55:15.219Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "cancelled",
+      "at": "2026-10-30T07:56:07.628Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "cancelled",
+      "at": "2026-10-30T07:56:07.652Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-30T07:56:07.690Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-30T07:56:07.712Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-30T07:56:07.736Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-30T07:56:07.757Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-10-30T07:56:07.779Z"
     }
   ],
   "active_tasks": [
@@ -1982,14 +2147,21 @@
       "last_updated": "2026-09-27T19:39:18.867875+00:00"
     },
     "agent:general": {
-      "count": 135,
-      "completed": 135,
-      "successes": 75,
-      "success_rate": 0.56,
-      "last_updated": "2026-10-13T23:02:24.043Z"
+      "count": 148,
+      "completed": 148,
+      "successes": 80,
+      "success_rate": 0.54,
+      "last_updated": "2026-10-30T07:56:07.645Z"
+    },
+    "agent:coder": {
+      "count": 10,
+      "completed": 10,
+      "successes": 0,
+      "success_rate": 0,
+      "last_updated": "2026-10-30T07:56:07.773Z"
     }
   },
-  "last_updated": "2026-10-30T07:05:53.774Z",
+  "last_updated": "2026-10-30T07:56:07.779Z",
   "workflow_trace": [
     {
       "agent": "fixer",
