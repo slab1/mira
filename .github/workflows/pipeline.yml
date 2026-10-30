@@ -1,0 +1,190 @@
+name: Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  setup:
+    name: setup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify install integrity
+        run: node scripts/verify-install.js
+
+  lint-and-typecheck:
+    name: lint-and-typecheck
+    needs: [setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bunx turbo run typecheck --continue --cache-dir=.turbo
+
+  unit-tests:
+    name: unit-tests
+    needs: [setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Run unit tests
+        run: bun test src/tools src/skills packages/server/src/memory packages/server/src/auth
+        working-directory: packages/server
+
+  governance-tests:
+    name: governance-tests
+    needs: [setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Run governance tests
+        run: bun test src/patching/governance
+        working-directory: packages/server
+
+  provenance-tests:
+    name: provenance-tests
+    needs: [setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Run provenance tests
+        run: bun test src/memory/provenance.test.ts
+        working-directory: packages/server
+
+  security-scan:
+    name: security-scan
+    needs: [setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Run audit
+        run: bun audit || true
+
+  build:
+    name: build
+    needs: [setup, lint-and-typecheck]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Build packages
+        run: bunx turbo run build --continue --cache-dir=.turbo
+
+  integration-tests:
+    name: integration-tests
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Run integration tests
+        run: bun test src/routes
+        working-directory: packages/server
+
+  deployment-checks:
+    name: deployment-checks
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify strict auth guard
+        run: |
+          MIRA_STRICT_AUTH=1 MIRA_TOKEN="" NODE_ENV=production timeout 15 bun run --cwd packages/server src/index.ts > /tmp/auth-out.txt 2>&1 || true
+          grep -q "refusing to start without auth" /tmp/auth-out.txt || (echo "STRICT_AUTH fail-closed check failed" && exit 1)
+
+  summary:
+    name: summary
+    needs:
+      - setup
+      - lint-and-typecheck
+      - unit-tests
+      - governance-tests
+      - provenance-tests
+      - security-scan
+      - build
+      - integration-tests
+      - deployment-checks
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate CI Summary
+        uses: actions/github-script@v6
+        env:
+          JOBS_JSON: ${{ toJSON(needs) }}
+        with:
+          script: |
+            const jobs = JSON.parse(process.env.JOBS_JSON);
+            const results = {
+              setup: jobs.setup?.result,
+              'lint-and-typecheck': jobs['lint-and-typecheck']?.result,
+              'unit-tests': jobs['unit-tests']?.result,
+              'governance-tests': jobs['governance-tests']?.result,
+              'provenance-tests': jobs['provenance-tests']?.result,
+              'security-scan': jobs['security-scan']?.result,
+              build: jobs.build?.result,
+              'integration-tests': jobs['integration-tests']?.result,
+              'deployment-checks': jobs['deployment-checks']?.result,
+            };
+            const passed = Object.values(results).filter(r => r === 'success').length;
+            const failed = Object.values(results).filter(r => r === 'failure').length;
+            const total = Object.keys(results).length;
+            let summary = '\n## CI Summary\n\n| Job | Status |\n|-----|--------|\n';
+            Object.entries(results).forEach(([job, result]) => {
+              const status = result === 'success' ? '✅' : result === 'failure' ? '❌' : '⚠️';
+              summary += `| ${job} | ${status} |\n`;
+            });
+            summary += `\n**Total:** ${passed}/${total} passed, ${failed} failed\n`;
+            console.log(summary);
+            if (failed > 0) {
+              core.setFailed(`${failed} jobs failed`);
+            }
