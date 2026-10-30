@@ -14,8 +14,13 @@
       "context": "Proposal p1 promoted",
       "at": "2026-10-12T07:38:20.316Z",
       "by": "governance",
-      "evidence": ["stage=canary", "metrics pass"],
-      "alternatives": ["remain in CANARY_PASSED"]
+      "evidence": [
+        "stage=canary",
+        "metrics pass"
+      ],
+      "alternatives": [
+        "remain in CANARY_PASSED"
+      ]
     },
     {
       "id": "dec_mv4xx4pt_qkqm",
@@ -29,8 +34,13 @@
       "context": "Proposal p1 promoted",
       "at": "2026-10-12T07:40:52.339Z",
       "by": "governance",
-      "evidence": ["stage=canary", "metrics pass"],
-      "alternatives": ["remain in CANARY_PASSED"]
+      "evidence": [
+        "stage=canary",
+        "metrics pass"
+      ],
+      "alternatives": [
+        "remain in CANARY_PASSED"
+      ]
     },
     {
       "id": "dec_mv4y0f6x_hjej",
@@ -44,8 +54,13 @@
       "context": "Proposal p1 promoted",
       "at": "2026-10-13T00:06:33.646Z",
       "by": "governance",
-      "evidence": ["stage=canary", "metrics pass"],
-      "alternatives": ["remain in CANARY_PASSED"]
+      "evidence": [
+        "stage=canary",
+        "metrics pass"
+      ],
+      "alternatives": [
+        "remain in CANARY_PASSED"
+      ]
     },
     {
       "id": "dec_mv5x80wz_9i0v",
@@ -59,8 +74,13 @@
       "context": "Proposal p1 promoted",
       "at": "2026-10-13T00:08:48.011Z",
       "by": "governance",
-      "evidence": ["stage=canary", "metrics pass"],
-      "alternatives": ["remain in CANARY_PASSED"]
+      "evidence": [
+        "stage=canary",
+        "metrics pass"
+      ],
+      "alternatives": [
+        "remain in CANARY_PASSED"
+      ]
     },
     {
       "id": "dec_mv5xavf6_504p",
@@ -74,8 +94,13 @@
       "context": "Proposal p1 promoted",
       "at": "2026-10-13T00:09:01.810Z",
       "by": "governance",
-      "evidence": ["stage=canary", "metrics pass"],
-      "alternatives": ["remain in CANARY_PASSED"]
+      "evidence": [
+        "stage=canary",
+        "metrics pass"
+      ],
+      "alternatives": [
+        "remain in CANARY_PASSED"
+      ]
     },
     {
       "id": "dec_mv5xb633_k7dm",
@@ -89,8 +114,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator alice",
       "at": "2026-10-13T19:27:08.452Z",
       "by": "alice",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72oiax_ykp0",
@@ -98,8 +128,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator alice",
       "at": "2026-10-13T19:27:08.457Z",
       "by": "alice",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72oib7_gtzj",
@@ -107,8 +142,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator alice",
       "at": "2026-10-13T19:27:08.467Z",
       "by": "alice",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72oib9_ftr8",
@@ -116,8 +156,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator alice",
       "at": "2026-10-13T19:27:08.469Z",
       "by": "alice",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72oibh_rv5p",
@@ -126,7 +171,10 @@
       "at": "2026-10-13T19:27:08.477Z",
       "by": "human",
       "evidence": [],
-      "alternatives": ["deny", "keep pending"]
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72oibq_wmgp",
@@ -134,8 +182,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator human",
       "at": "2026-10-13T19:27:08.486Z",
       "by": "human",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72oibv_7tq5",
@@ -143,8 +196,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator the-operator",
       "at": "2026-10-13T19:27:08.491Z",
       "by": "the-operator",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72oicr_xq8q",
@@ -152,8 +210,13 @@
       "context": "Proposal prop_1 (level 3) denied by human operator the-operator",
       "at": "2026-10-13T19:27:08.523Z",
       "by": "the-operator",
-      "evidence": ["touches auth"],
-      "alternatives": ["approve", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "approve",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72oicx_disz",
@@ -161,8 +224,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
       "at": "2026-10-13T19:27:08.529Z",
       "by": "op-b",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72oid6_dbr8",
@@ -170,8 +238,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator solo",
       "at": "2026-10-13T19:27:08.538Z",
       "by": "solo",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72oid8_ypde",
@@ -179,8 +252,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator human",
       "at": "2026-10-13T19:27:08.540Z",
       "by": "human",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72oidd_ube5",
@@ -188,8 +266,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
       "at": "2026-10-13T19:27:08.545Z",
       "by": "op-b",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72oidg_buag",
@@ -197,8 +280,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator op-a",
       "at": "2026-10-13T19:27:08.548Z",
       "by": "op-a",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72oidz_jv1p",
@@ -206,8 +294,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator human",
       "at": "2026-10-13T19:27:08.567Z",
       "by": "human",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72oie4_875l",
@@ -215,8 +308,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator human",
       "at": "2026-10-13T19:27:08.572Z",
       "by": "human",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72oie9_5apr",
@@ -224,8 +322,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator human",
       "at": "2026-10-13T19:27:08.577Z",
       "by": "human",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72sco1_885w",
@@ -233,8 +336,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator alice",
       "at": "2026-10-13T19:30:07.777Z",
       "by": "alice",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72sco6_rep0",
@@ -242,8 +350,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator alice",
       "at": "2026-10-13T19:30:07.782Z",
       "by": "alice",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72scoh_dsq5",
@@ -251,8 +364,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator alice",
       "at": "2026-10-13T19:30:07.793Z",
       "by": "alice",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72scom_4xmp",
@@ -260,8 +378,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator alice",
       "at": "2026-10-13T19:30:07.798Z",
       "by": "alice",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72scor_7ptp",
@@ -270,7 +393,10 @@
       "at": "2026-10-13T19:30:07.803Z",
       "by": "human",
       "evidence": [],
-      "alternatives": ["deny", "keep pending"]
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72scoy_rekw",
@@ -278,8 +404,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator human",
       "at": "2026-10-13T19:30:07.810Z",
       "by": "human",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72scp4_c0jb",
@@ -287,8 +418,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator the-operator",
       "at": "2026-10-13T19:30:07.816Z",
       "by": "the-operator",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72scp7_5ldj",
@@ -296,8 +432,13 @@
       "context": "Proposal prop_1 (level 3) denied by human operator the-operator",
       "at": "2026-10-13T19:30:07.819Z",
       "by": "the-operator",
-      "evidence": ["touches auth"],
-      "alternatives": ["approve", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "approve",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72scpa_lpcz",
@@ -305,8 +446,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
       "at": "2026-10-13T19:30:07.822Z",
       "by": "op-b",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72scpd_st7i",
@@ -314,8 +460,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator solo",
       "at": "2026-10-13T19:30:07.825Z",
       "by": "solo",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72scpg_7lt1",
@@ -323,8 +474,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator human",
       "at": "2026-10-13T19:30:07.828Z",
       "by": "human",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72scpj_4pm5",
@@ -332,8 +488,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
       "at": "2026-10-13T19:30:07.831Z",
       "by": "op-b",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72scpm_rnwr",
@@ -341,8 +502,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator op-a",
       "at": "2026-10-13T19:30:07.834Z",
       "by": "op-a",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72scpw_jdxh",
@@ -350,8 +516,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator human",
       "at": "2026-10-13T19:30:07.844Z",
       "by": "human",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72scq1_8bq7",
@@ -359,8 +530,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator human",
       "at": "2026-10-13T19:30:07.849Z",
       "by": "human",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72scq6_jrpw",
@@ -368,8 +544,13 @@
       "context": "Proposal prop_1 (level 3) approved by human operator human",
       "at": "2026-10-13T19:30:07.854Z",
       "by": "human",
-      "evidence": ["touches auth"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72skt3_mwr1",
@@ -377,8 +558,13 @@
       "context": "Proposal prop_high (level 4) approved by human operator human-test",
       "at": "2026-10-13T19:30:18.327Z",
       "by": "human-test",
-      "evidence": ["guardrails"],
-      "alternatives": ["deny", "keep pending"]
+      "evidence": [
+        "guardrails"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72skwd_rfyo",
@@ -394,7 +580,10 @@
         "affectedEngine \"guardrails\" is high-risk per §18",
         "proposer risk=high"
       ],
-      "alternatives": ["deny", "keep pending"]
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     },
     {
       "id": "dec_mv72skx0_kj0w",
@@ -409,7 +598,232 @@
         "affectedEngine \"guardrails\" is high-risk per §18",
         "proposer risk=high"
       ],
-      "alternatives": ["approve", "keep pending"]
+      "alternatives": [
+        "approve",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvukot0y_wr0m",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-10-30T06:09:57.490Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvukot14_272k",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-10-30T06:09:57.496Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvukot1b_uk21",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-10-30T06:09:57.503Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvukot1f_xzqu",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-10-30T06:09:57.507Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvukot1i_yz2c",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 0) approved by human operator human",
+      "at": "2026-10-30T06:09:57.510Z",
+      "by": "human",
+      "evidence": [],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvukot1l_xu6b",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-10-30T06:09:57.513Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvukot1q_1pbs",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator the-operator",
+      "at": "2026-10-30T06:09:57.518Z",
+      "by": "the-operator",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvukot1u_ucg9",
+      "decision": "approval:denied",
+      "context": "Proposal prop_1 (level 3) denied by human operator the-operator",
+      "at": "2026-10-30T06:09:57.522Z",
+      "by": "the-operator",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "approve",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvukot1z_bwb5",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
+      "at": "2026-10-30T06:09:57.527Z",
+      "by": "op-b",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvukot24_17fq",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator solo",
+      "at": "2026-10-30T06:09:57.532Z",
+      "by": "solo",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvukot28_u1e7",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-10-30T06:09:57.536Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvukot2c_87dc",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
+      "at": "2026-10-30T06:09:57.540Z",
+      "by": "op-b",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvukot2e_lt07",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator op-a",
+      "at": "2026-10-30T06:09:57.542Z",
+      "by": "op-a",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvukot2k_p619",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-10-30T06:09:57.548Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvukot2m_hkz8",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-10-30T06:09:57.550Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvukot2q_1lit",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-10-30T06:09:57.554Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     }
   ],
   "strategy_log": [
@@ -1354,7 +1768,9 @@
     }
   ],
   "artifacts": {
-    "files_created": ["shared/simulation_sandbox.ts"],
+    "files_created": [
+      "shared/simulation_sandbox.ts"
+    ],
     "files_modified": [
       "packages/server/src/learning/ledger.ts",
       "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -1475,7 +1891,7 @@
       "last_updated": "2026-10-13T23:02:24.043Z"
     }
   },
-  "last_updated": "2026-10-13T23:02:24.045Z",
+  "last_updated": "2026-10-30T06:09:57.554Z",
   "workflow_trace": [
     {
       "agent": "fixer",
@@ -1483,7 +1899,11 @@
       "task": "P1 MCP CI flake Legacy SSE listen failed (HTTP 200)",
       "status": "completed",
       "timestamp": "2026-09-09T18:05:26.207624+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -1506,7 +1926,11 @@
       "task": "P1 MCP CI flake Legacy SSE listen failed (HTTP 200)",
       "status": "completed",
       "timestamp": "2026-09-09T19:30:00.000000+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/mcp/http-client.ts:186-197 split !res.ok vs !res.body with distinct messages",
@@ -1528,7 +1952,11 @@
       "task": "P1 workspace @ mentions — real workspace tree via GET /workspace/tree",
       "status": "completed",
       "timestamp": "2026-09-09T19:06:28.241103+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/routes/workspace.ts (new) — GET /workspace/tree via Bun.Glob('**/*') + isPathAllowed/sanitizePath, .gitignore + defaults (.git, node_modules, dist, .turbo, data, *.db, .mira, coverage), sorted 500",
@@ -1550,7 +1978,11 @@
       "task": "P1 CORS MIRA_ALLOW_LOCALHOST gate",
       "status": "completed",
       "timestamp": "2026-09-09T20:05:06.509550+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/middleware/index.ts:36-64 corsOrigin function with MIRA_ALLOW_LOCALHOST gate + normalizedAllowSet + header-smuggling protection",
@@ -1570,7 +2002,11 @@
       "task": "P2 queue rail reorder/cancel — QueueRail polling + App.tsx placement + api/client verification",
       "status": "completed",
       "timestamp": "2026-09-09T20:58:58.684555+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/web/src/components/QueueRail.tsx:1-35 polling 3s visibility-aware onCleanup + ↑↓ reorder and ✕ cancel per-item (existing styling)",
@@ -1591,7 +2027,12 @@
       "task": "TUI vs web parity crosscheck @80a6e743 (8 fixes)",
       "status": "completed",
       "timestamp": "2026-09-09T21:44:43Z",
-      "stages": ["parse_context", "examine_tui", "examine_web", "verify"],
+      "stages": [
+        "parse_context",
+        "examine_tui",
+        "examine_web",
+        "verify"
+      ],
       "verdict": "REVISE",
       "artifacts": {
         "report": "/tmp/report_tui_crosscheck.md",
@@ -1607,7 +2048,11 @@
       "task": "Fix CI gaps.test.ts auth 401 — GET /providers hasKey",
       "status": "completed",
       "timestamp": "2026-09-09T22:30:00.000000+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/e2e/gaps.test.ts: beforeAll MIRA_TOKEN=test-gaps-token deterministic + AUTH headers on GET /providers, POST /providers/:id/test, GET /terminal, GET /health, WS /terminal + WS vscode-webview (header + auth message fallback), WS timeout 15s",
@@ -1630,7 +2075,11 @@
       "task": "TUI P0 slash preload + skeleton + P1 workspace @",
       "status": "completed",
       "timestamp": "2026-09-10T06:00:24.509200+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/App.tsx:95-96 slashVisible fix + preload createEffect + workspace @ (MOCK_FILES, workspaceFiles, fetchWorkspaceFiles, atVisible/atFiltered, AtMentionAutocomplete, onInput/onFocus/onKeyDown)",
@@ -1651,7 +2100,11 @@
       "task": "TUI P1 cost + queue — per-session cost/cap bar + queue polling + proxy",
       "status": "completed",
       "timestamp": "2026-09-10T06:33:51.000000+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/rpc/client.ts:13-23 Session costUsd/tokensIn/tokensOut",
@@ -1675,7 +2128,11 @@
       "task": "P1 auth gaps ora-3: CORS WS vs HTTP, api_keys schema, placeholder token",
       "status": "completed",
       "timestamp": "2026-09-10T07:25:25.000000+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/storage/schema.ts: apiKeys table added (key TEXT PK, owner TEXT, created_at INTEGER, created_by TEXT DEFAULT default) + index api_keys_owner_idx, schema export includes apiKeys",
@@ -1700,7 +2157,11 @@
       "task": "TUI P2 history grouping + abortPrompt",
       "status": "completed",
       "timestamp": "2026-09-10T07:40:00.000000+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + ↩ rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
@@ -1722,7 +2183,11 @@
       "task": "TUI P2 history grouping + abortPrompt",
       "status": "completed",
       "timestamp": "2026-09-10T08:35:23.513735+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/tui/src/components/HistoryView.tsx:198-351 grouped Map<string,Snapshot[]> by messageID (__no_message__ sentinel), per-group header msg 8chars/no message + earliest timestamp + file count + ↩ rewind to here -> rpc.revertSession + refetch + toast, per-file card path+time+edit/new file+diff -> rpc.getSnapshot -> DiffViewer before/after + line-count delta",
@@ -1744,7 +2209,11 @@
       "task": "P0-2 workspace tree project-aware + prod bug",
       "status": "completed",
       "timestamp": "2026-09-10T10:35:44.628986+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/routes/workspace.ts:63-82 project-aware with cwd/projectId/limit/cursor/includeDirs, sanitizePath+isPathAllowed with real allowedRoots, pagination, return {files:[{path,isDir,size,mtime}], truncated, cwd}",
@@ -1766,7 +2235,11 @@
       "task": "P0-1 Add projectId/cwd to sessions + thread through prompt/tools",
       "status": "completed",
       "timestamp": "2026-09-10T11:08:50.872685+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/storage/schema.ts:11 cwd: text(\"cwd\"), projectId: text(\"project_id\") + index sessions_project_id_idx",
@@ -1795,7 +2268,11 @@
       "run_id": "run_20260909_96b605",
       "task": "P2-1 Workspace-aware symbols/LSP/memory",
       "status": "completed",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "timestamp": "2026-09-10T20:45:00.000000+00:00",
       "artifacts": {
         "checkpoint_dir": "~/.config/opencode/shared/checkpoints/fixer/run_20260909_96b605",
@@ -1820,7 +2297,11 @@
       "task": "P2-2 project lifecycle — create/switch/templates/recent",
       "status": "completed",
       "timestamp": "2026-09-11T00:29:53.681711+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/routes/workspace.ts (already had GET/POST/DELETE /workspaces with sanitizePath+isPathAllowed+getConfig guardrails, ~/.mira/workspaces.json + MIRA_WORKSPACE_ROOTS)",
@@ -1845,7 +2326,11 @@
       "task": "P2-3 CLI env-only + P3-3 VITE_MIRA_TOKEN prod bake",
       "status": "completed",
       "timestamp": "2026-09-11T06:54:36.238176+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/cli/src/cli.ts:68-95 readMiraEnvFile() (MIRA_DIR, XDG_CONFIG_HOME/mira/mira.env, ~/.mira/mira.env) + token() now process.env.MIRA_TOKEN ?? readMiraEnvFile() ?? \"\"",
@@ -1870,7 +2355,11 @@
       "task": "P2-2 validateToken double 401 — single gated endpoint",
       "status": "completed",
       "timestamp": "2026-09-11T08:16:50.719522+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/web/src/api/client.ts:440-449 validateToken single gated endpoint GET /config only (was /health then /config double 401, now 1 RTT saved)",
@@ -1892,7 +2381,11 @@
       "task": "P3 auth gaps — api_keys hash, admin loopback gate, tokenEquals hash, isPublicUiPath normalize, ?api= validate",
       "status": "completed",
       "timestamp": "2026-09-11T10:11:59.270194+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/index.ts: tokenEquals hash-then-compare (createHash sha256 32B constant time, P3-4)",
@@ -1920,7 +2413,11 @@
       "task": "F1 Sync Vite proxies to server route table",
       "status": "completed",
       "timestamp": "2026-09-11T15:33:35.462703+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/web/vite.config.ts:79-99 add 7 proxies /admin /workspaces /workspace /complete /autocomplete /terminal /metrics + keep WS catch-all last",
@@ -1944,7 +2441,11 @@
       "task": "F2 Make slack#dev opt-in, not persistent",
       "status": "completed",
       "timestamp": "2026-09-11T20:15:00.000000+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
@@ -1968,7 +2469,11 @@
       "task": "F2 Make slack#dev opt-in, not persistent",
       "status": "completed",
       "timestamp": "2026-09-12T01:35:47.379650+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "package.json: dev -> turbo dev --continue --filter=!@mira/slack + dev:all: turbo dev --continue",
@@ -1992,7 +2497,11 @@
       "task": "F5 Align WS isOriginAllowed with HTTP CORS",
       "status": "completed",
       "timestamp": "2026-09-12T04:26:16.115820+00:00",
-      "stages": ["parse_context", "apply_changes", "verify_changes"],
+      "stages": [
+        "parse_context",
+        "apply_changes",
+        "verify_changes"
+      ],
       "artifacts": {
         "files_modified": [
           "packages/server/src/middleware/index.ts:32-101 isLocalDevOrigin now ws/wss + isVscodeOrigin + corsOrigin vscode allowlist both branches",

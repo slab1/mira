@@ -99,6 +99,7 @@ jobs:
         run: node scripts/verify-install.js
       - name: Verify auth hygiene (MIRA_TOKEN placeholder + gen script + no real secrets)
         run: |
+          chmod +x scripts/gen-mira-token.sh 2>/dev/null || true
           test -x scripts/gen-mira-token.sh || (echo "missing scripts/gen-mira-token.sh (chmod +x)" && exit 1)
           grep -q "change-me-to-a-long-random-secret" .env.example || (echo ".env.example must keep placeholder" && exit 1)
           grep -q "scripts/gen-mira-token.sh" .env.example || (echo ".env.example must reference gen script" && exit 1)

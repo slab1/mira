@@ -1479,13 +1479,13 @@ async function main() {
   // /engines, /shadow, /canary, /memory, /gateway, /me, /webhooks, /v1).
   mountStaticRoutes(app, { tools })
 
-  // ── Bun.serve with port rotation (4096 → 4145 if in use, fallback to 0) ─────────
+  // ── Bun.serve with port rotation (4096 → 4145 if in use on normal ports) ─────────
   let server: ReturnType<typeof Bun.serve> | null = null
   let actualPort = PORT
   for (let attempt = 0; attempt < 50; attempt++) {
     try {
       server = Bun.serve<MiraWSData>({
-        port: attempt === 49 ? 0 : actualPort,
+        port: actualPort,
         hostname: HOST,
         idleTimeout: 180,
         fetch(req, srv) {

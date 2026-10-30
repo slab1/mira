@@ -48,12 +48,24 @@ if [ "${MIRA_SKIP_DISK_CHECK:-0}" != "1" ]; then
   echo "install.sh: disk ok (${FREE_GB}G free)."
 fi
 
-# --- install (exactly one backend flag; extra args appended) ---
+# --- sanitize npm-style args for Bun ---
+SANITIZED_ARGS=()
+for arg in "$@"; do
+  if [ "$arg" = "--production=false" ]; then
+    continue
+  elif [ "$arg" = "--production=true" ]; then
+    SANITIZED_ARGS+=("--production")
+  else
+    SANITIZED_ARGS+=("$arg")
+  fi
+done
+
+# --- install (exactly one backend flag; sanitized extra args appended) ---
 cd "$REPO_DIR"
 if [ -n "$BACKEND" ]; then
-  bun install --backend="$BACKEND" "$@"
+  bun install --backend="$BACKEND" "${SANITIZED_ARGS[@]}"
 else
-  bun install "$@"
+  bun install "${SANITIZED_ARGS[@]}"
 fi
 
 # --- verify integrity (fail fast with actionable errors) ---

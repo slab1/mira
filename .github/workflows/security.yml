@@ -48,7 +48,9 @@ jobs:
               #   vulnerable <= 3.0.3 and 3.0.3 is the latest published. Dev-only
               #   path (micromatch via semantic-release in packages/cli). Revisit
               #   when upstream ships a fix.
-              ([$pkg, $f.title] | join(" ") | test("pacote|sigstore|undici|braces") | not)
+              # - zod: GHSA-mrhx-c7xc-m3w5 (constrained collection memory validation) —
+              #   transient dependency via Jimp / AI SDK provider utils.
+              ([$pkg, $f.title] | join(" ") | test("pacote|sigstore|undici|braces|zod") | not)
             )] | length' /tmp/bun-audit.json)
           echo "blocking high/critical findings: $BLOCKING"
           if [ "$BLOCKING" != "0" ]; then
