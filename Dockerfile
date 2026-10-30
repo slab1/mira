@@ -36,7 +36,7 @@ RUN bun install --production --frozen-lockfile
 # Build stage
 FROM deps AS builder
 COPY . .
-RUN bun run build
+RUN bunx turbo run build
 # Smoke: verify server dist and web dist were produced (fail fast if build silently broke)
 RUN test -f packages/server/dist/index.js && test -f packages/web/dist/index.html
 

@@ -16,11 +16,21 @@
  * Frontmatter is parsed with a minimal hand-rolled reader (scalars +
  * string lists) — no external YAML dependency.
  */
+import { existsSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 
-/** Content directory: packages/server/src/skills/../../data/skills */
-export const SKILLS_DIR = fileURLToPath(new URL('../../data/skills/', import.meta.url))
+/** Content directory: resolves packages/server/data/skills/ across both TS source and bundled dist */
+function resolveSkillsDir(): string {
+  const candidates = [
+    fileURLToPath(new URL('../../data/skills/', import.meta.url)),
+    fileURLToPath(new URL('../data/skills/', import.meta.url)),
+    fileURLToPath(new URL('./data/skills/', import.meta.url)),
+  ]
+  return candidates.find((d) => existsSync(d)) ?? candidates[0]
+}
+
+export const SKILLS_DIR = resolveSkillsDir()
 
 export interface SkillPack {
   /** unique pack id (frontmatter `name`, falls back to directory/file name) */
