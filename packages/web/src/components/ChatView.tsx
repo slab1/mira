@@ -608,6 +608,20 @@ export function ChatView(props: {
         overflow: 'hidden',
       }}
     >
+      {/* Zeriq-inspired Multi-Agent Workspace Status Bar */}
+      <div class="mira-agent-bar">
+        <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
+          <span class="mira-agent-avatar">M</span>
+          <span style={{ 'font-weight': '600', color: 'var(--fg)' }}>Mira Agent Teammate</span>
+          <span class={`pill ${s().streaming ? 'pill-brand' : ''}`} style={{ 'font-size': '10px' }}>
+            {s().streaming ? '● Active Turn' : 'Idle'}
+          </span>
+        </div>
+        <div style={{ 'margin-left': 'auto', display: 'flex', 'align-items': 'center', gap: '12px', color: 'var(--fg-muted)' }}>
+          <span>Roles: <b>Coder</b> · <b>Reviewer</b> · <b>Verifier</b></span>
+        </div>
+      </div>
+
       {/* messages */}
       <div style={{ flex: '1', position: 'relative', 'min-height': '0' }}>
         <div
@@ -627,6 +641,35 @@ export function ChatView(props: {
               'min-height': '100%',
             }}
           >
+            {/* Zeriq-inspired 6-Stage Lifecycle Stepper */}
+            <Show when={s().currentId}>
+              <div class="mira-stepper">
+                <div class={`mira-step-item ${s().streaming ? 'completed' : 'completed'}`}>
+                  <span class="mira-step-dot" /> Explore
+                </div>
+                <div class="mira-step-connector" />
+                <div class={`mira-step-item ${s().streaming ? 'completed' : 'completed'}`}>
+                  <span class="mira-step-dot" /> Understand
+                </div>
+                <div class="mira-step-connector" />
+                <div class={`mira-step-item ${s().streaming ? 'active' : 'completed'}`}>
+                  <span class="mira-step-dot" /> Plan
+                </div>
+                <div class="mira-step-connector" />
+                <div class={`mira-step-item ${s().streaming ? 'active' : 'completed'}`}>
+                  <span class="mira-step-dot" /> Implement
+                </div>
+                <div class="mira-step-connector" />
+                <div class={`mira-step-item ${s().streaming ? '' : 'completed'}`}>
+                  <span class="mira-step-dot" /> Verify
+                </div>
+                <div class="mira-step-connector" />
+                <div class={`mira-step-item ${s().streaming ? '' : 'completed'}`}>
+                  <span class="mira-step-dot" /> Report
+                </div>
+              </div>
+            </Show>
+
             <Show
               when={s().currentId}
               fallback={

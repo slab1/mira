@@ -2,6 +2,8 @@
 import { For, Show, createSignal, createMemo, createEffect, onCleanup } from 'solid-js'
 import type { AppStore } from '../stores/app'
 import type { Part, Todo } from '../api/client'
+import { AutonomyDial } from './AutonomyDial'
+import { ScopeTransparency } from './ScopeTransparency'
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -612,7 +614,7 @@ export function ActivityPanel(props: {
       >
         {/* Header */}
         <div class="activity-panel-header">
-          <span class="activity-panel-title">Activity</span>
+          <span class="activity-panel-title">Activity & Governance</span>
           <div style={{ display: 'flex', gap: '4px', 'align-items': 'center' }}>
             <Show when={isStreaming()}>
               <span
@@ -644,6 +646,15 @@ export function ActivityPanel(props: {
               «
             </button>
           </div>
+        </div>
+
+        {/* Zeriq-Inspired Autonomy & Scope Governance Controls */}
+        <div style={{ padding: '8px 12px', 'border-bottom': '1px solid var(--border)', display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
+          <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
+            <span style={{ 'font-size': '11px', 'font-weight': '600', color: 'var(--fg-muted)', 'text-transform': 'uppercase', 'letter-spacing': '0.04em' }}>Autonomy</span>
+            <AutonomyDial />
+          </div>
+          <ScopeTransparency workspace="work" />
         </div>
 
         {/* Progress */}

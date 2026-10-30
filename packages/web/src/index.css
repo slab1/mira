@@ -2655,3 +2655,84 @@ html {
     max-height: 46vh;
   }
 }
+
+/* ── Zeriq-Inspired Lifecycle Stepper Component ── */
+.mira-stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--m3-shape-lg);
+  padding: 6px 10px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.mira-stepper::-webkit-scrollbar {
+  display: none;
+}
+
+.mira-step-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--fg-muted);
+  padding: 4px 8px;
+  border-radius: var(--m3-shape-sm);
+  transition: all var(--dur-fast) var(--ease);
+  white-space: nowrap;
+}
+.mira-step-item.active {
+  color: var(--m3-primary);
+  background: var(--m3-primary-container);
+  font-weight: 600;
+}
+.mira-step-item.completed {
+  color: var(--fg);
+}
+.mira-step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-full);
+  background: var(--border-strong);
+}
+.mira-step-item.active .mira-step-dot {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+.mira-step-item.completed .mira-step-dot {
+  background: var(--success);
+}
+.mira-step-connector {
+  width: 12px;
+  height: 1px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+/* ── Multi-Agent Workspace Status Bar ── */
+.mira-agent-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-xs);
+}
+.mira-agent-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-full);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 11px;
+}
+

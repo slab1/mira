@@ -154,14 +154,12 @@ export function ApprovalQueue(props: { onDecided?: () => void }) {
           <For each={pending()}>
             {(p) => (
               <div
+                class="m3-card"
                 style={{
-                  border: '1px solid var(--border)',
-                  'border-radius': 'var(--r-md)',
-                  padding: '10px',
+                  padding: '14px 16px',
                   display: 'flex',
                   'flex-direction': 'column',
                   gap: '8px',
-                  background: 'var(--bg-app)',
                 }}
               >
                 <div

@@ -824,6 +824,104 @@
         "deny",
         "keep pending"
       ]
+    },
+    {
+      "id": "dec_mvumoqo3_prw6",
+      "decision": "approval:approved",
+      "context": "Proposal proposal_cand_prop_9_1793343953664 (level 1) approved by human operator alice",
+      "at": "2026-10-30T07:05:53.667Z",
+      "by": "alice",
+      "evidence": [
+        "candidate change is eligible for promotion"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvumoqoc_i02d",
+      "decision": "approval:approved",
+      "context": "Proposal proposal_cand_prop_9_1793343953675 (level 1) approved by human operator alice",
+      "at": "2026-10-30T07:05:53.676Z",
+      "by": "alice",
+      "evidence": [
+        "candidate change is eligible for promotion"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvumoqq0_9bwj",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 1) approved by human operator alice",
+      "at": "2026-10-30T07:05:53.737Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvumoqq8_or39",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 1) approved by human operator alice",
+      "at": "2026-10-30T07:05:53.744Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvumoqqe_54hw",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 1) approved by human operator alice",
+      "at": "2026-10-30T07:05:53.750Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvumoqqp_b63l",
+      "decision": "approval:denied",
+      "context": "Proposal prop_1 (level 1) denied by human operator alice",
+      "at": "2026-10-30T07:05:53.761Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "approve",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mvumoqr2_asf1",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 1) approved by human operator alice",
+      "at": "2026-10-30T07:05:53.774Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     }
   ],
   "strategy_log": [
@@ -1891,7 +1989,7 @@
       "last_updated": "2026-10-13T23:02:24.043Z"
     }
   },
-  "last_updated": "2026-10-30T06:09:57.554Z",
+  "last_updated": "2026-10-30T07:05:53.774Z",
   "workflow_trace": [
     {
       "agent": "fixer",

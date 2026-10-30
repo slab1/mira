@@ -397,3 +397,126 @@ export function BehaviorAdjust(props: {
     </div>
   )
 }
+
+/* ── Zeriq-Inspired Approval Gate Card ────────────────────────────────────── */
+
+export function ApprovalGateCard(props: {
+  title: string
+  actionSummary: string
+  targetFiles?: string[]
+  diffPreview?: string
+  onApprove: () => void
+  onReject: (reason?: string) => void
+}) {
+  const [rejectReason, setRejectReason] = createSignal('')
+  const [showRejectForm, setShowRejectForm] = createSignal(false)
+
+  return (
+    <div
+      class="m3-card"
+      style={{
+        padding: '16px',
+        margin: '12px 0',
+        border: '1px solid var(--border-strong)',
+        background: 'var(--m3-surface-container-high)',
+        'border-radius': 'var(--m3-shape-lg)',
+      }}
+    >
+      <div style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'margin-bottom': '8px' }}>
+        <span class="pill pill-warn" style={{ 'font-size': '10px' }}>Approval Required</span>
+        <span style={{ 'font-weight': '700', 'font-size': 'var(--fs-sm)', color: 'var(--fg)' }}>{props.title}</span>
+      </div>
+
+      <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-muted)', 'margin-bottom': '10px', 'line-height': '1.5' }}>
+        {props.actionSummary}
+      </div>
+
+      <Show when={props.targetFiles && props.targetFiles.length > 0}>
+        <div style={{ 'margin-bottom': '10px' }}>
+          <div style={{ 'font-size': '10px', 'font-weight': '600', color: 'var(--fg-faint)', 'text-transform': 'uppercase', 'margin-bottom': '4px' }}>Target Files</div>
+          <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '4px' }}>
+            {props.targetFiles?.map((f) => (
+              <span class="pill" style={{ 'font-family': 'var(--font-mono)', 'font-size': '11px', background: 'var(--bg-app)' }}>{f}</span>
+            ))}
+          </div>
+        </div>
+      </Show>
+
+      <Show when={props.diffPreview}>
+        <pre style={{
+          background: 'var(--bg-app)',
+          padding: '8px 10px',
+          'border-radius': 'var(--r-md)',
+          'font-family': 'var(--font-mono)',
+          'font-size': '11px',
+          overflow: 'auto',
+          'max-height': '120px',
+          'margin-bottom': '12px',
+          border: '1px solid var(--border)',
+          color: 'var(--fg-subtle)'
+        }}>
+          <code>{props.diffPreview}</code>
+        </pre>
+      </Show>
+
+      <Show when={!showRejectForm()} fallback={
+        <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
+          <input
+            type="text"
+            placeholder="Feedback / Reason for rejection..."
+            value={rejectReason()}
+            onInput={(e) => setRejectReason(e.currentTarget.value)}
+            style={{
+              width: '100%',
+              padding: '6px 10px',
+              'font-size': 'var(--fs-xs)',
+              background: 'var(--bg-app)',
+              border: '1px solid var(--border-strong)',
+              'border-radius': 'var(--r-md)',
+              color: 'var(--fg)',
+              outline: 'none'
+            }}
+          />
+          <div style={{ display: 'flex', gap: '8px', 'justify-content': 'flex-end' }}>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              onClick={() => setShowRejectForm(false)}
+              style={{ padding: '4px 10px', 'font-size': '11px' }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn"
+              onClick={() => props.onReject(rejectReason())}
+              style={{ padding: '4px 10px', 'font-size': '11px', background: 'var(--danger)', color: '#fff' }}
+            >
+              Confirm Rejection
+            </button>
+          </div>
+        </div>
+      }>
+        <div style={{ display: 'flex', gap: '8px', 'justify-content': 'flex-end' }}>
+          <button
+            type="button"
+            class="btn btn-ghost"
+            onClick={() => setShowRejectForm(true)}
+            style={{ padding: '6px 12px', 'font-size': '12px', border: '1px solid var(--border)' }}
+          >
+            Reject with Feedback
+          </button>
+          <button
+            type="button"
+            class="btn"
+            onClick={props.onApprove}
+            style={{ padding: '6px 12px', 'font-size': '12px', background: 'var(--accent)', color: 'var(--on-accent)', 'font-weight': '600' }}
+          >
+            Approve & Execute
+          </button>
+        </div>
+      </Show>
+    </div>
+  )
+}
+
