@@ -43,7 +43,8 @@ import {
   unpublishEntry,
   type PublishRequest,
 } from '../community/publish.js'
-import { SKILLS_DIR } from '../skills/loader.js'
+import { SKILLS_DIR, ensureSkillsSeeded } from '../skills/loader.js'
+import { SEEDED_SKILLS } from '../skills/seeded-skills.js'
 import type { StoreInput } from '../learning/knowledge.js'
 import type { MiraConfig } from '../types/index.js'
 
@@ -77,13 +78,14 @@ function localSkillsDir(cwd: string): string {
 
 /** Read the shipped pack body (packaged source) — returns SKILL.md text or null. */
 async function readPackagedPack(name: string): Promise<string | null> {
+  ensureSkillsSeeded()
   // Directory layout first (all 20 shipped packs), then the single-file form.
   for (const p of [join(SKILLS_DIR, name, 'SKILL.md'), join(SKILLS_DIR, `${name}.md`)]) {
     try {
       return await readFile(p, 'utf-8')
     } catch {}
   }
-  return null
+  return SEEDED_SKILLS[name] ?? null
 }
 
 /** Strip frontmatter and rebuild a canonical pack file from name/description/body. */

@@ -16,9 +16,11 @@
  * Frontmatter is parsed with a minimal hand-rolled reader (scalars +
  * string lists) — no external YAML dependency.
  */
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
+import { SEEDED_SKILLS } from './seeded-skills.js'
 
 /** Content directory: resolves packages/server/data/skills/ across both TS source and bundled dist */
 function resolveSkillsDir(): string {
@@ -31,6 +33,25 @@ function resolveSkillsDir(): string {
 }
 
 export const SKILLS_DIR = resolveSkillsDir()
+
+/** Auto-seeds built-in skills to disk if directory is missing or incomplete (e.g. fresh git clone or clean runner) */
+export function ensureSkillsSeeded(dir = SKILLS_DIR): void {
+  try {
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true })
+    }
+    for (const [name, content] of Object.entries(SEEDED_SKILLS)) {
+      const packDir = join(dir, name)
+      const filePath = join(packDir, 'SKILL.md')
+      if (!existsSync(filePath)) {
+        mkdirSync(packDir, { recursive: true })
+        writeFileSync(filePath, content, 'utf-8')
+      }
+    }
+  } catch {}
+}
+
+ensureSkillsSeeded()
 
 export interface SkillPack {
   /** unique pack id (frontmatter `name`, falls back to directory/file name) */
@@ -133,6 +154,7 @@ export function skillDirs(cwd = process.cwd()): string[] {
  * Malformed packs are skipped silently; missing directories yield {}.
  */
 export async function loadSkills(): Promise<Record<string, SkillPack>> {
+  ensureSkillsSeeded()
   const skills: Record<string, SkillPack> = {}
   for (const rawDir of skillDirs()) {
     const dir = rawDir.replace(/\/+$/, '')
@@ -160,6 +182,11 @@ export async function loadSkills(): Promise<Record<string, SkillPack>> {
         }
       }),
     )
+  }
+  if (Object.keys(skills).length === 0) {
+    for (const [name, raw] of Object.entries(SEEDED_SKILLS)) {
+      skills[name] = toPack(name, raw)
+    }
   }
   return skills
 }
