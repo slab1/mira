@@ -1,6 +1,6 @@
 /**
- * Mira Server - Main Entry Point
- * 
+ * Mira Server - Main Entry
+ *
  * Thin entry point that delegates to bootstrap modules.
  * 
  * Architecture:
@@ -21,7 +21,7 @@
  *   bun src/index.ts --port 3000  # custom port
  */
 
-import { main } from './bootstrap/main.js'
+import { main, sandbox } from './bootstrap/main.js'
 
 // Start the server
 main().catch((e) => {
@@ -37,3 +37,10 @@ export * from './bus/index.js'
 export * from './storage/db.js'
 export * from './gateway/index.js'
 export * from './permission/index.js'
+export * from './config/index.js'
+export * from './mcp/index.js'
+export * from './learning/index.js'
+export * from './guardrails/index.js'
+
+// Re-export sandbox
+export { sandbox }
