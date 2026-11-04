@@ -50,13 +50,13 @@ describe('Configuration Validation', () => {
         },
       }
       
-      const result = checkForSecretsInConfig(config, 'test-config')
+      const result = checkForSecretsInConfig(config as any, 'test-config')
       expect(result.errors.length).toBeGreaterThan(0)
       expect(result.errors[0]).toContain('apiKey')
     })
 
     it('should detect Anthropic API keys', () => {
-      const config: PartialMiraConfig = {
+      const config = {
         model: 'anthropic/claude-3-sonnet',
         provider: {
           anthropic: {
@@ -67,12 +67,12 @@ describe('Configuration Validation', () => {
         },
       }
       
-      const result = checkForSecretsInConfig(config, 'test-config')
+      const result = checkForSecretsInConfig(config as any, 'test-config')
       expect(result.errors.length).toBeGreaterThan(0)
     })
 
     it('should detect NVIDIA API keys', () => {
-      const config: PartialMiraConfig = {
+      const config = {
         model: 'nvidia/llama-3.1-70b',
         provider: {
           nvidia: {
@@ -83,12 +83,12 @@ describe('Configuration Validation', () => {
         },
       }
       
-      const result = checkForSecretsInConfig(config, 'test-config')
+      const result = checkForSecretsInConfig(config as any, 'test-config')
       expect(result.errors.length).toBeGreaterThan(0)
     })
 
     it('should NOT flag env template values as secrets', () => {
-      const config: PartialMiraConfig = {
+      const config = {
         model: 'openai/gpt-4o',
         provider: {
           openai: {
@@ -99,12 +99,12 @@ describe('Configuration Validation', () => {
         },
       }
       
-      const result = checkForSecretsInConfig(config, 'test-config')
+      const result = checkForSecretsInConfig(config as any, 'test-config')
       expect(result.errors.length).toBe(0)
     })
 
     it('should warn about keys that look like secrets without templates', () => {
-      const config: PartialMiraConfig = {
+      const config = {
         model: 'openai/gpt-4o',
         provider: {
           openai: {
@@ -117,7 +117,7 @@ describe('Configuration Validation', () => {
         customSecret: '{env:CUSTOM_SECRET}',
       }
       
-      const result = checkForSecretsInConfig(config, 'test-config')
+      const result = checkForSecretsInConfig(config as any, 'test-config')
       // Should have warnings but no errors
       expect(result.errors.length).toBe(0)
     })
@@ -125,7 +125,7 @@ describe('Configuration Validation', () => {
 
   describe('validateConfig', () => {
     it('should validate and return config for valid input', () => {
-      const config: PartialMiraConfig = {
+      const config = {
         model: 'openai/gpt-4o',
         smallModel: 'openai/gpt-3.5-turbo',
         loop: {
@@ -134,13 +134,13 @@ describe('Configuration Validation', () => {
         },
       }
       
-      const result = validateConfig(config, 'test-config')
+      const result = validateConfig(config as any, 'test-config')
       expect(result.model).toBe('openai/gpt-4o')
       expect(result.smallModel).toBe('openai/gpt-3.5-turbo')
     })
 
     it('should throw on secrets in config', () => {
-      const config: PartialMiraConfig = {
+      const config = {
         model: 'openai/gpt-4o',
         provider: {
           openai: {
@@ -151,11 +151,11 @@ describe('Configuration Validation', () => {
         },
       }
       
-      expect(() => validateConfig(config, 'test-config')).toThrow()
+      expect(() => validateConfig(config as any, 'test-config')).toThrow()
     })
 
     it('should accept config with env templates', () => {
-      const config: PartialMiraConfig = {
+      const config = {
         model: 'openai/gpt-4o',
         provider: {
           openai: {
@@ -168,7 +168,7 @@ describe('Configuration Validation', () => {
         },
       }
       
-      const result = validateConfig(config, 'test-config')
+      const result = validateConfig(config as any, 'test-config')
       expect(result.model).toBe('openai/gpt-4o')
     })
   })

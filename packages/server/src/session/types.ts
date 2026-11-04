@@ -62,15 +62,22 @@ export interface SessionPromptDeps {
       toolErrors: number
       doomLoops: number
       compactionCount: number
+      success?: boolean
+      userFeedback?: string
+      createdAt?: number
     }): Promise<void>
   }
 }
 
 /** Options for the loop */
 export interface LoopOptions {
-  sessionID: string
-  message: string
+  sessionID?: string
+  message?: string
   model?: string
+  callerOwner?: string | null
+  explicitModel?: string
+  sessionModel?: string
+  task?: string
   /** auto-compact when context > pct of model context window (default: 0.8) */
   compactionThreshold?: number
   /** max steps before auto-stop (default: 25) */

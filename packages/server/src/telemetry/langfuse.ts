@@ -5,3 +5,6 @@ export function initLangfuse() {
   // Placeholder for real Langfuse init
   return { trace: (_name: string) => ({ update: (_data?: JsonValue) => {}, end: () => {} }) }
 }
+
+export const initOtel = initLangfuse
+

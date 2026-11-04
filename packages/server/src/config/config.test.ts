@@ -83,9 +83,9 @@ describe('loadConfig', () => {
       JSON.stringify({ provider: { openai: { options: { apiKey: 'sk-user' } } } }),
     )
     const config = await loadConfig(testDir)
-    expect(config.provider.openai.options.apiKey).toBe('sk-user')
-    expect(config.provider.openai.options.baseURL).toBe('https://api.openai.com/v1')
-    expect(config.provider.openai.options.timeout).toBe(120_000)
+    expect(config.provider.openai?.options?.apiKey).toBe('sk-user')
+    expect(config.provider.openai?.options?.baseURL).toBe('https://api.openai.com/v1')
+    expect(config.provider.openai?.options?.timeout).toBe(120_000)
   })
 
   test('partial provider override keeps other providers and the npm tag', async () => {
@@ -105,7 +105,7 @@ describe('loadConfig', () => {
       JSON.stringify({ provider: { google: { options: { apiKey: ['{env:ONE}', '{env:TWO}'] } } } }),
     )
     const config = await loadConfig(testDir)
-    expect(config.provider.google.options.apiKey).toEqual(['{env:ONE}', '{env:TWO}'])
+    expect(config.provider.google?.options?.apiKey).toEqual(['{env:ONE}', '{env:TWO}'])
   })
 
   test('partial routing override keeps aliases and fallbacks', async () => {
@@ -529,9 +529,9 @@ describe('env layer (MIRA_MODEL / provider keys)', () => {
     resetConfigCache()
     const config = await loadConfig(testDir)
     const openai = config.provider.openai
-    expect(String(openai.options.apiKey)).toContain('sk-from-env')
+    expect(String(openai?.options?.apiKey)).toContain('sk-from-env')
     // the deep merge must preserve siblings
-    expect(openai.options.baseURL).toBe('https://api.openai.com/v1')
+    expect(openai?.options?.baseURL).toBe('https://api.openai.com/v1')
   })
 
   test('no env vars → defaults are untouched', async () => {

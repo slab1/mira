@@ -783,7 +783,7 @@ async function main() {
     tools,
     permissions,
     knowledge: learning.knowledge,
-    usage: learning.usage,
+    usage: learning.usage as any,
   })
   tools.setSubagentRunner((opts) =>
     prompt.runSubagent({
@@ -969,7 +969,7 @@ async function main() {
   // Phase 1 Evolution Core — read-only, no auto-promote, no canary/shadow (MIRA_WEAKNESSES_AND_OBSTACLES.md:23)
   try {
     const evolutionLedger = new ImprovementLedger(
-      db as unknown as import('./storage/db.js').MiraDB,
+      db as unknown as import('../storage/db.js').MiraDB,
       bus,
     )
     const evolutionObserver = new EvolutionObserver({
@@ -980,7 +980,7 @@ async function main() {
       evolutionObserver.watchBus()
     } catch {}
     mountEvolutionRoutes(app, {
-      db: db as unknown as import('./storage/db.js').MiraDB,
+      db: db as unknown as import('../storage/db.js').MiraDB,
       bus,
       ledger: evolutionLedger,
       observer: evolutionObserver,
@@ -1199,7 +1199,7 @@ async function main() {
       // Phase 5 Canary — 5% traffic via SubgatewayRegistry lane canary vs default per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_EVOLUTION_SPEC.md Phase 5 + MIRA_SYSTEM_DOCUMENTATION.md:10 Reversibility
       try {
         const canaryLedger = new ImprovementLedger(
-          db as unknown as import('./storage/db.js').MiraDB,
+          db as unknown as import('../storage/db.js').MiraDB,
           bus,
         )
         const canaryManager = new CanaryManager({
@@ -1248,11 +1248,11 @@ async function main() {
   // Phase 6 Memory Evolution — per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_SYSTEM_DOCUMENTATION.md:6 + MIRA_EVOLUTION_SPEC.md Phase 6 (Failure Memory)
   try {
     const evolutionMemory = new EvolutionMemory(
-      db as unknown as import('./storage/db.js').MiraDB,
+      db as unknown as import('../storage/db.js').MiraDB,
       bus,
     )
     mountMemoryEvolutionRoutes(app, {
-      db: db as unknown as import('./storage/db.js').MiraDB,
+      db: db as unknown as import('../storage/db.js').MiraDB,
       bus,
       memory: evolutionMemory,
     })
@@ -1771,7 +1771,7 @@ async function main() {
       await mcp.disconnectAll()
     } catch {}
     try {
-      const { shutdownAllServers } = await import('./lsp/client.js')
+      const { shutdownAllServers } = await import('../lsp/client.js')
       await shutdownAllServers().catch(() => {})
     } catch {}
     try {

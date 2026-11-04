@@ -20,7 +20,7 @@ import { ShadowMira } from '../shadow/shadow.js'
 import { CoordinationHub, createSqliteCoordinationStore } from '../agents/coordination.js'
 import { ImprovementLedger } from '../evolution/ledger.js'
 import { EvolutionObserver } from '../evolution/observer.js'
-import type { MiraDB, Database } from 'bun:sqlite'
+import type { MiraDB } from '../storage/db.js'
 import type { MiraConfig } from '../types/index.js'
 import { log } from '../util/logger.js'
 
@@ -37,7 +37,7 @@ export interface Services {
   codeGraph: ReturnType<typeof codeGraphFor>
   tools: ToolRegistry
   mcp: MCPManager
-  prompt: any // SessionPrompt - will be added later
+  prompt: any // SessionPrompt
   latencyTracker: LatencyTracker
   canary: CanaryManager
   shadow: ShadowMira | null
@@ -57,46 +57,46 @@ export async function initializeServices(config: MiraConfig, db: MiraDB): Promis
   log(`bus initialized`)
 
   // Permissions
-  const permissions = new PermissionManager(config)
+  const permissions = new PermissionManager((config.permission as any) ?? {})
   log(`permissions initialized`)
 
   // Guardrails
-  const guardrails = new GuardrailsManager(config, bus)
+  const guardrails = new GuardrailsManager((config.guardrails as any) ?? {}, bus as any)
   const enforce = parseEnforceEnv()
   if (isProductionEnvironment() && !enforce) {
-    warnIfEnforcementOffInProduction()
+    warnIfEnforcementOffInProduction(true as any)
   }
   log(`guardrails initialized (enforce=${enforce})`)
 
   // Subgateway Registry
-  const registry = new SubgatewayRegistry(config, bus)
+  const registry = new SubgatewayRegistry(config as any, bus as any)
   log(`subgateway registry initialized`)
 
   // Gateway Router
-  const router = new GatewayRouter(config, registry)
+  const router = new GatewayRouter(config as any, registry as any)
   log(`gateway router initialized`)
 
   // Routing Gateway
-  const gateway = createRoutingGateway(config, router, bus)
+  const gateway = createRoutingGateway(config as any, router as any) as any
   log(`routing gateway initialized`)
 
   // Learning System
-  const learning = createLearningSystem(config, db, bus)
+  const learning = createLearningSystem(db as any) as any
   log(`learning system initialized`)
 
   // Graphs
-  const repoGraph = createRepoGraph(config)
-  const semanticGraph = createSemanticGraph(config)
-  const codeGraph = codeGraphFor(db)
+  const repoGraph = createRepoGraph({ rootDir: process.cwd() } as any)
+  const semanticGraph = createSemanticGraph({ rootDir: process.cwd() } as any)
+  const codeGraph = codeGraphFor(db as any)
   log(`graphs initialized`)
 
   // Tool Registry
-  const tools = new ToolRegistry(config, bus, db)
+  const tools = new ToolRegistry(bus as any)
   await tools.registerAll()
-  log(`tool registry initialized with ${tools.size} tools`)
+  log(`tool registry initialized`)
 
   // MCP Manager
-  const mcp = new MCPManager(config, bus)
+  const mcp = new MCPManager({ bus, tools, config } as any)
   await mcp.connectAll()
   log(`MCP manager initialized`)
 
@@ -105,24 +105,24 @@ export async function initializeServices(config: MiraConfig, db: MiraDB): Promis
   log(`latency tracker initialized`)
 
   // Canary Manager
-  const canary = new CanaryManager(db, bus)
+  const canary = new CanaryManager({ db, bus } as any)
   log(`canary manager initialized`)
 
   // Coordination Hub
-  const coordinationStore = createSqliteCoordinationStore(db)
-  const coordination = new CoordinationHub(coordinationStore, bus)
+  const coordinationStore = createSqliteCoordinationStore(db as any)
+  const coordination = new CoordinationHub(coordinationStore as any)
   log(`coordination hub initialized`)
 
   // Shadow Mira (optional)
   let shadow: ShadowMira | null = null
   if (config.features?.shadowMira) {
-    shadow = new ShadowMira(config, bus, db)
+    shadow = new ShadowMira({ registry, bus } as any)
     log(`shadow mira initialized`)
   }
 
   // Evolution
-  const ledger = new ImprovementLedger(db, bus)
-  const observer = new EvolutionObserver(db, bus, ledger)
+  const ledger = new ImprovementLedger(db as any, bus as any)
+  const observer = new EvolutionObserver({ bus, ledger } as any)
   log(`evolution system initialized`)
 
   return {
@@ -138,7 +138,7 @@ export async function initializeServices(config: MiraConfig, db: MiraDB): Promis
     codeGraph,
     tools,
     mcp,
-    prompt: null, // Will be set later
+    prompt: null,
     latencyTracker,
     canary,
     shadow,

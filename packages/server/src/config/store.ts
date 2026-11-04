@@ -134,14 +134,14 @@ export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
           continue
         }
         // Validate config structure and report issues
-        const validated = validateConfigEnhanced(raw as PartialMiraConfig, name)
+        const validated = validateConfigEnhanced(raw as any, name) as Record<string, any>
         cached = {
           ...DEFAULT_CONFIG,
           ...validated,
           permission:
             mergeSection(DEFAULT_CONFIG.permission, validated.permission) ?? DEFAULT_CONFIG.permission,
           mcp: mergeSection(DEFAULT_CONFIG.mcp, validated.mcp) ?? DEFAULT_CONFIG.mcp,
-          provider: mergeSection(DEFAULT_CONFIG.provider, validated.provider) ?? DEFAULT_CONFIG.provider,
+          provider: mergeSection(DEFAULT_CONFIG.provider, validated.provider as any) ?? DEFAULT_CONFIG.provider,
           routing: mergeSection(
             DEFAULT_CONFIG.routing,
             validated.routing as typeof DEFAULT_CONFIG.routing,
@@ -198,7 +198,7 @@ export function getConfig(cwd?: string): MiraConfig {
             )
             continue
           }
-          const validated = validateConfigEnhanced(raw as PartialMiraConfig, name)
+          const validated = validateConfigEnhanced(raw as any, name) as Record<string, any>
           const merged = {
             ...DEFAULT_CONFIG,
             ...validated,
@@ -206,7 +206,7 @@ export function getConfig(cwd?: string): MiraConfig {
               mergeSection(DEFAULT_CONFIG.permission, validated.permission) ?? DEFAULT_CONFIG.permission,
             mcp: mergeSection(DEFAULT_CONFIG.mcp, validated.mcp) ?? DEFAULT_CONFIG.mcp,
             provider:
-              mergeSection(DEFAULT_CONFIG.provider, validated.provider) ?? DEFAULT_CONFIG.provider,
+              mergeSection(DEFAULT_CONFIG.provider, validated.provider as any) ?? DEFAULT_CONFIG.provider,
             routing: mergeSection(
               DEFAULT_CONFIG.routing,
               validated.routing as typeof DEFAULT_CONFIG.routing,

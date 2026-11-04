@@ -28,10 +28,10 @@ describe('redactConfig', () => {
     } as unknown as MiraConfig
 
     const redacted = redactConfig(config)
-    const options = redacted.provider.test!.options
+    const options = redacted.provider.test?.options
 
-    expect(options.apiKey).toEqual(['***', '***'])
-    expect(options.headers).toEqual({
+    expect(options?.apiKey).toEqual(['***', '***'])
+    expect(options?.headers).toEqual({
       Authorization: '***',
       'X-API-Key': '***',
       'HTTP-Referer': 'https://mira.example.test',
@@ -81,7 +81,7 @@ describe('provider model discovery with an array apiKey', () => {
     )
     resetConfigCache()
     // sanity: the config really does carry an array
-    const raw = getConfig(dir).provider.gprov!.options.apiKey
+    const raw = getConfig(dir).provider.gprov?.options?.apiKey
     expect(Array.isArray(raw)).toBe(true)
 
     const app = new Hono<{ Variables: { requestId: string } }>()

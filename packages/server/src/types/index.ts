@@ -246,15 +246,15 @@ export interface LegacyMCPServerConfig {
 
 export interface ProviderConfig {
   npm?: string
-  name: string
-  options: {
-    baseURL: string
-    apiKey: string | string[]
+  name?: string
+  options?: {
+    baseURL?: string
+    apiKey?: string | string[]
     headers?: Record<string, string>
     timeout?: number
     kind?: string
   }
-  models: Record<string, { name: string; limit: { context: number; output: number } }>
+  models?: Record<string, { name?: string; limit?: { context?: number; output?: number } }>
 }
 
 export interface RoutingConfig {

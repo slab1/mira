@@ -24,8 +24,8 @@ export async function loadAPIKeys(db: MiraDB): Promise<Map<string, APIKeyRecord>
   const apiKeys = new Map<string, APIKeyRecord>()
 
   try {
-    const rows = db
-      .query(`
+    const rows = db.sqlite
+      .prepare(`
         SELECT id, key, owner, createdAt, expiresAt, revokedAt, role, description 
         FROM api_keys 
         WHERE revokedAt IS NULL AND (expiresAt IS NULL OR expiresAt > datetime('now'))

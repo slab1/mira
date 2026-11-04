@@ -27,7 +27,7 @@ export async function loadOrgs(db: MiraDB): Promise<Map<string, Org>> {
   const orgs = new Map<string, Org>()
 
   try {
-    const rows = db.query('SELECT id, name, createdAt FROM orgs').all() as Org[]
+    const rows = db.sqlite.prepare('SELECT id, name, createdAt FROM orgs').all() as Org[]
 
     for (const row of rows) {
       orgs.set(row.id, row)
@@ -46,8 +46,8 @@ export async function loadOrgs(db: MiraDB): Promise<Map<string, Org>> {
  */
 export async function loadOrgMemberships(db: MiraDB): Promise<OrgMembership[]> {
   try {
-    const rows = db
-      .query('SELECT id, orgId, userId, role, createdAt FROM org_memberships')
+    const rows = db.sqlite
+      .prepare('SELECT id, orgId, userId, role, createdAt FROM org_memberships')
       .all() as OrgMembership[]
 
     log(`loaded ${rows.length} organization memberships`)

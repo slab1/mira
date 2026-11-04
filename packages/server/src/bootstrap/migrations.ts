@@ -6,7 +6,7 @@
 import { getConfig } from '../config/index.js'
 import type { MiraDB } from '../storage/db.js'
 import { log, warn } from '../util/logger.js'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -26,7 +26,7 @@ export async function migrateRetiredModels(db: MiraDB): Promise<number> {
       return 0
     }
 
-    const sessionsTable = db.query('SELECT id, model, createdAt FROM sessions WHERE model IS NOT NULL')
+    const sessionsTable = db.sqlite.prepare('SELECT id, model, createdAt FROM sessions WHERE model IS NOT NULL')
       .all() as Array<{ id: string; model: string; createdAt: string }>
 
     let migrated = 0
@@ -36,7 +36,7 @@ export async function migrateRetiredModels(db: MiraDB): Promise<number> {
         if (modelLower.includes(retiredModel)) {
           // Find a replacement model
           const newModel = cfg.autoModel ?? cfg.model
-          db.query('UPDATE sessions SET model = ? WHERE id = ?').run(newModel, session.id)
+          db.sqlite.prepare('UPDATE sessions SET model = ? WHERE id = ?').run(newModel, session.id)
           log(`migrated session ${session.id} from ${session.model} to ${newModel}`)
           migrated++
           break
@@ -82,7 +82,7 @@ export async function importCrossDeviceSessions(): Promise<number> {
   }
 
   try {
-    const files = Bun.readdirSync(exportDir)
+    const files = readdirSync(exportDir)
     const jsonFiles = files.filter((f: string) => f.endsWith('.json') || f.endsWith('.jsonc'))
 
     if (jsonFiles.length === 0) {

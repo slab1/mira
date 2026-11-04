@@ -129,7 +129,7 @@ export function resolveLane(
   }
 
   // Default lane
-  return cfg.routing?.defaultLane ?? 'default'
+  return (routing?.defaultLane as string) ?? 'default'
 }
 
 /**
@@ -147,7 +147,7 @@ export function laneCostCap(lane: string): number {
  */
 export function tierModel(tier: string | undefined, fallbackSmall?: string): string {
   const cfg = getConfig()
-  const tierModels = cfg.tierModels as Record<string, string> | undefined
+  const tierModels = (cfg as unknown as Record<string, unknown>).tierModels as Record<string, string> | undefined
   if (tier && tierModels?.[tier]) {
     return tierModels[tier]
   }
@@ -159,7 +159,7 @@ export function tierModel(tier: string | undefined, fallbackSmall?: string): str
  */
 export function priceForModel(modelID: string): [number, number] {
   const cfg = getConfig()
-  const pricing = cfg.modelPricing as Record<string, [number, number]> | undefined
+  const pricing = (cfg as unknown as Record<string, unknown>).modelPricing as Record<string, [number, number]> | undefined
   return pricing?.[modelID] ?? [0, 0]
 }
 
@@ -192,28 +192,45 @@ export function isRetired(modelID: string): boolean {
   return getRetiredModels().has(modelID.toLowerCase())
 }
 
+import { getAgentTemplates } from '../agents/templates.js'
+
 /**
  * Resolve the effective model to use.
  */
 export function resolveEffectiveModel(input: {
   model?: string
+  explicitModel?: string
+  sessionModel?: string
   smallModel?: string
   agent?: string | null
+  task?: string
 }): string {
   const cfg = getConfig()
 
-  // If explicitly specified, use it
-  if (input.model) {
-    return input.model
+  // 1. Explicit model
+  const explicit = input.explicitModel ?? input.model
+  if (explicit) {
+    return resolveModelViaGateway(explicit)
   }
 
-  // If agent specifies a model, use it
+  // 2. Agent template model
   if (input.agent) {
-    // TODO: Look up agent model
+    try {
+      const templates = getAgentTemplates()
+      const tmpl = templates[input.agent as keyof typeof templates]
+      if (tmpl?.model) {
+        return resolveModelViaGateway(tmpl.model)
+      }
+    } catch {}
   }
 
-  // Fall back to config
-  return cfg.model
+  // 3. Session model
+  if (input.sessionModel) {
+    return resolveModelViaGateway(input.sessionModel)
+  }
+
+  // 4. Config default
+  return resolveModelViaGateway(cfg.model)
 }
 
 /**

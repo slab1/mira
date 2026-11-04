@@ -116,7 +116,7 @@ export function mountSessionExtrasRoutes(
         : null
     return prompt.streamResponse(id, text as string, model as string | undefined, {
       maxSteps: maxSteps as number | undefined,
-      agent: (agent as string | undefined) ?? null,
+      agent: (agent as string | undefined) ?? undefined,
       signal,
       callerOwner,
     })

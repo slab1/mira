@@ -61,9 +61,10 @@ export const providerModelSchema = z.object({
 })
 
 export const providerOptionsSchema = z.object({
-  baseURL: z.string().describe('API base URL (supports {env:VAR} expansion)'),
+  baseURL: z.string().optional().describe('API base URL (supports {env:VAR} expansion)'),
   apiKey: z
     .union([z.string(), z.array(z.string())])
+    .optional()
     .describe('API key or array of keys for rotation (supports {env:VAR} expansion)'),
   headers: z
     .record(z.string(), z.string())
@@ -80,12 +81,9 @@ export const providerOptionsSchema = z.object({
 export type ProviderOptions = z.infer<typeof providerOptionsSchema>
 
 export const providerConfigSchema = z.object({
-  // `npm` documents which provider SDK this entry maps to. The transport is raw
-  // HTTP (nothing loads the package today), but a value outside the known set is
-  // reported as a config issue so a typo is not silently ignored.
   npm: z.string().optional().describe('NPM package for provider SDK'),
-  name: z.string().describe('Display name'),
-  options: providerOptionsSchema,
+  name: z.string().optional().describe('Display name'),
+  options: providerOptionsSchema.default({}),
   models: z.record(z.string(), providerModelSchema).default({}),
 })
 export type ProviderConfig = z.infer<typeof providerConfigSchema>

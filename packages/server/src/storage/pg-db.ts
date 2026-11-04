@@ -93,6 +93,6 @@ export async function getPgClient(db: PgMiraDB): Promise<PoolClient> {
   return db.pool.connect()
 }
 
-// Re-export types
-export type { Pool, PoolClient }
-export { Pool }
+// Re-export types and values
+export { Pool, type PoolClient }
+

@@ -27,15 +27,15 @@ export function buildRegistry(config: MiraConfig): ProviderRegistry {
     const key = k.toLowerCase()
     const entry: ProviderConfig = {
       npm: v.npm,
-      name: v.name,
+      name: v.name ?? k,
       options: {
-        baseURL: v.options.baseURL,
-        apiKey: v.options.apiKey as string | string[],
-        headers: (v.options as { headers?: Record<string, string> }).headers,
-        timeout: (v.options as { timeout?: number }).timeout,
-        kind: (v.options as { kind?: string }).kind,
+        baseURL: v.options?.baseURL ?? '',
+        apiKey: (v.options?.apiKey ?? '') as string | string[],
+        headers: v.options?.headers,
+        timeout: v.options?.timeout,
+        kind: v.options?.kind,
       },
-      models: v.models ?? {},
+      models: (v.models as any) ?? {},
     }
     const existing = providerMap[key]
     if (!existing) {

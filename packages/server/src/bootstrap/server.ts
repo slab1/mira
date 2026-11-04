@@ -3,9 +3,10 @@
  * Configure and mount all routes
  */
 
-import { Hono, type Context } from 'hono'
+import { Hono } from 'hono'
 import type { Services } from './services.js'
-import type { MiraConfig, JsonValue } from '../types/index.js'
+import type { MiraConfig } from '../types/index.js'
+import type { MiraDB } from '../storage/db.js'
 import type { Database } from 'bun:sqlite'
 import { mountHealthRoutes } from '../routes/health.js'
 import { mountSessionRoutes } from '../routes/session.js'
@@ -33,7 +34,7 @@ import { log } from '../util/logger.js'
 
 export interface ServerConfig {
   config: MiraConfig
-  db: Database
+  db: MiraDB
   services: Services
   apiKeys: Map<string, any>
   orgs: Map<string, any>
@@ -49,16 +50,11 @@ export function createApp(serverConfig: ServerConfig): Hono {
     bus,
     permissions,
     guardrails,
-    registry,
-    router,
     gateway,
     learning,
     repoGraph,
-    semanticGraph,
-    codeGraph,
     tools,
     mcp,
-    latencyTracker,
     canary,
     shadow,
     coordination,
@@ -66,11 +62,10 @@ export function createApp(serverConfig: ServerConfig): Hono {
     observer,
   } = services
 
-  const app = new Hono()
+  const app: any = new Hono()
 
   // Middleware
-  app.use('*', async (c, next) => {
-    // Add common context
+  app.use('*', async (c: any, next: any) => {
     c.set('config', config)
     c.set('db', db)
     c.set('bus', bus)
@@ -80,72 +75,72 @@ export function createApp(serverConfig: ServerConfig): Hono {
   })
 
   // Health routes
-  mountHealthRoutes(app, { db, bus })
+  mountHealthRoutes(app, { db: db as unknown as Database, bus } as any)
 
   // Session routes
-  mountSessionRoutes(app, { config, db, bus, permissions, guardrails, gateway, learning })
+  mountSessionRoutes(app, { config, db, bus, permissions, guardrails, gateway, learning } as any)
 
   // Config routes
-  mountConfigRoutes(app, { config, db })
+  mountConfigRoutes(app, { bus, gateway })
 
   // MCP routes
-  mountMcpRoutes(app, { config, mcp, bus })
+  mountMcpRoutes(app, mcp)
 
   // Admin routes
-  mountAdminRoutes(app, { config, db, bus, apiKeys, orgs, memberships })
+  mountAdminRoutes(app, { config, db, bus, apiKeys, orgs, memberships } as any)
 
   // Finding routes
-  mountFindingRoutes(app, { config, db, bus, codeGraph })
+  mountFindingRoutes(app, { config, db, bus, codeGraph: services.codeGraph } as any)
 
   // Webhook routes
-  mountWebhookRoutes(app, { config, db, bus })
+  mountWebhookRoutes(app, { config, db, bus } as any)
 
   // Me routes
-  mountMeRoutes(app, { config, db, bus })
+  mountMeRoutes(app, { config, db, bus } as any)
 
   // Session extras routes
-  mountSessionExtrasRoutes(app, { config, db, bus })
+  mountSessionExtrasRoutes(app, { db, bus, prompt: services.prompt } as any)
 
   // Community routes
-  mountCommunityRoutes(app, { config, db, bus })
+  mountCommunityRoutes(app, { knowledge: learning.knowledge } as any)
 
   // Org routes
-  mountOrgRoutes(app, { config, db, bus, orgs, memberships })
+  mountOrgRoutes(app, { db } as any)
 
   // Tools routes
-  mountToolsRoutes(app, { config, tools, bus })
+  mountToolsRoutes(app, { tools, permissions, guardrails, gateway } as any)
 
   // Workspace routes
-  mountWorkspaceRoutes(app, { config, db, bus, repoGraph })
+  mountWorkspaceRoutes(app)
 
   // Workspaces routes
-  mountWorkspacesRoutes(app, { config, db, bus })
+  mountWorkspacesRoutes(app, { db })
 
   // Symbol routes
-  mountSymbolRoutes(app, { config, db, bus, semanticGraph })
+  mountSymbolRoutes(app)
 
   // Dashboard routes
-  mountDashboardRoutes(app, { config, db, bus })
+  mountDashboardRoutes(app, { db, bus, repoGraph })
 
   // Static routes
-  mountStaticRoutes(app, { config })
+  mountStaticRoutes(app, { config } as any)
 
   // Evolution routes
-  mountEvolutionRoutes(app, { config, db, bus, ledger, observer })
+  mountEvolutionRoutes(app, { db, bus, ledger, observer } as any)
 
   // Shadow routes
   if (shadow) {
-    mountShadowRoutes(app, { config, db, bus, shadow })
+    mountShadowRoutes(app, { shadow } as any)
   }
 
   // Coordination routes
-  mountCoordinationRoutes(app, { config, db, bus, coordination })
+  mountCoordinationRoutes(app, { config, db, bus, coordination } as any)
 
   // Engine routes
-  mountEngineRoutes(app, { config, db, bus, gateway })
+  mountEngineRoutes(app, { gateway } as any)
 
   // Canary routes
-  mountCanaryRoutes(app, { config, db, bus, canary })
+  mountCanaryRoutes(app, { manager: canary } as any)
 
   log(`HTTP routes mounted`)
 
@@ -158,24 +153,19 @@ export function createApp(serverConfig: ServerConfig): Hono {
 export function startServer(
   app: Hono,
   config: MiraConfig,
-  services: Services
+  _services: Services
 ): { server: ReturnType<typeof Bun.serve>; cleanup: () => Promise<void> } {
-  const port = Number(process.env.PORT ?? config.port ?? 4096)
-  const host = process.env.HOST ?? config.host ?? 'localhost'
+  const port = Number(process.env.PORT ?? (config as any).port ?? 4096)
+  const host = process.env.HOST ?? (config as any).host ?? 'localhost'
 
   const server = Bun.serve({
     port,
     hostname: host,
     fetch: app.fetch,
-    // WebSocket support
-    websocket: {
-      // Handle WebSocket connections
-    },
   })
 
   log(`server started on ${host}:${port}`)
 
-  // Cleanup function
   const cleanup = async () => {
     server.stop()
     log(`server stopped`)

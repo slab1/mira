@@ -765,18 +765,14 @@ export class SessionPrompt {
 
       // ── Cost cap guard (Kilo K8) — perTask / perSession in USD, per subgateway ───────
       try {
-        const lane = resolveLane(this.deps.gateway, {
-          model,
-          agent: opts.agent ?? null,
-          task: 'stream',
-        })
-        const laneCap = laneCostCap(this.deps.gateway, lane)
+        const lane = resolveLane(model)
+        const laneCapNum = laneCostCap(lane)
         const globalCap = (
           getConfig() as MiraConfig & { costCap?: { perTask?: number; perSession?: number } }
         ).costCap
-        const cap = laneCap ?? globalCap
-        // Also check subgateway's own costCap via registry if laneCap not found
-        const effectiveCap = cap ?? globalCap
+        const effectiveCap: { perTask?: number; perSession?: number } | undefined = globalCap ?? (
+          Number.isFinite(laneCapNum) ? { perTask: laneCapNum, perSession: laneCapNum } : undefined
+        )
         const curCost = estimateCostUSD(model, totalTokensIn, totalTokensOut)
         if (effectiveCap?.perTask !== undefined && curCost > effectiveCap.perTask) {
           const msg = `Cost cap exceeded: $${curCost.toFixed(4)} > $${effectiveCap.perTask.toFixed(4)} per-task limit (model ${model}, lane ${lane}, step ${step}). Aborting.`
@@ -1276,7 +1272,7 @@ export class SessionPrompt {
           doomLoops: doomLoopCount,
           compactionCount,
           success: finishSuccess,
-          userFeedback: null,
+          userFeedback: undefined,
           createdAt: Date.now(),
         })
         .catch(() => {})
