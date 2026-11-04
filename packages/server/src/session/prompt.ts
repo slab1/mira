@@ -48,331 +48,30 @@ import { eq } from 'drizzle-orm'
 import { trace as otelTrace } from '@opentelemetry/api'
 import { classifyBashArity } from '../permission/index.js'
 
+// Import types and helpers from split files
+import type { LoopMessage, SessionPromptDeps, LoopOptions } from './types.js'
+import {
+  pruneReasoning,
+  summarizeToolTraces,
+  getRouter,
+  getRegistry,
+  isGatewayRouter,
+  isSubgatewayRegistry,
+  resolveLane,
+  laneCostCap,
+  tierModel,
+  priceForModel,
+  estimateCostUSD,
+  getRetiredModels,
+  isRetired,
+  resolveEffectiveModel,
+  resolveModelViaGateway,
+} from './helpers.js'
+
+
 // ── Types ──────────────────────────────────────────────────────────
 
 /** One turn-context message fed back into gateway.stream (loop working set). */
-export interface LoopMessage {
-  role: string
-  content: string
-  toolCalls?: Array<{ id: string; name: string; args: Record<string, JsonValue> }>
-  toolResults?: Array<{ toolCallID: string; name: string; result: JsonValue; isError: boolean }>
-  toolCallID?: string
-  isExecutorContext?: boolean
-}
-
-export interface SessionPromptDeps {
-  db: MiraDB
-  bus: Bus
-  gateway: Gateway
-  registry?: SubgatewayRegistry
-  router?: GatewayRouter
-  tools: ToolRegistry
-  permissions: PermissionManager
-  /** shared hierarchical memory (injected from learning system) */
-  knowledge?: {
-    retrieve(opts: {
-      query: string
-      limit?: number
-    }): Promise<Array<{ id: string; title: string; content: string }>>
-    /** utility feedback loop: id ∈ [insight.id from online, parse id] */
-    bumpUtility?: (id: string, delta: number) => void
-  }
-  /** usage learner (injected from learning system) */
-  usage?: {
-    recordTool(m: {
-      tool: string
-      durationMs: number
-      isError: boolean
-      errorKind?: string
-      sessionID: string
-      timestamp: number
-    }): Promise<void>
-    recordSession(m: {
-      sessionID: string
-      model: string
-      steps: number
-      totalTokensIn: number
-      totalTokensOut: number
-      latencyMs: number
-      toolCalls: number
-      toolErrors: number
-      doomLoops: number
-      compactionCount: number
-      success: boolean
-      userFeedback?: 'up' | 'down' | null
-      createdAt: number
-    }): Promise<void>
-  }
-}
-
-export interface LoopOptions {
-  maxSteps?: number // default 32
-  maxTokens?: number // per-step
-  compactionThreshold?: number // 0.8 = compact at 80% context
-  signal?: AbortSignal
-  agent?: string | null // per-turn agent override (Kilo K1 parity)
-  /** Owner driving this turn (P3.3) — may differ from the session owner when a
-   *  same-org member continues a colleague's session; agents address the
-   *  person present, not the session's creator. */
-  callerOwner?: string | null
-}
-
-/** Strip reasoning_content from all messages except last 2 assistant messages. */
-function pruneReasoning(messages: LoopMessage[]): LoopMessage[] {
-  const enabled = process.env.MIRA_CONTEXT_REASONING_PRUNE !== '0'
-  if (!enabled) return messages
-  const assistantIndices: number[] = []
-  messages.forEach((m, i) => {
-    if (m.role === 'assistant') assistantIndices.push(i)
-  })
-  const keep = new Set(assistantIndices.slice(-2))
-  return messages.map((m, i) => {
-    const copy = { ...m } as LoopMessage & { reasoning_content?: unknown }
-    if (copy.reasoning_content && !keep.has(i)) {
-      delete copy.reasoning_content
-    }
-    return copy
-  })
-}
-
-/** Summarize executor tool traces into a summary block when step count > 8. */
-function summarizeToolTraces(messages: LoopMessage[], stepCount: number): LoopMessage[] {
-  if (stepCount <= 8) return messages
-  const toolSummaries: string[] = []
-  const filtered: LoopMessage[] = []
-  for (const m of messages) {
-    if (m.role === 'tool' && m.isExecutorContext) {
-      const preview = String(m.content ?? '').slice(0, 200)
-      const id = m.toolCallID ?? 'unknown'
-      toolSummaries.push(`Tool ${id}: ${preview}`)
-    } else {
-      filtered.push(m)
-    }
-  }
-  if (toolSummaries.length) {
-    filtered.push({
-      role: 'system',
-      content: `Executor tool trace summary (${toolSummaries.length} traces):\n${toolSummaries.join('\n')}`,
-      isExecutorContext: true,
-    })
-  }
-  return filtered
-}
-
-// ── Subgateway routing helpers ─────────────────────────────────────
-
-function getRouter(gateway: Gateway): GatewayRouter | null {
-  if (!('router' in gateway)) return null
-  const router: unknown = gateway.router
-  return isGatewayRouter(router) ? router : null
-}
-
-function getRegistry(gateway: Gateway): SubgatewayRegistry | null {
-  if (!('registry' in gateway)) return null
-  const registry: unknown = gateway.registry
-  return isSubgatewayRegistry(registry) ? registry : null
-}
-
-/** Structural guards for the optional router/registry augmentations. */
-function isGatewayRouter(value: unknown): value is GatewayRouter {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'resolve' in value &&
-    typeof value.resolve === 'function'
-  )
-}
-
-function isSubgatewayRegistry(value: unknown): value is SubgatewayRegistry {
-  return (
-    typeof value === 'object' && value !== null && 'get' in value && typeof value.get === 'function'
-  )
-}
-
-function resolveLane(
-  gateway: Gateway,
-  ctx: {
-    model?: string
-    agent?: string | null
-    messages?: Array<{ role: string; content: string }>
-    task?: 'summarize' | 'stream' | 'complete' | 'vision'
-  },
-): string {
-  const router = getRouter(gateway)
-  if (!router) return 'default'
-  return router.resolve(ctx as never)
-}
-
-function laneCostCap(
-  gateway: Gateway,
-  lane: string,
-): { perTask?: number; perSession?: number } | undefined {
-  const registry = getRegistry(gateway)
-  if (!registry) return undefined
-  // Subgateway exposes config via private subConfig; fallback to global
-  try {
-    // Try to read costCap from subgateway's config via sync
-    const cfg = (
-      getConfig() as MiraConfig & {
-        subgateways?: Record<string, { costCap?: { perTask?: number; perSession?: number } }>
-      }
-    ).subgateways?.[lane]?.costCap
-    if (cfg) return cfg
-  } catch {}
-  return undefined
-}
-
-// ── Auto-Model + Cost Cap helpers (Kilo K8) ──────────────────────────
-
-function tierModel(tier: string | undefined, fallbackSmall?: string): string {
-  switch (tier) {
-    case 'cheap':
-      return fallbackSmall ?? 'claude-3.5-sonnet'
-    case 'max':
-      return 'claude-opus-4'
-    case 'balanced':
-    default:
-      return 'claude-sonnet-4'
-  }
-}
-function priceForModel(modelID: string): [number, number] {
-  const m = modelID.toLowerCase()
-  if (m.includes('claude-sonnet')) return [3, 15]
-  if (m.includes('claude-opus')) return [15, 75]
-  if (m.includes('claude-haiku')) return [0.8, 4]
-  if (m.includes('gpt-4o')) return [2.5, 10]
-  if (m.includes('gpt-4')) return [10, 30]
-  if (m.includes('deepseek')) return [0.27, 1.1]
-  if (m.includes('llama') || m.includes('mistral')) return [0.5, 0.8]
-  return [1, 2]
-}
-function estimateCostUSD(modelID: string, inputTokens: number, outputTokens: number): number {
-  const [pin, pout] = priceForModel(modelID)
-  return (inputTokens * pin + outputTokens * pout) / 1_000_000
-}
-function getRetiredModels(): Set<string> {
-  try {
-    const cfg = getConfig() as MiraConfig & { routing?: { retiredModels?: string[] } }
-    const list = cfg.routing?.retiredModels ?? []
-    const set = new Set(list.map((s) => s.toLowerCase()))
-    if (set.size === 0) {
-      // fallback defaults if config not loaded
-      return new Set([
-        'claude-3-opus-20240229',
-        'claude-3-sonnet-20240229',
-        'claude-3-haiku-20240307',
-        'gpt-4-0314',
-        'gpt-4-0613',
-      ])
-    }
-    return set
-  } catch {
-    return new Set([
-      'claude-3-opus-20240229',
-      'claude-3-sonnet-20240229',
-      'claude-3-haiku-20240307',
-      'gpt-4-0314',
-      'gpt-4-0613',
-    ])
-  }
-}
-
-function isRetired(modelID: string): boolean {
-  const m = modelID.toLowerCase()
-  const retired = getRetiredModels()
-  for (const r of retired) {
-    if (m.includes(r)) return true
-  }
-  return false
-}
-
-export function resolveEffectiveModel(input: {
-  explicitModel?: string
-  agent?: string | null
-  sessionModel?: string
-  task?: 'summarize' | 'stream' | 'complete' | 'vision'
-}): string {
-  // Precedence: explicit > agent.template.model > autoModel tier > session default > global default
-  const candidate = ((): string => {
-    if (input.explicitModel) return input.explicitModel
-    if (input.agent) {
-      const tpl = getAgentTemplates()[input.agent]
-      if (tpl?.model) return tpl.model
-    }
-    try {
-      const cfg = getConfig() as MiraConfig & {
-        autoModel?: { enabled?: boolean; tier?: string }
-        smallModel?: string
-      }
-      if (cfg.autoModel?.enabled) {
-        // Auto-model routing by task type
-        let tier = cfg.autoModel.tier
-        if (input.task) {
-          if (input.task === 'summarize' || input.task === 'complete') {
-            tier = 'cheap'
-          } else if (input.task === 'vision') {
-            tier = 'max'
-          } else if (input.task === 'stream') {
-            // keep configured tier or default to balanced
-            tier = tier ?? 'balanced'
-          }
-        }
-        return tierModel(tier, cfg.smallModel)
-      }
-    } catch {}
-    if (input.sessionModel) return input.sessionModel
-    try {
-      return getConfig().model
-    } catch {
-      return 'claude-sonnet-4'
-    }
-  })()
-  // Route the winner through the gateway so agent model selection honors
-  // aliases, provider prefixes, and default-provider fallback. Falls back to
-  // the raw candidate when the gateway cannot resolve (e.g. no API key
-  // configured) — model resolution must never throw here.
-  let resolved = resolveModelViaGateway(candidate)
-  // Guard against retired models: if the resolved model is retired, try fallback chain
-  if (isRetired(resolved)) {
-    console.warn(`[mira] model "${resolved}" is retired, attempting fallback chain`)
-    try {
-      const registry = buildRegistry(getConfig())
-      const fallbackResolved = resolveWithFallbacks(registry, candidate)[0]
-      if (
-        fallbackResolved?.providerKey &&
-        fallbackResolved?.modelID &&
-        !isRetired(`${fallbackResolved.providerKey}/${fallbackResolved.modelID}`)
-      ) {
-        resolved = `${fallbackResolved.providerKey}/${fallbackResolved.modelID}`
-      } else {
-        const fallback = tierModel('balanced')
-        resolved = resolveModelViaGateway(fallback)
-      }
-    } catch {
-      const fallback = tierModel('balanced')
-      resolved = resolveModelViaGateway(fallback)
-    }
-  }
-  return resolved
-}
-
-/**
- * Normalize a model string via the gateway ProviderRegistry
- * (alias expansion + provider-prefix resolution). Never throws —
- * returns the raw candidate when resolution fails.
- */
-export function resolveModelViaGateway(candidate: string): string {
-  try {
-    const resolved = resolveModel(buildRegistry(getConfig()), candidate)
-    if (resolved?.providerKey && typeof resolved?.modelID === 'string' && resolved.modelID) {
-      return `${resolved.providerKey}/${resolved.modelID}`
-    }
-  } catch {}
-  return candidate
-}
-
-// ── SessionPrompt ──────────────────────────────────────────────────
-
 export class SessionPrompt {
   private doomDetectors = new Map<string, DoomLoopDetector>()
   private getDoomDetector(sessionID: string): DoomLoopDetector {
@@ -1895,3 +1594,24 @@ export class SessionPrompt {
 }
 
 // Mira Patch (2026-09-23): Reduce token cost: summarize tool results >500 chars, compact at 60% window, batch reads. Evidence: nvidia/meta/muse-glimmer-30b avg 46163 tokens (budget 20k); overall avg 23082 tokens/session
+
+
+// Re-export types and helpers for backward compatibility
+export type { LoopMessage, SessionPromptDeps, LoopOptions } from './types.js'
+export {
+  pruneReasoning,
+  summarizeToolTraces,
+  getRouter,
+  getRegistry,
+  isGatewayRouter,
+  isSubgatewayRegistry,
+  resolveLane,
+  laneCostCap,
+  tierModel,
+  priceForModel,
+  estimateCostUSD,
+  getRetiredModels,
+  isRetired,
+  resolveEffectiveModel,
+  resolveModelViaGateway,
+} from './helpers.js'
