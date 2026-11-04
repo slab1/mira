@@ -60,7 +60,7 @@ export class InferenceEngine {
         })
 
         // If cloud fallback is permitted and privacy permits, attempt fallback
-        if (policy.allowCloudFallback && policy.privacy !== 'local_only') {
+        if (policy.allowCloudFallback && validatePrivacyPolicy(policy, 'cloud-fallback')) {
           const cloudAvailable = await this.cloud.isAvailable()
           if (cloudAvailable) {
             try {

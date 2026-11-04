@@ -2,6 +2,8 @@ import { describe, test, expect } from 'bun:test'
 import { ConcurrencyManager } from '../src/resources/concurrency-manager.js'
 import { evaluateRouting } from '../src/routing/routing-policy.js'
 import { InferenceEngine } from '../src/core/inference-engine.js'
+import { validatePrivacyPolicy } from '../src/security/privacy-policy.js'
+import { InferenceMetrics } from '../src/telemetry/inference-metrics.js'
 
 describe('ConcurrencyManager', () => {
   test('enforces concurrency limit of 1', () => {
@@ -38,5 +40,29 @@ describe('InferenceEngine Cloud Fallback & Retry', () => {
       expect(e.message).toContain('Ollama generation failed')
     }
     expect(thrown).toBe(true)
+  })
+})
+
+describe('InferenceEngine Privacy & Fallback Mock Tests', () => {
+  test('validatePrivacyPolicy isolates local_only from cloud providers', () => {
+    const policy = { privacy: 'local_only' as const, localFirst: true, allowCloudFallback: true, maxRetries: 1, timeoutMs: 1000 }
+    expect(validatePrivacyPolicy(policy, 'ollama')).toBe(true)
+    expect(validatePrivacyPolicy(policy, 'cloud-fallback')).toBe(false)
+  })
+
+  test('validatePrivacyPolicy permits cloud when cloud_allowed', () => {
+    const policy = { privacy: 'cloud_allowed' as const, localFirst: true, allowCloudFallback: true, maxRetries: 1, timeoutMs: 1000 }
+    expect(validatePrivacyPolicy(policy, 'cloud-fallback')).toBe(true)
+  })
+})
+
+describe('InferenceMetrics Bounded Ring Buffer', () => {
+  test('respects maxRecords limit', () => {
+    const metrics = new InferenceMetrics(5)
+    for (let i = 0; i < 10; i++) {
+      metrics.record({ model: 'test', provider: 'ollama', latencyMs: 10, success: true })
+    }
+    const summary = metrics.getSummary()
+    expect(summary.total).toBe(5)
   })
 })

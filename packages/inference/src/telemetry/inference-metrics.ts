@@ -9,12 +9,20 @@ export interface InferenceMetricRecord {
 
 export class InferenceMetrics {
   private records: InferenceMetricRecord[] = []
+  private maxRecords: number
+
+  constructor(maxRecords = 1000) {
+    this.maxRecords = maxRecords
+  }
 
   record(rec: Omit<InferenceMetricRecord, 'timestamp'>): void {
     this.records.push({
       ...rec,
       timestamp: Date.now(),
     })
+    if (this.records.length > this.maxRecords) {
+      this.records.shift()
+    }
   }
 
   getSummary() {
