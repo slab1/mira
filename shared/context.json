@@ -2,760 +2,6 @@
   "version": "1.0",
   "decisions": [
     {
-      "id": "dec_mtsfhm5r_lkku",
-      "decision": "bootstrap workflow trace",
-      "context": "gap 12-15 fixer",
-      "at": "2026-09-08T08:49:26.903Z",
-      "by": "fixer"
-    },
-    {
-      "id": "dec_mv4xx4po_7fkr",
-      "decision": "mirror:mv4xx4pm:promoted",
-      "context": "Proposal p1 promoted",
-      "at": "2026-10-12T07:38:20.316Z",
-      "by": "governance",
-      "evidence": [
-        "stage=canary",
-        "metrics pass"
-      ],
-      "alternatives": [
-        "remain in CANARY_PASSED"
-      ]
-    },
-    {
-      "id": "dec_mv4xx4pt_qkqm",
-      "decision": "routed:mv4xx4ps",
-      "context": "goes to explicit dir",
-      "at": "2026-10-12T07:38:20.321Z"
-    },
-    {
-      "id": "dec_mv4y0e0j_yonq",
-      "decision": "mirror:mv4y0e0i:promoted",
-      "context": "Proposal p1 promoted",
-      "at": "2026-10-12T07:40:52.339Z",
-      "by": "governance",
-      "evidence": [
-        "stage=canary",
-        "metrics pass"
-      ],
-      "alternatives": [
-        "remain in CANARY_PASSED"
-      ]
-    },
-    {
-      "id": "dec_mv4y0f6x_hjej",
-      "decision": "routed:mv4y0f6x",
-      "context": "goes to explicit dir",
-      "at": "2026-10-12T07:40:53.865Z"
-    },
-    {
-      "id": "dec_mv5x7zqm_o6ms",
-      "decision": "mirror:mv5x7zqk:promoted",
-      "context": "Proposal p1 promoted",
-      "at": "2026-10-13T00:06:33.646Z",
-      "by": "governance",
-      "evidence": [
-        "stage=canary",
-        "metrics pass"
-      ],
-      "alternatives": [
-        "remain in CANARY_PASSED"
-      ]
-    },
-    {
-      "id": "dec_mv5x80wz_9i0v",
-      "decision": "routed:mv5x80wy",
-      "context": "goes to explicit dir",
-      "at": "2026-10-13T00:06:35.171Z"
-    },
-    {
-      "id": "dec_mv5xavez_h4wt",
-      "decision": "mirror:mv5xavew:promoted",
-      "context": "Proposal p1 promoted",
-      "at": "2026-10-13T00:08:48.011Z",
-      "by": "governance",
-      "evidence": [
-        "stage=canary",
-        "metrics pass"
-      ],
-      "alternatives": [
-        "remain in CANARY_PASSED"
-      ]
-    },
-    {
-      "id": "dec_mv5xavf6_504p",
-      "decision": "routed:mv5xavf5",
-      "context": "goes to explicit dir",
-      "at": "2026-10-13T00:08:48.018Z"
-    },
-    {
-      "id": "dec_mv5xb62a_ofiv",
-      "decision": "mirror:mv5xb629:promoted",
-      "context": "Proposal p1 promoted",
-      "at": "2026-10-13T00:09:01.810Z",
-      "by": "governance",
-      "evidence": [
-        "stage=canary",
-        "metrics pass"
-      ],
-      "alternatives": [
-        "remain in CANARY_PASSED"
-      ]
-    },
-    {
-      "id": "dec_mv5xb633_k7dm",
-      "decision": "routed:mv5xb632",
-      "context": "goes to explicit dir",
-      "at": "2026-10-13T00:09:01.839Z"
-    },
-    {
-      "id": "dec_mv72oias_dht6",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator alice",
-      "at": "2026-10-13T19:27:08.452Z",
-      "by": "alice",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72oiax_ykp0",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator alice",
-      "at": "2026-10-13T19:27:08.457Z",
-      "by": "alice",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72oib7_gtzj",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator alice",
-      "at": "2026-10-13T19:27:08.467Z",
-      "by": "alice",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72oib9_ftr8",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator alice",
-      "at": "2026-10-13T19:27:08.469Z",
-      "by": "alice",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72oibh_rv5p",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 0) approved by human operator human",
-      "at": "2026-10-13T19:27:08.477Z",
-      "by": "human",
-      "evidence": [],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72oibq_wmgp",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator human",
-      "at": "2026-10-13T19:27:08.486Z",
-      "by": "human",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72oibv_7tq5",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator the-operator",
-      "at": "2026-10-13T19:27:08.491Z",
-      "by": "the-operator",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72oicr_xq8q",
-      "decision": "approval:denied",
-      "context": "Proposal prop_1 (level 3) denied by human operator the-operator",
-      "at": "2026-10-13T19:27:08.523Z",
-      "by": "the-operator",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "approve",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72oicx_disz",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
-      "at": "2026-10-13T19:27:08.529Z",
-      "by": "op-b",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72oid6_dbr8",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator solo",
-      "at": "2026-10-13T19:27:08.538Z",
-      "by": "solo",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72oid8_ypde",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator human",
-      "at": "2026-10-13T19:27:08.540Z",
-      "by": "human",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72oidd_ube5",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
-      "at": "2026-10-13T19:27:08.545Z",
-      "by": "op-b",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72oidg_buag",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator op-a",
-      "at": "2026-10-13T19:27:08.548Z",
-      "by": "op-a",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72oidz_jv1p",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator human",
-      "at": "2026-10-13T19:27:08.567Z",
-      "by": "human",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72oie4_875l",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator human",
-      "at": "2026-10-13T19:27:08.572Z",
-      "by": "human",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72oie9_5apr",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator human",
-      "at": "2026-10-13T19:27:08.577Z",
-      "by": "human",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72sco1_885w",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator alice",
-      "at": "2026-10-13T19:30:07.777Z",
-      "by": "alice",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72sco6_rep0",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator alice",
-      "at": "2026-10-13T19:30:07.782Z",
-      "by": "alice",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72scoh_dsq5",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator alice",
-      "at": "2026-10-13T19:30:07.793Z",
-      "by": "alice",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72scom_4xmp",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator alice",
-      "at": "2026-10-13T19:30:07.798Z",
-      "by": "alice",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72scor_7ptp",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 0) approved by human operator human",
-      "at": "2026-10-13T19:30:07.803Z",
-      "by": "human",
-      "evidence": [],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72scoy_rekw",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator human",
-      "at": "2026-10-13T19:30:07.810Z",
-      "by": "human",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72scp4_c0jb",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator the-operator",
-      "at": "2026-10-13T19:30:07.816Z",
-      "by": "the-operator",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72scp7_5ldj",
-      "decision": "approval:denied",
-      "context": "Proposal prop_1 (level 3) denied by human operator the-operator",
-      "at": "2026-10-13T19:30:07.819Z",
-      "by": "the-operator",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "approve",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72scpa_lpcz",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
-      "at": "2026-10-13T19:30:07.822Z",
-      "by": "op-b",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72scpd_st7i",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator solo",
-      "at": "2026-10-13T19:30:07.825Z",
-      "by": "solo",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72scpg_7lt1",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator human",
-      "at": "2026-10-13T19:30:07.828Z",
-      "by": "human",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72scpj_4pm5",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
-      "at": "2026-10-13T19:30:07.831Z",
-      "by": "op-b",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72scpm_rnwr",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator op-a",
-      "at": "2026-10-13T19:30:07.834Z",
-      "by": "op-a",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72scpw_jdxh",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator human",
-      "at": "2026-10-13T19:30:07.844Z",
-      "by": "human",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72scq1_8bq7",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator human",
-      "at": "2026-10-13T19:30:07.849Z",
-      "by": "human",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72scq6_jrpw",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator human",
-      "at": "2026-10-13T19:30:07.854Z",
-      "by": "human",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72skt3_mwr1",
-      "decision": "approval:approved",
-      "context": "Proposal prop_high (level 4) approved by human operator human-test",
-      "at": "2026-10-13T19:30:18.327Z",
-      "by": "human-test",
-      "evidence": [
-        "guardrails"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72skwd_rfyo",
-      "decision": "approval:approved",
-      "context": "Proposal prop_mv72skw6_xvss (level 1) approved by human operator test-human",
-      "at": "2026-10-13T19:30:18.445Z",
-      "by": "test-human",
-      "evidence": [
-        "changedFiles 6 >5 — large blast radius",
-        "sensitive files: packages/server/src/guardrails/index.ts",
-        "permission scope \"guardrails\" requires approval (§18)",
-        "P0 priority — higher stakes than P1",
-        "affectedEngine \"guardrails\" is high-risk per §18",
-        "proposer risk=high"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mv72skx0_kj0w",
-      "decision": "approval:denied",
-      "context": "Proposal prop_mv72skww_4ukv (level 1) denied by human operator test-human",
-      "at": "2026-10-13T19:30:18.468Z",
-      "by": "test-human",
-      "evidence": [
-        "changedFiles 6 >5 — large blast radius",
-        "permission scope \"guardrails\" requires approval (§18)",
-        "P0 priority — higher stakes than P1",
-        "affectedEngine \"guardrails\" is high-risk per §18",
-        "proposer risk=high"
-      ],
-      "alternatives": [
-        "approve",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mvukot0y_wr0m",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator alice",
-      "at": "2026-10-30T06:09:57.490Z",
-      "by": "alice",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mvukot14_272k",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator alice",
-      "at": "2026-10-30T06:09:57.496Z",
-      "by": "alice",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mvukot1b_uk21",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator alice",
-      "at": "2026-10-30T06:09:57.503Z",
-      "by": "alice",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mvukot1f_xzqu",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator alice",
-      "at": "2026-10-30T06:09:57.507Z",
-      "by": "alice",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mvukot1i_yz2c",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 0) approved by human operator human",
-      "at": "2026-10-30T06:09:57.510Z",
-      "by": "human",
-      "evidence": [],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mvukot1l_xu6b",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator human",
-      "at": "2026-10-30T06:09:57.513Z",
-      "by": "human",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mvukot1q_1pbs",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator the-operator",
-      "at": "2026-10-30T06:09:57.518Z",
-      "by": "the-operator",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mvukot1u_ucg9",
-      "decision": "approval:denied",
-      "context": "Proposal prop_1 (level 3) denied by human operator the-operator",
-      "at": "2026-10-30T06:09:57.522Z",
-      "by": "the-operator",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "approve",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mvukot1z_bwb5",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
-      "at": "2026-10-30T06:09:57.527Z",
-      "by": "op-b",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mvukot24_17fq",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator solo",
-      "at": "2026-10-30T06:09:57.532Z",
-      "by": "solo",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
-      "id": "dec_mvukot28_u1e7",
-      "decision": "approval:approved",
-      "context": "Proposal prop_1 (level 3) approved by human operator human",
-      "at": "2026-10-30T06:09:57.536Z",
-      "by": "human",
-      "evidence": [
-        "touches auth"
-      ],
-      "alternatives": [
-        "deny",
-        "keep pending"
-      ]
-    },
-    {
       "id": "dec_mvukot2c_87dc",
       "decision": "approval:approved",
       "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
@@ -2521,6 +1767,1087 @@
       "alternatives": [
         "remain in PROPOSED"
       ]
+    },
+    {
+      "id": "dec_mw2eh6fo_09jw",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-11-04T17:38:13.332Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eh6fv_sma6",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-11-04T17:38:13.339Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eh6fz_gkq6",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-11-04T17:38:13.343Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eh6g3_6blo",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-11-04T17:38:13.347Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eh6gd_xqpr",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 0) approved by human operator human",
+      "at": "2026-11-04T17:38:13.357Z",
+      "by": "human",
+      "evidence": [],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eh6gh_egwv",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-11-04T17:38:13.361Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eh6gk_z8s4",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator the-operator",
+      "at": "2026-11-04T17:38:13.364Z",
+      "by": "the-operator",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eh6gm_zyq5",
+      "decision": "approval:denied",
+      "context": "Proposal prop_1 (level 3) denied by human operator the-operator",
+      "at": "2026-11-04T17:38:13.366Z",
+      "by": "the-operator",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "approve",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eh6gr_s0sr",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
+      "at": "2026-11-04T17:38:13.371Z",
+      "by": "op-b",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eh6gw_09ky",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator solo",
+      "at": "2026-11-04T17:38:13.376Z",
+      "by": "solo",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eh6h0_1wjq",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-11-04T17:38:13.380Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eh6h3_2nm9",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
+      "at": "2026-11-04T17:38:13.383Z",
+      "by": "op-b",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eh6h8_z6rw",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator op-a",
+      "at": "2026-11-04T17:38:13.388Z",
+      "by": "op-a",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eh6hi_7rpu",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-11-04T17:38:13.398Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eh6hn_izoi",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-11-04T17:38:13.403Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eh6hs_e815",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-11-04T17:38:13.408Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehih4_zgm1",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-11-04T17:38:28.936Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehihf_rewu",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-11-04T17:38:28.947Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehihk_q6r5",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-11-04T17:38:28.952Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehiho_gpnh",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-11-04T17:38:28.956Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehiht_flwf",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 0) approved by human operator human",
+      "at": "2026-11-04T17:38:28.961Z",
+      "by": "human",
+      "evidence": [],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehihz_8qrp",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-11-04T17:38:28.967Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehii4_pk6x",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator the-operator",
+      "at": "2026-11-04T17:38:28.972Z",
+      "by": "the-operator",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehii8_izkj",
+      "decision": "approval:denied",
+      "context": "Proposal prop_1 (level 3) denied by human operator the-operator",
+      "at": "2026-11-04T17:38:28.976Z",
+      "by": "the-operator",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "approve",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehiia_hhd3",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
+      "at": "2026-11-04T17:38:28.978Z",
+      "by": "op-b",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehiih_fv1j",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator solo",
+      "at": "2026-11-04T17:38:28.985Z",
+      "by": "solo",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehiim_wt6m",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-11-04T17:38:28.990Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehiiq_frh0",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
+      "at": "2026-11-04T17:38:28.994Z",
+      "by": "op-b",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehiit_dp5m",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator op-a",
+      "at": "2026-11-04T17:38:28.997Z",
+      "by": "op-a",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehiix_yowf",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-11-04T17:38:29.001Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehiiz_p5r4",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-11-04T17:38:29.003Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehij2_ia86",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-11-04T17:38:29.006Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehijb_8jrj",
+      "decision": "approval:approved",
+      "context": "Proposal prop_high (level 4) approved by human operator human-test",
+      "at": "2026-11-04T17:38:29.015Z",
+      "by": "human-test",
+      "evidence": [
+        "guardrails"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehikz_mt8r",
+      "decision": "approval:approved",
+      "context": "Proposal prop_mw2ehikv_c7xw (level 1) approved by human operator test-human",
+      "at": "2026-11-04T17:38:29.075Z",
+      "by": "test-human",
+      "evidence": [
+        "changedFiles 6 >5 — large blast radius",
+        "sensitive files: packages/server/src/guardrails/index.ts",
+        "permission scope \"guardrails\" requires approval (§18)",
+        "P0 priority — higher stakes than P1",
+        "affectedEngine \"guardrails\" is high-risk per §18",
+        "proposer risk=high"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehn7a_fo2i",
+      "decision": "approval:denied",
+      "context": "Proposal prop_mw2ehn76_i5w8 (level 1) denied by human operator test-human",
+      "at": "2026-11-04T17:38:35.062Z",
+      "by": "test-human",
+      "evidence": [
+        "changedFiles 6 >5 — large blast radius",
+        "permission scope \"guardrails\" requires approval (§18)",
+        "P0 priority — higher stakes than P1",
+        "affectedEngine \"guardrails\" is high-risk per §18",
+        "proposer risk=high"
+      ],
+      "alternatives": [
+        "approve",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehnml_63jx",
+      "decision": "approval:approved",
+      "context": "Proposal p1 (level 1) approved by human operator alice",
+      "at": "2026-11-04T17:38:35.613Z",
+      "by": "alice",
+      "evidence": [
+        "x"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehnmr_0chf",
+      "decision": "approval:approved",
+      "context": "Proposal p1 (level 1) approved by human operator alice",
+      "at": "2026-11-04T17:38:35.619Z",
+      "by": "alice",
+      "evidence": [
+        "x"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehnmx_b725",
+      "decision": "approval:approved",
+      "context": "Proposal p1 (level 1) approved by human operator alice",
+      "at": "2026-11-04T17:38:35.625Z",
+      "by": "alice",
+      "evidence": [
+        "x"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehnn7_y8kp",
+      "decision": "approval:approved",
+      "context": "Proposal p1 (level 1) approved by human operator alice",
+      "at": "2026-11-04T17:38:35.635Z",
+      "by": "alice",
+      "evidence": [
+        "x"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehnnf_hufm",
+      "decision": "approval:approved",
+      "context": "Proposal p1 (level 1) approved by human operator alice",
+      "at": "2026-11-04T17:38:35.643Z",
+      "by": "alice",
+      "evidence": [
+        "x"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehnnl_itwe",
+      "decision": "approval:approved",
+      "context": "Proposal p1 (level 1) approved by human operator alice",
+      "at": "2026-11-04T17:38:35.649Z",
+      "by": "alice",
+      "evidence": [
+        "x"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehnns_0y3v",
+      "decision": "approval:approved",
+      "context": "Proposal p1 (level 1) approved by human operator alice",
+      "at": "2026-11-04T17:38:35.656Z",
+      "by": "alice",
+      "evidence": [
+        "x"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehow9_btcq",
+      "decision": "approval:approved",
+      "context": "Proposal prop_cap (level 1) approved by human operator op",
+      "at": "2026-11-04T17:38:37.257Z",
+      "by": "op",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehowe_he2p",
+      "decision": "approval:approved",
+      "context": "Proposal prop_cap (level 1) approved by human operator ad",
+      "at": "2026-11-04T17:38:37.262Z",
+      "by": "ad",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehowj_7m7a",
+      "decision": "approval:approved",
+      "context": "Proposal prop_cap (level 1) approved by human operator bob",
+      "at": "2026-11-04T17:38:37.267Z",
+      "by": "bob",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehown_wk9d",
+      "decision": "approval:approved",
+      "context": "Proposal prop_cap (level 1) approved by human operator op",
+      "at": "2026-11-04T17:38:37.271Z",
+      "by": "op",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehows_rzgt",
+      "decision": "approval:approved",
+      "context": "Proposal prop_cap (level 1) approved by human operator op",
+      "at": "2026-11-04T17:38:37.276Z",
+      "by": "op",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehox0_fmpq",
+      "decision": "approval:approved",
+      "context": "Proposal prop_cap (level 1) approved by human operator op",
+      "at": "2026-11-04T17:38:37.284Z",
+      "by": "op",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehox6_1koy",
+      "decision": "approval:denied",
+      "context": "Proposal prop_cap (level 1) denied by human operator op",
+      "at": "2026-11-04T17:38:37.290Z",
+      "by": "op",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "approve",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehoxe_p3e0",
+      "decision": "approval:approved",
+      "context": "Proposal prop_cap (level 1) approved by human operator op",
+      "at": "2026-11-04T17:38:37.298Z",
+      "by": "op",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ehoxl_5jlh",
+      "decision": "approval:approved",
+      "context": "Proposal prop_cap (level 1) approved by human operator op",
+      "at": "2026-11-04T17:38:37.305Z",
+      "by": "op",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eilxk_h4ne",
+      "decision": "approval:approved",
+      "context": "Proposal prop_high (level 4) approved by human operator human-test",
+      "at": "2026-11-04T17:39:20.072Z",
+      "by": "human-test",
+      "evidence": [
+        "guardrails"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eilzt_y1wm",
+      "decision": "approval:approved",
+      "context": "Proposal prop_mw2eilzp_m0vk (level 1) approved by human operator test-human",
+      "at": "2026-11-04T17:39:20.153Z",
+      "by": "test-human",
+      "evidence": [
+        "changedFiles 6 >5 — large blast radius",
+        "sensitive files: packages/server/src/guardrails/index.ts",
+        "permission scope \"guardrails\" requires approval (§18)",
+        "P0 priority — higher stakes than P1",
+        "affectedEngine \"guardrails\" is high-risk per §18",
+        "proposer risk=high"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2eiqju_ya7o",
+      "decision": "approval:denied",
+      "context": "Proposal prop_mw2eiqjq_hzx5 (level 1) denied by human operator test-human",
+      "at": "2026-11-04T17:39:26.058Z",
+      "by": "test-human",
+      "evidence": [
+        "changedFiles 6 >5 — large blast radius",
+        "permission scope \"guardrails\" requires approval (§18)",
+        "P0 priority — higher stakes than P1",
+        "affectedEngine \"guardrails\" is high-risk per §18",
+        "proposer risk=high"
+      ],
+      "alternatives": [
+        "approve",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ej85m_hcu5",
+      "decision": "approval:approved",
+      "context": "Proposal prop_mw2ej85e_dd9k (level 1) approved by human operator test-human",
+      "at": "2026-11-04T17:39:48.874Z",
+      "by": "test-human",
+      "evidence": [
+        "changedFiles 6 >5 — large blast radius",
+        "sensitive files: packages/server/src/guardrails/index.ts",
+        "permission scope \"guardrails\" requires approval (§18)",
+        "P0 priority — higher stakes than P1",
+        "affectedEngine \"guardrails\" is high-risk per §18",
+        "proposer risk=high"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2elkn5_6ef5",
+      "decision": "approval:approved",
+      "context": "Proposal prop_mw2elkmy_9icw (level 1) approved by human operator test-human",
+      "at": "2026-11-04T17:41:38.369Z",
+      "by": "test-human",
+      "evidence": [
+        "changedFiles 6 >5 — large blast radius",
+        "sensitive files: packages/server/src/guardrails/index.ts",
+        "permission scope \"guardrails\" requires approval (§18)",
+        "P0 priority — higher stakes than P1",
+        "affectedEngine \"guardrails\" is high-risk per §18",
+        "proposer risk=high"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ewm51_sq42",
+      "decision": "approval:approved",
+      "context": "Proposal prop_high (level 4) approved by human operator human-test",
+      "at": "2026-11-04T17:50:13.525Z",
+      "by": "human-test",
+      "evidence": [
+        "guardrails"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ewm7a_3qh8",
+      "decision": "approval:approved",
+      "context": "Proposal prop_mw2ewm77_y7ls (level 1) approved by human operator test-human",
+      "at": "2026-11-04T17:50:13.606Z",
+      "by": "test-human",
+      "evidence": [
+        "changedFiles 6 >5 — large blast radius",
+        "sensitive files: packages/server/src/guardrails/index.ts",
+        "permission scope \"guardrails\" requires approval (§18)",
+        "P0 priority — higher stakes than P1",
+        "affectedEngine \"guardrails\" is high-risk per §18",
+        "proposer risk=high"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2ewrrr_3jlk",
+      "decision": "approval:denied",
+      "context": "Proposal prop_mw2ewrrn_k8m3 (level 1) denied by human operator test-human",
+      "at": "2026-11-04T17:50:20.823Z",
+      "by": "test-human",
+      "evidence": [
+        "changedFiles 6 >5 — large blast radius",
+        "permission scope \"guardrails\" requires approval (§18)",
+        "P0 priority — higher stakes than P1",
+        "affectedEngine \"guardrails\" is high-risk per §18",
+        "proposer risk=high"
+      ],
+      "alternatives": [
+        "approve",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2exb9v_01zo",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-11-04T17:50:46.099Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2exba0_8hqn",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-11-04T17:50:46.104Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2exba4_gxq7",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-11-04T17:50:46.108Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2exba8_p5b7",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator alice",
+      "at": "2026-11-04T17:50:46.112Z",
+      "by": "alice",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2exbae_gxnm",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 0) approved by human operator human",
+      "at": "2026-11-04T17:50:46.118Z",
+      "by": "human",
+      "evidence": [],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2exbak_k68s",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-11-04T17:50:46.124Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2exban_7h55",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator the-operator",
+      "at": "2026-11-04T17:50:46.127Z",
+      "by": "the-operator",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2exbas_fixe",
+      "decision": "approval:denied",
+      "context": "Proposal prop_1 (level 3) denied by human operator the-operator",
+      "at": "2026-11-04T17:50:46.132Z",
+      "by": "the-operator",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "approve",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2exbaz_dis7",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
+      "at": "2026-11-04T17:50:46.139Z",
+      "by": "op-b",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2exbb3_gzn7",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator solo",
+      "at": "2026-11-04T17:50:46.143Z",
+      "by": "solo",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2exbb6_inqd",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-11-04T17:50:46.146Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2exbba_cx4j",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operators op-a + op-b (two-person rule)",
+      "at": "2026-11-04T17:50:46.150Z",
+      "by": "op-b",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2exbbe_sm76",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator op-a",
+      "at": "2026-11-04T17:50:46.154Z",
+      "by": "op-a",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2exbbn_65zt",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-11-04T17:50:46.163Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2exbbq_gd5f",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-11-04T17:50:46.166Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
+    },
+    {
+      "id": "dec_mw2exbbt_lai5",
+      "decision": "approval:approved",
+      "context": "Proposal prop_1 (level 3) approved by human operator human",
+      "at": "2026-11-04T17:50:46.169Z",
+      "by": "human",
+      "evidence": [
+        "touches auth"
+      ],
+      "alternatives": [
+        "deny",
+        "keep pending"
+      ]
     }
   ],
   "strategy_log": [
@@ -4047,6 +4374,102 @@
       "agent_target": "researcher",
       "outcome": "completed:UNVERIFIED",
       "at": "2026-10-30T15:53:09.644Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-11-04T17:38:17.857Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-11-04T17:38:17.874Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-11-04T17:38:17.893Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-11-04T17:38:17.937Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-11-04T17:38:17.958Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-11-04T17:38:17.972Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-11-04T17:38:17.990Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "failed",
+      "at": "2026-11-04T17:38:17.997Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-11-04T17:38:18.003Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "cancelled",
+      "at": "2026-11-04T17:38:39.246Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "cancelled",
+      "at": "2026-11-04T17:38:39.274Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-11-04T17:38:40.176Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-11-04T17:38:40.196Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-11-04T17:38:40.211Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-11-04T17:38:40.227Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:FAILED_VERIFICATION",
+      "at": "2026-11-04T17:38:40.241Z"
     }
   ],
   "active_tasks": [
@@ -4175,18 +4598,18 @@
       "last_updated": "2026-09-27T19:39:18.867875+00:00"
     },
     "agent:general": {
-      "count": 186,
-      "completed": 186,
-      "successes": 95,
+      "count": 197,
+      "completed": 197,
+      "successes": 100,
       "success_rate": 0.51,
-      "last_updated": "2026-10-30T15:53:09.570Z"
+      "last_updated": "2026-11-04T17:38:39.269Z"
     },
     "agent:coder": {
-      "count": 33,
-      "completed": 33,
+      "count": 38,
+      "completed": 38,
       "successes": 0,
       "success_rate": 0,
-      "last_updated": "2026-10-30T15:53:09.590Z"
+      "last_updated": "2026-11-04T17:38:40.237Z"
     },
     "agent:coder-ok": {
       "count": 3,
@@ -4224,7 +4647,7 @@
       "last_updated": "2026-10-30T15:53:09.639Z"
     }
   },
-  "last_updated": "2026-10-30T15:53:10.642Z",
+  "last_updated": "2026-11-04T17:50:46.169Z",
   "workflow_trace": [
     {
       "agent": "fixer",

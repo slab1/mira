@@ -12,7 +12,7 @@ import type { RiskAssessment } from '../evolution/risk.js'
 // script) skips it — without this, appendDecision writes the REPO's
 // shared/context.json (observed: test entries leaked into git status).
 beforeAll(() => {
-  process.env.MIRA_CONTEXT_PATH ??= join(
+  process.env.MIRA_CONTEXT_PATH = join(
     mkdtempSync(join(tmpdir(), 'mira-ledger-decisions-test-')),
     'context.json',
   )
@@ -75,11 +75,11 @@ describe('ApprovalGate decision log wiring', () => {
     gate.requestApproval(proposal, 3, risk)
     expect(gate.isPending('prop_log_1')).toBe(true)
 
-    const result = gate.approve('prop_log_1', { owner: 'alice', authenticated: true, role: 'operator' })
+    const result = gate.approve('prop_log_1', { owner: 'alice-ledger', authenticated: true, role: 'operator' })
     expect(result.approved).toBe(true)
 
     const ctx = loadContext()
-    const entry = ctx.decisions?.find((d) => d.decision === 'approval:approved' && d.by === 'alice')
+    const entry = ctx.decisions?.find((d) => d.decision === 'approval:approved' && d.by === 'alice-ledger')
     expect(entry).toBeDefined()
     expect(entry?.evidence).toContain('touches auth module')
     expect(entry?.alternatives).toContain('deny')
@@ -88,10 +88,10 @@ describe('ApprovalGate decision log wiring', () => {
   test('human deny logs decision with alternatives', () => {
     const gate = new ApprovalGate({})
     gate.requestApproval(proposal, 3, risk)
-    gate.deny('prop_log_1', { owner: 'bob', authenticated: true, role: 'operator' })
+    gate.deny('prop_log_1', { owner: 'bob-ledger', authenticated: true, role: 'operator' })
 
     const ctx = loadContext()
-    const entry = ctx.decisions?.find((d) => d.decision === 'approval:denied' && d.by === 'bob')
+    const entry = ctx.decisions?.find((d) => d.decision === 'approval:denied' && d.by === 'bob-ledger')
     expect(entry).toBeDefined()
     expect(entry?.alternatives).toContain('approve')
   })

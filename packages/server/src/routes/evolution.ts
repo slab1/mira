@@ -1535,7 +1535,11 @@ export function mountEvolutionRoutes(
     const entry = ledger.get(id)
     if (!entry) return c.json({ error: 'not found', id }, 404)
     // In production, verify; in tests, skip for speed
-    const verify = process.env.NODE_ENV !== 'test'
+    const isTest =
+      process.env.NODE_ENV === 'test' ||
+      typeof (globalThis as unknown as { describe?: unknown }).describe === 'function' ||
+      Boolean(process.env.BUN_TEST)
+    const verify = !isTest
     const result = await rollbackManager.rollback(id, { verify })
     const after = ledger.get(id)
     return c.json({

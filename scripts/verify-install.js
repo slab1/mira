@@ -35,11 +35,21 @@ function resolvePackageJson(name, fromDir) {
     try {
       if (fs.statSync(cand).isFile()) return cand;
     } catch {}
+    const bunCand = path.join(dir, 'node_modules', '.bun', 'node_modules', name, 'package.json');
+    try {
+      if (fs.statSync(bunCand).isFile()) return bunCand;
+    } catch {}
     const parent = path.dirname(dir);
-    if (parent === dir) return null;
+    if (parent === dir) break;
     dir = parent;
   }
+  const rootBun = path.join(ROOT, 'node_modules', '.bun', 'node_modules', name, 'package.json');
+  try {
+    if (fs.statSync(rootBun).isFile()) return rootBun;
+  } catch {}
+  return null;
 }
+
 
 function entryTargets(pkg) {
   const out = new Set();

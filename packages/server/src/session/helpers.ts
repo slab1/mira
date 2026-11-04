@@ -189,10 +189,17 @@ export function getRetiredModels(): Set<string> {
  * Check if a model is retired.
  */
 export function isRetired(modelID: string): boolean {
-  return getRetiredModels().has(modelID.toLowerCase())
+  const lower = modelID.toLowerCase()
+  const retired = getRetiredModels()
+  if (retired.has(lower)) return true
+  for (const r of retired) {
+    if (lower.includes(r) || r.includes(lower)) return true
+  }
+  return false
 }
 
 import { getAgentTemplates } from '../agents/templates.js'
+import { buildRegistry } from '../gateway/provider.js'
 
 /**
  * Resolve the effective model to use.
@@ -208,29 +215,50 @@ export function resolveEffectiveModel(input: {
   const cfg = getConfig()
 
   // 1. Explicit model
-  const explicit = input.explicitModel ?? input.model
-  if (explicit) {
-    return resolveModelViaGateway(explicit)
-  }
+  let candidate: string | undefined = input.explicitModel ?? input.model
 
   // 2. Agent template model
-  if (input.agent) {
+  if (!candidate && input.agent) {
     try {
       const templates = getAgentTemplates()
       const tmpl = templates[input.agent as keyof typeof templates]
       if (tmpl?.model) {
-        return resolveModelViaGateway(tmpl.model)
+        candidate = tmpl.model
       }
     } catch {}
   }
 
   // 3. Session model
-  if (input.sessionModel) {
-    return resolveModelViaGateway(input.sessionModel)
+  if (!candidate && input.sessionModel) {
+    candidate = input.sessionModel
   }
 
   // 4. Config default
-  return resolveModelViaGateway(cfg.model)
+  if (!candidate) {
+    candidate = cfg.model
+  }
+
+  // If candidate is retired, fall back to configured fallbacks
+  if (isRetired(candidate)) {
+    const fallbacks = (cfg.routing?.fallbacks as string[] | undefined) ?? []
+    let resolvedFallback: string | null = null
+    try {
+      const reg = buildRegistry(cfg)
+      for (const fb of fallbacks) {
+        if (isRetired(fb)) continue
+        try {
+          const r = reg.resolve(fb)
+          resolvedFallback = `${r.providerKey}/${r.modelID}`
+          break
+        } catch {
+          continue
+        }
+      }
+    } catch {}
+    candidate = resolvedFallback ?? fallbacks.find((fb) => !isRetired(fb)) ?? cfg.model
+  }
+
+  return resolveModelViaGateway(candidate)
 }
 
 /**
@@ -241,10 +269,16 @@ export function resolveModelViaGateway(candidate: string): string {
   const routing = cfg.routing as Record<string, unknown> | undefined
   const aliases = routing?.aliases as Record<string, string> | undefined
 
-  // Resolve aliases
-  if (aliases?.[candidate]) {
-    return aliases[candidate]
+  let model = candidate
+  if (aliases?.[model]) {
+    model = aliases[model]
   }
 
-  return candidate
+  try {
+    const reg = buildRegistry(cfg)
+    const resolved = reg.resolve(model)
+    return `${resolved.providerKey}/${resolved.modelID}`
+  } catch {
+    return model
+  }
 }

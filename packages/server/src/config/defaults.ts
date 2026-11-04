@@ -116,6 +116,7 @@ export const DEFAULT_CONFIG: MiraConfig = {
       'google/gemini-2.0-flash',
     ],
     defaultProvider: 'nvidia',
+    retiredModels: ['claude-3-opus-20240229'],
   },
   subgateways: {
     default: {

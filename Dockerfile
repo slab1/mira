@@ -5,8 +5,8 @@ ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=4096
 
-# Install system deps for healthcheck
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
+# Install system deps for healthcheck and tool operations (e.g. patch)
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates patch && rm -rf /var/lib/apt/lists/*
 
 # Dependencies stage (all deps — needed for build)
 FROM base AS deps
@@ -18,6 +18,7 @@ COPY packages/tui/package.json ./packages/tui/
 COPY packages/cli/package.json ./packages/cli/
 COPY packages/slack/package.json ./packages/slack/
 COPY packages/vscode-mira/package.json ./packages/vscode-mira/
+COPY packages/inference/package.json ./packages/inference/
 RUN bun install --frozen-lockfile
 
 # Production deps stage (no devDependencies — used by runner)
@@ -31,6 +32,7 @@ COPY packages/tui/package.json ./packages/tui/
 COPY packages/cli/package.json ./packages/cli/
 COPY packages/slack/package.json ./packages/slack/
 COPY packages/vscode-mira/package.json ./packages/vscode-mira/
+COPY packages/inference/package.json ./packages/inference/
 RUN bun install --production --frozen-lockfile
 
 # Build stage
@@ -49,6 +51,7 @@ WORKDIR /app
 COPY --from=builder /app/package.json /app/bun.lock* ./
 COPY --from=builder /app/packages/server ./packages/server
 COPY --from=builder /app/packages/shared ./packages/shared
+COPY --from=builder /app/packages/inference ./packages/inference
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=builder /app/packages/server/dist ./packages/server/dist
 COPY --from=builder /app/packages/web/dist ./packages/web/dist
