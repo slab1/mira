@@ -26,3 +26,17 @@ describe('RoutingPolicy', () => {
     expect(routing.provider).toBe('cloud')
   })
 })
+
+describe('InferenceEngine Cloud Fallback & Retry', () => {
+  test('respects local_only privacy policy when local fails', async () => {
+    const engine = new InferenceEngine({ privacy: 'local_only', allowCloudFallback: true, maxRetries: 0 })
+    let thrown = false
+    try {
+      await engine.execute({ model: 'qwen2.5', prompt: 'hello' })
+    } catch (e: any) {
+      thrown = true
+      expect(e.message).toContain('Ollama generation failed')
+    }
+    expect(thrown).toBe(true)
+  })
+})
