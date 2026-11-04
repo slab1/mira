@@ -4,6 +4,7 @@ import type { InferenceRequest, InferenceResponse } from '../providers/provider.
 import { ConcurrencyManager } from '../resources/concurrency-manager.js'
 import { evaluateRouting } from '../routing/routing-policy.js'
 import type { InferencePolicy } from '../security/privacy-policy.js'
+import { validatePrivacyPolicy } from '../security/privacy-policy.js'
 import { InferenceMetrics } from '../telemetry/inference-metrics.js'
 
 export class InferenceEngine {
@@ -82,8 +83,8 @@ export class InferenceEngine {
         this.concurrency.release()
       }
     } else {
-      if (policy.privacy === 'local_only') {
-        throw new Error('Privacy policy violation: local_only cannot fallback to cloud')
+      if (!validatePrivacyPolicy(policy, 'cloud-fallback')) {
+        throw new Error('Privacy policy violation: local_only cannot route to cloud provider')
       }
       const response = await this.executeWithRetry(this.cloud, request, policy.maxRetries)
       this.metrics.record({
