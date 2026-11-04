@@ -1,9 +1,9 @@
 /**
  * Capability Registry
- * 
+ *
  * Tracks the implementation and verification status of every major capability.
  * This prevents documentation drift and provides a single source of truth.
- * 
+ *
  * Status levels (from docs/LONG_TERM_RISK_AND_SCALABILITY_PLAN.md):
  * - proposed: planned, not implemented
  * - implemented: code exists
@@ -14,12 +14,8 @@
 
 import type { MiraDB } from '../storage/db.js'
 
-export type CapabilityStatus = 
-  | 'proposed'
-  | 'implemented'
-  | 'integrated'
-  | 'test-verified'
-  | 'production-verified'
+export type CapabilityStatus =
+  'proposed' | 'implemented' | 'integrated' | 'test-verified' | 'production-verified'
 
 export interface CapabilityEntry {
   /** Unique capability identifier */
@@ -59,7 +55,7 @@ export const DEFAULT_CAPABILITY_REGISTRY: CapabilityRegistry = {
   // =========================================================================
   // P0: Fail-Closed Governance
   // =========================================================================
-  
+
   'governance.benchmark.fail-closed': {
     id: 'governance.benchmark.fail-closed',
     name: 'Benchmark fails closed on missing evidence',
@@ -71,7 +67,10 @@ export const DEFAULT_CAPABILITY_REGISTRY: CapabilityRegistry = {
     owner: '@slab1',
     lastVerified: '2026-10-20',
     commit: '20b1ca4',
-    docs: ['docs/LONG_TERM_RISK_AND_SCALABILITY_PLAN.md', 'docs/MIRA_LONG_TERM_RISK_MITIGATION_AND_SCALABILITY.md'],
+    docs: [
+      'docs/LONG_TERM_RISK_AND_SCALABILITY_PLAN.md',
+      'docs/MIRA_LONG_TERM_RISK_MITIGATION_AND_SCALABILITY.md',
+    ],
   },
 
   'governance.canary.fail-closed': {
@@ -79,7 +78,8 @@ export const DEFAULT_CAPABILITY_REGISTRY: CapabilityRegistry = {
     name: 'Canary fails closed on missing evidence',
     status: 'test-verified',
     category: 'P0',
-    description: 'CanaryRunner returns BLOCKED when tracker, SLO, or sufficient samples are missing',
+    description:
+      'CanaryRunner returns BLOCKED when tracker, SLO, or sufficient samples are missing',
     implementation: 'packages/server/src/patching/governance/canary.ts',
     tests: 'packages/server/src/patching/governance/gate-fail-closed.test.ts',
     owner: '@slab1',
@@ -145,7 +145,7 @@ export const DEFAULT_CAPABILITY_REGISTRY: CapabilityRegistry = {
   // =========================================================================
   // P0: Isolation
   // =========================================================================
-  
+
   'sandbox.isolation.docker': {
     id: 'sandbox.isolation.docker',
     name: 'Docker container isolation',
@@ -189,7 +189,7 @@ export const DEFAULT_CAPABILITY_REGISTRY: CapabilityRegistry = {
   // =========================================================================
   // P0: Rollback
   // =========================================================================
-  
+
   'rollback.file-restoration': {
     id: 'rollback.file-restoration',
     name: 'File restoration on rollback',
@@ -218,11 +218,11 @@ export const DEFAULT_CAPABILITY_REGISTRY: CapabilityRegistry = {
   // =========================================================================
   // P1: Memory & Provenance
   // =========================================================================
-  
+
   'memory.provenance.levels': {
     id: 'memory.provenance.levels',
     name: 'Provenance levels enum',
-    status: 'partial',
+    status: 'implemented',
     category: 'P1',
     description: 'ProvenanceLevel enum with 5 levels exists',
     implementation: 'packages/server/src/memory/provenance.ts',
@@ -235,7 +235,7 @@ export const DEFAULT_CAPABILITY_REGISTRY: CapabilityRegistry = {
   'memory.provenance.columns': {
     id: 'memory.provenance.columns',
     name: 'Provenance and confidence columns',
-    status: 'partial',
+    status: 'implemented',
     category: 'P1',
     description: 'provenance and confidence columns exist on knowledge_entries',
     implementation: 'learning/knowledge.ts',
@@ -260,7 +260,7 @@ export const DEFAULT_CAPABILITY_REGISTRY: CapabilityRegistry = {
   // =========================================================================
   // P1: Orchestration
   // =========================================================================
-  
+
   'orchestration.task-limits': {
     id: 'orchestration.task-limits',
     name: 'Task count and concurrency limits',
@@ -286,7 +286,7 @@ export const DEFAULT_CAPABILITY_REGISTRY: CapabilityRegistry = {
   // =========================================================================
   // P1: Cost Accounting
   // =========================================================================
-  
+
   'budget.in-memory': {
     id: 'budget.in-memory',
     name: 'In-memory spend counters',
@@ -313,7 +313,7 @@ export const DEFAULT_CAPABILITY_REGISTRY: CapabilityRegistry = {
   // =========================================================================
   // P1: Tenant Isolation
   // =========================================================================
-  
+
   'security.tenant-isolation': {
     id: 'security.tenant-isolation',
     name: 'Multi-tenant isolation invariants',
@@ -329,7 +329,7 @@ export const DEFAULT_CAPABILITY_REGISTRY: CapabilityRegistry = {
   // =========================================================================
   // P1: Documentation
   // =========================================================================
-  
+
   'docs.risk-plan': {
     id: 'docs.risk-plan',
     name: 'Long-term risk mitigation and scalability plan',
@@ -371,7 +371,7 @@ export const DEFAULT_CAPABILITY_REGISTRY: CapabilityRegistry = {
  */
 export class CapabilityRegistryStore {
   private static instance: CapabilityRegistryStore | null = null
-  
+
   constructor(private db: MiraDB) {}
 
   static async getInstance(db: MiraDB): Promise<CapabilityRegistryStore> {
@@ -401,7 +401,7 @@ export class CapabilityRegistryStore {
         depends_on TEXT
       )
     `)
-    
+
     // Seed with default registry
     for (const [id, cap] of Object.entries(DEFAULT_CAPABILITY_REGISTRY)) {
       const existing = await this.get(id)
@@ -412,92 +412,121 @@ export class CapabilityRegistryStore {
   }
 
   async get(id: string): Promise<CapabilityEntry | null> {
-    const result = await this.db.sqlite.exec({
-      sql: 'SELECT * FROM capabilities WHERE id = ?',
-      args: [id],
-    })
-    
-    if (result.rows.length === 0) return null
-    
-    const row = result.rows[0]
+    const row = this.db.sqlite.prepare('SELECT * FROM capabilities WHERE id = ?').get(id) as {
+      id: string
+      name: string
+      status: string
+      category: string
+      description: string
+      implementation: string | null
+      tests: string | null
+      limitations: string | null
+      owner: string
+      last_verified: string | null
+      commit: string | null
+      docs: string | null
+      depends_on: string | null
+    } | null
+
+    if (!row) return null
+
     return {
-      id: row.id as string,
-      name: row.name as string,
+      id: row.id,
+      name: row.name,
       status: row.status as CapabilityStatus,
-      category: row.category as string,
-      description: row.description as string,
-      implementation: row.implementation as string | undefined,
-      tests: row.tests ? (row.tests as string).split(',') : undefined,
-      limitations: row.limitations ? JSON.parse(row.limitations as string) : undefined,
-      owner: row.owner as string,
-      lastVerified: row.last_verified as string | undefined,
-      commit: row.commit as string | undefined,
-      docs: row.docs ? (row.docs as string).split(',') : undefined,
-      dependsOn: row.depends_on ? (row.depends_on as string).split(',') : undefined,
+      category: row.category,
+      description: row.description,
+      implementation: row.implementation ?? undefined,
+      tests: row.tests ? row.tests.split(',') : undefined,
+      limitations: row.limitations ? JSON.parse(row.limitations) : undefined,
+      owner: row.owner,
+      lastVerified: row.last_verified ?? undefined,
+      commit: row.commit ?? undefined,
+      docs: row.docs ? row.docs.split(',') : undefined,
+      dependsOn: row.depends_on ? row.depends_on.split(',') : undefined,
     }
   }
 
   async set(id: string, entry: CapabilityEntry): Promise<void> {
-    await this.db.sqlite.exec({
-      sql: `INSERT OR REPLACE INTO capabilities (id, name, status, category, description, implementation, tests, limitations, owner, last_verified, commit, docs, depends_on) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [
+    this.db.sqlite
+      .prepare(
+        `
+        INSERT OR REPLACE INTO capabilities 
+        (id, name, status, category, description, implementation, tests, limitations, owner, last_verified, commit, docs, depends_on)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
         id,
         entry.name,
         entry.status,
         entry.category,
         entry.description,
         entry.implementation ?? null,
-        Array.isArray(entry.tests) ? entry.tests.join(',') : entry.tests ?? null,
+        Array.isArray(entry.tests) ? entry.tests.join(',') : (entry.tests ?? null),
         entry.limitations ? JSON.stringify(entry.limitations) : null,
         entry.owner,
         entry.lastVerified ?? null,
         entry.commit ?? null,
         Array.isArray(entry.docs) ? entry.docs.join(',') : null,
         entry.dependsOn ? entry.dependsOn.join(',') : null,
-      ],
-    })
+      )
   }
 
   async list(category?: string): Promise<CapabilityEntry[]> {
-    const result = await this.db.sqlite.exec({
-      sql: category 
-        ? 'SELECT * FROM capabilities WHERE category = ?'
-        : 'SELECT * FROM capabilities',
-      args: category ? [category] : [],
-    })
-    
-    return result.rows.map((row) => ({
-      id: row.id as string,
-      name: row.name as string,
+    const query = category
+      ? 'SELECT * FROM capabilities WHERE category = ?'
+      : 'SELECT * FROM capabilities'
+    const stmt = this.db.sqlite.prepare(query)
+    const rows = category ? stmt.all(category) : stmt.all()
+
+    return (
+      rows as Array<{
+        id: string
+        name: string
+        status: string
+        category: string
+        description: string
+        implementation: string | null
+        tests: string | null
+        limitations: string | null
+        owner: string
+        last_verified: string | null
+        commit: string | null
+        docs: string | null
+        depends_on: string | null
+      }>
+    ).map((row) => ({
+      id: row.id,
+      name: row.name,
       status: row.status as CapabilityStatus,
-      category: row.category as string,
-      description: row.description as string,
-      implementation: row.implementation as string | undefined,
-      tests: row.tests ? (row.tests as string).split(',') : undefined,
-      limitations: row.limitations ? JSON.parse(row.limitations as string) : undefined,
-      owner: row.owner as string,
-      lastVerified: row.last_verified as string | undefined,
-      commit: row.commit as string | undefined,
-      docs: row.docs ? (row.docs as string).split(',') : undefined,
-      dependsOn: row.depends_on ? (row.depends_on as string).split(',') : undefined,
+      category: row.category,
+      description: row.description,
+      implementation: row.implementation ?? undefined,
+      tests: row.tests ? row.tests.split(',') : undefined,
+      limitations: row.limitations ? JSON.parse(row.limitations) : undefined,
+      owner: row.owner,
+      lastVerified: row.last_verified ?? undefined,
+      commit: row.commit ?? undefined,
+      docs: row.docs ? row.docs.split(',') : undefined,
+      dependsOn: row.depends_on ? row.depends_on.split(',') : undefined,
     }))
   }
 
   async getStatusReport(): Promise<Record<CapabilityStatus, number>> {
     const all = await this.list()
     const report: Record<CapabilityStatus, number> = {
-      'proposed': 0,
-      'implemented': 0,
-      'integrated': 0,
+      proposed: 0,
+      implemented: 0,
+      integrated: 0,
       'test-verified': 0,
       'production-verified': 0,
     }
-    
+
     for (const cap of all) {
       report[cap.status]++
     }
-    
+
     return report
   }
 
@@ -505,7 +534,7 @@ export class CapabilityRegistryStore {
     // Find capabilities that depend on non-existent or proposed capabilities
     const all = await this.list()
     const errors: string[] = []
-    
+
     for (const cap of all) {
       if (cap.dependsOn) {
         for (const depId of cap.dependsOn) {
@@ -513,12 +542,14 @@ export class CapabilityRegistryStore {
           if (!dep) {
             errors.push(`${cap.id} depends on non-existent capability: ${depId}`)
           } else if (dep.status === 'proposed') {
-            errors.push(`${cap.id} depends on proposed capability: ${depId} (status: ${dep.status})`)
+            errors.push(
+              `${cap.id} depends on proposed capability: ${depId} (status: ${dep.status})`,
+            )
           }
         }
       }
     }
-    
+
     return errors
   }
 }
@@ -534,28 +565,30 @@ export function getCapabilitySummary(registry: CapabilityRegistry = DEFAULT_CAPA
   p1Complete: boolean
 } {
   const byStatus: Record<CapabilityStatus, number> = {
-    'proposed': 0,
-    'implemented': 0,
-    'integrated': 0,
+    proposed: 0,
+    implemented: 0,
+    integrated: 0,
     'test-verified': 0,
     'production-verified': 0,
   }
-  
+
   const byCategory: Record<string, number> = {}
-  
+
   for (const cap of Object.values(registry)) {
     byStatus[cap.status]++
     byCategory[cap.category] = (byCategory[cap.category] || 0) + 1
   }
-  
+
   // P0 complete means no P0 capabilities are 'proposed' or 'implemented'
-  const p0Caps = Object.values(registry).filter(c => c.category === 'P0')
-  const p0Complete = p0Caps.every(c => c.status === 'test-verified' || c.status === 'production-verified')
-  
+  const p0Caps = Object.values(registry).filter((c) => c.category === 'P0')
+  const p0Complete = p0Caps.every(
+    (c) => c.status === 'test-verified' || c.status === 'production-verified',
+  )
+
   // P1 complete means no P1 capabilities are 'proposed'
-  const p1Caps = Object.values(registry).filter(c => c.category === 'P1')
-  const p1Complete = p1Caps.every(c => c.status !== 'proposed')
-  
+  const p1Caps = Object.values(registry).filter((c) => c.category === 'P1')
+  const p1Complete = p1Caps.every((c) => c.status !== 'proposed')
+
   return {
     total: Object.keys(registry).length,
     byStatus,
