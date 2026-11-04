@@ -1,0 +1,402 @@
+name: Deployment
+
+# Deployment workflow for Mira
+# Handles canary deployments, production rollouts, and rollback verification
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - canary
+          - production
+      version:
+        description: 'Version to deploy'
+        required: false
+      force:
+        description: 'Force deployment (skip checks)'
+        required: false
+        default: 'false'
+      rollback:
+        description: 'Trigger rollback'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: deployment-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Build Docker image
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: '1.3.5'
+
+      - name: Install dependencies
+        run: bun install --production
+
+      - name: Run tests
+        run: bun test
+
+      - name: Build application
+        run: bun run build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix={{branch}}-,format=long
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Deploy to Staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build
+    environment:
+      name: staging
+      url: https://staging.mira.slab1.com
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy to staging
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          port: ${{ secrets.STAGING_PORT || 22 }}
+          script: |
+            # Pull the latest image
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+
+            # Stop and remove old container
+            docker stop mira-staging || true
+            docker rm mira-staging || true
+
+            # Run new container
+            docker run -d \
+              --name mira-staging \
+              --restart unless-stopped \
+              -p 3000:3000 \
+              -e MIRA_ENV=staging \
+              -e MIRA_DB=/data/mira-staging.db \
+              -v /data:/data \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+
+            # Wait for health check
+            for i in 1 2 3 4 5; do
+              if curl -f http://localhost:3000/api/health; then
+                echo "Staging deployed successfully"
+                exit 0
+              fi
+              sleep 10
+            done
+            echo "Health check failed"
+            exit 1
+
+  # Deploy to Canary
+  deploy-canary:
+    name: Deploy to Canary
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [build, deploy-staging]
+    environment:
+      name: canary
+      url: https://canary.mira.slab1.com
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'canary' || github.ref == 'refs/heads/main' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy canary
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.CANARY_HOST }}
+          username: ${{ secrets.CANARY_USER }}
+          key: ${{ secrets.CANARY_SSH_KEY }}
+          port: ${{ secrets.CANARY_PORT || 22 }}
+          script: |
+            # Pull the latest image
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+
+            # Stop and remove old container
+            docker stop mira-canary || true
+            docker rm mira-canary || true
+
+            # Run new container with canary config
+            docker run -d \
+              --name mira-canary \
+              --restart unless-stopped \
+              -p 3001:3000 \
+              -e MIRA_ENV=canary \
+              -e MIRA_DB=/data/mira-canary.db \
+              -e MIRA_CANARY_MODE=true \
+              -e MIRA_CANARY_TRAFFIC_PERCENT=5 \
+              -v /data:/data \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+
+            # Wait for health check
+            for i in 1 2 3 4 5; do
+              if curl -f http://localhost:3000/api/health; then
+                echo "Canary deployed successfully"
+                exit 0
+              fi
+              sleep 10
+            done
+            echo "Health check failed"
+            exit 1
+
+      - name: Verify canary deployment
+        run: |
+          # Wait for canary to be ready
+          sleep 30
+
+          # Check canary health
+          curl -f http://${{ secrets.CANARY_HOST }}:3001/api/health
+
+          # Check governance state
+          curl http://${{ secrets.CANARY_HOST }}:3001/api/governance/state
+
+  # Run canary tests
+  canary-tests:
+    name: Canary Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: deploy-canary
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'canary' || github.ref == 'refs/heads/main' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: '1.3.5'
+
+      - name: Run canary test suite
+        run: |
+          # Install test dependencies
+          bun install
+
+          # Run canary-specific tests
+          bun test packages/server/src/patching/governance/canary.test.ts
+
+          # Run governance tests
+          bun test packages/server/src/patching/governance/
+
+  # Promote to Production (manual approval required)
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [build, deploy-staging, canary-tests]
+    environment:
+      name: production
+      url: https://mira.slab1.com
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Wait for manual approval
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          echo "Waiting for manual approval..."
+          # This will pause until someone approves in the GitHub UI
+
+      - name: Deploy to production
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          port: ${{ secrets.PRODUCTION_PORT || 22 }}
+          script: |
+            # Pull the latest image
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+
+            # Create rollback point
+            docker exec mira-production bun run packages/server/src/evolution/complete-rollback.ts create
+
+            # Stop and remove old container
+            docker stop mira-production || true
+            docker rm mira-production || true
+
+            # Run new container
+            docker run -d \
+              --name mira-production \
+              --restart unless-stopped \
+              -p 3000:3000 \
+              -e MIRA_ENV=production \
+              -e MIRA_DB=/data/mira-production.db \
+              -v /data:/data \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+
+            # Wait for health check
+            for i in 1 2 3 4 5; do
+              if curl -f http://localhost:3000/api/health; then
+                echo "Production deployed successfully"
+                exit 0
+              fi
+              sleep 10
+            done
+            echo "Health check failed"
+            exit 1
+
+      - name: Verify production deployment
+        run: |
+          # Wait for production to be ready
+          sleep 60
+
+          # Check production health
+          curl -f https://mira.slab1.com/api/health
+
+          # Check governance state
+          curl https://mira.slab1.com/api/governance/state
+
+          # Run smoke tests
+          bun test packages/server/src/routes/health.test.ts
+
+  # Rollback workflow
+  rollback:
+    name: Rollback
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.rollback == 'true' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get rollback target
+        id: rollback
+        uses: actions/github-script@v6
+        with:
+          script: |
+            // Get the last successful deployment
+            const { data: deployments } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'deployment.yml',
+              status: 'success',
+              per_page: 5,
+            })
+
+            const lastDeployment = deployments.workflow_runs[0]
+            const rollbackTarget = lastDeployment.head_sha
+
+            core.setOutput('target', rollbackTarget)
+            return rollbackTarget
+
+      - name: Trigger rollback
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          port: ${{ secrets.PRODUCTION_PORT || 22 }}
+          script: |
+            # Find the rollback point for the target SHA
+            ROLLBACK_ID=$(docker exec mira-production bun run packages/server/src/evolution/complete-rollback.ts list | grep ${{ steps.rollback.outputs.target }} | head -1 | awk '{print $1}')
+
+            if [ -z "$ROLLBACK_ID" ]; then
+              echo "No rollback point found for ${{ steps.rollback.outputs.target }}"
+              exit 1
+            fi
+
+            # Execute rollback
+            docker exec mira-production bun run packages/server/src/evolution/complete-rollback.ts rollback $ROLLBACK_ID
+
+            # Verify rollback
+            docker exec mira-production bun run packages/server/src/evolution/complete-rollback.ts verify $ROLLBACK_ID
+
+  # Notify on completion
+  notify:
+    name: Notify
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - deploy-staging
+      - deploy-canary
+      - deploy-production
+      - rollback
+    if: always()
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Send Slack notification
+        if: always()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_COLOR: ${{ contains(needs.*.result, 'success') && 'good' || 'danger' }}
+          SLACK_TITLE: ${{ github.workflow }} ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || github.ref_name }}
+          SLACK_MESSAGE: |
+            ${{ github.workflow }} ${{ github.event_name == 'workflow_dispatch' && format('to {0}', github.event.inputs.environment) || '' }} 
+            ${{ contains(needs.*.result, 'success') && 'succeeded' || 'failed' }}
+
+            ${{ needs.deploy-staging.result && '✅ Staging' || needs.deploy-staging.result == 'skipped' && '⏭️ Staging (skipped)' || '❌ Staging' }}
+            ${{ needs.deploy-canary.result && '✅ Canary' || needs.deploy-canary.result == 'skipped' && '⏭️ Canary (skipped)' || '❌ Canary' }}
+            ${{ needs.deploy-production.result && '✅ Production' || needs.deploy-production.result == 'skipped' && '⏭️ Production (skipped)' || '❌ Production' }}
+            ${{ needs.rollback.result && '✅ Rollback' || needs.rollback.result == 'skipped' && '⏭️ Rollback (skipped)' || '❌ Rollback' }}

@@ -1,0 +1,44 @@
+name: Verify Branch Protection
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-protection:
+    name: Verify main branch protection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check branch protection via API
+        id: check-protection
+        run: |
+          # Use GitHub API to check branch protection
+          response=$(gh api repos/slab1/mira/branches/main/protection 2>&1 || echo "")
+          
+          if [ -z "$response" ] || echo "$response" | grep -q "Not Found"; then
+            echo "::error::Branch protection not configured for main"
+            echo "status=missing" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Check for required fields
+          echo "$response" | grep -q '"required_status_checks"' || {
+            echo "::error::required_status_checks not configured"
+            exit 1
+          }
+          echo "$response" | grep -q '"enforce_admins".*true' || {
+            echo "::error::enforce_admins not enabled"
+            exit 1
+          }
+          
+          echo "status=protected" >> $GITHUB_OUTPUT
+          echo "✅ Branch protection verified for main"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
