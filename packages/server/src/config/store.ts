@@ -3,7 +3,7 @@ import type { PartialMiraConfig } from './types.js'
 import { DEFAULT_CONFIG } from './defaults.js'
 import { z } from 'zod'
 import { existsSync, readFileSync } from 'node:fs'
-import { warn, log, error } from '../util/logger.js'
+import { warn, log } from '../util/logger.js'
 import { parseEnvConfig } from '../../../shared/src/schemas/config.js'
 import { validateConfig as validateConfigEnhanced, checkForSecretsInConfig } from './validation.js'
 
@@ -134,32 +134,28 @@ export async function loadConfig(cwd = process.cwd()): Promise<MiraConfig> {
           continue
         }
         // Validate config structure and report issues
-        try {
-          // Use enhanced validation with secrets detection
-          const validated = validateConfigEnhanced(raw as PartialMiraConfig, name)
-          // Merge the validated config with defaults
-          cached = {
-            ...DEFAULT_CONFIG,
-            ...validated,
-            permission:
-              mergeSection(DEFAULT_CONFIG.permission, validated.permission) ?? DEFAULT_CONFIG.permission,
-            mcp: mergeSection(DEFAULT_CONFIG.mcp, validated.mcp) ?? DEFAULT_CONFIG.mcp,
-            provider: mergeSection(DEFAULT_CONFIG.provider, validated.provider) ?? DEFAULT_CONFIG.provider,
-            routing: mergeSection(
-              DEFAULT_CONFIG.routing,
-              validated.routing as typeof DEFAULT_CONFIG.routing,
-            ),
-            subgateways: mergeSection(
-              DEFAULT_CONFIG.subgateways,
-              validated.subgateways as typeof DEFAULT_CONFIG.subgateways,
-            ),
-            loop: mergeSection(DEFAULT_CONFIG.loop, validated.loop),
-            agents: mergeSection(DEFAULT_CONFIG.agents, validated.agents),
-            guardrails: mergeSection(DEFAULT_CONFIG.guardrails, validated.guardrails),
-            compliance: mergeSection(DEFAULT_CONFIG.compliance, validated.compliance),
-            features: mergeSection(DEFAULT_CONFIG.features, validated.features),
-            tools: mergeSection(DEFAULT_CONFIG.tools, validated.tools),
-          } as MiraConfig
+        const validated = validateConfigEnhanced(raw as PartialMiraConfig, name)
+        cached = {
+          ...DEFAULT_CONFIG,
+          ...validated,
+          permission:
+            mergeSection(DEFAULT_CONFIG.permission, validated.permission) ?? DEFAULT_CONFIG.permission,
+          mcp: mergeSection(DEFAULT_CONFIG.mcp, validated.mcp) ?? DEFAULT_CONFIG.mcp,
+          provider: mergeSection(DEFAULT_CONFIG.provider, validated.provider) ?? DEFAULT_CONFIG.provider,
+          routing: mergeSection(
+            DEFAULT_CONFIG.routing,
+            validated.routing as typeof DEFAULT_CONFIG.routing,
+          ),
+          subgateways: mergeSection(
+            DEFAULT_CONFIG.subgateways,
+            validated.subgateways as typeof DEFAULT_CONFIG.subgateways,
+          ),
+          loop: mergeSection(DEFAULT_CONFIG.loop, validated.loop),
+          agents: mergeSection(DEFAULT_CONFIG.agents, validated.agents),
+          guardrails: mergeSection(DEFAULT_CONFIG.guardrails, validated.guardrails),
+          compliance: mergeSection(DEFAULT_CONFIG.compliance, validated.compliance),
+          features: mergeSection(DEFAULT_CONFIG.features, validated.features),
+          tools: mergeSection(DEFAULT_CONFIG.tools, validated.tools),
         } as MiraConfig
         // Env layer is the highest file-independent layer (documented layer 6,
         // above the project file's layer 4), so it is applied last.
@@ -202,7 +198,6 @@ export function getConfig(cwd?: string): MiraConfig {
             )
             continue
           }
-          // Use enhanced validation with secrets detection
           const validated = validateConfigEnhanced(raw as PartialMiraConfig, name)
           const merged = {
             ...DEFAULT_CONFIG,
@@ -223,9 +218,9 @@ export function getConfig(cwd?: string): MiraConfig {
             loop: mergeSection(DEFAULT_CONFIG.loop, validated.loop),
             agents: mergeSection(DEFAULT_CONFIG.agents, validated.agents),
             guardrails: mergeSection(DEFAULT_CONFIG.guardrails, validated.guardrails),
-            compliance: mergeSection(DEFAULT_CONFIG.compliance, validated.compliance),
-            features: mergeSection(DEFAULT_CONFIG.features, validated.features),
-            tools: mergeSection(DEFAULT_CONFIG.tools, validated.tools),
+            compliance: mergeSection(DEFAULT_CONFIG.compliance, raw.compliance),
+            features: mergeSection(DEFAULT_CONFIG.features, raw.features),
+            tools: mergeSection(DEFAULT_CONFIG.tools, raw.tools),
           } as MiraConfig
           // Env layer is the highest file-independent layer (documented layer 6,
           // above the project file's layer 4), applied to the sync merge.
