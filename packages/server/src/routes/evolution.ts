@@ -555,9 +555,18 @@ export function mountEvolutionRoutes(
       })
     }
 
+    // Authenticated caller or session origin bound immutably to proposal.createdBy
+    const authHeader = c.req.header('authorization') ?? ''
+    const bearerTok = authHeader.replace(/^Bearer\s+/i, '').trim()
+    const callerIdentity = bearerTok
+      ? (deps.resolveOwner ? deps.resolveOwner(bearerTok) : 'operator')
+      : sessionID
+        ? `session:${sessionID}`
+        : 'system'
+
     // Pipeline: Diagnosis → Proposal
     const diagnosis = diagnose(observed)
-    const proposal = propose(diagnosis)
+    const proposal = propose(diagnosis, callerIdentity)
 
     // ── §10 research trust boundary — Research → Validate → advisory evidence ──
     // body.research is untrusted web content (single object or array for

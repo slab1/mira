@@ -129,13 +129,18 @@ function rollbackPlanFor(d: Diagnosis, risk: RiskLevel): ImprovementProposal['ro
   }
 }
 
-export function propose(diagnosis: Diagnosis): ImprovementProposal {
+export function propose(diagnosis: Diagnosis, creator?: string): ImprovementProposal {
   const risk = riskFor(diagnosis)
   const priority = priorityFor(risk, diagnosis)
   const id = `prop_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
-  // Immutable creator identity — sessionID if available, else 'system'
+  // Immutable creator identity — caller identity, sessionID if available, else 'system'
   // This field is set once and never changed; used for self-approval prevention
-  const createdBy = diagnosis.sessionID ? `session:${diagnosis.sessionID}` : 'system'
+  const createdBy =
+    creator && creator.trim().length > 0
+      ? creator.trim()
+      : diagnosis.sessionID
+        ? `session:${diagnosis.sessionID}`
+        : 'system'
   return {
     id,
     title: titleFor(diagnosis),
@@ -155,5 +160,5 @@ export function propose(diagnosis: Diagnosis): ImprovementProposal {
 }
 
 export function proposeBatch(diagnoses: Diagnosis[]): ImprovementProposal[] {
-  return diagnoses.map(propose)
+  return diagnoses.map((d) => propose(d))
 }

@@ -4112,24 +4112,6 @@
       "at": "2026-10-30T15:52:16.014Z"
     },
     {
-      "strategy_chosen": "agent:coder-ok",
-      "agent_target": "coder-ok",
-      "outcome": "completed:VERIFIED",
-      "at": "2026-10-30T15:52:16.165Z"
-    },
-    {
-      "strategy_chosen": "agent:coder-unverified",
-      "agent_target": "coder-unverified",
-      "outcome": "completed:UNVERIFIED",
-      "at": "2026-10-30T15:52:16.181Z"
-    },
-    {
-      "strategy_chosen": "agent:fixer-failed",
-      "agent_target": "fixer-failed",
-      "outcome": "failed goal=goal_ship",
-      "at": "2026-10-30T15:52:16.202Z"
-    },
-    {
       "strategy_chosen": "agent:general",
       "agent_target": "general",
       "outcome": "cancelled",
@@ -4250,24 +4232,6 @@
       "at": "2026-10-30T15:52:30.733Z"
     },
     {
-      "strategy_chosen": "agent:coder-ok",
-      "agent_target": "coder-ok",
-      "outcome": "completed:VERIFIED",
-      "at": "2026-10-30T15:52:30.877Z"
-    },
-    {
-      "strategy_chosen": "agent:coder-unverified",
-      "agent_target": "coder-unverified",
-      "outcome": "completed:UNVERIFIED",
-      "at": "2026-10-30T15:52:30.895Z"
-    },
-    {
-      "strategy_chosen": "agent:fixer-failed",
-      "agent_target": "fixer-failed",
-      "outcome": "failed goal=goal_ship",
-      "at": "2026-10-30T15:52:30.914Z"
-    },
-    {
       "strategy_chosen": "agent:general",
       "agent_target": "general",
       "outcome": "cancelled",
@@ -4332,24 +4296,6 @@
       "agent_target": "general",
       "outcome": "cancelled",
       "at": "2026-10-30T15:53:09.357Z"
-    },
-    {
-      "strategy_chosen": "agent:coder-ok",
-      "agent_target": "coder-ok",
-      "outcome": "completed:VERIFIED",
-      "at": "2026-10-30T15:53:09.520Z"
-    },
-    {
-      "strategy_chosen": "agent:coder-unverified",
-      "agent_target": "coder-unverified",
-      "outcome": "completed:UNVERIFIED",
-      "at": "2026-10-30T15:53:09.539Z"
-    },
-    {
-      "strategy_chosen": "agent:fixer-failed",
-      "agent_target": "fixer-failed",
-      "outcome": "failed goal=goal_ship",
-      "at": "2026-10-30T15:53:09.557Z"
     },
     {
       "strategy_chosen": "agent:general",
@@ -4472,24 +4418,6 @@
       "at": "2026-11-04T17:38:40.241Z"
     },
     {
-      "strategy_chosen": "agent:coder-ok",
-      "agent_target": "coder-ok",
-      "outcome": "completed:VERIFIED",
-      "at": "2026-11-06T18:48:31.326Z"
-    },
-    {
-      "strategy_chosen": "agent:coder-unverified",
-      "agent_target": "coder-unverified",
-      "outcome": "completed:UNVERIFIED",
-      "at": "2026-11-06T18:48:31.352Z"
-    },
-    {
-      "strategy_chosen": "agent:fixer-failed",
-      "agent_target": "fixer-failed",
-      "outcome": "failed goal=goal_ship",
-      "at": "2026-11-06T18:48:31.371Z"
-    },
-    {
       "strategy_chosen": "agent:general",
       "agent_target": "general",
       "outcome": "cancelled",
@@ -4512,24 +4440,6 @@
       "agent_target": "researcher",
       "outcome": "completed:UNVERIFIED",
       "at": "2026-11-06T18:48:31.457Z"
-    },
-    {
-      "strategy_chosen": "agent:coder-ok-1793990930548-j13kbusv3k",
-      "agent_target": "coder-ok-1793990930548-j13kbusv3k",
-      "outcome": "completed:VERIFIED",
-      "at": "2026-11-06T18:48:50.558Z"
-    },
-    {
-      "strategy_chosen": "agent:coder-unverified",
-      "agent_target": "coder-unverified",
-      "outcome": "completed:UNVERIFIED",
-      "at": "2026-11-06T18:48:50.585Z"
-    },
-    {
-      "strategy_chosen": "agent:fixer-failed",
-      "agent_target": "fixer-failed",
-      "outcome": "failed goal=goal_ship",
-      "at": "2026-11-06T18:48:50.608Z"
     },
     {
       "strategy_chosen": "agent:general",
@@ -4695,27 +4605,6 @@
       "success_rate": 0,
       "last_updated": "2026-11-06T18:48:50.642Z"
     },
-    "agent:coder-ok": {
-      "count": 4,
-      "completed": 4,
-      "successes": 4,
-      "success_rate": 1,
-      "last_updated": "2026-11-06T18:48:31.315Z"
-    },
-    "agent:coder-unverified": {
-      "count": 5,
-      "completed": 5,
-      "successes": 0,
-      "success_rate": 0,
-      "last_updated": "2026-11-06T18:48:50.579Z"
-    },
-    "agent:fixer-failed": {
-      "count": 5,
-      "completed": 5,
-      "successes": 0,
-      "success_rate": 0,
-      "last_updated": "2026-11-06T18:48:50.600Z"
-    },
     "agent:fixer": {
       "count": 5,
       "completed": 5,
@@ -4729,13 +4618,6 @@
       "successes": 0,
       "success_rate": 0,
       "last_updated": "2026-11-06T18:48:50.677Z"
-    },
-    "agent:coder-ok-1793990930548-j13kbusv3k": {
-      "count": 1,
-      "completed": 1,
-      "successes": 1,
-      "success_rate": 1,
-      "last_updated": "2026-11-06T18:48:50.550Z"
     }
   },
   "last_updated": "2026-11-06T18:48:50.683Z",

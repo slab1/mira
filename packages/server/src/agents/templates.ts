@@ -60,6 +60,43 @@ export const PLAN_BASH_ALLOWLIST = [
   'git ls-files',
 ] as const
 
+export const QA_BASH_ALLOWLIST = [
+  ...PLAN_BASH_ALLOWLIST,
+  'bun test',
+  'npm test',
+  'npm run test',
+  'yarn test',
+  'pnpm test',
+  'jest',
+  'vitest',
+  'pytest',
+  'cargo test',
+  'go test',
+  'tsc',
+  'eslint',
+] as const
+
+export const DEVOPS_BASH_ALLOWLIST = [
+  ...PLAN_BASH_ALLOWLIST,
+  'bun',
+  'npm',
+  'yarn',
+  'pnpm',
+  'docker',
+  'git',
+  'systemctl',
+  'ps',
+  'top',
+  'df',
+  'free',
+  'netstat',
+  'ss',
+  'uptime',
+  'node',
+  'cargo',
+  'make',
+] as const
+
 function bashSegmentAllowed(segment: string, allowlist: readonly string[]): boolean {
   const cmd = segment.trim()
   if (!cmd) return true
@@ -238,6 +275,7 @@ export const AGENT_TEMPLATES = {
       'Mira QA — quality assurance and test engineering: test suite authoring, edge case coverage, and regression verification.',
     tools: ['bash', 'edit', 'write', 'read', 'glob', 'grep', 'todowrite', 'diagnose'],
     permissions: 'standard',
+    bashAllowlist: QA_BASH_ALLOWLIST,
   },
   'mira-qa': {
     system:
@@ -246,6 +284,7 @@ export const AGENT_TEMPLATES = {
       'Mira QA — quality assurance and test engineering: test suite authoring, edge case coverage, and regression verification.',
     tools: ['bash', 'edit', 'write', 'read', 'glob', 'grep', 'todowrite', 'diagnose'],
     permissions: 'standard',
+    bashAllowlist: QA_BASH_ALLOWLIST,
   },
   devops: {
     system:
@@ -254,6 +293,7 @@ export const AGENT_TEMPLATES = {
       'Mira DevOps — infrastructure and operations: deployment scripts, build pipelines, environment configuration, and server health.',
     tools: ['bash', 'read', 'write', 'edit', 'glob', 'grep', 'todowrite', 'diagnose'],
     permissions: 'standard',
+    bashAllowlist: DEVOPS_BASH_ALLOWLIST,
   },
   'mira-devops': {
     system:
@@ -262,6 +302,7 @@ export const AGENT_TEMPLATES = {
       'Mira DevOps — infrastructure and operations: deployment scripts, build pipelines, environment configuration, and server health.',
     tools: ['bash', 'read', 'write', 'edit', 'glob', 'grep', 'todowrite', 'diagnose'],
     permissions: 'standard',
+    bashAllowlist: DEVOPS_BASH_ALLOWLIST,
   },
   'mira-researcher': {
     system:
@@ -276,7 +317,7 @@ export const AGENT_TEMPLATES = {
       'You are Mira Memory Manager. Curate long-term memory, distill architectural decisions and technical debt into the Memory Bank, organize cross-session knowledge, prune stale recollections, and reconcile project conventions.',
     description:
       'Mira Memory Manager — knowledge curation: Memory Bank synthesis, decision records, convention tracking, and memory hygiene.',
-    tools: ['memory_search', 'memory_write', 'read', 'write', 'edit', 'glob', 'grep', 'todowrite'],
+    tools: ['memory_search', 'memory_write', 'read', 'glob', 'grep', 'todowrite'],
     permissions: 'standard',
   },
   'mira-memory-manager': {
@@ -284,7 +325,7 @@ export const AGENT_TEMPLATES = {
       'You are Mira Memory Manager. Curate long-term memory, distill architectural decisions and technical debt into the Memory Bank, organize cross-session knowledge, prune stale recollections, and reconcile project conventions.',
     description:
       'Mira Memory Manager — knowledge curation: Memory Bank synthesis, decision records, convention tracking, and memory hygiene.',
-    tools: ['memory_search', 'memory_write', 'read', 'write', 'edit', 'glob', 'grep', 'todowrite'],
+    tools: ['memory_search', 'memory_write', 'read', 'glob', 'grep', 'todowrite'],
     permissions: 'standard',
   },
 

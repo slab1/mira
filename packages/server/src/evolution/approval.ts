@@ -183,7 +183,11 @@ export function createSqliteApprovalStore(db: MiraDB): ApprovalStore {
             .run(id, JSON.stringify(result), Date.now())
         })
         tx()
-      } catch {}
+      } catch (err) {
+        if (result.authoritative) {
+          throw new Error(`failed to persist authoritative approval decision for ${id}: ${String(err)}`)
+        }
+      }
     },
     loadPending() {
       try {
@@ -208,7 +212,11 @@ export function createSqliteApprovalStore(db: MiraDB): ApprovalStore {
     savePending(req) {
       try {
         upsert.run(req.id, 'pending', JSON.stringify(req), Date.now())
-      } catch {}
+      } catch (err) {
+        if (req.risk?.level === 'high') {
+          throw new Error(`failed to persist high-risk pending approval for ${req.id}: ${String(err)}`)
+        }
+      }
     },
     deletePending(id) {
       try {
@@ -218,7 +226,11 @@ export function createSqliteApprovalStore(db: MiraDB): ApprovalStore {
     saveDecided(id, result) {
       try {
         upsert.run(id, 'decided', JSON.stringify(result), Date.now())
-      } catch {}
+      } catch (err) {
+        if (result.authoritative) {
+          throw new Error(`failed to persist authoritative approval decision for ${id}: ${String(err)}`)
+        }
+      }
     },
   }
 }

@@ -1,23 +1,25 @@
 /**
- * Engine Registry — Phase 3 per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_EVOLUTION_SPEC.md Phase 3 + MIRA_ENGINE_REGISTRY.md
+ * Engine Registry — Phase 3 & Flagship Initiatives per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_EVOLUTION_SPEC.md Phase 3 + MIRA_ENGINE_REGISTRY.md
  *
- * Status: Target→Implemented — 9 modular engines behind a single registry (§7). Each engine:
- *   id, version, capabilities[], health(), benchmark(), upgrade(), rollback() per §7 interface.
- * Keeps nvidia primary + colibri opportunistic, respects MIRA_NO_AUTOPROVISION, no local hardware.
+ * Status: Target→Implemented — 15 modular engines behind a single registry (§7).
+ * Comprises 9 foundational domain engines (agent, memory, retrieval, planning, evaluation, learning, tool, security, model)
+ * plus 6 flagship initiative engines (evolution, shadow, ledger, research, patch, self-healing) unified under the Engine Registry.
+ * Each engine exposes: id, version, capabilities[], health(), benchmark(), upgrade(), rollback() per §7 interface.
+ * Keeps nvidia primary + colibri opportunistic, respects MIRA_NO_AUTOPROVISION, no local hardware required.
  *
  * Documentation Maintenance — 10 items:
  * | # | Item | Status | Evidence (path / interface) |
  * |---|------|--------|------------------------------|
- * | 1 | Implementation path | Implemented | packages/server/src/engines/registry.ts + 9 engine files + routes/engines.ts |
+ * | 1 | Implementation path | Implemented | packages/server/src/engines/registry.ts + 15 engine files + routes/engines.ts |
  * | 2 | Public interfaces | Implemented | EngineRegistry.register/get/list/healthAll/benchmarkAll/upgrade/rollback; MiraEngine{id,version,capabilities,health,benchmark,upgrade,rollback}; GET /engines, GET /engines/:id/health, POST /engines/:id/benchmark, POST /engines/:id/rollback |
  * | 3 | Events | Implemented | engines.ready (log), engine.health/benchmark via Bus (opportunistic) |
  * | 4 | Configuration | Implemented | registry is config-free; per-engine reads MiraConfig but never overrides nvidia primary |
- * | 5 | Tests | Implemented | packages/server/src/engines/registry.test.ts (smoke) + Hono fetch GET /engines 200 |
+ * | 5 | Tests | Implemented | packages/server/src/engines/registry.test.ts (lists 15 engines, healthAll, benchmark, upgrade/rollback) + Hono fetch GET /engines 200 |
  * | 6 | Security boundaries | Implemented | no secret leak; MIRA_NO_AUTOPROVISION respected; health never requires colibri |
- * | 7 | Operational procedures | Implemented | instantiate in src/index.ts, register 9 engines, log engines ready — 9 registered, mountEngineRoutes |
- * | 8 | Migration strategy | Implemented | additive; engines/* is new, routes additive, zero-downtime |
+ * | 7 | Operational procedures | Implemented | instantiate in bootstrap/main.ts, register 15 engines, mountEngineRoutes |
+ * | 8 | Migration strategy | Implemented | additive; engines/* modular, routes additive, zero-downtime |
  * | 9 | Rollback strategy | Implemented | EngineRegistry.rollback(id) + per-engine rollback(); POST /engines/:id/rollback |
- * | 10 | Known limitations | Implemented | colibri opportunistic 800ms probe; mock upgrade/rollback (version bump) until Phase 4 shadow |
+ * | 10 | Known limitations | Implemented | colibri opportunistic 800ms probe; empirical probes verify real runtime capabilities |
  */
 
 import type { JsonValue } from '../types/index.js'

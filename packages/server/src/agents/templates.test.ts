@@ -80,4 +80,46 @@ describe('plan agent bash allowlist (P0-1)', () => {
   test('builtin AGENT_TEMPLATES plan matches registry', () => {
     expect([...AGENT_TEMPLATES.plan.bashAllowlist!]).toEqual([...PLAN_BASH_ALLOWLIST])
   })
+
+  test('qa agent carries QA_BASH_ALLOWLIST bounded to tests', () => {
+    const qa = getAgentTemplates().qa
+    expect(qa.tools).toContain('bash')
+    expect(qa.bashAllowlist).toBeDefined()
+    expect(isBashCommandAllowed('bun test', qa.bashAllowlist!)).toBe(true)
+    expect(isBashCommandAllowed('npm test', qa.bashAllowlist!)).toBe(true)
+    expect(isBashCommandAllowed('rm -rf /', qa.bashAllowlist!)).toBe(false)
+    expect(isBashCommandAllowed('git push', qa.bashAllowlist!)).toBe(false)
+  })
+
+  test('devops agent carries DEVOPS_BASH_ALLOWLIST bounded to infrastructure diagnostics', () => {
+    const devops = getAgentTemplates().devops
+    expect(devops.tools).toContain('bash')
+    expect(devops.bashAllowlist).toBeDefined()
+    expect(isBashCommandAllowed('docker ps', devops.bashAllowlist!)).toBe(true)
+    expect(isBashCommandAllowed('systemctl status', devops.bashAllowlist!)).toBe(true)
+    expect(isBashCommandAllowed('rm -rf /', devops.bashAllowlist!)).toBe(false)
+  })
+
+  test('memory-manager agent is scoped strictly to knowledge curation without code writing tools', () => {
+    const mm = getAgentTemplates()['memory-manager']
+    expect(mm.tools).toContain('memory_search')
+    expect(mm.tools).toContain('memory_write')
+    expect(mm.tools).not.toContain('write')
+    expect(mm.tools).not.toContain('edit')
+    expect(mm.tools).not.toContain('bash')
+  })
+
+  test('security and architect agents are strictly read-only without bash', () => {
+    const sec = getAgentTemplates().security
+    expect(sec.permissions).toBe('readonly')
+    expect(sec.tools).not.toContain('bash')
+    expect(sec.tools).not.toContain('write')
+    expect(sec.tools).not.toContain('edit')
+
+    const arch = getAgentTemplates().architect
+    expect(arch.permissions).toBe('readonly')
+    expect(arch.tools).not.toContain('bash')
+    expect(arch.tools).not.toContain('write')
+    expect(arch.tools).not.toContain('edit')
+  })
 })

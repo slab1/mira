@@ -9,3 +9,7 @@ exact = false
 
 [install.cache]
 disable = false
+
+[test]
+# Hermetic ledger: redirect shared/context.json writes to a temp file for all tests
+preload = ["./packages/server/tests/preload.ts"]

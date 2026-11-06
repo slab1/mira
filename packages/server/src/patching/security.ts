@@ -25,6 +25,7 @@ export type SecurityKind =
   | 'code-eval'
   | 'sql-injection'
   | 'insecure-transport'
+  | 'weak-cryptography'
 
 export interface SecurityIssue extends Record<string, JsonValue> {
   id: string
@@ -187,8 +188,11 @@ const CODE_RULES: CodeRule[] = [
     detail: 'Shell command built from a non-literal (command injection risk)',
     suggestion: 'Use execFile/spawn with an argv array; never pass a shell string',
     test: (l) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(l)) return false
       if (COMMAND_INJECTION_RE.test(l) && /[;|&`]/.test(l)) return true
-      for (const sink of ['exec', 'execSync', 'spawn', 'spawnSync', 'execFile']) {
+      if (/\b(exec|execSync|spawn|spawnSync|execFile)\s*\(\s*`[^`]*\$\{/.test(l)) return true
+      if (/\$\s*`[^`]*\$\{/.test(l)) return true
+      for (const sink of ['exec', 'execSync', 'spawn', 'spawnSync', 'execFile', 'popen', 'system']) {
         const arg = sinkArg(l, sink)
         if (arg !== null && isDynamicArg(arg)) return true
       }
@@ -201,10 +205,15 @@ const CODE_RULES: CodeRule[] = [
     detail: 'Unescaped HTML sink assigned a non-literal (XSS risk)',
     suggestion: 'Use textContent, or sanitize with a vetted HTML sanitizer',
     test: (l) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(l)) return false
       const m = /\.(innerHTML|outerHTML)\s*=\s*(.+)$/.exec(l)
       if (m) {
         const rhs = m[2]!.trim()
         if (!isDynamicArg(rhs)) return false
+        // Evasion check: user input / body parameter named "sanitized..." is not trusted
+        if (/\b(req|request|ctx|c|body|params|query|input|user|data)\.(saniti[sz]ed|safe|clean)/i.test(rhs)) return true
+        // If it's a real vetted sanitizer call, allow
+        if (/\b(DOMPurify\.sanitize|sanitizeHtml|escapeHtml|escapeXml|he\.encode)\s*\(/.test(rhs)) return false
         return !PRE_SANITIZED.test(rhs.replace(/[;,)\s]+$/, ''))
       }
       if (/\binsertAdjacentHTML\s*\(/.test(l)) return true
@@ -249,6 +258,53 @@ const CODE_RULES: CodeRule[] = [
       /\b(skipAuth|bypassAuth|requireAuth\s*:\s*false|authDisabled|allowAnonymous\s*:\s*true|disableAuth)\b/.test(
         l,
       ),
+  },
+  {
+    kind: 'path-traversal',
+    severity: 'high',
+    detail: 'Filesystem operation with dynamic unvalidated path (path traversal risk)',
+    suggestion: 'Validate path with sanitizePath, ensure root containment, or avoid user-controlled paths',
+    test: (l) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(l)) return false
+      if (/\b(sanitizePath|isPathAllowed)\b/.test(l)) return false
+      for (const sink of ['readFile', 'readFileSync', 'writeFile', 'writeFileSync', 'unlink', 'unlinkSync', 'createReadStream', 'createWriteStream']) {
+        const arg = sinkArg(l, sink)
+        if (arg !== null && isDynamicArg(arg)) {
+          if (/(\.\.[\/\\]|\+|\$\{|req\.|body\.|params\.)/.test(arg)) return true
+        }
+      }
+      return false
+    },
+  },
+  {
+    kind: 'ssrf',
+    severity: 'high',
+    detail: 'Network request with dynamic unvalidated target URL (SSRF risk)',
+    suggestion: 'Validate scheme (http/https only), block loopback/private IP ranges, and check host allowlist',
+    test: (l) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(l)) return false
+      for (const sink of ['fetch', 'axios', 'axios.get', 'axios.post', 'http.get', 'http.request', 'https.get', 'https.request']) {
+        const arg = sinkArg(l, sink)
+        if (arg !== null && isDynamicArg(arg)) {
+          if (/^['"`]\/(?!\/)/.test(arg.trim())) return false
+          if (/(req\.|body\.|params\.|url|target|dest|endpoint)/i.test(arg)) return true
+        }
+      }
+      return false
+    },
+  },
+  {
+    kind: 'weak-cryptography',
+    severity: 'medium',
+    detail: 'Broken or weak cryptographic algorithm used (MD5/SHA1 or Math.random in security context)',
+    suggestion: 'Use crypto.randomBytes / crypto.getRandomValues and SHA-256 or stronger algorithms',
+    test: (l) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(l)) return false
+      if (/createHash\s*\(\s*['"](md5|sha1)['"]\s*\)/i.test(l)) return true
+      if (/crypto\.createCipheriv\s*\(\s*['"](des|rc4)['"]/i.test(l)) return true
+      if (/\b(token|secret|key|password|nonce)\b/i.test(l) && /Math\.random\s*\(\s*\)/.test(l)) return true
+      return false
+    },
   },
 ]
 
