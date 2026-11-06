@@ -33,13 +33,14 @@ describe('layer linkage registry', () => {
 
 describe('recordTaskOutcome → learning layer', () => {
   test('completed+VERIFIED counts as success for the agent strategy', () => {
+    const agentName = `coder-ok-${Date.now()}-${Math.random().toString(36).slice(2)}`
     recordTaskOutcome({
       taskID: 't1',
-      agent: 'coder-ok',
+      agent: agentName,
       status: 'completed',
       verificationState: 'VERIFIED',
     })
-    const stats = loadContext().strategy_effectiveness?.['agent:coder-ok']
+    const stats = loadContext().strategy_effectiveness?.[`agent:${agentName}`]
     expect(stats).toBeDefined()
     expect(stats!.successes).toBe(1)
     expect(stats!.success_rate).toBe(1)

@@ -4470,6 +4470,90 @@
       "agent_target": "coder",
       "outcome": "completed:FAILED_VERIFICATION",
       "at": "2026-11-04T17:38:40.241Z"
+    },
+    {
+      "strategy_chosen": "agent:coder-ok",
+      "agent_target": "coder-ok",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-11-06T18:48:31.326Z"
+    },
+    {
+      "strategy_chosen": "agent:coder-unverified",
+      "agent_target": "coder-unverified",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-11-06T18:48:31.352Z"
+    },
+    {
+      "strategy_chosen": "agent:fixer-failed",
+      "agent_target": "fixer-failed",
+      "outcome": "failed goal=goal_ship",
+      "at": "2026-11-06T18:48:31.371Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "cancelled",
+      "at": "2026-11-06T18:48:31.386Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:UNVERIFIED goal=goal_p25",
+      "at": "2026-11-06T18:48:31.408Z"
+    },
+    {
+      "strategy_chosen": "agent:fixer",
+      "agent_target": "fixer",
+      "outcome": "failed",
+      "at": "2026-11-06T18:48:31.436Z"
+    },
+    {
+      "strategy_chosen": "agent:researcher",
+      "agent_target": "researcher",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-11-06T18:48:31.457Z"
+    },
+    {
+      "strategy_chosen": "agent:coder-ok-1793990930548-j13kbusv3k",
+      "agent_target": "coder-ok-1793990930548-j13kbusv3k",
+      "outcome": "completed:VERIFIED",
+      "at": "2026-11-06T18:48:50.558Z"
+    },
+    {
+      "strategy_chosen": "agent:coder-unverified",
+      "agent_target": "coder-unverified",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-11-06T18:48:50.585Z"
+    },
+    {
+      "strategy_chosen": "agent:fixer-failed",
+      "agent_target": "fixer-failed",
+      "outcome": "failed goal=goal_ship",
+      "at": "2026-11-06T18:48:50.608Z"
+    },
+    {
+      "strategy_chosen": "agent:general",
+      "agent_target": "general",
+      "outcome": "cancelled",
+      "at": "2026-11-06T18:48:50.623Z"
+    },
+    {
+      "strategy_chosen": "agent:coder",
+      "agent_target": "coder",
+      "outcome": "completed:UNVERIFIED goal=goal_p25",
+      "at": "2026-11-06T18:48:50.646Z"
+    },
+    {
+      "strategy_chosen": "agent:fixer",
+      "agent_target": "fixer",
+      "outcome": "failed",
+      "at": "2026-11-06T18:48:50.664Z"
+    },
+    {
+      "strategy_chosen": "agent:researcher",
+      "agent_target": "researcher",
+      "outcome": "completed:UNVERIFIED",
+      "at": "2026-11-06T18:48:50.683Z"
     }
   ],
   "active_tasks": [
@@ -4598,56 +4682,63 @@
       "last_updated": "2026-09-27T19:39:18.867875+00:00"
     },
     "agent:general": {
-      "count": 197,
-      "completed": 197,
+      "count": 199,
+      "completed": 199,
       "successes": 100,
-      "success_rate": 0.51,
-      "last_updated": "2026-11-04T17:38:39.269Z"
+      "success_rate": 0.5,
+      "last_updated": "2026-11-06T18:48:50.620Z"
     },
     "agent:coder": {
-      "count": 38,
-      "completed": 38,
+      "count": 40,
+      "completed": 40,
       "successes": 0,
       "success_rate": 0,
-      "last_updated": "2026-11-04T17:38:40.237Z"
+      "last_updated": "2026-11-06T18:48:50.642Z"
     },
     "agent:coder-ok": {
-      "count": 3,
-      "completed": 3,
-      "successes": 3,
+      "count": 4,
+      "completed": 4,
+      "successes": 4,
       "success_rate": 1,
-      "last_updated": "2026-10-30T15:53:09.512Z"
+      "last_updated": "2026-11-06T18:48:31.315Z"
     },
     "agent:coder-unverified": {
-      "count": 3,
-      "completed": 3,
+      "count": 5,
+      "completed": 5,
       "successes": 0,
       "success_rate": 0,
-      "last_updated": "2026-10-30T15:53:09.533Z"
+      "last_updated": "2026-11-06T18:48:50.579Z"
     },
     "agent:fixer-failed": {
-      "count": 3,
-      "completed": 3,
+      "count": 5,
+      "completed": 5,
       "successes": 0,
       "success_rate": 0,
-      "last_updated": "2026-10-30T15:53:09.552Z"
+      "last_updated": "2026-11-06T18:48:50.600Z"
     },
     "agent:fixer": {
-      "count": 3,
-      "completed": 3,
+      "count": 5,
+      "completed": 5,
       "successes": 0,
       "success_rate": 0,
-      "last_updated": "2026-10-30T15:53:09.618Z"
+      "last_updated": "2026-11-06T18:48:50.661Z"
     },
     "agent:researcher": {
-      "count": 3,
-      "completed": 3,
+      "count": 5,
+      "completed": 5,
       "successes": 0,
       "success_rate": 0,
-      "last_updated": "2026-10-30T15:53:09.639Z"
+      "last_updated": "2026-11-06T18:48:50.677Z"
+    },
+    "agent:coder-ok-1793990930548-j13kbusv3k": {
+      "count": 1,
+      "completed": 1,
+      "successes": 1,
+      "success_rate": 1,
+      "last_updated": "2026-11-06T18:48:50.550Z"
     }
   },
-  "last_updated": "2026-11-04T17:50:46.169Z",
+  "last_updated": "2026-11-06T18:48:50.683Z",
   "workflow_trace": [
     {
       "agent": "fixer",

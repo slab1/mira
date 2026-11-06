@@ -8,6 +8,12 @@ import { Card, SectionHeader, StatusRow } from '../components/DesignSystem'
 interface HealthStatus {
   status: string
   healthy: boolean
+  ok?: boolean
+  version?: string
+  uptime?: number
+  tools?: number
+  mcp?: number
+  providers?: number
   engines?: Record<string, { status: string; healthy: boolean }>
 }
 
@@ -27,24 +33,42 @@ interface DashboardData {
   cost: { totalTokens: number; totalRuns: number }
 }
 
+interface EngineEntry {
+  id: string
+  version: string
+  capabilities: string[]
+}
+
+interface EngineHealthMap {
+  ok: boolean
+  count: number
+  health: Record<string, { id: string; version: string; status: 'healthy' | 'degraded' | 'unhealthy'; latencyMs: number; message?: string }>
+}
+
 export default function SystemPage() {
   const [health, setHealth] = createSignal<HealthStatus | null>(null)
   const [config, setConfig] = createSignal<SystemConfig | null>(null)
   const [dashboard, setDashboard] = createSignal<DashboardData | null>(null)
+  const [engines, setEngines] = createSignal<EngineEntry[]>([])
+  const [engineHealth, setEngineHealth] = createSignal<Record<string, { id: string; version: string; status: string; latencyMs: number; message?: string }>>({})
   const [error, setError] = createSignal<string | null>(null)
   const [state, setState] = createSignal<OperationalState>('loading')
 
   onMount(async () => {
     try {
-      const [h, c, d] = await Promise.all([
+      const [h, c, d, engRes, healthRes] = await Promise.all([
         req<HealthStatus>('/health').catch(() => null),
         req<SystemConfig>('/config').catch(() => null),
         req<DashboardData>('/dashboard').catch(() => null),
+        req<{ ok: boolean; engines: EngineEntry[] }>('/engines').catch(() => ({ ok: false, engines: [] })),
+        req<EngineHealthMap>('/engines/health').catch(() => ({ ok: false, count: 0, health: {} })),
       ])
       setHealth(h)
       setConfig(c)
       setDashboard(d)
-      setState(h || c ? 'live' : 'empty')
+      if (engRes?.engines) setEngines(engRes.engines)
+      if (healthRes?.health) setEngineHealth(healthRes.health)
+      setState(h || c || engRes?.ok ? 'live' : 'empty')
     } catch (e) {
       setError(String(e))
       setState('error')
@@ -90,9 +114,9 @@ export default function SystemPage() {
             S
           </div>
           <div>
-            <div style={{ 'font-size': 'var(--fs-lg)', 'font-weight': '700' }}>System</div>
+            <div style={{ 'font-size': 'var(--fs-lg)', 'font-weight': '700' }}>System Control Center</div>
             <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>
-              Operational control center — health, config, resources
+              Operational governance, 15 modular engines, runtime health, and resource monitoring
             </div>
           </div>
           <div style={{ 'margin-left': 'auto' }}>
@@ -106,20 +130,55 @@ export default function SystemPage() {
           </div>
         </Show>
 
-        {/* Health Category */}
+        {/* Server & Runtime Health */}
         <Show when={health()}>
           {(h) => (
             <Card padding="16px">
-              <SectionHeader title="Health" sub="Server status and engine health" />
-              <StatusRow label="Status" value={h().status} ok={h().healthy} />
-              <Show when={h().engines}>
-                <For each={Object.entries(h().engines!).slice(0, 4)}>
-                  {([name, eng]) => <StatusRow label={name} value={eng.status} ok={eng.healthy} />}
-                </For>
+              <SectionHeader title="Server Health & Runtime" sub="Core server daemon status and resource allocation" />
+              <StatusRow label="Status" value={h().status || (h().ok ? 'healthy' : 'degraded')} ok={h().healthy ?? h().ok} />
+              <Show when={h().version}>
+                <StatusRow label="Version" value={h().version!} />
+              </Show>
+              <Show when={h().uptime}>
+                <StatusRow label="Uptime" value={`${Math.floor(h().uptime! / 60)} min`} />
+              </Show>
+              <Show when={h().tools !== undefined}>
+                <StatusRow label="Registered Tools" value={String(h().tools)} />
               </Show>
             </Card>
           )}
         </Show>
+
+        {/* 15 Modular Engines Health */}
+        <Card padding="16px">
+          <SectionHeader
+            title="Modular Engine Registry"
+            sub="15 core engines & flagship initiatives (Evolution, Shadow, Ledger, Research, Patch, Self-Healing)"
+          />
+          <div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px', 'margin-top': '8px' }}>
+            <For each={engines()}>
+              {(eng) => {
+                const rep = () => engineHealth()[eng.id]
+                const status = () => rep()?.status ?? 'healthy'
+                const ok = () => status() === 'healthy'
+                const latency = () => (rep()?.latencyMs !== undefined ? `${rep()!.latencyMs}ms` : '—')
+                const message = () => rep()?.message ? ` · ${rep()!.message}` : ''
+                return (
+                  <StatusRow
+                    label={`${eng.id} (v${eng.version})`}
+                    value={`${status().toUpperCase()} (${latency()}${message()})`}
+                    ok={ok()}
+                  />
+                )
+              }}
+            </For>
+            <Show when={engines().length === 0}>
+              <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)', padding: '6px 0' }}>
+                Connecting to Engine Registry...
+              </div>
+            </Show>
+          </div>
+        </Card>
 
         {/* Config Category */}
         <Show when={config()}>
@@ -149,7 +208,7 @@ export default function SystemPage() {
         <Show when={dashboard()}>
           {(d) => (
             <Card padding="16px">
-              <SectionHeader title="Operations" sub="Operational metrics summary" />
+              <SectionHeader title="Operations Summary" sub="Operational metrics aggregated across all agents and sessions" />
               <StatusRow label="Agents" value={String(d().agents.total)} />
               <StatusRow label="Proposals" value={String(d().governance.totalProposals)} />
               <StatusRow label="Memories" value={String(d().learning.totalMemories)} />

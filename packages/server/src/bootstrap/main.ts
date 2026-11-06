@@ -114,6 +114,12 @@ import { LearningEngine } from '../engines/learning.js'
 import { ToolEngine } from '../engines/tool.js'
 import { SecurityEngine } from '../engines/security.js'
 import { ModelEngine } from '../engines/model.js'
+import { EvolutionEngine } from '../engines/evolution.js'
+import { ShadowEngine } from '../engines/shadow.js'
+import { LedgerEngine } from '../engines/ledger.js'
+import { ResearchEngine } from '../engines/research.js'
+import { PatchEngine } from '../engines/patch.js'
+import { SelfHealingEngine } from '../engines/self-healing.js'
 import { mountMemoryEvolutionRoutes } from '../routes/memory-evolution.js'
 import { EvolutionMemory } from '../memory-evolution/evolution-memory.js'
 import { mountMiddleware } from '../middleware/index.js'
@@ -998,12 +1004,14 @@ async function main() {
     workspace: learning.workspace,
     repoGraph,
   })
+  let evolutionLedgerInstance: ImprovementLedger | null = null
   // Phase 1 Evolution Core — read-only, no auto-promote, no canary/shadow (MIRA_WEAKNESSES_AND_OBSTACLES.md:23)
   try {
     const evolutionLedger = new ImprovementLedger(
       db as unknown as import('../storage/db.js').MiraDB,
       bus,
     )
+    evolutionLedgerInstance = evolutionLedger
     const evolutionObserver = new EvolutionObserver({
       bus,
       registry: registry as unknown as { hasKey: (k: string) => boolean },
@@ -1196,10 +1204,37 @@ async function main() {
         fallback: 'colibri',
       }),
     )
+    engineRegistry.register(
+      new EvolutionEngine({
+        proposalCount: async () => {
+          try {
+            return (await learning.governance?.list())?.length ?? 0
+          } catch {
+            return 0
+          }
+        },
+      }),
+    )
+    engineRegistry.register(new ShadowEngine())
+    engineRegistry.register(
+      new LedgerEngine({
+        entryCount: async () => {
+          try {
+            return (await evolutionLedgerInstance?.list(100))?.length ?? 0
+          } catch {
+            return 0
+          }
+        },
+      }),
+    )
+    engineRegistry.register(new ResearchEngine())
+    engineRegistry.register(new PatchEngine())
+    engineRegistry.register(new SelfHealingEngine())
+
     mountEngineRoutes(app, { registry: engineRegistry })
     // expose for tests/routes that may import it dynamically (optional)
     ;(globalThis as unknown as Record<string, unknown>).__miraEngineRegistry = engineRegistry
-    log(`engines ready — 9 registered`)
+    log(`engines ready — 15 registered (including 7 flagship engineering initiatives)`)
 
     // Phase 4 Shadow Mira — isolated Candidate vs Production per MIRA_WEAKNESSES_AND_OBSTACLES.md:23 + MIRA_EVOLUTION_SPEC.md Phase 4 + MIRA_SYSTEM_DOCUMENTATION.md:11
     try {

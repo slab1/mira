@@ -117,6 +117,7 @@ export default defineConfig({
       '/autocomplete': { target: API_TARGET, changeOrigin: true },
       '/terminal': { target: API_TARGET, changeOrigin: true },
       '/metrics': { target: API_TARGET, changeOrigin: true },
+      '/dashboard': { target: API_TARGET, changeOrigin: true },
       '/evolution': { target: API_TARGET, changeOrigin: true },
       '/engines': { target: API_TARGET, changeOrigin: true },
       '/shadow': { target: API_TARGET, changeOrigin: true },
