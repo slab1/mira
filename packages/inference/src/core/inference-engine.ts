@@ -33,8 +33,8 @@ export class InferenceEngine {
     const localAvailable = await this.ollama.isAvailable()
     const routing = evaluateRouting(policy, localAvailable)
 
-    let provider = routing.provider === 'ollama' ? this.ollama : this.cloud
-    let providerName = routing.provider === 'ollama' ? 'ollama' : 'cloud-fallback'
+    const provider = routing.provider === 'ollama' ? this.ollama : this.cloud
+    const providerName = routing.provider === 'ollama' ? 'ollama' : 'cloud-fallback'
 
     // If local was routed but fails with retryable error / timeout / unavailable, check cloud fallback if allowed
     if (providerName === 'ollama') {

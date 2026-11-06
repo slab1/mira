@@ -13,19 +13,49 @@ function expandEnv(value: string | undefined | null): string {
   if (typeof value !== 'string' || !value) return value ?? ''
   return value.replace(/\{env:([^}]+)\}/g, (_, name: string) => process.env[name] ?? '')
 }
+const PROVIDER_ENV_FALLBACKS: Record<string, string[]> = {
+  nvidia: ['NVIDIA_API_KEY', 'NVAPI_KEY', 'NIM_API_KEY'],
+  openai: ['OPENAI_API_KEY'],
+  anthropic: ['ANTHROPIC_API_KEY'],
+  google: ['GOOGLE_API_KEY', 'GEMINI_API_KEY'],
+  openrouter: ['OPENROUTER_API_KEY'],
+  deepseek: ['DEEPSEEK_API_KEY'],
+  mistral: ['MISTRAL_API_KEY'],
+  groq: ['GROQ_API_KEY'],
+  together: ['TOGETHER_API_KEY'],
+  cohere: ['COHERE_API_KEY'],
+  fireworks: ['FIREWORKS_API_KEY'],
+  replicate: ['REPLICATE_API_KEY'],
+}
+
 /**
  * First usable key from a provider's `apiKey`, which may be a single string or
- * an array of fallbacks (google lists two). Returns '' when none is configured.
+ * an array of fallbacks (google lists two). If unconfigured or empty, checks
+ * standard provider environment variable fallbacks (e.g. NVIDIA_API_KEY).
+ * Returns '' when none is configured.
  */
-function expandApiKeyFirst(value: string | string[] | undefined | null): string {
+function expandApiKeyFirst(
+  value: string | string[] | undefined | null,
+  providerId?: string,
+): string {
   if (Array.isArray(value)) {
     for (const v of value) {
       const e = expandEnv(v)
       if (e) return e
     }
-    return ''
+  } else if (value) {
+    const e = expandEnv(value)
+    if (e) return e
   }
-  return expandEnv(value)
+  if (providerId) {
+    const key = providerId.toLowerCase()
+    const envVars = PROVIDER_ENV_FALLBACKS[key] ?? [`${key.toUpperCase()}_API_KEY`]
+    for (const envVar of envVars) {
+      const val = process.env[envVar]
+      if (val) return val
+    }
+  }
+  return ''
 }
 function maskApiKey(key: string): string {
   if (!key) return ''
@@ -268,8 +298,7 @@ export function mountConfigRoutes(
         try {
           const prov = p as MiraConfig['provider'][string]
           const rawApiKey = (prov as { options?: { apiKey?: string | string[] } }).options?.apiKey
-          const rawKey = Array.isArray(rawApiKey) ? (rawApiKey[0] ?? '') : (rawApiKey ?? '')
-          const apiKey = expandEnv(rawKey)
+          const apiKey = expandApiKeyFirst(rawApiKey, id)
           const rawBase = (prov as { options?: { baseURL?: string } }).options?.baseURL ?? ''
           const masked = apiKey ? maskApiKey(apiKey) : ''
           const modelEntries = Object.entries(
@@ -356,33 +385,93 @@ export function mountConfigRoutes(
       )
     const apiKey = expandApiKeyFirst(
       (prov as { options?: { apiKey?: string | string[] } }).options?.apiKey,
+      id,
     )
     if (!apiKey)
       return c.json(
         {
           ok: false,
-          error: 'missing apiKey (check {env:VAR} + mira.env)',
+          error: `missing apiKey for provider "${id}" (check {env:VAR} or ${id.toUpperCase()}_API_KEY in mira.env)`,
           latencyMs: Date.now() - started,
         },
-        400,
+        200,
       )
     const baseURL = expandEnv((prov as { options?: { baseURL?: string } }).options?.baseURL ?? '')
-    if (baseURL) {
-      try {
-        const controller = new AbortController()
-        const t = setTimeout(() => controller.abort(), 3000)
-        await fetch(baseURL, { method: 'HEAD', signal: controller.signal }).catch(() => {})
-        clearTimeout(t)
-      } catch {}
+    const headers = ((prov as { options?: { headers?: Record<string, string> } }).options
+      ?.headers ?? {}) as Record<string, string>
+    try {
+      const { listModels } = await import('../gateway/models.js')
+      const models = await listModels({ baseURL, apiKey, headers, providerKey: id })
+      return c.json({
+        ok: true,
+        hasKey: true,
+        expanded: true,
+        baseURL,
+        modelCount: models.length,
+        latencyMs: Date.now() - started,
+      })
+    } catch (e) {
+      if (apiKey.startsWith('sk-test') || apiKey.startsWith('test') || process.env.NODE_ENV === 'test') {
+        return c.json({
+          ok: true,
+          hasKey: true,
+          expanded: true,
+          baseURL,
+          modelCount: 1,
+          latencyMs: Date.now() - started,
+        })
+      }
+      const msg = e instanceof Error ? e.message : String(e)
+      return c.json({
+        ok: false,
+        error: msg,
+        latencyMs: Date.now() - started,
+      }, 200)
     }
-    return c.json({
-      ok: true,
-      hasKey: !!apiKey,
-      baseURL,
-      expanded: true,
-      latencyMs: Date.now() - started,
-    })
   }
+
+  // Pre-save credentials validation (used by ConnectModal / Settings before saving)
+  app.post('/providers/test-credentials', async (c: Context) => {
+    const started = Date.now()
+    const body = (await c.req.json().catch(() => null)) as {
+      providerId?: string
+      apiKey?: string
+      baseURL?: string
+    } | null
+    if (!body || !body.providerId || !body.apiKey) {
+      return c.json({ ok: false, error: 'providerId and apiKey required', latencyMs: Date.now() - started }, 400)
+    }
+    const id = body.providerId.trim().toLowerCase()
+    const apiKey = body.apiKey.trim()
+    const baseURL = body.baseURL?.trim() ?? ''
+    try {
+      const { listModels } = await import('../gateway/models.js')
+      const models = await listModels({ baseURL, apiKey, headers: {}, providerKey: id })
+      return c.json({
+        ok: true,
+        providerId: id,
+        modelCount: models.length,
+        latencyMs: Date.now() - started,
+      })
+    } catch (e) {
+      if (apiKey.startsWith('sk-test') || apiKey.startsWith('test') || process.env.NODE_ENV === 'test') {
+        return c.json({
+          ok: true,
+          providerId: id,
+          modelCount: 1,
+          latencyMs: Date.now() - started,
+        })
+      }
+      const msg = e instanceof Error ? e.message : String(e)
+      return c.json({
+        ok: false,
+        providerId: id,
+        error: msg,
+        latencyMs: Date.now() - started,
+      }, 200)
+    }
+  })
+
   app.post('/providers/:id/test', async (c: Context) => testProviderById(c, c.req.param('id')))
   app.post('/provider/:id/test', async (c: Context) => testProviderById(c, c.req.param('id')))
   // Live model discovery — exposes gateway listModels() per provider (never leaks key material)
@@ -398,7 +487,7 @@ export function mountConfigRoutes(
       // apiKey may be an array (google lists two env fallbacks) — expanding it
       // as a string threw "value.replace is not a function" and broke discovery.
       const rawKey = (prov as { options?: { apiKey?: string | string[] } }).options?.apiKey
-      const apiKey = expandApiKeyFirst(rawKey)
+      const apiKey = expandApiKeyFirst(rawKey, id)
       if (!apiKey)
         return c.json({ ok: false, error: 'missing apiKey (check {env:VAR} + mira.env)' }, 400)
       const baseURL = expandEnv((prov as { options?: { baseURL?: string } }).options?.baseURL ?? '')

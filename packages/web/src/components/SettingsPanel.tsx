@@ -1026,8 +1026,20 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
         ...prev,
         [id]: r.ok ? `✓ ok${r.latencyMs ? ` · ${r.latencyMs}ms` : ''}` : `✗ ${r.error ?? 'failed'}`,
       }))
-      if (r.ok) toast.success(`Provider "${id}" reachable`)
-      else toast.error(`Provider "${id}" test failed: ${r.error ?? 'unknown'}`)
+      if (r.ok) {
+        toast.success(`Provider "${id}" reachable`)
+      } else if (
+        r.error?.includes('missing apiKey') ||
+        r.error?.includes('not configured') ||
+        r.error?.includes('Unauthorized') ||
+        r.error?.includes('Invalid API key') ||
+        r.error?.includes('401') ||
+        r.error?.includes('400')
+      ) {
+        toast.warn(`Provider "${id}": ${r.error}`)
+      } else {
+        toast.error(`Provider "${id}" test failed: ${r.error ?? 'unknown'}`)
+      }
     } finally {
       setProvTesting(null)
     }

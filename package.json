@@ -8,6 +8,7 @@
     "dev": "bunx turbo dev --continue --filter=!@mira/slack",
     "dev:all": "turbo dev --continue",
     "build": "turbo build",
+    "build:bin": "bun build packages/cli/src/cli.ts --compile --outfile dist/mira",
     "test": "turbo test",
     "typecheck": "turbo typecheck",
     "lint": "eslint . || true",

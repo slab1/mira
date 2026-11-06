@@ -7,7 +7,7 @@ import type { JsonValue } from '../types/index.js'
 import type { TodoStatus, TodoPriority } from '../types/index.js'
 import { isKnownAgent } from '../agents/templates.js'
 import { z } from 'zod'
-import { desc } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { sessions } from '../storage/schema.js'
 import { sessionVisibleTo as sessionVisibleToRow } from '../auth/session-access.js'
 
@@ -207,6 +207,36 @@ export function mountSessionRoutes(
     const session = await deps.authorizedSession(id, c)
     if (!session) return c.json({ error: 'not found' }, 404)
     return c.json(session)
+  })
+  app.patch('/session/:id', async (c: Context) => {
+    const id = requireId(c)
+    if (!id) return c.json({ error: 'not found' }, 404)
+    const session = await deps.authorizedSession(id, c)
+    if (!session) return c.json({ error: 'not found' }, 404)
+    const body = (await c.req.json().catch(() => null)) as {
+      title?: string
+      model?: string
+      agent?: string
+    } | null
+    if (!body || typeof body !== 'object') {
+      return c.json({ error: 'invalid payload' }, 400)
+    }
+    const patch: Record<string, unknown> = { updatedAt: Date.now() }
+    if (typeof body.title === 'string' && body.title.trim()) patch.title = body.title.trim()
+    if (typeof body.model === 'string' && body.model.trim()) patch.model = body.model.trim()
+    if (typeof body.agent === 'string') {
+      if (body.agent && !isKnownAgent(body.agent)) return c.json({ error: `unknown agent "${body.agent}"` }, 400)
+      patch.agent = body.agent.trim() || null
+    }
+    await db
+      .update(db.schema.sessions)
+      .set(patch as never)
+      .where(eq(db.schema.sessions.id, id))
+    const updated = await deps.authorizedSession(id, c)
+    if (updated) {
+      bus.publish({ type: 'session.updated', payload: JSON.parse(JSON.stringify(updated)) as JsonValue, timestamp: Date.now() })
+    }
+    return c.json(updated ?? { ok: true })
   })
   app.get('/session/:id/cost', async (c: Context) => {
     const id = requireId(c)

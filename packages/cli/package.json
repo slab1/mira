@@ -35,6 +35,7 @@
   },
   "scripts": {
     "build": "tsc --noEmit && bun build src/cli.ts --outdir dist --target bun --format esm",
+    "build:bin": "bun build src/cli.ts --compile --outfile dist/mira",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "dev": "tsc --watch --noEmit",

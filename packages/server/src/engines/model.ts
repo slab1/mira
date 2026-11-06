@@ -21,12 +21,14 @@
 
 import type { MiraEngine, HealthReport, BenchmarkReport, UpgradeResult } from './registry.js'
 import type { JsonValue } from '../types/index.js'
+import { InferenceEngine } from '@mira/inference'
 
 export class ModelEngine implements MiraEngine {
   id = 'model'
   version = '0.1.0'
-  capabilities = ['provider-registry', 'gateway', 'nvidia-primary', 'colibri-opportunistic', 'health']
+  capabilities = ['provider-registry', 'gateway', 'nvidia-primary', 'colibri-opportunistic', 'inference-engine', 'local-routing', 'health']
   private prior: string | null = null
+  public readonly inference: InferenceEngine
 
   constructor(private deps?: {
     providerKeys?: () => string[]
@@ -34,7 +36,10 @@ export class ModelEngine implements MiraEngine {
     healthSnapshot?: () => { lanes: Record<string, unknown>; providers: Record<string, unknown> }
     primary?: string
     fallback?: string
-  }) {}
+    inferenceEngine?: InferenceEngine
+  }) {
+    this.inference = deps?.inferenceEngine ?? new InferenceEngine()
+  }
 
   async health(): Promise<HealthReport> {
     const t0=Date.now()

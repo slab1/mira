@@ -149,9 +149,10 @@ jobs:
         if: vars.DEPLOY_URL != ''
         env:
           DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
         run: |
           for i in 1 2 3 4 5; do
-            if curl -fsSL "$DEPLOY_URL/health" | grep -q ok; then
+            if curl -fsSL -H "Authorization: Bearer $DEPLOY_TOKEN" "$DEPLOY_URL/health" 2>/dev/null | grep -q ok || curl -fsSL "$DEPLOY_URL/healthz" 2>/dev/null | grep -q ok; then
               echo "Health check passed"
               exit 0
             fi

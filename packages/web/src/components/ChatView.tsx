@@ -1322,7 +1322,16 @@ export function ChatView(props: {
               disabled={s().streaming}
               settings={props.settings}
               selectedModel={selectedModel()}
-              onModelSelect={setSelectedModel}
+              onModelSelect={(m) => {
+                setSelectedModel(m)
+                const id = s().currentId
+                if (id) void props.store.updateSession(id, { model: m })
+              }}
+              selectedAgent={s().sessions.find((x) => x.id === s().currentId)?.agent || ''}
+              onAgentSelect={(a) => {
+                const id = s().currentId
+                if (id) void props.store.updateSession(id, { agent: a })
+              }}
               filePills={filePills()}
               onRemovePill={removeFilePill}
               onAddPill={addFilePill}

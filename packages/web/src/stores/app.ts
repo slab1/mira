@@ -660,6 +660,19 @@ export function createAppStore() {
     clearDoomLoop()
   }
 
+  async function updateSession(
+    id: string,
+    patch: Partial<{ title: string; model: string; agent: string }>,
+  ) {
+    try {
+      const updated = await api.updateSession(id, patch)
+      setState('sessions', (prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
+      return updated
+    } catch (e) {
+      toast.error(`Failed to update session: ${(e as Error).message}`)
+    }
+  }
+
   return {
     state,
     input,
@@ -676,6 +689,7 @@ export function createAppStore() {
     loadSessions,
     createSession,
     selectSession,
+    updateSession,
     deleteSession,
     loadMessages,
     loadTodos,

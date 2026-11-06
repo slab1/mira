@@ -53,22 +53,6 @@ function FilePillChip(props: { pill: FilePill; onRemove: () => void }) {
 
 // ── @ mention autocomplete ───────────────────────────────────────────
 
-const MOCK_FILES = [
-  'src/App.tsx',
-  'src/components/ChatView.tsx',
-  'src/components/SessionList.tsx',
-  'src/components/ActivityPanel.tsx',
-  'src/components/ToolView.tsx',
-  'src/stores/app.ts',
-  'src/stores/settings.ts',
-  'src/api/client.ts',
-  'src/index.css',
-  'package.json',
-  'README.md',
-  'vite.config.ts',
-  'tsconfig.json',
-]
-
 function filterFiles(query: string, files: string[]): string[] {
   const q = query.toLowerCase().trim()
   if (!q) return files.slice(0, 8)
@@ -434,6 +418,138 @@ function ModelSelector(props: {
   )
 }
 
+// ── Agent selector ────────────────────────────────────────────────────
+
+function AgentSelector(props: {
+  value?: string
+  onSelect?: (agent: string) => void
+}) {
+  const [open, setOpen] = createSignal(false)
+  let containerRef: HTMLDivElement | undefined
+
+  const lanes = [
+    { id: 'general', label: 'general', icon: '🤖', desc: 'General Partner' },
+    { id: 'code', label: 'code', icon: '⌨', desc: 'Coding & Implementation' },
+    { id: 'ask', label: 'ask', icon: '❓', desc: 'Q&A & Explanations' },
+    { id: 'plan', label: 'plan', icon: '📐', desc: 'Architecture & Planning' },
+    { id: 'explorer', label: 'explorer', icon: '🧭', desc: 'Search & Discovery' },
+    { id: 'fixer', label: 'fixer', icon: '🛠', desc: 'Bug & Error Fixing' },
+    { id: 'review', label: 'review', icon: '👁', desc: 'Code Review' },
+    { id: 'debug', label: 'debug', icon: '🐞', desc: 'Deep Diagnostics' },
+    { id: 'architect', label: 'architect', icon: '🏛', desc: 'System Design' },
+    { id: 'security', label: 'security', icon: '🛡', desc: 'Security & Audit' },
+  ]
+
+  const currentLane = () => lanes.find((l) => l.id === (props.value || 'general')) ?? lanes[0]
+
+  createEffect(() => {
+    if (!open()) return
+    const onDown = (e: MouseEvent) => {
+      if (!containerRef?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    onCleanup(() => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    })
+  })
+
+  return (
+    <div ref={containerRef} data-slot="agent-selector" style={{ position: 'relative' }}>
+      <button
+        type="button"
+        data-slot="agent-selector-trigger"
+        onClick={() => setOpen(!open())}
+        aria-expanded={open() ? 'true' : 'false'}
+        aria-haspopup="listbox"
+        title="Select agent lane"
+        style={{
+          display: 'inline-flex',
+          'align-items': 'center',
+          gap: '6px',
+          padding: '4px 8px',
+          'font-size': 'var(--fs-xs)',
+          border: '1px solid var(--border)',
+          'border-radius': 'var(--r-md)',
+          background: open() ? 'var(--bg-active)' : 'var(--bg-surface)',
+          color: 'var(--fg-muted)',
+          cursor: 'pointer',
+          'font-family': 'var(--font-mono)',
+        }}
+      >
+        <span style={{ 'font-size': '11px' }}>{currentLane().icon}</span>
+        <span>{currentLane().label}</span>
+        <span style={{ 'font-size': '9px', color: 'var(--fg-faint)' }}>▾</span>
+      </button>
+      <Show when={open()}>
+        <div
+          data-slot="agent-selector-dropdown"
+          role="listbox"
+          aria-label="Select agent lane"
+          style={{
+            position: 'absolute',
+            bottom: 'calc(100% + 6px)',
+            left: '0',
+            width: '220px',
+            background: 'var(--bg-canvas)',
+            border: '1px solid var(--border-strong)',
+            'border-radius': 'var(--r-md)',
+            'box-shadow': 'var(--shadow-pop)',
+            overflow: 'hidden',
+            'z-index': '20',
+            display: 'flex',
+            'flex-direction': 'column',
+            padding: '4px',
+            gap: '2px',
+          }}
+        >
+          <For each={lanes}>
+            {(lane) => (
+              <button
+                type="button"
+                role="option"
+                aria-selected={currentLane().id === lane.id ? 'true' : 'false'}
+                onClick={() => {
+                  props.onSelect?.(lane.id)
+                  setOpen(false)
+                }}
+                style={{
+                  display: 'flex',
+                  'align-items': 'center',
+                  gap: '8px',
+                  width: '100%',
+                  padding: '6px 8px',
+                  'border-radius': 'var(--r-sm)',
+                  border: '1px solid transparent',
+                  background: currentLane().id === lane.id ? 'var(--accent-soft)' : 'transparent',
+                  color: currentLane().id === lane.id ? 'var(--accent)' : 'var(--fg)',
+                  'font-size': 'var(--fs-xs)',
+                  'font-family': 'var(--font-mono)',
+                  cursor: 'pointer',
+                  'text-align': 'left',
+                }}
+              >
+                <span>{lane.icon}</span>
+                <div style={{ display: 'flex', 'flex-direction': 'column', flex: '1', 'min-width': '0' }}>
+                  <span style={{ 'font-weight': '600' }}>{lane.label}</span>
+                  <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-subtle)' }}>{lane.desc}</span>
+                </div>
+                <Show when={currentLane().id === lane.id}>
+                  <span style={{ 'font-size': '10px', color: 'var(--accent)' }}>✓</span>
+                </Show>
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
+  )
+}
+
 // ── PromptInput ──────────────────────────────────────────────────────
 
 export function PromptInput(props: {
@@ -449,6 +565,8 @@ export function PromptInput(props: {
   slashCommands?: CommandEntry[]
   selectedModel?: string
   onModelSelect?: (model: string) => void
+  selectedAgent?: string
+  onAgentSelect?: (agent: string) => void
   filePills?: FilePill[]
   onRemovePill?: (index: number) => void
   onAddPill?: (path: string) => void
@@ -655,10 +773,10 @@ export function PromptInput(props: {
         aria-label="Message Mira"
         aria-autocomplete="list"
         rows={1}
-        style={{ 'min-height': '24px', 'max-height': '160px' }}
+        style={{ 'min-height': '24px', 'max-height': '165px' }}
       />
 
-      {/* Bottom bar: model selector + send */}
+      {/* Bottom bar: model selector + agent selector + send */}
       <div
         data-slot="prompt-actions"
         style={{
@@ -673,6 +791,10 @@ export function PromptInput(props: {
             settings={props.settings}
             value={props.selectedModel}
             onSelect={props.onModelSelect}
+          />
+          <AgentSelector
+            value={props.selectedAgent}
+            onSelect={props.onAgentSelect}
           />
           <span
             aria-hidden="true"

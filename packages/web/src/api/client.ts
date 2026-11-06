@@ -467,7 +467,22 @@ function getRuntimeApiUrl(): string {
   try {
     // 1. Explicit user override (survives rebuilds, fixes ephemeral trycloudflare URL without redeploy)
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem(API_URL_KEY) : null
-    if (stored && stored.trim()) return stored.trim().replace(/\/$/, '')
+    if (stored && stored.trim()) {
+      const trimmed = stored.trim().replace(/\/$/, '')
+      // Safety: If the page is accessed remotely (e.g. Cloud Run, tunnel, preview),
+      // a stored loopback address (localhost/127.0.0.1) cannot reach the server container.
+      if (
+        typeof window !== 'undefined' &&
+        window.location.hostname !== 'localhost' &&
+        window.location.hostname !== '127.0.0.1'
+      ) {
+        if (/^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/i.test(trimmed)) {
+          window.localStorage.removeItem(API_URL_KEY)
+          return ''
+        }
+      }
+      return trimmed
+    }
     // 2. URL query param ?api=https://... (shareable link) — validated (P3-6: only localhost or https)
     if (typeof window !== 'undefined') {
       const q = new URLSearchParams(window.location.search).get('api')
@@ -548,9 +563,9 @@ function baseUrl(): string {
   if (runtime) return runtime
   const raw = getEnvBase()
   if (raw) return raw.replace(/\/$/, '')
-  // dev proxy: relative urls go through Vite proxy to :4096
-  // prod: same origin unless VITE_API_URL set
-  if (typeof window !== 'undefined' && window.location.port === '3000') return ''
+  // In any standard browser environment without an explicit API URL override, use relative URLs ("")
+  // so requests stay on the same origin/protocol and flow cleanly through Vite/Nginx proxies.
+  if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) return ''
   return defaultApiUrl()
 }
 
@@ -839,6 +854,8 @@ export const api = {
   createSession: (body: Partial<Session> = {}) =>
     req<Session>('/session', { method: 'POST', body: JSON.stringify(body) }),
   getSession: (id: string) => req<Session>(`/session/${id}`),
+  updateSession: (id: string, patch: Partial<{ title: string; model: string; agent: string }>) =>
+    req<Session>(`/session/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteSession: (id: string) => req<{ ok: boolean }>(`/session/${id}`, { method: 'DELETE' }),
 
   getMessages: (id: string) =>
@@ -1123,6 +1140,11 @@ export const api = {
     req<{ ok: boolean; latencyMs?: number; error?: string }>(
       `/providers/${encodeURIComponent(id)}/test`,
       { method: 'POST' },
+    ),
+  testProviderCredentials: (body: { providerId: string; apiKey: string; baseURL?: string }) =>
+    req<{ ok: boolean; providerId?: string; modelCount?: number; latencyMs?: number; error?: string }>(
+      '/providers/test-credentials',
+      { method: 'POST', body: JSON.stringify(body) },
     ),
   listProviderModels: (id: string) =>
     req<{ ok: boolean; models?: { id: string; name?: string }[]; error?: string }>(
@@ -1563,6 +1585,22 @@ export type WSEvents = {
   error: (err: Event) => void
 }
 
+export function getWsUrl(): string {
+  const base = baseUrl()
+  if (!base) {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${proto}//${window.location.host}/`
+  }
+  try {
+    const u = new URL(base)
+    const proto = window.location.protocol === 'https:' || u.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${proto}//${u.host}/`
+  } catch {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${proto}//${window.location.host}/`
+  }
+}
+
 export function createSocket(handlers: Partial<WSEvents> = {}): {
   connect: () => WebSocket
   disconnect: () => void
@@ -1573,17 +1611,7 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
   let ws: WebSocket | null = null
 
   function wsUrl(): string {
-    const base = baseUrl()
-    if (!base) {
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      return `${proto}//${window.location.host}/`
-    }
-    const u = new URL(base)
-    // If the page is served over HTTPS, the WS connection must also be WSS —
-    // browsers block mixed content (ws:// on https:// pages). Upgrade ws:// → wss://
-    // when the page protocol is HTTPS, regardless of the base URL protocol.
-    const proto = window.location.protocol === 'https:' || u.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${u.host}/`
+    return getWsUrl()
   }
 
   function doConnect(): WebSocket {

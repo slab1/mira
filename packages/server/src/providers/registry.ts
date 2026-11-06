@@ -17,6 +17,7 @@ import {
 import {
   expandEnv,
   expandEnvArray,
+  expandApiKey,
   expandHeaders,
   KeyRing,
   exponentialBackoff,
@@ -85,7 +86,7 @@ export class ProviderRegistry {
   constructor(providerMap: Record<string, ProviderConfig>, opts?: RegistryOptions) {
     for (const [k, v] of Object.entries(providerMap)) {
       this.providers.set(k, v)
-      this.keyRings.set(k, new KeyRing(v.options.apiKey as string | string[]))
+      this.keyRings.set(k, new KeyRing(v.options.apiKey as string | string[], k))
     }
     this.aliases = opts?.aliases ?? {}
     this.fallbacks = opts?.fallbacks ?? []
@@ -191,7 +192,8 @@ export class ProviderRegistry {
     // behaves like (see capabilitiesOf). Defaults to the key itself.
     const kind = (cfg.options.kind ?? providerKey) as ProviderKind
     const ring = this.keyRings.get(providerKey)
-    const apiKey = ring?.current ?? expandEnvArray(cfg.options.apiKey as string | string[])[0] ?? ''
+    const apiKey =
+      ring?.current || expandApiKey(cfg.options.apiKey as string | string[], providerKey)[0] || ''
 
     if (!apiKey) {
       throw new ProviderError({
@@ -588,6 +590,20 @@ export class ProviderRegistry {
     }
 
     if (results.length === 0) {
+      // Find any configured provider in the registry with a valid key
+      for (const [pKey, pConfig] of this.providers.entries()) {
+        if (this.hasKey(pKey) && this.isHealthy(pKey)) {
+          try {
+            const models = Object.keys(pConfig.models ?? {})
+            const firstModel = models[0] ? `${pKey}/${models[0]}` : pKey
+            tryAdd(firstModel)
+            if (results.length > 0) break
+          } catch {}
+        }
+      }
+    }
+
+    if (results.length === 0) {
       // Every candidate was skipped. Surface the primary's real reason rather
       // than a bare resolve() error that hides the cause.
       return [this.resolve(modelStr)]
@@ -609,10 +625,10 @@ export class ProviderRegistry {
   /** Check if provider has valid key */
   hasKey(providerKey: string): boolean {
     const ring = this.keyRings.get(providerKey)
-    if (ring) return ring.hasKey
+    if (ring && ring.hasKey) return true
     const cfg = this.providers.get(providerKey)
     if (!cfg) return false
-    return expandEnvArray(cfg.options.apiKey as string | string[]).some(Boolean)
+    return expandApiKey(cfg.options.apiKey as string | string[], providerKey).some(Boolean)
   }
 
   /** Rotate key for provider on 429/401, return new key or null */
@@ -625,25 +641,25 @@ export class ProviderRegistry {
   /** Get current key for provider */
   getKey(providerKey: string): string {
     const ring = this.keyRings.get(providerKey)
-    if (ring) return ring.current
+    if (ring && ring.current) return ring.current
     const cfg = this.providers.get(providerKey)
     if (!cfg) return ''
-    return expandEnvArray(cfg.options.apiKey as string | string[])[0] ?? ''
+    return expandApiKey(cfg.options.apiKey as string | string[], providerKey)[0] ?? ''
   }
 
   /** Get all keys for provider */
   getAllKeys(providerKey: string): string[] {
     const ring = this.keyRings.get(providerKey)
-    if (ring) return ring.all
+    if (ring && ring.size > 0) return ring.all
     const cfg = this.providers.get(providerKey)
     if (!cfg) return []
-    return expandEnvArray(cfg.options.apiKey as string | string[])
+    return expandApiKey(cfg.options.apiKey as string | string[], providerKey)
   }
 
   /** Update provider config (for runtime changes) */
   setProvider(key: string, cfg: ProviderConfig): void {
     this.providers.set(key, cfg)
-    this.keyRings.set(key, new KeyRing(cfg.options.apiKey as string | string[]))
+    this.keyRings.set(key, new KeyRing(cfg.options.apiKey as string | string[], key))
   }
 
   /** Get headers for provider (expanded) */

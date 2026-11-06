@@ -57,37 +57,39 @@ export function pickNvidiaAutoModel(
   // Vision lane never auto-picks nvidia
   if (lane === 'vision' || task === 'vision') return NVIDIA_AUTO_MODELS.vision
 
-  let health: { status: string; state: string; failureCount: number; latencyMs: number } | undefined
+  let provs: Record<string, { status: string; state: string; failureCount: number; latencyMs: number }> = {}
   try {
-    health = registry.providersHealth?.()?.['nvidia'] ?? registry.providersHealth?.()?.['Nvidia']
+    provs = registry.providersHealth?.() ?? {}
   } catch {}
-  const degraded =
-    health && (health.status === 'down' || health.state === 'OPEN' || health.failureCount >= 5)
 
-  // Reasoning capability → pro (higher quality, still nvidia)
-  if (capability === 'reasoning' || lane.includes('reasoning')) {
-    if (!degraded) return NVIDIA_AUTO_MODELS.pro
-    // nvidia degraded → try llama as cheaper fallback before leaving nvidia
-    return NVIDIA_AUTO_MODELS.llama
+  const nvidiaHealth = provs['nvidia'] ?? provs['Nvidia']
+  const nvidiaConfigured = nvidiaHealth && nvidiaHealth.status !== 'missing-key'
+
+  if (nvidiaConfigured) {
+    const degraded =
+      nvidiaHealth.status === 'down' || nvidiaHealth.state === 'OPEN' || nvidiaHealth.failureCount >= 5
+
+    if (capability === 'reasoning' || lane.includes('reasoning')) {
+      if (!degraded) return NVIDIA_AUTO_MODELS.pro
+      return NVIDIA_AUTO_MODELS.llama
+    }
+    if (!degraded) return NVIDIA_AUTO_MODELS.flash
   }
 
-  // Default: cheapest/fastest — flash; if degraded, ladder flash → llama → anthropic
-  if (!degraded) return NVIDIA_AUTO_MODELS.flash
-  // If flash provider degraded, try llama (same provider but may have same circuit — still try)
-  // For healthiest pick, compare failureCount/latency across providers: nvidia vs anthropic
-  let anthHealth: { failureCount: number; latencyMs: number } | undefined
-  try {
-    anthHealth = (
-      registry.providersHealth?.() as Record<string, { failureCount: number; latencyMs: number }>
-    )?.['anthropic']
-  } catch {}
-  // If anthropic is healthier (lower latency/failures), use it; otherwise stay on llama
-  if (anthHealth && health) {
-    if (anthHealth.failureCount < health.failureCount && anthHealth.latencyMs < health.latencyMs) {
-      return NVIDIA_AUTO_MODELS.anthropicFallback
+  // If nvidia is missing API key or down, pick the healthiest configured provider
+  const candidateProviders = ['anthropic', 'openai', 'google', 'openrouter', 'deepseek']
+  for (const p of candidateProviders) {
+    const h = provs[p]
+    if (h && h.status !== 'missing-key' && h.status !== 'down') {
+      if (p === 'anthropic') return 'anthropic/claude-sonnet-4'
+      if (p === 'openai') return 'openai/gpt-4o'
+      if (p === 'google') return 'google/gemini-2.5-flash'
+      if (p === 'openrouter') return 'openrouter/anthropic/claude-sonnet-4'
+      if (p === 'deepseek') return 'deepseek/deepseek-chat'
     }
   }
-  return NVIDIA_AUTO_MODELS.llama
+
+  return 'anthropic/claude-sonnet-4'
 }
 
 export class GatewayRouter {

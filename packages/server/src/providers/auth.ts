@@ -55,8 +55,33 @@ export function expandHeaders(headers: Record<string, string> | undefined): Reco
   return out
 }
 
-export function expandApiKey(apiKey: string | string[] | undefined): string[] {
-  return expandEnvArray(apiKey)
+const PROVIDER_ENV_FALLBACKS: Record<string, string[]> = {
+  nvidia: ['NVIDIA_API_KEY', 'NVAPI_KEY', 'NIM_API_KEY'],
+  openai: ['OPENAI_API_KEY'],
+  anthropic: ['ANTHROPIC_API_KEY'],
+  google: ['GOOGLE_API_KEY', 'GEMINI_API_KEY'],
+  openrouter: ['OPENROUTER_API_KEY'],
+  deepseek: ['DEEPSEEK_API_KEY'],
+  mistral: ['MISTRAL_API_KEY'],
+  groq: ['GROQ_API_KEY'],
+  together: ['TOGETHER_API_KEY'],
+  cohere: ['COHERE_API_KEY'],
+  fireworks: ['FIREWORKS_API_KEY'],
+  replicate: ['REPLICATE_API_KEY'],
+}
+
+export function expandApiKey(apiKey: string | string[] | undefined, providerId?: string): string[] {
+  const keys = expandEnvArray(apiKey)
+  if (keys.length > 0) return keys
+  if (providerId) {
+    const key = providerId.toLowerCase()
+    const envVars = PROVIDER_ENV_FALLBACKS[key] ?? [`${key.toUpperCase()}_API_KEY`]
+    for (const envVar of envVars) {
+      const val = process.env[envVar]
+      if (val) return [val]
+    }
+  }
+  return []
 }
 
 /**
@@ -66,8 +91,8 @@ export class KeyRing {
   private keys: string[]
   private index = 0
 
-  constructor(apiKey: string | string[] | undefined) {
-    this.keys = expandApiKey(apiKey).filter(Boolean)
+  constructor(apiKey: string | string[] | undefined, providerId?: string) {
+    this.keys = expandApiKey(apiKey, providerId).filter(Boolean)
   }
 
   get current(): string {
@@ -141,15 +166,18 @@ export function classifyError(status: number, message: string): 'retryable' | 'f
 }
 
 /** Expand a provider's raw options into resolved values */
-export function resolveProviderOptions(raw: {
-  baseURL?: string
-  apiKey?: string | string[]
-  headers?: Record<string, string>
-  timeout?: number
-}): { baseURL: string; apiKeys: string[]; headers: Record<string, string>; timeout: number } {
+export function resolveProviderOptions(
+  raw: {
+    baseURL?: string
+    apiKey?: string | string[]
+    headers?: Record<string, string>
+    timeout?: number
+  },
+  providerId?: string,
+): { baseURL: string; apiKeys: string[]; headers: Record<string, string>; timeout: number } {
   return {
     baseURL: expandEnvString(raw.baseURL),
-    apiKeys: expandApiKey(raw.apiKey),
+    apiKeys: expandApiKey(raw.apiKey, providerId),
     headers: expandHeaders(raw.headers),
     timeout: raw.timeout ?? 120_000,
   }

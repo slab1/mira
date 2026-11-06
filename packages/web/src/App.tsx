@@ -45,9 +45,11 @@ import {
   getToken,
   setToken,
   validateToken,
+  clearTokenOn401,
   getApiUrl,
   defaultApiUrl,
   setApiUrl,
+  getWsUrl,
 } from './api/client'
 
 type ViewMode = 'chat' | 'split' | 'graph'
@@ -78,6 +80,10 @@ function AuthGate(props: { onReady: () => void }) {
 
   // Keep input in sync if token changes from another tab or Settings
   onMount(() => {
+    const envToken = (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
+    if (!value() && envToken) {
+      setValue(envToken)
+    }
     const onTokenChange = (e: Event): void => {
       const detail = (e as CustomEvent<{ token: string }>).detail
       if (detail && typeof detail.token === 'string') setValue(detail.token)
@@ -104,6 +110,16 @@ function AuthGate(props: { onReady: () => void }) {
       .replace(/\/healthz\/?$/i, '')
       .replace(/\/health\/?$/i, '')
       .replace(/\/$/, '')
+    // Safety check: if user entered a loopback url on a remote preview, strip it
+    if (
+      typeof window !== 'undefined' &&
+      window.location.hostname !== 'localhost' &&
+      window.location.hostname !== '127.0.0.1' &&
+      /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/i.test(urlTrimmed)
+    ) {
+      urlTrimmed = ''
+      setApiUrlValue('')
+    }
     setError('')
     setChecking(true)
     // Persist API URL override so next req() uses it (fixes ephemeral trycloudflare without rebuild)
@@ -224,13 +240,33 @@ function AuthGate(props: { onReady: () => void }) {
           type="password"
           class="input"
           value={value()}
-          placeholder="mira_… (empty for open dev servers)"
+          placeholder="64-hex MIRA_TOKEN from ~/.mira/mira.env"
           autocomplete="off"
           spellcheck={false}
           aria-invalid={error() ? 'true' : 'false'}
           aria-describedby={error() ? 'auth-error' : undefined}
           onInput={(e) => setValue(e.currentTarget.value)}
         />
+        <Show when={(import.meta.env.VITE_MIRA_TOKEN as string) && value() !== (import.meta.env.VITE_MIRA_TOKEN as string)}>
+          <button
+            type="button"
+            class="btn"
+            style={{
+              'align-self': 'flex-start',
+              'font-size': 'var(--fs-2xs)',
+              padding: '3px 8px',
+              color: 'var(--accent)',
+              border: '1px solid var(--border)',
+              'border-radius': 'var(--r-sm)',
+            }}
+            onClick={() => {
+              setValue((import.meta.env.VITE_MIRA_TOKEN as string) || '')
+              setError('')
+            }}
+          >
+            ⚡ Auto-fill detected server token
+          </button>
+        </Show>
 
         <Show when={error()}>
           <div
@@ -375,7 +411,7 @@ export default function App() {
 
   // RealtimeLayer — connect to WebSocket server
   const realtime = createRealtimeLayer({
-    url: `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/`,
+    url: getWsUrl(),
   })
   onMount(() => {
     realtime.connect()
@@ -486,6 +522,7 @@ export default function App() {
       try {
         const ok = await validateToken()
         if (!ok) {
+          clearTokenOn401()
           setAuthorized(false)
           return
         }
@@ -496,8 +533,10 @@ export default function App() {
         const err = e as Error
         const msg = err.message
         const isUnauthorized = msg === 'unauthorized' || msg.includes('401')
-        if (isUnauthorized) setAuthorized(false)
-        else {
+        if (isUnauthorized) {
+          clearTokenOn401()
+          setAuthorized(false)
+        } else {
           console.warn('[mira] probe failed:', msg)
           setAuthorized(false)
         }
@@ -706,10 +745,23 @@ export default function App() {
 
   const handlePaletteInsert = (text: string) => {
     const trimmed = text.trim()
+    const low = trimmed.toLowerCase()
+    if (low === '/new') {
+      void store.createSession().catch(() => {})
+      return
+    }
+    if (low === '/clear') {
+      store.setInput('')
+      return
+    }
+    if (low === '/settings' || low === '/models') {
+      setSettingsOpen(true)
+      return
+    }
     if (
-      trimmed === '/connect' ||
-      trimmed.startsWith('/connect ') ||
-      trimmed.startsWith('/connect\t')
+      low === '/connect' ||
+      low.startsWith('/connect ') ||
+      low.startsWith('/connect\t')
     ) {
       const arg =
         trimmed === '/connect' ? undefined : trimmed.slice('/connect'.length).trim().split(/\s+/)[0]

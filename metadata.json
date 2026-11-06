@@ -1,4 +1,5 @@
 {
   "name": "Mira — Autonomous AI Agent Platform",
-  "description": "Mira — AI agent platform with hierarchical memory, streaming, real-time bus, and snapshot undo."
+  "description": "Mira — AI agent platform with hierarchical memory, streaming, real-time bus, and snapshot undo.",
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

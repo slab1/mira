@@ -34,23 +34,20 @@ jobs:
           # Tolerate bun audit's nonzero exit (fires on ANY finding, even
           # dev-only lows) — the jq gate below enforces high/critical only.
           bun audit --json > /tmp/bun-audit.json || true
+          # Explicit, traceable allowlist (documented in SECURITY_EXCEPTIONS.md):
+          # - GHSA-mrhx-c7xc-m3w5 (zod constrained collection memory)
+          # - GHSA-vrm6-8vpv-qv8q, GHSA-v9p9-hfj2-hcw8, GHSA-2m5v-pch6-74hx, GHSA-qrxm-fqhp-jwvm, GHSA-vxpw-j846-p89q (nested undici via @ai-sdk)
+          # - GHSA-w4pp-8pjf-rmxw (pacote via semantic-release)
+          # - GHSA-52v5-jr5w-gjxr (sigstore via npm/release toolchain)
           BLOCKING=$(jq '[. as $root
             | keys[] as $pkg
             | $root[$pkg][] as $f
             | select($f.severity == "high" or $f.severity == "critical")
             | select(
-              # allowlist:
-              # - pacote/sigstore: npm toolchain, never in runtime bundle
-              # - undici: only the nested 5.29.0 (via @ai-sdk/provider-utils) is
-              #   in range; top-level 7.29.0 is clean. No upgrade path until the
-              #   AI SDK moves off undici 5 (server never uses its websockets).
-              # - braces: GHSA-vfj7-8cjw-p6xm (ReDoS) has NO patched release —
-              #   vulnerable <= 3.0.3 and 3.0.3 is the latest published. Dev-only
-              #   path (micromatch via semantic-release in packages/cli). Revisit
-              #   when upstream ships a fix.
-              # - zod: GHSA-mrhx-c7xc-m3w5 (constrained collection memory validation) —
-              #   transient dependency via Jimp / AI SDK provider utils.
-              ([$pkg, $f.title] | join(" ") | test("pacote|sigstore|undici|braces|zod") | not)
+              ($f.url // "") as $url
+              | ["GHSA-mrhx-c7xc-m3w5", "GHSA-vrm6-8vpv-qv8q", "GHSA-v9p9-hfj2-hcw8", "GHSA-2m5v-pch6-74hx", "GHSA-qrxm-fqhp-jwvm", "GHSA-vxpw-j846-p89q", "GHSA-w4pp-8pjf-rmxw", "GHSA-52v5-jr5w-gjxr"]
+              | any(. == ($url | split("/")[-1]))
+              | not
             )] | length' /tmp/bun-audit.json)
           echo "blocking high/critical findings: $BLOCKING"
           if [ "$BLOCKING" != "0" ]; then

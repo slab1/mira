@@ -10,6 +10,7 @@
  */
 
 import { deduplicate, detectGaps, createEvent, type ReconciledEvent } from '../state/reconciliation'
+import { getWsUrl } from '../api/client'
 
 export interface WebSocketConfig {
   url: string
@@ -57,7 +58,8 @@ export class RealtimeLayer {
     if (this.ws?.readyState === WebSocket.OPEN) return
     this._connectionState = 'connecting'
     try {
-      this.ws = new WebSocket(this.config.url)
+      const targetUrl = this.config.url || getWsUrl()
+      this.ws = new WebSocket(targetUrl)
       this.ws.onopen = () => this.handleOpen()
       this.ws.onmessage = (e) => this.handleMessage(e)
       this.ws.onclose = () => this.handleClose()

@@ -23,7 +23,7 @@ import { Hono, type Context } from 'hono'
 import { timingSafeEqual, randomBytes, createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync, appendFileSync } from 'node:fs'
 import { parseKeyPair, roleForOwner, isRole, type Role } from '../auth/roles.js'
 import { ENV_OVERRIDES_FILE_WARNING, resolveTokenPrecedence } from '../token-provisioning.js'
 import { Bus } from '../bus/index.js'
@@ -125,7 +125,10 @@ export type PartialMiraConfig = Partial<MiraConfig>
 
 // ── Bootstrap ──────────────────────────────────────────────────────
 const PORT_RAW =
-  process.env.PORT ?? Bun.argv.find((a) => a.startsWith('--port='))?.split('=')[1] ?? '4096'
+  Bun.argv.find((a) => a.startsWith('--port='))?.split('=')[1] ??
+  process.env.MIRA_PORT ??
+  process.env.MIRA_SERVER_PORT ??
+  (process.env.PORT && process.env.PORT !== '8080' && process.env.PORT !== '3000' ? process.env.PORT : '4096')
 const PORT = (() => {
   const n = Number(PORT_RAW)
   if (!Number.isFinite(n) || n <= 0 || n > 65535) {
@@ -179,6 +182,11 @@ function readMiraEnvFile(): Record<string, string> {
       } catch {}
     }
   } catch {}
+  for (const [k, v] of Object.entries(out)) {
+    if (v && !process.env[k]) {
+      process.env[k] = v
+    }
+  }
   return out
 }
 function provisionFirstRunToken(): void {
@@ -190,6 +198,12 @@ function provisionFirstRunToken(): void {
       // The file is a *fallback* for direct runs (serve-local.sh sources it too).
       // An explicitly-set process env always wins — see token-provisioning.ts.
       const vars = readMiraEnvFile()
+      // Populate process.env with all key-value pairs from mira.env (unless already set)
+      for (const [k, v] of Object.entries(vars)) {
+        if (v && !process.env[k]) {
+          process.env[k] = v
+        }
+      }
       const resolved = resolveTokenPrecedence({
         envToken: process.env.MIRA_TOKEN,
         envApiKeys: process.env.MIRA_API_KEYS,
@@ -199,18 +213,35 @@ function provisionFirstRunToken(): void {
       if (resolved.token) process.env.MIRA_TOKEN = resolved.token
       if (resolved.apiKeys) process.env.MIRA_API_KEYS = resolved.apiKeys
       if (resolved.conflicted) warn(ENV_OVERRIDES_FILE_WARNING)
+      if (vars.MIRA_APPROVAL_SIGNING_KEY && !process.env.MIRA_APPROVAL_SIGNING_KEY) {
+        process.env.MIRA_APPROVAL_SIGNING_KEY = vars.MIRA_APPROVAL_SIGNING_KEY
+      }
+      if (!process.env.MIRA_APPROVAL_SIGNING_KEY) {
+        const signingKey = randomBytes(32).toString('hex')
+        process.env.MIRA_APPROVAL_SIGNING_KEY = signingKey
+        try {
+          const existing = readFileSync(file, 'utf-8')
+          if (!existing.includes('MIRA_APPROVAL_SIGNING_KEY')) {
+            appendFileSync(file, `MIRA_APPROVAL_SIGNING_KEY=${signingKey}\n`)
+          }
+        } catch {}
+      }
       return
     }
     if (process.env.MIRA_TOKEN || process.env.MIRA_API_KEYS) {
       if (process.env.MIRA_TOKEN && !readMiraEnvFile().MIRA_TOKEN)
         warn('[mira] MIRA_TOKEN from env — using it')
+      if (!process.env.MIRA_APPROVAL_SIGNING_KEY) {
+        process.env.MIRA_APPROVAL_SIGNING_KEY = randomBytes(32).toString('hex')
+      }
       return
     }
     const token = randomBytes(32).toString('hex') // 64-hex, like scripts/gen-mira-token.sh
+    const signingKey = randomBytes(32).toString('hex')
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(
       file,
-      `# Mira env — auto-created on first run. Keep private.\nMIRA_TOKEN=${token}\n`,
+      `# Mira env — auto-created on first run. Keep private.\nMIRA_TOKEN=${token}\nMIRA_APPROVAL_SIGNING_KEY=${signingKey}\n`,
       { mode: 0o600 },
     )
     if (process.platform !== 'win32') {
@@ -219,7 +250,8 @@ function provisionFirstRunToken(): void {
       } catch {}
     }
     process.env.MIRA_TOKEN = token
-    log(`🔑 first run: generated MIRA_TOKEN in ${file}`)
+    process.env.MIRA_APPROVAL_SIGNING_KEY = signingKey
+    log(`🔑 first run: generated MIRA_TOKEN and MIRA_APPROVAL_SIGNING_KEY in ${file}`)
   } catch (e) {
     warn('first-run token provisioning failed (continuing open):', String(e))
   }

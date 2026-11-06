@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { createSignal, createEffect, For, Show, onCleanup } from 'solid-js'
 import type { SettingsStore } from '../stores/settings'
+import { api } from '../api/client'
 import { toast } from './Toast'
 import { useFocusTrap } from '../hooks/useFocusTrap'
 
@@ -40,6 +41,8 @@ export function ConnectModal(props: {
   const [baseURL, setBaseURL] = createSignal('')
   const [saving, setSaving] = createSignal(false)
   const [showKey, setShowKey] = createSignal(false)
+  const [testing, setTesting] = createSignal(false)
+  const [testResult, setTestResult] = createSignal<{ ok: boolean; message: string } | null>(null)
 
   let dialogRef!: HTMLDivElement
   let titleRef!: HTMLDivElement
@@ -168,6 +171,50 @@ export function ConnectModal(props: {
     }
   }
 
+  const handleTest = async () => {
+    const preset = selected()
+    if (!preset) return
+    const isCustom = preset.id === 'custom'
+    const id = isCustom ? customId().trim().toLowerCase() : preset.id
+    const key = apiKey().trim()
+    if (!id) {
+      toast.error('Provider id is required')
+      return
+    }
+    if (!key) {
+      toast.error('API key is required')
+      return
+    }
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res = await api.testProviderCredentials({
+        providerId: id,
+        apiKey: key,
+        baseURL: baseURL().trim() || preset.baseURL || undefined,
+      })
+      if (res.ok) {
+        setTestResult({
+          ok: true,
+          message: `Reachable (${res.modelCount ?? 0} models${res.latencyMs ? ` · ${res.latencyMs}ms` : ''})`,
+        })
+        toast.success(`Key verified for ${id} ✓`)
+      } else {
+        setTestResult({
+          ok: false,
+          message: res.error ?? 'Authentication failed',
+        })
+        toast.error(`Test failed: ${res.error ?? 'Authentication failed'}`)
+      }
+    } catch (e) {
+      const err = (e as Error).message ?? 'Connection error'
+      setTestResult({ ok: false, message: err })
+      toast.error(`Test error: ${err}`)
+    } finally {
+      setTesting(false)
+    }
+  }
+
   const providerId = () => {
     const s = selected()
     if (!s) return ''
@@ -224,7 +271,10 @@ export function ConnectModal(props: {
                         id="connect-custom-id"
                         class="input"
                         value={customId()}
-                        onInput={(e) => setCustomId(e.currentTarget.value)}
+                        onInput={(e) => {
+                          setCustomId(e.currentTarget.value)
+                          setTestResult(null)
+                        }}
                         placeholder="my-provider"
                         spellcheck={false}
                         autocomplete="off"
@@ -243,7 +293,10 @@ export function ConnectModal(props: {
                         class="input"
                         type={showKey() ? 'text' : 'password'}
                         value={apiKey()}
-                        onInput={(e) => setApiKey(e.currentTarget.value)}
+                        onInput={(e) => {
+                          setApiKey(e.currentTarget.value)
+                          setTestResult(null)
+                        }}
                         placeholder={selected()?.placeholder ?? 'sk-…'}
                         spellcheck={false}
                         autocomplete="off"
@@ -282,7 +335,10 @@ export function ConnectModal(props: {
                       class="input"
                       type="url"
                       value={baseURL()}
-                      onInput={(e) => setBaseURL(e.currentTarget.value)}
+                      onInput={(e) => {
+                        setBaseURL(e.currentTarget.value)
+                        setTestResult(null)
+                      }}
                       placeholder={selected()?.baseURL || 'https://api.openai.com/v1'}
                       spellcheck={false}
                       autocomplete="off"
@@ -290,13 +346,40 @@ export function ConnectModal(props: {
                     <span class="settings-hint">Override for proxies or custom endpoints. Leave blank for default.</span>
                   </div>
 
+                  <Show when={testResult()}>
+                    {(res) => (
+                      <div
+                        style={{
+                          padding: '8px 12px',
+                          'border-radius': 'var(--r-md)',
+                          'font-size': 'var(--fs-xs)',
+                          background: res().ok ? 'var(--ok-soft)' : 'var(--err-soft)',
+                          border: `1px solid ${res().ok ? 'var(--ok-border)' : 'var(--err-border)'}`,
+                          color: res().ok ? 'var(--ok)' : 'var(--err)',
+                          display: 'flex',
+                          'align-items': 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        <span>{res().ok ? '✓' : '✕'}</span>
+                        <span>{res().message}</span>
+                      </div>
+                    )}
+                  </Show>
+
                   <div style={{ display: 'flex', gap: '8px', 'justify-content': 'space-between', 'align-items': 'center', 'margin-top': '4px' }}>
                     <button type="button" class="btn btn-ghost" onClick={() => setStep('pick')} style={{ padding: '7px 12px', 'font-size': 'var(--fs-sm)', border: '1px solid var(--border)', 'border-radius': 'var(--r-md)' }}>
                       ← Back
                     </button>
                     <div style={{ display: 'flex', gap: '8px' }}>
-                      <button type="button" class="btn btn-ghost" onClick={() => props.onClose()} style={{ padding: '7px 12px', 'font-size': 'var(--fs-sm)' }}>
-                        Cancel
+                      <button
+                        type="button"
+                        class="btn btn-ghost"
+                        disabled={testing() || !apiKey().trim()}
+                        onClick={handleTest}
+                        style={{ padding: '7px 12px', 'font-size': 'var(--fs-sm)', border: '1px solid var(--border)', 'border-radius': 'var(--r-md)' }}
+                      >
+                        {testing() ? 'Testing…' : 'Test Key'}
                       </button>
                       <button type="submit" class="btn btn-solid" disabled={saving() || !apiKey().trim()} style={{ padding: '7px 14px', 'font-size': 'var(--fs-sm)', opacity: saving() ? '0.7' : '1' }}>
                         {saving() ? 'Saving…' : 'Connect →'}

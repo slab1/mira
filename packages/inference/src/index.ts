@@ -1,5 +1,6 @@
 export * from './providers/provider.interface.js'
 export * from './providers/ollama.provider.js'
+export * from './providers/cloud.provider.js'
 export * from './core/inference-engine.js'
 export * from './resources/concurrency-manager.js'
 export * from './routing/routing-policy.js'
