@@ -247,11 +247,14 @@ export class ImprovementEngine {
       }
     }
 
-    // 3. Eval gate (opt-in via MIRA_EVAL_GATE=1): run the pr-tier behavioral
-    //    eval harness. This is the RCSI promotion gate — a patch that passes
-    //    tsc but regresses any pr check is rejected with the failing checkIds
-    //    recorded. Fails CLOSED on harness errors.
-    if (process.env.MIRA_EVAL_GATE === '1') {
+    // 3. Eval gate: mandatory for high-impact mutations (engine, tool, config)
+    //    at the promotion boundary, and whenever MIRA_EVAL_GATE=1 is explicitly set.
+    //    This enforces that code/system modifications execute behavioral verification,
+    //    while prompt notes can run lightweight shadow verification. Fails CLOSED.
+    const isMandatoryEval = imp.kind === 'engine' || imp.kind === 'tool' || imp.kind === 'config'
+    const evalRequested = isMandatoryEval || process.env.MIRA_EVAL_GATE === '1'
+
+    if (evalRequested) {
       try {
         const { runEval } = await import('../eval/index.js')
         const report = await runEval('pr')
@@ -262,7 +265,7 @@ export class ImprovementEngine {
             .map((c) => c.checkId + (c.message ? ` (${c.message.slice(0, 80)})` : ''))
           return {
             verified: false,
-            reason: `eval gate rejected patch — failing checks: ${failed.slice(0, 5).join('; ')}`,
+            reason: `eval gate rejected patch (${imp.kind}) — failing checks: ${failed.slice(0, 5).join('; ')}`,
           }
         }
       } catch (err) {

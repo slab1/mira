@@ -756,7 +756,9 @@ export class Subgateway implements Gateway {
         const isAbort = lastError instanceof SubgatewayError && lastError.code === 'ABORTED'
         const isAuthOrQuota =
           lastError instanceof ProviderError &&
-          (lastError.code === 'RATE_LIMITED' || lastError.code === 'UNAUTHORIZED')
+          (lastError.code === 'RATE_LIMITED' ||
+            lastError.code === 'UNAUTHORIZED' ||
+            lastError.code === 'NO_API_KEY')
         // `shouldFallback` reads only .status/.message/.code, so it classifies a
         // raw network Error correctly too (status 0 + message regex).
         const shouldAdvance =
@@ -862,9 +864,9 @@ export class Subgateway implements Gateway {
       output: opts.maxTokens ?? 1024,
     }
     this.checkCostCap(capEstimate.input, capEstimate.output, model, opts.sessionID)
-    let resolved: ReturnType<ProviderRegistry['resolve']>
+    let candidates: ReturnType<ProviderRegistry['resolveWithFallbacks']>
     try {
-      resolved = this.registry.resolve(model)
+      candidates = this.registry.resolveWithFallbacks(model)
     } catch (e) {
       if (e instanceof ProviderError)
         throw new SubgatewayError({
@@ -881,135 +883,147 @@ export class Subgateway implements Gateway {
         lane: this.lane,
       })
     }
-    if (!resolved.apiKey) {
-      throw new SubgatewayError({
-        message: `No API key configured for provider "${resolved.providerKey}" lane "${this.lane}"`,
-        code: 'NO_API_KEY',
-        provider: resolved.providerKey,
-        lane: this.lane,
-      })
-    }
-    // Charge the per-provider token bucket for this actual dispatch (resolve()
-    // only peeked, so this is the single debit).
-    if (!this.registry.consumeRateLimit(resolved.providerKey, resolved.modelID)) {
-      throw new SubgatewayError({
-        message: `Rate limited for "${resolved.providerKey}:${resolved.modelID}" — provider budget exhausted`,
-        code: 'RATE_LIMITED',
-        provider: resolved.providerKey,
-        lane: this.lane,
-        status: 429,
-        retryable: true,
-      })
-    }
-    const allKeys = this.registry.getAllKeys(resolved.providerKey)
-    const keysToTry = allKeys.length ? allKeys : [resolved.apiKey]
-    const timeout = this.subConfig.timeout ?? resolved.timeout
-    let lastErr: Error | null = null
-    for (const key of keysToTry) {
-      try {
-        const res = await fetch(`${resolved.baseURL.replace(/\/$/, '')}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${key}`,
-            'HTTP-Referer': 'https://mira.ai',
-            'X-Title': 'Mira',
-            ...resolved.headers,
-          },
-          body: JSON.stringify({
-            model: resolved.modelID,
-            messages: [
-              ...(opts.system ? [{ role: 'system', content: opts.system }] : []),
-              { role: 'user', content: opts.prompt },
-            ],
-            max_tokens: opts.maxTokens ?? 1024,
-          }),
-          signal: AbortSignal.timeout(timeout),
-        })
-        if (!res.ok) {
-          const txt = (await res.text()).slice(0, 500)
-          const status = res.status
-          if (
-            (status === 429 || status === 401) &&
-            keysToTry.length > 1 &&
-            key !== keysToTry[keysToTry.length - 1]
-          ) {
-            lastErr = new Error(`Gateway ${status}: ${txt}`)
-            continue
-          }
-          throw new SubgatewayError({
-            message: `complete() ${status}: ${txt}`,
-            code:
-              status === 429 ? 'RATE_LIMITED' : status === 401 ? 'UNAUTHORIZED' : 'PROVIDER_ERROR',
-            provider: resolved.providerKey,
-            lane: this.lane,
-            status,
-          })
-        }
-        const data = (await res.json()) as {
-          choices?: Array<{ message?: { content?: string } }>
-          usage?: { prompt_tokens?: number; completion_tokens?: number }
-        }
-        const text = data.choices?.[0]?.message?.content ?? ''
-        this.statsCollector.record(
-          resolved.modelID,
-          data.usage?.prompt_tokens ?? 0,
-          data.usage?.completion_tokens ?? 0,
-          Date.now() - t0,
-        )
-        // Per-session cost tracking, matching stream(). Without this the
-        // session cost view silently omitted every complete() call.
-        if (opts.sessionID) {
-          const inTok = data.usage?.prompt_tokens ?? 0
-          const outTok = data.usage?.completion_tokens ?? 0
-          const [inputPrice, outputPrice] = priceFor(resolved.modelID)
-          const cost = (inTok * inputPrice + outTok * outputPrice) / 1_000_000
-          const sess = sessionCosts.get(opts.sessionID) ?? {
-            costUSD: 0,
-            inputTokens: 0,
-            outputTokens: 0,
-            requests: 0,
-          }
-          sess.costUSD += cost
-          sess.inputTokens += inTok
-          sess.outputTokens += outTok
-          sess.requests++
-          sessionCosts.set(opts.sessionID, sess)
-        }
-        this.recordSuccess()
-        this.recordProviderOutcome(resolved.providerKey, true, t0)
-        return {
-          text,
-          inputTokens: data.usage?.prompt_tokens,
-          outputTokens: data.usage?.completion_tokens,
-        }
-      } catch (e) {
-        lastErr = e as Error
-        if (
-          KeyRing.isRotatableError(undefined, (e as Error).message) &&
-          key !== keysToTry[keysToTry.length - 1]
-        )
-          continue
-        if (e instanceof SubgatewayError) throw e
-        if (e instanceof ProviderError)
-          throw new SubgatewayError({
-            message: e.message,
-            code: e.code,
-            provider: e.provider,
-            lane: this.lane,
-            status: e.status,
-          })
-        throw e
+
+    if (this.subConfig.fallback?.length) {
+      for (const fb of this.subConfig.fallback) {
+        try {
+          const r = this.registry.resolve(fb)
+          const key = `${r.providerKey}:${r.modelID}`
+          if (!candidates.some((c) => `${c.providerKey}:${c.modelID}` === key)) candidates.push(r)
+        } catch {}
       }
     }
+
+    let lastError: Error | null = null
+    for (const resolved of candidates) {
+      if (!resolved.apiKey) {
+        lastError = new SubgatewayError({
+          message: `No API key configured for provider "${resolved.providerKey}" lane "${this.lane}"`,
+          code: 'NO_API_KEY',
+          provider: resolved.providerKey,
+          lane: this.lane,
+        })
+        continue
+      }
+      if (!this.registry.consumeRateLimit(resolved.providerKey, resolved.modelID)) {
+        lastError = new SubgatewayError({
+          message: `Rate limited for "${resolved.providerKey}:${resolved.modelID}" — provider budget exhausted`,
+          code: 'RATE_LIMITED',
+          provider: resolved.providerKey,
+          lane: this.lane,
+          status: 429,
+          retryable: true,
+        })
+        continue
+      }
+      const allKeys = this.registry.getAllKeys(resolved.providerKey)
+      const keysToTry = allKeys.length ? allKeys : [resolved.apiKey]
+      const timeout = this.subConfig.timeout ?? resolved.timeout
+      for (const key of keysToTry) {
+        try {
+          const res = await fetch(`${resolved.baseURL.replace(/\/$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${key}`,
+              'HTTP-Referer': 'https://mira.ai',
+              'X-Title': 'Mira',
+              ...resolved.headers,
+            },
+            body: JSON.stringify({
+              model: resolved.modelID,
+              messages: [
+                ...(opts.system ? [{ role: 'system', content: opts.system }] : []),
+                { role: 'user', content: opts.prompt },
+              ],
+              max_tokens: opts.maxTokens ?? 1024,
+            }),
+            signal: AbortSignal.timeout(timeout),
+          })
+          if (!res.ok) {
+            const txt = (await res.text()).slice(0, 500)
+            const status = res.status
+            if (
+              (status === 429 || status === 401) &&
+              keysToTry.length > 1 &&
+              key !== keysToTry[keysToTry.length - 1]
+            ) {
+              lastError = new Error(`Gateway ${status}: ${txt}`)
+              continue
+            }
+            throw new SubgatewayError({
+              message: `complete() ${status}: ${txt}`,
+              code:
+                status === 429 ? 'RATE_LIMITED' : status === 401 ? 'UNAUTHORIZED' : 'PROVIDER_ERROR',
+              provider: resolved.providerKey,
+              lane: this.lane,
+              status,
+            })
+          }
+          const data = (await res.json()) as {
+            choices?: Array<{ message?: { content?: string } }>
+            usage?: { prompt_tokens?: number; completion_tokens?: number }
+          }
+          const text = data.choices?.[0]?.message?.content ?? ''
+          this.statsCollector.record(
+            resolved.modelID,
+            data.usage?.prompt_tokens ?? 0,
+            data.usage?.completion_tokens ?? 0,
+            Date.now() - t0,
+          )
+          if (opts.sessionID) {
+            const inTok = data.usage?.prompt_tokens ?? 0
+            const outTok = data.usage?.completion_tokens ?? 0
+            const [inputPrice, outputPrice] = priceFor(resolved.modelID)
+            const cost = (inTok * inputPrice + outTok * outputPrice) / 1_000_000
+            const sess = sessionCosts.get(opts.sessionID) ?? {
+              costUSD: 0,
+              inputTokens: 0,
+              outputTokens: 0,
+              requests: 0,
+            }
+            sess.costUSD += cost
+            sess.inputTokens += inTok
+            sess.outputTokens += outTok
+            sess.requests++
+            sessionCosts.set(opts.sessionID, sess)
+          }
+          this.recordSuccess()
+          this.recordProviderOutcome(resolved.providerKey, true, t0)
+          return {
+            text,
+            inputTokens: data.usage?.prompt_tokens,
+            outputTokens: data.usage?.completion_tokens,
+          }
+        } catch (e) {
+          lastError = e as Error
+          if (
+            KeyRing.isRotatableError(undefined, (e as Error).message) &&
+            key !== keysToTry[keysToTry.length - 1]
+          )
+            continue
+        }
+      }
+      this.recordProviderOutcome(resolved.providerKey, false, t0)
+    }
+
     this.recordFailure()
-    this.recordProviderOutcome(resolved.providerKey, false, t0)
+    if (lastError instanceof ProviderError) {
+      if (lastError instanceof SubgatewayError) throw lastError
+      throw new SubgatewayError({
+        message: lastError.message,
+        code: lastError.code,
+        provider: lastError.provider,
+        lane: this.lane,
+        status: lastError.status,
+      })
+    }
     throw (
-      lastErr ??
+      lastError ??
       new SubgatewayError({
         message: 'complete() failed',
         code: 'PROVIDER_ERROR',
-        provider: resolved.providerKey,
+        provider: candidates[0]?.providerKey,
         lane: this.lane,
       })
     )

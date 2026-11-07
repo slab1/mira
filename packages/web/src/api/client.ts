@@ -620,18 +620,38 @@ export class ApiError extends Error {
   }
 }
 
+export async function ensureToken(): Promise<string> {
+  const t = getToken()
+  if (t && t !== 'dev-local-token-not-secret') return t
+  try {
+    const res = await fetch('/auth/token').then((r) => r.json()).catch(() => null)
+    if (res?.token && res.token !== 'dev-local-token-not-secret') {
+      setToken(res.token)
+      return res.token
+    }
+  } catch {}
+  try {
+    const res = await fetch('/__mira/token').then((r) => r.json()).catch(() => null)
+    if (res?.token && res.token !== 'dev-local-token-not-secret') {
+      setToken(res.token)
+      return res.token
+    }
+  } catch {}
+  const envToken = (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
+  if (envToken && envToken !== 'dev-local-token-not-secret') {
+    setToken(envToken)
+    return envToken
+  }
+  return t || ''
+}
+
 export function getToken(): string {
   try {
-    const stored = sessionStorage.getItem(TOKEN_KEY)
-    if (stored) return stored
-    // Explicitly cleared (empty submit or 401) — don't resurrect the baked fallback.
-    // BUT: if VITE_MIRA_TOKEN is explicitly set (dev env), it takes precedence
-    // over the cleared flag — the user configured a token, so clear the flag.
+    const stored = sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY)
+    if (stored && stored !== 'dev-local-token-not-secret') return stored
     const envToken = (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
-    try {
-      if (sessionStorage.getItem(TOKEN_CLEARED_KEY) === '1' && !envToken) return ''
-    } catch {}
-    return envToken
+    if (envToken && envToken !== 'dev-local-token-not-secret') return envToken
+    return stored || ''
   } catch {
     return ''
   }
@@ -641,14 +661,14 @@ export function setToken(token: string): void {
   try {
     if (token) {
       sessionStorage.setItem(TOKEN_KEY, token)
-      try {
-        sessionStorage.removeItem(TOKEN_CLEARED_KEY)
-      } catch {}
+      try { localStorage.setItem(TOKEN_KEY, token) } catch {}
+      try { sessionStorage.removeItem(TOKEN_CLEARED_KEY) } catch {}
+      try { localStorage.removeItem(TOKEN_CLEARED_KEY) } catch {}
     } else {
       sessionStorage.removeItem(TOKEN_KEY)
-      try {
-        sessionStorage.setItem(TOKEN_CLEARED_KEY, '1')
-      } catch {}
+      try { localStorage.removeItem(TOKEN_KEY) } catch {}
+      try { sessionStorage.setItem(TOKEN_CLEARED_KEY, '1') } catch {}
+      try { localStorage.setItem(TOKEN_CLEARED_KEY, '1') } catch {}
     }
     // notify same-tab listeners (storage event only fires cross-tab)
     try {
@@ -660,11 +680,10 @@ export function setToken(token: string): void {
 export function clearTokenOn401(): void {
   try {
     sessionStorage.removeItem(TOKEN_KEY)
-    // Mark cleared so a stale baked VITE_MIRA_TOKEN isn't silently retried —
-    // the user must paste the current token (fixes the "Invalid token" loop
-    // after server token rotation).
+    try { localStorage.removeItem(TOKEN_KEY) } catch {}
     try {
       sessionStorage.setItem(TOKEN_CLEARED_KEY, '1')
+      localStorage.setItem(TOKEN_CLEARED_KEY, '1')
     } catch {}
   } catch {}
   try {
@@ -678,6 +697,7 @@ export async function validateToken(): Promise<boolean> {
   // LOUD — returning false here is what mislabels every outage as
   // "Invalid token". (Message keeps the 'Failed to fetch' marker so the
   // AuthGate's unreachable branch renders "Cannot reach server…".)
+  await ensureToken().catch(() => '')
   try {
     await req('/healthz')
   } catch (e) {

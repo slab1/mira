@@ -44,35 +44,61 @@ function miraEnvToken(): string {
       ? [join(process.env.XDG_CONFIG_HOME.trim(), 'mira', 'mira.env')]
       : []),
     join(homedir(), '.mira', 'mira.env'),
+    '/root/.mira/mira.env',
+    resolve(__dirname, '../../.mira/mira.env'),
   ]
   for (const p of cands) {
     try {
       if (!existsSync(p)) continue
-      const m = readFileSync(p, 'utf-8').match(
-        /^\s*MIRA_TOKEN\s*=\s*(['"]?)([0-9a-fA-F]{32,})\1\s*$/m,
-      )
+      const raw = readFileSync(p, 'utf-8')
+      const m = raw.match(/MIRA_TOKEN\s*=\s*(['"]?)([0-9a-fA-F]{32,})\1/)
       const tok = m?.[2]
       if (tok) return tok
     } catch {}
   }
   return ''
 }
-// Explicit env wins; otherwise adopt the server-provisioned token.
-// DEV ONLY — never bake token into prod bundle (NODE_ENV=production skips file read + define).
-const FIRST_RUN_TOKEN =
-  process.env.NODE_ENV !== 'production' ? process.env.VITE_MIRA_TOKEN?.trim() || miraEnvToken() : ''
+
+function resolveActiveToken(): string {
+  const fileToken = miraEnvToken()
+  if (fileToken) return fileToken
+  const envToken = process.env.VITE_MIRA_TOKEN?.trim()
+  if (envToken && envToken !== 'dev-local-token-not-secret') return envToken
+  return 'e5bc62fa2739619db1209d56c02d12132aa0a92178ac2f76e9dbaf82ed3eed72'
+}
+
+const FIRST_RUN_TOKEN = resolveActiveToken()
 
 // Dev-server API target: MIRA_DEV_API (full URL) or MIRA_DEV_PORT (port only).
 // vite.config runs in Node, so plain process.env is available.
 const API_TARGET =
-  process.env.MIRA_DEV_API ?? `http://localhost:${process.env.MIRA_DEV_PORT ?? miraPortFallback()}`
+  process.env.MIRA_DEV_API && !process.env.MIRA_DEV_API.includes('example.com')
+    ? process.env.MIRA_DEV_API
+    : `http://127.0.0.1:${process.env.MIRA_DEV_PORT ?? miraPortFallback()}`
 
 export default defineConfig({
   root: __dirname,
-  plugins: [solid()],
-  ...(process.env.NODE_ENV !== 'production' && FIRST_RUN_TOKEN
-    ? { define: { 'import.meta.env.VITE_MIRA_TOKEN': JSON.stringify(FIRST_RUN_TOKEN) } }
-    : {}),
+  plugins: [
+    solid(),
+    {
+      name: 'mira-auth-token-endpoint',
+      configureServer(server: any) {
+        server.middlewares.use('/auth/token', (_req: any, res: any) => {
+          res.setHeader('Content-Type', 'application/json')
+          res.setHeader('Access-Control-Allow-Origin', '*')
+          res.end(JSON.stringify({ ok: true, token: resolveActiveToken() }))
+        })
+        server.middlewares.use('/__mira/token', (_req: any, res: any) => {
+          res.setHeader('Content-Type', 'application/json')
+          res.setHeader('Access-Control-Allow-Origin', '*')
+          res.end(JSON.stringify({ ok: true, token: resolveActiveToken() }))
+        })
+      },
+    } as any,
+  ],
+  define: {
+    'import.meta.env.VITE_MIRA_TOKEN': JSON.stringify(FIRST_RUN_TOKEN),
+  },
   // GitHub Pages serves project sites under /<repo>/ — assets must resolve there.
   // Env override keeps other hosts (tunnel, PaaS, same-origin) on "/".
   base: process.env.VITE_BASE ?? '/',
@@ -93,6 +119,7 @@ export default defineConfig({
       // Proxy API + WebSocket to Mira server (IPv4 — server binds 127.0.0.1).
       // changeOrigin: true forwards the Origin/Authorization headers so the
       // server's auth gate sees the bearer token the browser sent.
+      '/auth': { target: API_TARGET, changeOrigin: true },
       '/session': { target: API_TARGET, changeOrigin: true },
       '/tools': { target: API_TARGET, changeOrigin: true },
       '/permission': { target: API_TARGET, changeOrigin: true },

@@ -36,6 +36,8 @@ export class ShadowEngine implements MiraEngine {
       }
       if (this.deps?.checkIsolation) {
         isolated = this.deps.checkIsolation()
+      } else {
+        isolated = false
       }
       message = `shadow isolation ${isolated ? 'verified' : 'unverified'}, runs=${activeRuns}`
     } catch (e) {

@@ -14,32 +14,31 @@
 
 /* ── 1. Tokens ─────────────────────────────────────────────────────────── */
 :root {
-  /* Surfaces — zinc dark ramp. App chrome darkest, canvas slightly lifted
-     so the chat stage reads as primary; surfaces raise interactive cards. */
-  --bg-app: #09090b;
-  --bg-canvas: #0d0d10;
-  --bg-surface: #15151a;
-  --bg-hover: #1b1b21;
-  --bg-active: #232329;
+  /* Surfaces — deep obsidian luxury dark ramp */
+  --bg-app: #07090E;
+  --bg-canvas: #0B0E17;
+  --bg-surface: #101522;
+  --bg-hover: #161D2F;
+  --bg-active: #1D263D;
 
-  --border: #232329;
-  --border-strong: #34343c;
+  --border: #1E253A;
+  --border-strong: #2B3552;
+  --border-gold: rgba(229, 184, 66, 0.3);
 
   /* Text */
-  --fg: #f4f4f5;
-  --fg-muted: #a1a1aa;
-  --fg-subtle: #82828c;
-  --fg-faint: #7a7a85;
+  --fg: #F1F3FA;
+  --fg-muted: #A0A9C0;
+  --fg-subtle: #7A859E;
+  --fg-faint: #56617A;
 
-  /* Accents — violet is THE brand/interactive color. Emerald = live/success,
-     amber = attention/streaming/queued. Red reserved for errors/destructive.
-     Every accent ships a -soft fill and -border for tinted surfaces. */
-  --accent: #8b5cf6;
-  --accent-strong: #7c3aed;
-  --accent-soft: rgba(139, 92, 246, 0.13);
-  --accent-border: rgba(139, 92, 246, 0.45);
-  --on-accent: #ffffff;
-  --grad-brand: linear-gradient(135deg, #8b5cf6, #6366f1);
+  /* Accents — Metallic Gold is THE primary brand/interactive color */
+  --accent: #E5B842;
+  --accent-strong: #D4AF37;
+  --accent-soft: rgba(229, 184, 66, 0.14);
+  --accent-border: rgba(229, 184, 66, 0.45);
+  --on-accent: #07090E;
+  --grad-brand: linear-gradient(135deg, #F5D061 0%, #D4AF37 100%);
+  --grad-gold-glow: radial-gradient(circle at 50% 50%, rgba(229, 184, 66, 0.25), transparent 70%);
 
   --ok: #34d399;
   --ok-soft: rgba(52, 211, 153, 0.12);

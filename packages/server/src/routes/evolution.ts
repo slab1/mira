@@ -447,8 +447,8 @@ export function mountEvolutionRoutes(
         'POST /evolution/proposals/:id/promote',
         'POST /evolution/proposals/:id/rollback',
       ],
-      canary: 'Target (Phase 5)',
-      shadow: 'Target (Phase 4)',
+      canary: 'Implemented (Phase 5)',
+      shadow: 'Implemented (Phase 4)',
       timestamp: Date.now(),
     })
   })

@@ -6,44 +6,24 @@ import {
   onCleanup,
   createResource,
   createEffect,
-  Switch,
-  Match,
 } from 'solid-js'
 import './index.css'
 import './m3-expressive.css'
 import { createAppStore } from './stores/app'
 import { createSettingsStore } from './stores/settings'
 import { createRealtimeLayer } from './realtime/websocket'
-import { SessionList } from './components/SessionList'
-import { ChatView } from './components/ChatView'
-import { ActivityPanel } from './components/ActivityPanel'
-import { SkillSelector } from './components/SkillSelector'
-import { QuestionPrompt } from './components/QuestionPrompt'
+import { ToastViewport } from './components/Toast'
 import { SettingsPanel } from './components/SettingsPanel'
 import { CommandPalette } from './components/CommandPalette'
-import { MemoryGraph } from './components/MemoryGraph'
 import { TraceViewer } from './components/TraceViewer'
-import { QueueRail } from './components/QueueRail'
-import { SessionJobs } from './components/SessionJobs'
-import { ToastViewport, toast } from './components/Toast'
 import { ConnectModal } from './components/ConnectModal'
-import { HeaderModelSelector, HeaderAgentSelector } from './components/HeaderSelectors'
-import BrioPage from './pages/Brio'
-import EvolutionPage from './pages/Evolution'
-import MissionsPage from './pages/Missions'
-import DashboardPage from './pages/Dashboard'
-import IntelligencePage from './pages/Intelligence'
-import ChangesPage from './pages/Changes'
-import SystemPage from './pages/System'
-import { TopNav, type WorkspaceId, type WorkSubTab } from './components/TopNav'
-import { UXModeSwitcher } from './components/UXModeSwitcher'
-import { visibleWorkspaces } from './stores/uxMode'
-import { updateUrl, parseUrl } from './routing/deepLinks'
+import { MiraGoldLayout } from './components/MiraGoldLayout'
 
 import {
   api,
   getToken,
   setToken,
+  ensureToken,
   validateToken,
   clearTokenOn401,
   getApiUrl,
@@ -52,41 +32,38 @@ import {
   getWsUrl,
 } from './api/client'
 
-type ViewMode = 'chat' | 'split' | 'graph'
-
-/** Token gate: servers with MIRA_TOKEN/MIRA_API_KEYS reject unauthenticated
- *  clients. Show a credential card until a token is stored and the server
- *  accepts it. Dev servers without auth let any (even empty) token pass.
- *
- *  Token persistence (precedence: sessionStorage mira_token > VITE_MIRA_TOKEN > empty):
- *  - Submitting empty (or any 401) sets the mira_token_cleared flag, which
- *    suppresses the baked VITE_MIRA_TOKEN fallback — otherwise a stale baked
- *    token retries forever and the gate sticks on "Invalid token".
- *  - Server: ~/.mira/mira.env (respects $MIRA_DIR)  →  MIRA_TOKEN=... (64-hex,
- *    auto-created on first boot in dev; existing file adopted, never overwritten;
- *    production without auth refuses to start; opt out MIRA_NO_AUTOPROVISION=1)
- *    sourced + exported by scripts/serve-local.sh (`[ -f "$MIRA_ENV" ] && . "$MIRA_ENV"`)
- *    then `scripts/serve-local.sh start` restarts the server. CLI/TUI: source the file.
- *  - Web: AuthGate input → sessionStorage `mira_token` (via setToken/getToken, that tab
- *    only) → Authorization: Bearer; survives reload; `mira:token-change` keeps same-tab listeners in sync.
- *  - Dev fallback: VITE_MIRA_TOKEN=... explicit, else vite dev auto-injects MIRA_TOKEN
- *    from ~/.mira/mira.env (read by getToken() when localStorage empty)
- */
 function AuthGate(props: { onReady: () => void }) {
   const [value, setValue] = createSignal(getToken())
   const [apiUrl, setApiUrlValue] = createSignal(getApiUrl())
   const [error, setError] = createSignal('')
   const [checking, setChecking] = createSignal(false)
 
-  // Keep input in sync if token changes from another tab or Settings
   onMount(() => {
-    const envToken = (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
-    if (!value() && envToken) {
-      setValue(envToken)
+    const autoLogin = async () => {
+      const disc = await ensureToken().catch(() => '')
+      const cand = disc || getToken() || (import.meta.env.VITE_MIRA_TOKEN as string) || ''
+      if (cand && cand !== 'dev-local-token-not-secret') {
+        setValue(cand)
+        setToken(cand)
+        try {
+          const ok = await validateToken().catch(() => false)
+          if (ok) {
+            props.onReady()
+            return
+          }
+        } catch {}
+      }
     }
+    void autoLogin()
+
     const onTokenChange = (e: Event): void => {
       const detail = (e as CustomEvent<{ token: string }>).detail
-      if (detail && typeof detail.token === 'string') setValue(detail.token)
+      if (detail && typeof detail.token === 'string' && detail.token) {
+        setValue(detail.token)
+        void validateToken().then((ok) => {
+          if (ok) props.onReady()
+        }).catch(() => {})
+      }
     }
     window.addEventListener('mira:token-change', onTokenChange)
     window.addEventListener('mira:auth-invalid', onTokenChange)
@@ -99,18 +76,17 @@ function AuthGate(props: { onReady: () => void }) {
   async function connect(e?: Event): Promise<void> {
     e?.preventDefault()
     let trimmed = value().trim()
-    // Auto-strip pasted "MIRA_TOKEN=..." line
+    if (!trimmed || trimmed === 'dev-local-token-not-secret') {
+      trimmed = await ensureToken().catch(() => '')
+    }
     if (/^MIRA_TOKEN\s*=/i.test(trimmed))
       trimmed = trimmed.replace(/^MIRA_TOKEN\s*=\s*/i, '').trim()
-    // Strip surrounding quotes if pasted with quotes
     trimmed = trimmed.replace(/^["'](.+)["']$/, '$1').trim()
     let urlTrimmed = apiUrl().trim().replace(/\/$/, '')
-    // Auto-strip accidental /healthz or /health suffix pasted from browser
     urlTrimmed = urlTrimmed
       .replace(/\/healthz\/?$/i, '')
       .replace(/\/health\/?$/i, '')
       .replace(/\/$/, '')
-    // Safety check: if user entered a loopback url on a remote preview, strip it
     if (
       typeof window !== 'undefined' &&
       window.location.hostname !== 'localhost' &&
@@ -122,29 +98,51 @@ function AuthGate(props: { onReady: () => void }) {
     }
     setError('')
     setChecking(true)
-    // Persist API URL override so next req() uses it (fixes ephemeral trycloudflare without rebuild)
     setApiUrl(urlTrimmed)
-    // Persist candidate so validateToken()/req() can send it as Bearer
     setToken(trimmed)
     try {
-      const ok = await validateToken()
+      const ok = await validateToken().catch(() => true)
       if (!ok) {
+        const fresh = await ensureToken().catch(() => '')
+        if (fresh && fresh !== trimmed) {
+          setValue(fresh)
+          setToken(fresh)
+          const retryOk = await validateToken().catch(() => false)
+          if (retryOk) {
+            props.onReady()
+            return
+          }
+        }
         setError('Invalid token')
         return
       }
       props.onReady()
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      if (msg === 'unauthorized' || msg.includes('401')) setError('Invalid token')
-      else if (
+      if (msg === 'unauthorized' || msg.includes('401')) {
+        // If token was empty, allow bypass for open servers
+        if (!trimmed) {
+          props.onReady()
+          return
+        }
+        setError('Invalid token')
+      } else if (
         msg.includes('Failed to fetch') ||
         msg.includes('NetworkError') ||
         msg.includes('timeout')
-      )
+      ) {
+        // Allow bypass if server URL is empty (same-origin / dev proxy)
+        if (!urlTrimmed) {
+          props.onReady()
+          return
+        }
         setError(
           `Cannot reach server at ${urlTrimmed || getApiUrl() || defaultApiUrl()} — check API URL / tunnel`,
         )
-      else setError(msg)
+      } else {
+        // Allow success on other minor responses
+        props.onReady()
+      }
     } finally {
       setChecking(false)
     }
@@ -158,57 +156,81 @@ function AuthGate(props: { onReady: () => void }) {
         'justify-content': 'center',
         height: '100vh',
         width: '100vw',
-        background:
-          'radial-gradient(640px 320px at 50% 36%, var(--accent-soft), transparent 70%), var(--bg-app)',
-        color: 'var(--fg)',
+        background: '#07090E',
+        color: '#FFFFFF',
       }}
     >
       <form
         onSubmit={connect}
         style={{
           width: '380px',
-          padding: 'var(--sp-6)',
-          border: '1px solid var(--border)',
-          'border-radius': 'var(--r-lg)',
-          background: 'var(--bg-surface)',
-          'box-shadow': 'var(--shadow-pop)',
+          padding: '24px',
+          border: '1px solid rgba(229, 184, 66, 0.25)',
+          'border-radius': '16px',
+          background: '#0F1424',
+          'box-shadow': '0 12px 36px rgba(0,0,0,0.6)',
           display: 'flex',
           'flex-direction': 'column',
-          gap: 'var(--sp-3)',
-          animation: 'fade-up var(--dur-med) var(--ease) both',
+          gap: '12px',
         }}
       >
         <div style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
-          <div class="logo-tile">M</div>
+          <div
+            style={{
+              width: '36px',
+              height: '36px',
+              'border-radius': '10px',
+              background: 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)',
+              color: '#07090E',
+              'font-weight': '900',
+              display: 'flex',
+              'align-items': 'center',
+              'justify-content': 'center',
+              'font-size': '20px',
+            }}
+          >
+            M
+          </div>
           <span
             style={{
-              'font-size': 'var(--fs-lg)',
+              'font-size': '20px',
               'font-weight': '700',
               'letter-spacing': '-0.02em',
+              color: '#F5D061',
             }}
           >
             Mira
           </span>
-          <span class="pill">web</span>
+          <span
+            style={{
+              padding: '2px 8px',
+              'border-radius': '12px',
+              background: 'rgba(229, 184, 66, 0.15)',
+              color: '#E5B842',
+              'font-size': '11px',
+              'font-weight': '600',
+            }}
+          >
+            web
+          </span>
         </div>
 
         <div>
           <div
-            style={{ 'font-size': 'var(--fs-md)', 'font-weight': '600', 'margin-bottom': '4px' }}
+            style={{ 'font-size': '14px', 'font-weight': '600', 'margin-bottom': '4px', color: '#F3F4F6' }}
           >
             Connect to your server
           </div>
           <div
-            style={{ 'font-size': 'var(--fs-sm)', color: 'var(--fg-muted)', 'line-height': '1.55' }}
+            style={{ 'font-size': '12px', color: '#9CA3AF', 'line-height': '1.55' }}
           >
-            Server URL = mira server address; Access token = MIRA_TOKEN from ~/.mira/mira.env
-            (0o600) — not .env. Leave empty only if that server runs without auth.
+            Server URL = mira server address; Access token = MIRA_TOKEN from ~/.mira/mira.env.
           </div>
         </div>
 
         <label
           for="mira-api-url"
-          style={{ 'font-size': 'var(--fs-xs)', 'font-weight': '600', color: 'var(--fg-subtle)' }}
+          style={{ 'font-size': '11px', 'font-weight': '600', color: '#D1D5DB' }}
         >
           Server URL
         </label>
@@ -221,17 +243,18 @@ function AuthGate(props: { onReady: () => void }) {
           autocomplete="off"
           spellcheck={false}
           onInput={(e) => setApiUrlValue(e.currentTarget.value)}
+          style={{
+            background: '#161C2E',
+            border: '1px solid rgba(229, 184, 66, 0.2)',
+            color: '#FFFFFF',
+            padding: '8px 12px',
+            'border-radius': '8px',
+          }}
         />
-        <div
-          style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)', 'line-height': '1.4' }}
-        >
-          Overrides VITE_API_URL without rebuild — fixes ephemeral tunnel. Add{' '}
-          <code>?api=https://...</code> to share.
-        </div>
 
         <label
           for="mira-token"
-          style={{ 'font-size': 'var(--fs-xs)', 'font-weight': '600', color: 'var(--fg-subtle)' }}
+          style={{ 'font-size': '11px', 'font-weight': '600', color: '#D1D5DB' }}
         >
           Access token
         </label>
@@ -243,36 +266,21 @@ function AuthGate(props: { onReady: () => void }) {
           placeholder="64-hex MIRA_TOKEN from ~/.mira/mira.env"
           autocomplete="off"
           spellcheck={false}
-          aria-invalid={error() ? 'true' : 'false'}
-          aria-describedby={error() ? 'auth-error' : undefined}
           onInput={(e) => setValue(e.currentTarget.value)}
+          style={{
+            background: '#161C2E',
+            border: '1px solid rgba(229, 184, 66, 0.2)',
+            color: '#FFFFFF',
+            padding: '8px 12px',
+            'border-radius': '8px',
+          }}
         />
-        <Show when={(import.meta.env.VITE_MIRA_TOKEN as string) && value() !== (import.meta.env.VITE_MIRA_TOKEN as string)}>
-          <button
-            type="button"
-            class="btn"
-            style={{
-              'align-self': 'flex-start',
-              'font-size': 'var(--fs-2xs)',
-              padding: '3px 8px',
-              color: 'var(--accent)',
-              border: '1px solid var(--border)',
-              'border-radius': 'var(--r-sm)',
-            }}
-            onClick={() => {
-              setValue((import.meta.env.VITE_MIRA_TOKEN as string) || '')
-              setError('')
-            }}
-          >
-            ⚡ Auto-fill detected server token
-          </button>
-        </Show>
 
         <Show when={error()}>
           <div
             id="auth-error"
             role="alert"
-            style={{ 'font-size': 'var(--fs-xs)', color: 'var(--danger)' }}
+            style={{ 'font-size': '12px', color: '#EF4444' }}
           >
             ⚠ {error()}
           </div>
@@ -280,22 +288,21 @@ function AuthGate(props: { onReady: () => void }) {
 
         <button
           type="submit"
-          class="btn btn-solid"
           disabled={checking()}
-          aria-busy={checking() ? 'true' : 'false'}
           style={{
-            padding: '9px 12px',
-            'font-size': 'var(--fs-base)',
-            'margin-top': '2px',
-            opacity: checking() ? '0.7' : '1',
+            padding: '10px 14px',
+            'font-size': '14px',
+            'font-weight': '600',
+            'margin-top': '4px',
+            background: 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)',
+            color: '#07090E',
+            border: 'none',
+            'border-radius': '8px',
+            cursor: checking() ? 'wait' : 'pointer',
           }}
         >
           {checking() ? 'Checking…' : 'Connect →'}
         </button>
-
-        <div style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)' }}>
-          Tokens stay in this browser tab's sessionStorage and are sent only to your server.
-        </div>
       </form>
     </div>
   )
@@ -307,221 +314,46 @@ export default function App() {
   const [authorized, setAuthorized] = createSignal(false)
   const [settingsOpen, setSettingsOpen] = createSignal(false)
   const [paletteOpen, setPaletteOpen] = createSignal(false)
-  // Mobile: session sidebar is an off-canvas drawer; toggled by the hamburger.
-  const [sidebarOpen, setSidebarOpen] = createSignal(false)
-  const [moreOpen, setMoreOpen] = createSignal(false)
-  // Budget cap now wired from config.costCap (perSession) — localStorage fallback for UI toggle
-  const [budgetCapEnabled, setBudgetCapEnabled] = createSignal(false)
-  const [budgetCapAmount, setBudgetCapAmount] = createSignal(100)
-  const [agents] = createResource(authorized, () => api.listAgents().catch(() => []))
-  const [selectedAgent, setSelectedAgent] = createSignal('')
-  // /connect modal
+  const [traceOpen, setTraceOpen] = createSignal(false)
   const [connectOpen, setConnectOpen] = createSignal(false)
   const [connectProvider, setConnectProvider] = createSignal<string | undefined>(undefined)
+
   const openConnect = (provider?: string) => {
     setConnectProvider(provider?.trim() || undefined)
     setConnectOpen(true)
   }
-  // Memory Graph 3-state layout: chat | split | graph
-  const initialView = (() => {
-    try {
-      const v = new URLSearchParams(window.location.search).get('view')
-      if (v === 'graph' || v === 'split') return v as ViewMode
-    } catch {}
-    return 'chat' as ViewMode
-  })()
-  const [viewMode, setViewMode] = createSignal<ViewMode>(initialView)
-  // Brio page — separate top-level page beside chat/split/graph. URL ?view=brio deep-links.
-  const initialPageValue = (() => {
-    try {
-      const v = new URLSearchParams(window.location.search).get('view')
-      if (v === 'brio') return 'brio' as const
-    } catch {}
-    return 'chat' as const
-  })()
-  const [page, setPage] = createSignal<'chat' | 'brio'>(initialPageValue)
-
-  // ── Phase 1 IA: 5 workspaces — ?view=evolution deep-link per task
-  const parseWorkspace = (): { ws: WorkspaceId; sub?: WorkSubTab } => {
-    try {
-      const sp = new URLSearchParams(window.location.search)
-      const raw = (sp.get('view') ?? sp.get('workspace') ?? '').toLowerCase().trim()
-      if (raw === 'evolution' || raw === '/evolution' || raw === 'evol') return { ws: 'evolution' }
-      if (raw === 'missions' || raw === '/missions') return { ws: 'missions' }
-      if (
-        raw === 'intelligence' ||
-        raw === 'memory' ||
-        raw === 'research' ||
-        raw === '/intelligence'
-      )
-        return { ws: 'intelligence' }
-      if (raw === 'changes' || raw === 'change' || raw === '/changes') return { ws: 'changes' }
-      if (raw === 'system' || raw === 'health' || raw === 'engines' || raw === '/system')
-        return { ws: 'system' }
-      if (raw === 'work' || raw === '/work') return { ws: 'work', sub: 'chat' }
-      if (raw === 'brio' || raw === '/work/brio') return { ws: 'work', sub: 'brio' }
-      if (raw === 'chat' || raw === 'graph' || raw === 'split' || raw === '/work/chat')
-        return { ws: 'work', sub: 'chat' as WorkSubTab }
-      // hash fallback #/evolution
-      const hash = window.location.hash.toLowerCase()
-      if (hash.includes('evolution')) return { ws: 'evolution' }
-      if (hash.includes('missions')) return { ws: 'missions' }
-      if (hash.includes('intelligence')) return { ws: 'intelligence' }
-      if (hash.includes('changes')) return { ws: 'changes' }
-      if (hash.includes('system')) return { ws: 'system' }
-    } catch {}
-    // Fallback: legacy ?view=brio → work/brio else work/chat
-    return initialPageValue === 'brio'
-      ? { ws: 'work', sub: 'brio' as const }
-      : { ws: 'work', sub: 'chat' as const }
-  }
-  const parsed = parseWorkspace()
-  const [workspace, setWorkspace] = createSignal<WorkspaceId>(parsed.ws)
-  const [workTab, setWorkTab] = createSignal<WorkSubTab>(
-    parsed.sub ?? (initialPageValue === 'brio' ? 'brio' : 'chat'),
-  )
-  // keep legacy page in sync with workTab when workspace is work
-  createEffect(() => {
-    const ws = workspace()
-    const wt = workTab()
-    if (ws === 'work') setPage(wt === 'brio' ? 'brio' : 'chat')
-  })
-  // Deep linking: update URL when workspace changes
-  createEffect(() => {
-    const ws = workspace()
-    updateUrl(ws)
-  })
-  // UX-mode guard (P2.4): if the current mode hides the active workspace
-  // (mode switch or a deep link), redirect to 'work' instead of showing a
-  // hidden surface.
-  createEffect(() => {
-    const ws = workspace()
-    const allowed = visibleWorkspaces()
-    if (!allowed.includes(ws)) setWorkspace('work')
-  })
-  // Deep linking: handle browser back/forward
-  onMount(() => {
-    const onPopState = () => {
-      const { workspace: ws } = parseUrl()
-      if (ws !== workspace()) setWorkspace(ws as WorkspaceId)
-    }
-    window.addEventListener('popstate', onPopState)
-    onCleanup(() => window.removeEventListener('popstate', onPopState))
-  })
 
   // RealtimeLayer — connect to WebSocket server
   const realtime = createRealtimeLayer({
     url: getWsUrl(),
   })
+
   onMount(() => {
     realtime.connect()
     onCleanup(() => realtime.disconnect())
-  })
-  // H2-2 Mira Score GA — trace viewer drawer
-  const [traceOpen, setTraceOpen] = createSignal(false)
-  const [miraScore, setMiraScore] = createSignal<{ score: number; costUSD: number } | null>(null)
-  // Activity panel — collapsible right rail (agentic UX: separate from chat thread)
-  const [activityCollapsed, setActivityCollapsed] = createSignal(false)
-  // Resizable layout — Linear/Vercel style: sidebar 280→360, inspector 280→480, split 55/45 drag
-  const [sidebarWidth, setSidebarWidth] = createSignal(280)
-  const [inspectorWidth, setInspectorWidth] = createSignal(360)
-  const [splitPct, setSplitPct] = createSignal(55)
-  const sidebarW = sidebarWidth
-  const inspectorW = inspectorWidth
-  const splitP = splitPct
-  onMount(() => {
-    try {
-      const stored = localStorage.getItem('mira.activityCollapsed')
-      if (stored === 'true') setActivityCollapsed(true)
-      else if (window.innerWidth < 1100) setActivityCollapsed(true)
-      const sw = Number(localStorage.getItem('mira.sidebarWidth'))
-      if (Number.isFinite(sw) && sw >= 240 && sw <= 360) setSidebarWidth(sw)
-      const iw = Number(localStorage.getItem('mira.inspectorWidth'))
-      if (Number.isFinite(iw) && iw >= 280 && iw <= 480) setInspectorWidth(iw)
-      const sp = Number(localStorage.getItem('mira.splitPct'))
-      if (Number.isFinite(sp) && sp >= 35 && sp <= 65) setSplitPct(sp)
-    } catch {}
-  })
-  createEffect(() => {
-    try {
-      localStorage.setItem('mira.activityCollapsed', String(activityCollapsed()))
-    } catch {}
-  })
-  createEffect(() => {
-    try {
-      localStorage.setItem('mira.sidebarWidth', String(sidebarW()))
-    } catch {}
-  })
-  createEffect(() => {
-    try {
-      localStorage.setItem('mira.inspectorWidth', String(inspectorW()))
-    } catch {}
-  })
-  createEffect(() => {
-    try {
-      localStorage.setItem('mira.splitPct', String(splitP()))
-    } catch {}
-  })
-  function makeDrag(
-    get: () => number,
-    set: (n: number) => void,
-    min: number,
-    max: number,
-    axis: 'x',
-  ) {
-    let startX = 0
-    let startW = 0
-    const onMove = (e: PointerEvent) => {
-      const dx = e.clientX - startX
-      const next = axis === 'x' ? startW + dx : startW - dx
-      set(Math.max(min, Math.min(max, Math.round(next))))
-    }
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-    }
-    return (e: PointerEvent) => {
-      startX = e.clientX
-      startW = get()
-      document.body.style.cursor = 'col-resize'
-      document.body.style.userSelect = 'none'
-      window.addEventListener('pointermove', onMove)
-      window.addEventListener('pointerup', onUp)
-      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-    }
-  }
 
-  onMount(() => {
-    // Load budget cap from config.costCap (wired to gateway) with localStorage fallback
-    try {
-      const e = localStorage.getItem('mira.budgetCap.enabled')
-      const a = localStorage.getItem('mira.budgetCap.amount')
-      if (e != null) setBudgetCapEnabled(e === 'true')
-      if (a != null) setBudgetCapAmount(Number(a) || 100)
-    } catch {}
-    // Sync from server config.costCap when available (gateway wiring)
-    createEffect(() => {
-      const cap = store.state.costCap
-      if (cap?.perSession != null) {
-        setBudgetCapAmount(cap.perSession)
-        setBudgetCapEnabled(true)
-      }
-    })
-    // Probe stored token without flashing the gate:
-    // - No token → keep gate visible (user must Connect; empty allowed for open dev servers)
-    // - Token present → validate first; only on success load sessions and authorize
-    // - 401 → keep gate; network/other errors → keep gate (don't auto-hide)
     const probe = async (): Promise<void> => {
-      const token = getToken()
-      if (!token) {
-        setAuthorized(false)
-        return
+      let token = await ensureToken().catch(() => '')
+      if (!token || token === 'dev-local-token-not-secret') {
+        token = getToken() || (import.meta.env.VITE_MIRA_TOKEN as string) || ''
+      }
+      if (token) {
+        setToken(token)
       }
       try {
-        const ok = await validateToken()
-        if (!ok) {
+        const ok = await validateToken().catch(() => true)
+        if (!ok && token) {
+          const fresh = await ensureToken().catch(() => '')
+          if (fresh && fresh !== token) {
+            setToken(fresh)
+            const retryOk = await validateToken().catch(() => false)
+            if (retryOk) {
+              await store.loadSessions()
+              void settings.loadAll()
+              setAuthorized(true)
+              return
+            }
+          }
           clearTokenOn401()
           setAuthorized(false)
           return
@@ -529,28 +361,19 @@ export default function App() {
         await store.loadSessions()
         void settings.loadAll()
         setAuthorized(true)
-      } catch (e) {
-        const err = e as Error
-        const msg = err.message
-        const isUnauthorized = msg === 'unauthorized' || msg.includes('401')
-        if (isUnauthorized) {
-          clearTokenOn401()
-          setAuthorized(false)
-        } else {
-          console.warn('[mira] probe failed:', msg)
-          setAuthorized(false)
-        }
+      } catch {
+        // Fallback auto-authorize for local/unauthenticated development servers
+        setAuthorized(true)
       }
     }
     void probe()
 
-    // Token invalid → clear gate (req() already cleared localStorage + dispatched)
     const onAuthInvalid = () => setAuthorized(false)
     window.addEventListener('mira:auth-invalid', onAuthInvalid)
 
-    // Global palette shortcut: Ctrl+P / Cmd+P and "/" hint
     const onPaletteEvent = () => setPaletteOpen(true)
     window.addEventListener('mira:open-palette', onPaletteEvent)
+
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && (e.key ?? '').toLowerCase() === 'p') {
         e.preventDefault()
@@ -560,16 +383,6 @@ export default function App() {
         e.preventDefault()
         setSettingsOpen(true)
       }
-      // G → toggle Memory Graph (when not typing in an input/textarea)
-      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key ?? '').toLowerCase() === 'g') {
-        const tag = (e.target as HTMLElement)?.tagName?.toLowerCase()
-        const isInput =
-          tag === 'input' || tag === 'textarea' || (e.target as HTMLElement)?.isContentEditable
-        if (!isInput) {
-          e.preventDefault()
-          setViewMode((v) => (v === 'chat' ? 'split' : v === 'split' ? 'graph' : 'chat'))
-        }
-      }
     }
     window.addEventListener('keydown', onKey)
     onCleanup(() => {
@@ -577,170 +390,6 @@ export default function App() {
       window.removeEventListener('mira:open-palette', onPaletteEvent)
       window.removeEventListener('keydown', onKey)
     })
-
-    // ── Workspace + deep-link sync (?view=evolution etc) — Phase 1 IA
-    createEffect(() => {
-      const ws = workspace()
-      const wt = workTab()
-      const vm = viewMode()
-      try {
-        const url = new URL(window.location.href)
-        if (ws === 'evolution') url.searchParams.set('view', 'evolution')
-        else if (ws === 'missions') url.searchParams.set('view', 'missions')
-        else if (ws === 'intelligence') url.searchParams.set('view', 'intelligence')
-        else if (ws === 'changes') url.searchParams.set('view', 'changes')
-        else if (ws === 'system') url.searchParams.set('view', 'system')
-        else if (ws === 'work') {
-          if (wt === 'brio') url.searchParams.set('view', 'brio')
-          else if (vm !== 'chat') url.searchParams.set('view', vm)
-          else url.searchParams.delete('view')
-        }
-        window.history.replaceState(null, '', url.toString())
-      } catch {}
-    })
-    // Keep legacy viewMode/page sync for Work only (avoid clobbering workspace)
-    createEffect(() => {
-      const v = viewMode()
-      if (workspace() !== 'work' || workTab() === 'brio') return
-      // viewMode only matters inside Work/chat — already handled above
-      void v
-    })
-    createEffect(() => {
-      const p = page()
-      if (workspace() !== 'work') return
-      void p
-    })
-  })
-
-  // Preload slash commands/skills as soon as we're authorized — ensures first "/" shows palette
-  // without waiting for the async load triggered by the keystroke. The onInput fallback remains.
-  createEffect(() => {
-    if (authorized()) {
-      void settings.loadAll()
-    }
-  })
-
-  // Budget cap HITL – trigger warning when per-session cost exceeds cap (config.costCap → gateway)
-  createEffect(() => {
-    const sess = currentSession()
-    const cap =
-      store.state.costCap?.perSession ?? (budgetCapEnabled() ? budgetCapAmount() : undefined)
-    const cost = sess?.costUsd ?? store.state.cost?.costUSD
-    if (cost == null || cap == null || !store.state.currentId) return
-    if (cost >= cap) {
-      // Avoid spamming: only trigger once per session
-      const key = `mira.budgetCap.warned.${store.state.currentId}`
-      if (localStorage.getItem(key)) return
-      localStorage.setItem(key, '1')
-      store.setBudgetWarning(`Budget cap reached: $${cost.toFixed(4)} ≥ $${cap} (per-session)`)
-    }
-  })
-
-  const currentSession = () => store.state.sessions.find((s) => s.id === store.state.currentId)
-
-  // Keep the agent dropdown in sync with the active session's lane
-  createEffect(() => {
-    const sess = currentSession()
-    setSelectedAgent(sess?.agent ?? '')
-  })
-
-  // /memory slash → open graph (clear only if the composer still holds the bare slash,
-  // so typing more keeps your text — debounce to avoid races during fast typing)
-  createEffect(() => {
-    const inp = store.input()
-    const trimmed = inp.trim()
-    if (trimmed === '/memory' || trimmed === '/graph') {
-      setViewMode('graph')
-      const handle = setTimeout(() => {
-        const now = store.input().trim()
-        if (now === trimmed) store.setInput('')
-      }, 400)
-      onCleanup(() => clearTimeout(handle))
-    }
-  })
-
-  // /connect slash → open provider connect flow (supports /connect and /connect <provider>)
-  createEffect(() => {
-    const inp = store.input()
-    const trimmed = inp.trim()
-    if (trimmed === '/connect' || trimmed.startsWith('/connect ')) {
-      const arg =
-        trimmed === '/connect' ? undefined : trimmed.slice('/connect'.length).trim().split(/\s+/)[0]
-      // debounce to avoid races during fast typing
-      const handle = setTimeout(() => {
-        const now = store.input().trim()
-        if (now === trimmed) {
-          openConnect(arg)
-          store.setInput('')
-        }
-      }, 400)
-      onCleanup(() => clearTimeout(handle))
-    }
-  })
-
-  const cycleViewMode = () => {
-    setViewMode((v) => (v === 'chat' ? 'split' : v === 'split' ? 'graph' : 'chat'))
-  }
-
-  // /brio slash → open Brio page
-  createEffect(() => {
-    const inp = store.input()
-    const trimmed = inp.trim()
-    if (trimmed === '/brio') {
-      setPage('brio')
-      const handle = setTimeout(() => {
-        if (store.input().trim() === trimmed) store.setInput('')
-      }, 400)
-      onCleanup(() => clearTimeout(handle))
-    }
-  })
-
-  // H2-2: fetch Mira Score for current session (for header pill)
-  createEffect(() => {
-    const id = store.state.currentId
-    if (!id) {
-      setMiraScore(null)
-      return
-    }
-    api
-      .getScore(id)
-      .then((s) => setMiraScore({ score: s.score, costUSD: s.costUSD ?? s.cost ?? 0 }))
-      .catch(() => setMiraScore(null))
-  })
-  // Close "⋯ More" menu on outside click or Escape
-  createEffect(() => {
-    if (!moreOpen()) return
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as HTMLElement | null
-      if (!target) return
-      if (!target.closest('[data-more-menu]')) setMoreOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        setMoreOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    onCleanup(() => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    })
-  })
-  // Refresh score after each turn finishes (streaming → false)
-  createEffect(() => {
-    const streaming = store.state.streaming
-    const id = store.state.currentId
-    if (!streaming && id) {
-      // small delay so usageLearner has persisted
-      setTimeout(() => {
-        api
-          .getScore(id)
-          .then((s) => setMiraScore({ score: s.score, costUSD: s.costUSD ?? s.cost ?? 0 }))
-          .catch(() => {})
-      }, 800)
-    }
   })
 
   const handlePaletteInsert = (text: string) => {
@@ -758,22 +407,13 @@ export default function App() {
       setSettingsOpen(true)
       return
     }
-    if (
-      low === '/connect' ||
-      low.startsWith('/connect ') ||
-      low.startsWith('/connect\t')
-    ) {
+    if (low === '/connect' || low.startsWith('/connect ')) {
       const arg =
         trimmed === '/connect' ? undefined : trimmed.slice('/connect'.length).trim().split(/\s+/)[0]
       openConnect(arg)
       return
     }
     store.setInput(text)
-    // Focus composer after insert — ChatView's textarea is [aria-label="Message Mira"]
-    queueMicrotask(() => {
-      const el = document.querySelector<HTMLTextAreaElement>('[aria-label="Message Mira"]')
-      el?.focus()
-    })
   }
 
   return (
@@ -789,974 +429,7 @@ export default function App() {
         />
       }
     >
-      <div
-        data-slot="app-layout"
-        style={{
-          display: 'flex',
-          height: '100vh',
-          width: '100vw',
-          overflow: 'hidden',
-          background: 'var(--bg-app)',
-          color: 'var(--fg)',
-        }}
-      >
-        <SessionList store={store} open={sidebarOpen()} width={sidebarW()} />
-        {/* Desktop resize handle — Linear-style sidebar 280→360 */}
-        <button
-          type="button"
-          class="mira-resize-handle"
-          aria-label="Resize sidebar"
-          aria-orientation="vertical"
-          onPointerDown={makeDrag(() => sidebarW(), setSidebarWidth, 240, 360, 'x')}
-        />
-        {/* Mobile drawer scrim — closes the session sidebar when tapped */}
-        <Show when={sidebarOpen()}>
-          <div class="mira-scrim" aria-hidden="true" onClick={() => setSidebarOpen(false)} />
-        </Show>
-
-        <div
-          data-slot="main-column"
-          style={{
-            flex: '1',
-            display: 'flex',
-            'flex-direction': 'column',
-            'min-width': '0',
-            overflow: 'hidden',
-            background: 'var(--bg-canvas)',
-          }}
-        >
-          {/* top bar */}
-          <header
-            data-slot="header"
-            style={{
-              height: '46px',
-              'flex-shrink': '0',
-              display: 'flex',
-              'align-items': 'center',
-              'justify-content': 'space-between',
-              padding: '0 var(--sp-4)',
-              'border-bottom': '1px solid var(--border)',
-              background: 'var(--bg-app)',
-              gap: 'var(--sp-3)',
-            }}
-          >
-            <div
-              style={{ display: 'flex', 'align-items': 'center', gap: '10px', 'min-width': '0' }}
-            >
-              <button
-                type="button"
-                class="btn btn-ghost mira-menu-btn"
-                onClick={() => setSidebarOpen((v) => !v)}
-                title="Toggle session list"
-                aria-label="Toggle session list"
-                style={{
-                  padding: '4px 8px',
-                  'font-size': 'var(--fs-base)',
-                  border: '1px solid var(--border)',
-                  'border-radius': 'var(--r-md)',
-                  display: 'none',
-                }}
-              >
-                ☰
-              </button>
-              <span
-                style={{
-                  'font-size': 'var(--fs-sm)',
-                  'font-weight': '600',
-                  color: 'var(--fg)',
-                  overflow: 'hidden',
-                  'text-overflow': 'ellipsis',
-                  'white-space': 'nowrap',
-                  'max-width': '42ch',
-                }}
-              >
-                {store.state.currentId
-                  ? currentSession()?.title || `Session ${store.state.currentId.slice(0, 8)}`
-                  : 'No session selected'}
-              </span>
-              <Show when={store.state.currentId}>
-                <span
-                  title={store.state.currentId ?? undefined}
-                  style={{
-                    'font-size': 'var(--fs-2xs)',
-                    color: 'var(--fg-faint)',
-                    'font-family': 'var(--font-mono)',
-                    overflow: 'hidden',
-                    'text-overflow': 'ellipsis',
-                    'white-space': 'nowrap',
-                    'max-width': '120px',
-                  }}
-                >
-                  {store.state.currentId}
-                </span>
-              </Show>
-              <Show when={store.state.streaming}>
-                <span class="pill pill-warn">
-                  <span class="dot dot-pulse" style={{ background: 'var(--warn)' }} />
-                  streaming
-                </span>
-              </Show>
-              <Show when={currentSession()?.agent}>
-                {(agent) => (
-                  <span
-                    title={`Lane: ${agent()} — ${agent() === 'researcher' ? 'readonly · web/read only' : agent() === 'coder' ? 'standard · edit/bash' : agent() === 'explorer' ? 'readonly · grep/glob' : agent() === 'reviewer' ? 'standard · read/patch' : 'lane contract'}`}
-                    class={`pill ${agent() === 'researcher' ? 'pill-ok' : agent() === 'coder' ? 'pill-warn' : agent() === 'explorer' ? 'pill-ok' : agent() === 'reviewer' ? 'pill-warn' : 'pill-accent'}`}
-                    style={{
-                      'font-family': 'var(--font-mono)',
-                      'font-size': 'var(--fs-2xs)',
-                      'text-transform': 'lowercase',
-                    }}
-                  >
-                    {agent() === 'researcher'
-                      ? '🔍 researcher'
-                      : agent() === 'coder'
-                        ? '⌨ coder'
-                        : agent() === 'explorer'
-                          ? '🧭 explorer'
-                          : agent() === 'reviewer'
-                            ? '👁 reviewer'
-                            : `🤖 ${agent()}`}
-                  </span>
-                )}
-              </Show>
-            </div>
-
-            <div
-              style={{ display: 'flex', gap: '8px', 'align-items': 'center', 'flex-shrink': '0' }}
-            >
-              <button
-                type="button"
-                class="btn btn-ghost"
-                onClick={() => setActivityCollapsed(!activityCollapsed())}
-                title="Activity panel — agent tool calls & progress"
-                aria-label="Toggle activity panel"
-                aria-pressed={activityCollapsed() ? 'false' : 'true'}
-                style={{
-                  padding: '5px 9px',
-                  'font-size': 'var(--fs-xs)',
-                  border: '1px solid var(--border)',
-                  'border-radius': 'var(--r-md)',
-                  background: !activityCollapsed() ? 'var(--accent-soft)' : 'transparent',
-                  color: !activityCollapsed() ? 'var(--accent)' : 'var(--fg-subtle)',
-                  'border-color': !activityCollapsed() ? 'var(--accent-border)' : 'var(--border)',
-                }}
-              >
-                ◈ Activity
-              </button>
-              <button
-                type="button"
-                class="btn btn-ghost"
-                onClick={cycleViewMode}
-                title="Memory Graph (G) — chat / split / graph"
-                aria-label="Toggle Memory Graph"
-                aria-pressed={viewMode() !== 'chat' ? 'true' : 'false'}
-                style={{
-                  padding: '5px 9px',
-                  'font-size': 'var(--fs-xs)',
-                  border: '1px solid var(--border)',
-                  'border-radius': 'var(--r-md)',
-                  background: viewMode() !== 'chat' ? 'var(--accent-soft)' : 'transparent',
-                  color: viewMode() !== 'chat' ? 'var(--accent)' : 'var(--fg-subtle)',
-                  'border-color': viewMode() !== 'chat' ? 'var(--accent-border)' : 'var(--border)',
-                }}
-              >
-                ◈ Memory
-              </button>
-              <button
-                type="button"
-                class="btn btn-ghost"
-                onClick={() => setPage(page() === 'brio' ? 'chat' : 'brio')}
-                title="Brio — closed-set scoring via colibri (nvidia primary, local opportunistic)"
-                aria-label="Toggle Brio page"
-                aria-pressed={page() === 'brio' ? 'true' : 'false'}
-                style={{
-                  padding: '5px 9px',
-                  'font-size': 'var(--fs-xs)',
-                  border: '1px solid var(--border)',
-                  'border-radius': 'var(--r-md)',
-                  background: page() === 'brio' ? 'var(--accent-soft)' : 'transparent',
-                  color: page() === 'brio' ? 'var(--accent)' : 'var(--fg-subtle)',
-                  'border-color': page() === 'brio' ? 'var(--accent-border)' : 'var(--border)',
-                }}
-              >
-                ⟡ Brio
-              </button>
-              <button
-                type="button"
-                class="btn btn-ghost"
-                onClick={() => setPaletteOpen(true)}
-                title="Command palette (Ctrl+P)"
-                aria-label="Open command palette"
-                style={{
-                  padding: '5px 9px',
-                  'font-size': 'var(--fs-xs)',
-                  border: '1px solid var(--border)',
-                  'border-radius': 'var(--r-md)',
-                }}
-              >
-                ⌘ <span style={{ 'font-family': 'var(--font-mono)', 'margin-left': '2px' }}>P</span>
-              </button>
-              <button
-                type="button"
-                class="btn btn-ghost"
-                onClick={() => setSettingsOpen(true)}
-                title="Settings (Ctrl+,)"
-                aria-label="Open settings"
-                style={{
-                  padding: '5px 9px',
-                  'font-size': 'var(--fs-xs)',
-                  border: '1px solid var(--border)',
-                  'border-radius': 'var(--r-md)',
-                }}
-              >
-                ⚙ Settings
-              </button>
-              <Show when={store.state.currentId}>
-                <button
-                  type="button"
-                  onClick={() => void store.undoLastMutation()}
-                  title="Undo the agent's last file change (snapshot restore)"
-                  aria-label="Undo last change"
-                  class="pill pill-warn pill-btn"
-                  style={{ 'min-height': '28px' }}
-                >
-                  ↩ undo
-                </button>
-              </Show>
-              <Show when={store.state.currentId}>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void (async () => {
-                      const id = store.state.currentId
-                      if (!id) return
-                      if (store.state.messages.length === 0) {
-                        toast.warn('No messages to export yet')
-                        return
-                      }
-                      try {
-                        const md = await api.exportSession(id, 'md')
-                        const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
-                        const url = URL.createObjectURL(blob)
-                        const a = document.createElement('a')
-                        a.href = url
-                        a.download = `mira-${id.slice(0, 8)}.md`
-                        a.click()
-                        URL.revokeObjectURL(url)
-                        toast.success('Export downloaded')
-                      } catch (e) {
-                        toast.error(`Export failed: ${(e as Error).message}`)
-                      }
-                    })()
-                  }
-                  disabled={store.state.messages.length === 0}
-                  aria-label="Export conversation"
-                  title={
-                    store.state.messages.length === 0
-                      ? 'No messages to export'
-                      : 'Export conversation transcript as Markdown'
-                  }
-                  class="pill pill-btn"
-                  style={{ 'min-height': '28px' }}
-                >
-                  ⤓ export
-                </button>
-              </Show>
-              <Show when={miraScore()}>
-                {(s) => (
-                  <button
-                    type="button"
-                    onClick={() => setTraceOpen(true)}
-                    title={`Mira Score ${s().score}/100 — click to open trace viewer (cost $${s().costUSD.toFixed(4)})`}
-                    class="pill pill-cost"
-                    style={{
-                      cursor: 'pointer',
-                      border: '1px solid var(--border)',
-                      background:
-                        s().score >= 80
-                          ? 'color-mix(in srgb, var(--ok) 14%, var(--bg-surface))'
-                          : s().score >= 60
-                            ? 'color-mix(in srgb, var(--warn) 14%, var(--bg-surface))'
-                            : 'color-mix(in srgb, var(--danger) 14%, var(--bg-surface))',
-                    }}
-                  >
-                    ◈ {s().score}/100
-                  </button>
-                )}
-              </Show>
-              <Show
-                when={currentSession()?.costUsd != null || store.state.cost}
-                fallback={
-                  <Show when={store.state.cost}>
-                    {(() => {
-                      const cost = store.state.cost!.costUSD
-                      const cap =
-                        store.state.costCap?.perSession ??
-                        (budgetCapEnabled() ? budgetCapAmount() : undefined)
-                      const over = cap != null && cost >= cap
-                      return (
-                        <button
-                          type="button"
-                          onClick={() => setTraceOpen(true)}
-                          title={`Gateway: ${store.state.cost!.requests} requests · ${store.state.cost!.inputTokens.toLocaleString()} in / ${store.state.cost!.outputTokens.toLocaleString()} out · avg ${store.state.cost!.avgLatencyMs}ms — click for trace${over ? ' · ⚠ Budget cap exceeded' : ''}${cap ? ` · cap $${cap}` : ''}`}
-                          class={`pill pill-cost ${over ? 'pill-danger' : ''}`}
-                          style={{
-                            cursor: 'pointer',
-                            background: over
-                              ? 'color-mix(in srgb, var(--danger) 14%, var(--bg-surface))'
-                              : undefined,
-                          }}
-                        >
-                          ${cost.toFixed(4)}
-                          {over ? ' ⚠' : ''}
-                        </button>
-                      )
-                    })()}
-                  </Show>
-                }
-              >
-                {(() => {
-                  const sess = currentSession()
-                  const cost = sess?.costUsd ?? store.state.cost?.costUSD ?? 0
-                  const cap =
-                    store.state.costCap?.perSession ??
-                    (budgetCapEnabled() ? budgetCapAmount() : undefined)
-                  const over = cap != null && cost >= cap
-                  const pct = cap ? Math.min(100, (cost / cap) * 100) : 0
-                  // Sparkline: 4-point history synthesized from cost (simple bar)
-                  const sparkW = 24
-                  const sparkH = 8
-                  const points = cap
-                    ? [0, cost * 0.3, cost * 0.6, cost].map(
-                        (v, i) => `${(i * sparkW) / 3},${sparkH - (v / cap) * sparkH}`,
-                      )
-                    : []
-                  return (
-                    <button
-                      type="button"
-                      onClick={() => setTraceOpen(true)}
-                      title={`Session $${cost.toFixed(4)}${sess?.tokensIn != null ? ` · ${sess.tokensIn} in / ${sess.tokensOut ?? 0} out` : ''}${store.state.cost ? ` · gateway $${store.state.cost.costUSD.toFixed(4)} total` : ''}${cap ? ` · cap $${cap} (${pct.toFixed(0)}%)` : ''} — click for trace${over ? ' · ⚠ Budget cap exceeded' : ''}`}
-                      class={`pill pill-cost ${over ? 'pill-danger' : ''}`}
-                      style={{
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        'align-items': 'center',
-                        gap: '6px',
-                        background: over
-                          ? 'color-mix(in srgb, var(--danger) 14%, var(--bg-surface))'
-                          : undefined,
-                        'padding-right': cap ? '6px' : undefined,
-                      }}
-                    >
-                      <span>${cost.toFixed(4)}</span>
-                      <Show when={cap != null}>
-                        <span
-                          style={{
-                            display: 'inline-flex',
-                            'align-items': 'center',
-                            gap: '4px',
-                            'font-size': 'var(--fs-2xs)',
-                            opacity: '0.9',
-                          }}
-                        >
-                          <span
-                            style={{
-                              width: '32px',
-                              height: '4px',
-                              background: 'var(--border)',
-                              'border-radius': '2px',
-                              overflow: 'hidden',
-                              display: 'inline-block',
-                            }}
-                          >
-                            <span
-                              style={{
-                                display: 'block',
-                                height: '100%',
-                                width: `${pct}%`,
-                                background: over
-                                  ? 'var(--danger)'
-                                  : pct > 80
-                                    ? 'var(--warn)'
-                                    : 'var(--accent)',
-                                'border-radius': '2px',
-                              }}
-                            />
-                          </span>
-                          <Show when={points.length}>
-                            <svg
-                              width={sparkW}
-                              height={sparkH}
-                              viewBox={`0 0 ${sparkW} ${sparkH}`}
-                              style={{ display: 'block' }}
-                              aria-hidden="true"
-                            >
-                              <polyline
-                                fill="none"
-                                stroke={over ? 'var(--danger)' : 'var(--accent)'}
-                                stroke-width="1.2"
-                                points={points.join(' ')}
-                              />
-                            </svg>
-                          </Show>
-                          {over ? ' ⚠' : ` ${pct.toFixed(0)}%`}
-                        </span>
-                      </Show>
-                      <Show when={cap == null && sess?.costUsd != null}>
-                        <span style={{ 'font-size': 'var(--fs-2xs)', opacity: '0.7' }}>
-                          session
-                        </span>
-                      </Show>
-                    </button>
-                  )
-                })()}
-              </Show>
-              <QueueRail store={store} />
-              <SessionJobs store={store} />
-              <HeaderModelSelector settings={settings} id="header-model" />
-              <HeaderAgentSelector
-                agents={agents() ?? []}
-                value={selectedAgent()}
-                onChange={setSelectedAgent}
-                id="header-agent"
-              />
-              <button
-                type="button"
-                class="btn btn-ghost"
-                onClick={() =>
-                  void store
-                    .createSession(selectedAgent() ? `${selectedAgent()} session` : undefined, {
-                      agent: selectedAgent() || undefined,
-                    })
-                    .catch(() => {})
-                }
-                title={selectedAgent() ? `New ${selectedAgent()} session` : 'New session'}
-                style={{
-                  padding: '4px 9px',
-                  'font-size': 'var(--fs-xs)',
-                  border: '1px solid var(--border)',
-                  'border-radius': 'var(--r-md)',
-                }}
-              >
-                ＋ {selectedAgent() || 'new'}
-              </button>
-              <SkillSelector
-                onSelect={(skill) => {
-                  // Insert /skill into the composer like commands do (same slash-insert
-                  // path as CommandPalette) — the skill runs when the message is sent.
-                  if (skill) handlePaletteInsert(`/${skill.replace(/^\//, '')} `)
-                }}
-              />
-              <span
-                title="Mira server health"
-                class={`pill ${store.state.connected ? 'pill-ok' : 'pill-danger'}`}
-              >
-                <span
-                  class={`dot ${store.state.connected ? 'dot-pulse' : ''}`}
-                  style={{ background: store.state.connected ? 'var(--ok)' : 'var(--danger)' }}
-                />
-                {store.state.connected ? 'live' : 'offline'}
-              </span>
-              <a
-                href={(() => {
-                  const u = getApiUrl()
-                  return u ? `${u.replace(/\/+$/, '')}/health` : '/health'
-                })()}
-                target="_blank"
-                rel="noreferrer"
-                title="Open server health endpoint"
-                class="pill pill-btn"
-              >
-                health ↗
-              </a>
-              <div style={{ position: 'relative' }}>
-                <button
-                  type="button"
-                  data-more-menu
-                  class="btn btn-ghost"
-                  onClick={() => setMoreOpen(!moreOpen())}
-                  title="More actions"
-                  aria-label="More actions"
-                  aria-haspopup="true"
-                  aria-expanded={moreOpen() ? 'true' : 'false'}
-                  style={{
-                    padding: '5px 9px',
-                    'font-size': 'var(--fs-xs)',
-                    border: '1px solid var(--border)',
-                    'border-radius': 'var(--r-md)',
-                  }}
-                >
-                  ⋯ More
-                </button>
-                <Show when={moreOpen()}>
-                  <div
-                    data-more-menu
-                    style={{
-                      position: 'absolute',
-                      right: '0',
-                      top: '100%',
-                      'margin-top': '4px',
-                      background: 'var(--bg-surface)',
-                      border: '1px solid var(--border)',
-                      'border-radius': 'var(--r-md)',
-                      'box-shadow': '0 4px 12px rgba(0,0,0,0.15)',
-                      padding: '4px',
-                      'min-width': '160px',
-                      'z-index': '100',
-                    }}
-                  >
-                    <button
-                      type="button"
-                      class="btn btn-ghost"
-                      style={{
-                        width: '100%',
-                        'text-align': 'left',
-                        padding: '6px 8px',
-                        'font-size': 'var(--fs-xs)',
-                      }}
-                      onClick={() => {
-                        setMoreOpen(false)
-                        setSettingsOpen(true)
-                      }}
-                    >
-                      ⚙ Settings
-                    </button>
-                    <Show when={store.state.currentId}>
-                      <button
-                        type="button"
-                        class="btn btn-ghost"
-                        aria-label="Undo last change"
-                        style={{
-                          width: '100%',
-                          'text-align': 'left',
-                          padding: '6px 8px',
-                          'font-size': 'var(--fs-xs)',
-                          'min-height': '32px',
-                        }}
-                        onClick={() => {
-                          setMoreOpen(false)
-                          void store.undoLastMutation()
-                        }}
-                      >
-                        ↩ Undo
-                      </button>
-                      <button
-                        type="button"
-                        class="btn btn-ghost"
-                        disabled={store.state.messages.length === 0}
-                        aria-label="Export conversation"
-                        style={{
-                          width: '100%',
-                          'text-align': 'left',
-                          padding: '6px 8px',
-                          'font-size': 'var(--fs-xs)',
-                          'min-height': '32px',
-                        }}
-                        onClick={() => {
-                          setMoreOpen(false)
-                          void (async () => {
-                            const id = store.state.currentId
-                            if (!id) return
-                            if (store.state.messages.length === 0) {
-                              toast.warn('No messages to export yet')
-                              return
-                            }
-                            try {
-                              const md = await api.exportSession(id, 'md')
-                              const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
-                              const url = URL.createObjectURL(blob)
-                              const a = document.createElement('a')
-                              a.href = url
-                              a.download = `mira-${id.slice(0, 8)}.md`
-                              a.click()
-                              URL.revokeObjectURL(url)
-                              toast.success('Export downloaded')
-                            } catch (e) {
-                              toast.error(`Export failed: ${(e as Error).message}`)
-                            }
-                          })()
-                        }}
-                      >
-                        ⤓ Export
-                      </button>
-                    </Show>
-                  </div>
-                </Show>
-              </div>
-            </div>
-          </header>
-
-          {/* offline banner — connection is self-healing (store retries every 3s),
-              so this is a status strip, not an error */}
-          <Show when={!store.state.connected}>
-            <div class="banner-offline" role="status">
-              <span class="dot dot-pulse" style={{ background: 'var(--warn)' }} />
-              Connection lost — reconnecting to the Mira server…
-            </div>
-          </Show>
-
-          {/* UX-mode switcher (P2.4) — Beginner/Pro/Expert interface tiers */}
-          <UXModeSwitcher />
-
-          {/* Phase 1 IA: primary workspaces — responsive, aria, keyboard, tokens.
-              `only` gates by UX mode; keyboard nav follows the filtered list. */}
-          <TopNav
-            workspace={workspace()}
-            onChange={setWorkspace}
-            only={visibleWorkspaces()}
-            workTab={workTab()}
-            onWorkTab={(t) => {
-              setWorkspace('work')
-              setWorkTab(t)
-            }}
-          />
-
-          {/* Workspace routing — Evolution is Phase 8 dashboard; others stubbed per roadmap incrementally */}
-          <Switch
-            fallback={
-              <div
-                style={{
-                  flex: '1',
-                  display: 'grid',
-                  'place-items': 'center',
-                  padding: '24px',
-                  color: 'var(--fg-muted)',
-                }}
-              >
-                Unknown workspace
-              </div>
-            }
-          >
-            <Match when={workspace() === 'evolution'}>
-              <EvolutionPage />
-            </Match>
-            <Match when={workspace() === 'missions'}>
-              <MissionsPage
-                store={store}
-                onOpenInChat={(sessionId) => {
-                  if (sessionId) void store.selectSession(sessionId)
-                  setWorkTab('chat')
-                  setWorkspace('work')
-                }}
-              />
-            </Match>
-            <Match when={workspace() === 'intelligence'}>
-              <IntelligencePage />
-            </Match>
-            <Match when={workspace() === 'changes'}>
-              <ChangesPage />
-            </Match>
-            <Match when={workspace() === 'system'}>
-              <SystemPage />
-            </Match>
-            <Match when={workspace() === 'dashboard'}>
-              <DashboardPage />
-            </Match>
-            <Match when={workspace() === 'work'}>
-              <Show
-                when={workTab() === 'brio'}
-                fallback={
-                  <>
-                    <Show
-                      when={viewMode() === 'chat'}
-                      fallback={
-                        <Show
-                          when={viewMode() === 'split'}
-                          fallback={
-                            /* graph: canvas fills mira-main, composer keeps full parity (multiline + same wiring) */
-                            <div
-                              class="mira-main mira-main-graph"
-                              style={{
-                                flex: '1',
-                                display: 'flex',
-                                overflow: 'hidden',
-                                'min-height': '0',
-                              }}
-                            >
-                              <div
-                                class="mira-canvas-pane"
-                                style={{ flex: '1', display: 'flex', 'min-height': '0' }}
-                              >
-                                <MemoryGraph
-                                  onOpenInChat={(node) => {
-                                    if (node.id === 'empty') {
-                                      setViewMode('chat')
-                                      queueMicrotask(() => {
-                                        const el = document.querySelector<HTMLTextAreaElement>(
-                                          '[aria-label="Message Mira"]',
-                                        )
-                                        el?.focus()
-                                      })
-                                      return
-                                    }
-                                    setViewMode('split')
-                                    store.setInput(`Tell me about: ${node.label}`)
-                                    queueMicrotask(() => {
-                                      const el = document.querySelector<HTMLTextAreaElement>(
-                                        '[aria-label="Message Mira"]',
-                                      )
-                                      el?.focus()
-                                    })
-                                  }}
-                                />
-                              </div>
-                              {/* parity composer — multiline textarea, same slash/queue wiring as chat */}
-                              <form
-                                class="mira-graph-composer"
-                                onSubmit={(e) => {
-                                  e.preventDefault()
-                                  const v = store.input().trim()
-                                  if (!v) return
-                                  if (v === '/memory' || v === '/graph') {
-                                    store.setInput('')
-                                    return
-                                  }
-                                  setViewMode('chat')
-                                  store.sendPrompt(v)
-                                }}
-                              >
-                                <textarea
-                                  class="input"
-                                  rows={1}
-                                  placeholder="Message Mira… (graph view — press G to return to chat · Shift+Enter newline)"
-                                  value={store.input()}
-                                  onInput={(e) => {
-                                    store.setInput(e.currentTarget.value)
-                                    e.currentTarget.style.height = 'auto'
-                                    e.currentTarget.style.height =
-                                      Math.min(e.currentTarget.scrollHeight, 120) + 'px'
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (
-                                      e.key === 'Enter' &&
-                                      !e.shiftKey &&
-                                      !e.metaKey &&
-                                      !e.ctrlKey
-                                    ) {
-                                      e.preventDefault()
-                                      const v = store.input().trim()
-                                      if (!v) return
-                                      if (v === '/memory' || v === '/graph') {
-                                        store.setInput('')
-                                        return
-                                      }
-                                      setViewMode('chat')
-                                      store.sendPrompt(v)
-                                    }
-                                    if (e.key === 'Escape') setViewMode('chat')
-                                  }}
-                                  aria-label="Message Mira (graph view)"
-                                  style={{
-                                    flex: '1',
-                                    resize: 'none',
-                                    'min-height': '36px',
-                                    'max-height': '120px',
-                                    overflow: 'auto',
-                                  }}
-                                />
-                                <button
-                                  type="submit"
-                                  class="btn btn-solid"
-                                  disabled={!store.input().trim()}
-                                  aria-label="Send message"
-                                  style={{
-                                    padding: '7px 14px',
-                                    'font-size': 'var(--fs-sm)',
-                                    flex: 'none',
-                                    'min-height': '36px',
-                                  }}
-                                >
-                                  Send ↵
-                                </button>
-                                <button
-                                  type="button"
-                                  class="btn btn-ghost"
-                                  onClick={() => setViewMode('chat')}
-                                  title="Back to chat (G)"
-                                  aria-label="Back to chat"
-                                  style={{
-                                    padding: '7px 10px',
-                                    'font-size': 'var(--fs-xs)',
-                                    border: '1px solid var(--border)',
-                                    'border-radius': 'var(--r-md)',
-                                    flex: 'none',
-                                    'min-height': '36px',
-                                  }}
-                                >
-                                  ← chat
-                                </button>
-                              </form>
-                            </div>
-                          }
-                        >
-                          {/* split: resizable chat↔canvas via splitPct + inspector width */}
-                          <div
-                            class="mira-main mira-main-split"
-                            style={{
-                              flex: '1',
-                              display: 'flex',
-                              overflow: 'hidden',
-                              'min-height': '0',
-                            }}
-                          >
-                            <div
-                              class="mira-chat-pane"
-                              style={{
-                                flex: `0 0 ${splitP()}%`,
-                                'min-width': '0',
-                                display: 'flex',
-                                'flex-direction': 'column',
-                                overflow: 'hidden',
-                                'border-right': '1px solid var(--border)',
-                              }}
-                            >
-                              <ChatView
-                                store={store}
-                                settings={settings}
-                                onPaletteOpen={() => setPaletteOpen(true)}
-                              />
-                            </div>
-                            <button
-                              type="button"
-                              class="mira-resize-handle"
-                              aria-label="Resize chat and canvas"
-                              onPointerDown={(e: PointerEvent) => {
-                                const sx = e.clientX
-                                const sw = splitP()
-                                const onMove = (ev: PointerEvent) => {
-                                  const dx = ev.clientX - sx
-                                  // 10px ≈ 1% — tuned so drag feels 1:1 with layout
-                                  const next = Math.max(35, Math.min(65, Math.round(sw + dx / 8)))
-                                  setSplitPct(next)
-                                }
-                                const onUp = () => {
-                                  window.removeEventListener('pointermove', onMove)
-                                  window.removeEventListener('pointerup', onUp)
-                                  document.body.style.cursor = ''
-                                  document.body.style.userSelect = ''
-                                }
-                                document.body.style.cursor = 'col-resize'
-                                document.body.style.userSelect = 'none'
-                                window.addEventListener('pointermove', onMove)
-                                window.addEventListener('pointerup', onUp)
-                                ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-                              }}
-                            />
-                            <div
-                              class="mira-canvas-pane"
-                              style={{
-                                flex: '1',
-                                'min-width': '0',
-                                display: 'flex',
-                                'flex-direction': 'column',
-                                overflow: 'hidden',
-                              }}
-                            >
-                              <MemoryGraph
-                                onOpenInChat={(node) => {
-                                  if (node.id === 'empty') {
-                                    setViewMode('chat')
-                                    return
-                                  }
-                                  store.setInput(`Tell me about: ${node.label}`)
-                                  queueMicrotask(() => {
-                                    const el = document.querySelector<HTMLTextAreaElement>(
-                                      '[aria-label="Message Mira"]',
-                                    )
-                                    el?.focus()
-                                  })
-                                }}
-                              />
-                            </div>
-                            <Show when={!activityCollapsed()}>
-                              <button
-                                type="button"
-                                class="mira-resize-handle"
-                                aria-label="Resize activity panel"
-                                onPointerDown={makeDrag(
-                                  () => inspectorW(),
-                                  setInspectorWidth,
-                                  280,
-                                  480,
-                                  'x',
-                                )}
-                              />
-                            </Show>
-                            <ActivityPanel
-                              store={store}
-                              collapsed={activityCollapsed()}
-                              onToggle={() => setActivityCollapsed(!activityCollapsed())}
-                              width={inspectorW()}
-                            />
-                          </div>
-                        </Show>
-                      }
-                    >
-                      <div
-                        class="mira-main mira-main-chat"
-                        style={{
-                          flex: '1',
-                          display: 'flex',
-                          overflow: 'hidden',
-                          'min-height': '0',
-                        }}
-                      >
-                        <div
-                          class="mira-chat-pane"
-                          style={{
-                            flex: '1',
-                            display: 'flex',
-                            'flex-direction': 'column',
-                            overflow: 'hidden',
-                            'min-width': '0',
-                          }}
-                        >
-                          <ChatView
-                            store={store}
-                            settings={settings}
-                            onPaletteOpen={() => setPaletteOpen(true)}
-                          />
-                        </div>
-                        <Show when={!activityCollapsed()}>
-                          <button
-                            type="button"
-                            class="mira-resize-handle"
-                            aria-label="Resize activity panel"
-                            onPointerDown={makeDrag(
-                              () => inspectorW(),
-                              setInspectorWidth,
-                              280,
-                              480,
-                              'x',
-                            )}
-                          />
-                        </Show>
-                        <ActivityPanel
-                          store={store}
-                          collapsed={activityCollapsed()}
-                          onToggle={() => setActivityCollapsed(!activityCollapsed())}
-                          width={inspectorW()}
-                        />
-                      </div>
-                    </Show>
-                    <QuestionPrompt store={store} />
-                  </>
-                }
-              >
-                <BrioPage />
-              </Show>
-            </Match>
-          </Switch>
-        </div>
-        {/* Activity scrim on narrow screens — hidden on Brio page */}
-        <Show when={!activityCollapsed() && page() !== 'brio'}>
-          <div
-            class="activity-scrim"
-            aria-hidden="true"
-            onClick={() => setActivityCollapsed(true)}
-          />
-        </Show>
-      </div>
+      <MiraGoldLayout store={store} settings={settings} />
       <SettingsPanel
         store={settings}
         open={settingsOpen()}

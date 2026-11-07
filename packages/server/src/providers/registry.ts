@@ -308,7 +308,7 @@ export class ProviderRegistry {
     // retryable errors should fallback after retries exhausted
     if (cls === 'retryable') return true
     // also check explicit codes
-    if (error.code === 'RATE_LIMITED' || error.code === 'TIMEOUT') return true
+    if (error.code === 'RATE_LIMITED' || error.code === 'TIMEOUT' || error.code === 'NO_API_KEY') return true
     return false
   }
 

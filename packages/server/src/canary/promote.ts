@@ -88,6 +88,21 @@ export class CanaryPromoter {
     const latest = latestArr.slice(-1)[0] ?? baseline
     const health = this.monitor.getStatus(canaryId) ?? this.monitor.checkGates(baseline, latest)
 
+    // Candidate-specific traffic check: require actual candidate traffic samples
+    // A canary with zero candidate traffic or no traffic allocation cannot be verified
+    if (rec.traffic <= 0) {
+      return {
+        decision: 'rollback',
+        reason: `rollback: canary traffic is 0% — no candidate traffic routed`,
+      }
+    }
+    if (latestArr.length === 0) {
+      return {
+        decision: 'rollback',
+        reason: `rollback: no canary traffic samples recorded for ${canaryId} — real candidate execution required`,
+      }
+    }
+
     // circuit / health gate
     if (health === 'failed') {
       return {

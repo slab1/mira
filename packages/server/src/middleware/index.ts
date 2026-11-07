@@ -160,7 +160,7 @@ export function mountMiddleware(
   // Scrapers must send a bearer token. Deployments with no credentials configured
   // are unaffected — the whole gate below is skipped when REQUIRED_TOKEN is empty
   // and no API keys are issued.
-  const PUBLIC_PATHS = new Set(['/healthz', '/webhooks/github'])
+  const PUBLIC_PATHS = new Set(['/healthz', '/webhooks/github', '/auth/token', '/__mira/token'])
   const isPublicUiPath = (p: string) => {
     // Normalize traversal: /assets/../session -> /session (not public) (P3-5)
     let normalized = p

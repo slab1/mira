@@ -27,7 +27,7 @@
 import type { JsonValue } from "../types/index.js"
 import type { VerificationResult } from "./verifier.js"
 
-export type Decision = "accept" | "reject"
+export type Decision = "accept" | "reject" | "blocked"
 
 export interface BaselineMetrics {
   successRate: number // 0..1 (task completion)
@@ -44,6 +44,8 @@ export interface CandidateMetrics {
   regressionRate: number
   securityViolations: number
   verified: boolean
+  /** Whether the metrics reflect measured evidence rather than synthetic heuristics */
+  measured?: boolean
 }
 
 export interface Evaluation {
@@ -79,14 +81,44 @@ export function evaluate(
   baseline: BaselineMetrics = DEFAULT_BASELINE,
   candidate?: Partial<CandidateMetrics>,
 ): Evaluation {
-  // Derive candidate from verification when not supplied
+  // Check if real candidate measurements are supplied either explicitly or via verification.benchmark
+  const hasRealMeasurement =
+    candidate?.measured ??
+    (candidate?.successRate !== undefined ||
+      (verification.benchmark?.successRate !== undefined && verification.benchmark.successRate > 0))
+
+  // Fail-closed (§4): Missing actual candidate measurements results in BLOCKED rather than PASS/heuristic
+  if (!hasRealMeasurement && !candidate?.successRate) {
+    const fallbackRate = verification.verified ? 0.91 : 0.82
+    const reason = `blocked: independent improvement verification requires measured candidate benchmarks — missing evidence (heuristic rate ${fallbackRate} is insufficient for promotion)`
+    return {
+      decision: "blocked",
+      reason,
+      scores: {
+        success: { baseline: baseline.successRate, candidate: 0, delta: -baseline.successRate, pass: false },
+        latency: { baseline: baseline.latencyMs, candidate: verification.benchmark?.latencyMs ?? 0, deltaPct: 0, pass: false },
+        cost: { baseline: baseline.costPerTask, candidate: baseline.costPerTask, deltaPct: 0, pass: true },
+        regression: { baseline: baseline.regressionRate, candidate: verification.regression ? 0.12 : 0.04, delta: 0, pass: !verification.regression },
+        security: { baseline: baseline.securityViolations, candidate: verification.security.passed ? 0 : 1, pass: verification.security.passed },
+      },
+      timestamp: Date.now(),
+      details: {
+        ...(typeof verification.details === "object" && verification.details !== null ? verification.details : {}),
+        blocked: true,
+        reason: "missing_measured_candidate_benchmark",
+      } as unknown as JsonValue,
+    }
+  }
+
+  // Derive candidate from measured benchmark or explicit candidate metrics
   const cand: CandidateMetrics = {
-    successRate: candidate?.successRate ?? (verification.verified ? 0.91 : 0.82),
+    successRate: candidate?.successRate ?? verification.benchmark?.successRate ?? 0,
     latencyMs: candidate?.latencyMs ?? (verification.benchmark?.latencyMs ?? 200),
     costPerTask: candidate?.costPerTask ?? (verification.benchmark?.costDelta ?? 0) + baseline.costPerTask,
     regressionRate: candidate?.regressionRate ?? (verification.regression ? 0.12 : 0.04),
     securityViolations: candidate?.securityViolations ?? (verification.security.passed ? 0 : 1),
     verified: candidate?.verified ?? verification.verified,
+    measured: true,
   }
 
   // Thresholds per spec: canary +20% / -0.5pp hit (MIRA_EVOLUTION_SPEC.md Promote policy)
