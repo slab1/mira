@@ -116,6 +116,50 @@ function readMiraEnvFile(): string | undefined {
 function token(): string {
   return process.env.MIRA_TOKEN ?? readMiraEnvFile() ?? ''
 }
+
+function secureMiraEnvPath(): string {
+  const { chmodSync, lstatSync, mkdirSync } = require('node:fs') as typeof import('node:fs')
+  const { join } = require('node:path') as typeof import('node:path')
+  const { homedir } = require('node:os') as typeof import('node:os')
+  const dir = join(homedir(), '.mira')
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  const dirStat = lstatSync(dir)
+  if (!dirStat.isDirectory() || dirStat.isSymbolicLink()) {
+    throw new Error('~/.mira must be a real directory, not a symlink')
+  }
+  chmodSync(dir, 0o700)
+  return join(dir, 'mira.env')
+}
+
+function readPrivateMiraEnvFile(path: string): string {
+  const { chmodSync, lstatSync, readFileSync } = require('node:fs') as typeof import('node:fs')
+  const stat = lstatSync(path)
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error('~/.mira/mira.env must be a regular file, not a symlink')
+  }
+  // Repair permissions before the credential contents are read.
+  chmodSync(path, 0o600)
+  return readFileSync(path, 'utf-8')
+}
+
+function writePrivateMiraEnvFile(path: string, contents: string): void {
+  const { chmodSync, lstatSync, writeFileSync } = require('node:fs') as typeof import('node:fs')
+  try {
+    const existing = lstatSync(path)
+    if (!existing.isFile() || existing.isSymbolicLink()) {
+      throw new Error('~/.mira/mira.env must be a regular file, not a symlink')
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  writeFileSync(path, contents, { encoding: 'utf-8', mode: 0o600 })
+  const stat = lstatSync(path)
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error('~/.mira/mira.env must be a regular file, not a symlink')
+  }
+  chmodSync(path, 0o600)
+}
+
 function authHeaders(): Record<string, string> {
   const t = token()
   return t ? { Authorization: `Bearer ${t}` } : {}
@@ -417,9 +461,7 @@ async function cmdSessionPrompt(opts: Record<string, string | boolean>): Promise
           // Surfaced (was silently dropped): tells the user WHY the loop stopped.
           const reason = String(j.reason ?? j.error ?? 'repeated identical steps')
           const tool = String(j.tool ?? '')
-          console.error(
-            `\n[doom-loop stopped]${tool ? ` tool=${tool}` : ''} ${reason}`.trimEnd(),
-          )
+          console.error(`\n[doom-loop stopped]${tool ? ` tool=${tool}` : ''} ${reason}`.trimEnd())
         } else if (event === 'finish') {
           // already streamed via text_delta, no duplicate
         } else if (
@@ -667,48 +709,37 @@ async function cmdFindingResolve(opts: Record<string, string | boolean>): Promis
 async function cmdLogin(opts: Record<string, string | boolean>): Promise<void> {
   const tokenValue = String(opts.token ?? opts.t ?? process.env.MIRA_TOKEN ?? '').trim()
   if (!tokenValue) {
-    console.error('login requires a token: mira login --token <token> (or MIRA_TOKEN=<token> mira login)')
+    console.error(
+      'login requires a token: mira login --token <token> (or MIRA_TOKEN=<token> mira login)',
+    )
     process.exit(1)
   }
-  const { join } = (await import('node:path')) as typeof import('node:path')
-  const { mkdirSync, writeFileSync, existsSync, readFileSync } =
-    (await import('node:fs')) as typeof import('node:fs')
-  const { homedir } = (await import('node:os')) as typeof import('node:os')
-  const fp = join(homedir(), '.mira', 'mira.env')
-  try {
-    mkdirSync(join(homedir(), '.mira'), { recursive: true })
-  } catch {}
+  const { existsSync } = require('node:fs') as typeof import('node:fs')
+  const fp = secureMiraEnvPath()
   // Preserve other keys already in mira.env; replace MIRA_TOKEN.
   let lines: string[] = []
   if (existsSync(fp)) {
-    try {
-      lines = readFileSync(fp, 'utf-8')
-        .split('\n')
-        .filter((l) => !l.match(/^\s*MIRA_TOKEN\s*=/))
-    } catch {}
+    lines = readPrivateMiraEnvFile(fp)
+      .split('\n')
+      .filter((l) => !l.match(/^\s*MIRA_TOKEN\s*=/))
   }
   while (lines.length && !lines[lines.length - 1].trim()) lines.pop()
   lines.push(`MIRA_TOKEN=${tokenValue}`)
-  writeFileSync(fp, lines.join('\n') + '\n')
+  writePrivateMiraEnvFile(fp, lines.join('\n') + '\n')
   console.log(`Saved MIRA_TOKEN to ${fp}`)
 }
 
 async function cmdLogout(): Promise<void> {
-  const { join } = (await import('node:path')) as typeof import('node:path')
-  const { existsSync, readFileSync, writeFileSync } =
-    (await import('node:fs')) as typeof import('node:fs')
-  const { homedir } = (await import('node:os')) as typeof import('node:os')
-  const fp = join(homedir(), '.mira', 'mira.env')
+  const { existsSync } = require('node:fs') as typeof import('node:fs')
+  const fp = secureMiraEnvPath()
   if (!existsSync(fp)) {
     console.log('Not logged in (no ~/.mira/mira.env)')
     return
   }
-  try {
-    const kept = readFileSync(fp, 'utf-8')
-      .split('\n')
-      .filter((l) => !l.match(/^\s*MIRA_TOKEN\s*=/))
-    writeFileSync(fp, kept.join('\n') + (kept.length ? '\n' : ''))
-  } catch {}
+  const kept = readPrivateMiraEnvFile(fp)
+    .split('\n')
+    .filter((l) => !l.match(/^\s*MIRA_TOKEN\s*=/))
+  writePrivateMiraEnvFile(fp, kept.join('\n') + (kept.length ? '\n' : ''))
   console.log('Logged out (MIRA_TOKEN removed)')
 }
 

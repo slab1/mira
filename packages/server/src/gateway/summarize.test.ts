@@ -1,5 +1,5 @@
 import { describe, test, expect, mock } from 'bun:test'
-import { extractiveFallback } from './summarize.js'
+import { extractiveFallback, summarizeWithFallback } from './summarize.js'
 import type { GatewayMessage } from './types.js'
 
 describe('extractiveFallback', () => {
@@ -79,5 +79,67 @@ describe('extractiveFallback', () => {
     ]
     const result = extractiveFallback(messages)
     expect(result).toContain('Last state: real state')
+  })
+})
+
+describe('summarizeWithFallback outbound URL validation', () => {
+  test('rejects a loopback provider URL without making a request', async () => {
+    const originalFetch = globalThis.fetch
+    const fetchMock = mock(() => Promise.resolve(new Response('{}')))
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    try {
+      await expect(
+        summarizeWithFallback(
+          [{ role: 'user', content: 'summarize this' }],
+          {
+            baseURL: 'http://127.0.0.1:8000/v1',
+            apiKey: 'test-key',
+            headers: {},
+            timeout: 1000,
+            modelID: 'test-model',
+            providerKey: 'custom',
+          },
+          ['test-key'],
+        ),
+      ).rejects.toMatchObject({ status: 403 })
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test('cancels a stalled response body when the provider timeout expires', async () => {
+    const originalFetch = globalThis.fetch
+    let canceled = false
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start() {},
+            cancel() {
+              canceled = true
+            },
+          }),
+        ),
+      ),
+    ) as unknown as typeof fetch
+    try {
+      const result = await summarizeWithFallback(
+        [{ role: 'user', content: 'summarize this' }],
+        {
+          baseURL: 'https://api.example.com/v1',
+          apiKey: 'test-key',
+          headers: {},
+          timeout: 15,
+          modelID: 'test-model',
+          providerKey: 'test-provider',
+        },
+        ['test-key'],
+      )
+      expect(result).toContain('Original task: summarize this')
+      expect(canceled).toBe(true)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })

@@ -43,9 +43,9 @@ const seedSession = (id: string, prompt: string) => {
   const now = Date.now()
   db.sqlite
     .prepare(
-      'INSERT OR IGNORE INTO sessions (id,title,model,provider,created_at,updated_at) VALUES (?,?,?,?,?,?)',
+      'INSERT OR IGNORE INTO sessions (id,title,model,provider,created_at,updated_at,cwd) VALUES (?,?,?,?,?,?,?)',
     )
-    .run(id, id, 'm', 'p', now, now)
+    .run(id, id, 'm', 'p', now, now, dir)
   db.sqlite
     .prepare('INSERT INTO messages (id, session_id, role, created_at) VALUES (?,?,?,?)')
     .run(`${id}-msg`, id, 'user', now)

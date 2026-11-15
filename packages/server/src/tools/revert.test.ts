@@ -64,9 +64,9 @@ const registry = async () => {
 const seedSession = (id: string) =>
   db.sqlite
     .prepare(
-      'INSERT OR IGNORE INTO sessions (id, title, model, provider, created_at, updated_at) VALUES (?,?,?,?,?,?)',
+      'INSERT OR IGNORE INTO sessions (id, title, model, provider, created_at, updated_at, cwd) VALUES (?,?,?,?,?,?,?)',
     )
-    .run(id, id, 'm', 'p', Date.now(), Date.now())
+    .run(id, id, 'm', 'p', Date.now(), Date.now(), dir)
 
 const ctx = (sessionID: string) => ({
   sessionID,

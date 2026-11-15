@@ -21,6 +21,7 @@ import { SubgatewayStatsCollector } from './stats.js'
 import { CircuitBreaker } from '../providers/circuit-breaker.js'
 import { priceFor } from '../providers/pricing.js'
 import { GlobalBus } from '../bus/index.js'
+import { isBlockedFetchUrl } from '../guardrails/index.js'
 
 export class SubgatewayError extends ProviderError {
   lane: string
@@ -66,6 +67,24 @@ export interface SubgatewayOptions {
 }
 
 type CircuitState = 'closed' | 'open' | 'half-open'
+
+async function readResponseTextWithTimeout(
+  response: Response,
+  timeout: Promise<never>,
+  onReader: (reader: ReadableStreamDefaultReader<Uint8Array>) => void,
+): Promise<string> {
+  if (!response.body) return ''
+  const reader = response.body.getReader()
+  onReader(reader)
+  const decoder = new TextDecoder()
+  let text = ''
+  while (true) {
+    const result = await Promise.race([reader.read(), timeout])
+    if (result.done) break
+    text += decoder.decode(result.value, { stream: true })
+  }
+  return text + decoder.decode()
+}
 
 /** Read the optional global costCap (not part of the base MiraConfig type). */
 function readGlobalCostCap(
@@ -921,79 +940,126 @@ export class Subgateway implements Gateway {
       const timeout = this.subConfig.timeout ?? resolved.timeout
       for (const key of keysToTry) {
         try {
-          const res = await fetch(`${resolved.baseURL.replace(/\/$/, '')}/chat/completions`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${key}`,
-              'HTTP-Referer': 'https://mira.ai',
-              'X-Title': 'Mira',
-              ...resolved.headers,
-            },
-            body: JSON.stringify({
-              model: resolved.modelID,
-              messages: [
-                ...(opts.system ? [{ role: 'system', content: opts.system }] : []),
-                { role: 'user', content: opts.prompt },
-              ],
-              max_tokens: opts.maxTokens ?? 1024,
-            }),
-            signal: AbortSignal.timeout(timeout),
-          })
-          if (!res.ok) {
-            const txt = (await res.text()).slice(0, 500)
-            const status = res.status
-            if (
-              (status === 429 || status === 401) &&
-              keysToTry.length > 1 &&
-              key !== keysToTry[keysToTry.length - 1]
-            ) {
-              lastError = new Error(`Gateway ${status}: ${txt}`)
-              continue
-            }
+          const fetchUrl = `${resolved.baseURL.replace(/\/$/, '')}/chat/completions`
+          const ssrfBlock = isBlockedFetchUrl(fetchUrl)
+          if (ssrfBlock) {
             throw new SubgatewayError({
-              message: `complete() ${status}: ${txt}`,
-              code:
-                status === 429 ? 'RATE_LIMITED' : status === 401 ? 'UNAUTHORIZED' : 'PROVIDER_ERROR',
+              message: `Gateway SSRF blocked: ${ssrfBlock}`,
+              code: 'PROVIDER_ERROR',
               provider: resolved.providerKey,
               lane: this.lane,
-              status,
+              status: 403,
             })
           }
-          const data = (await res.json()) as {
-            choices?: Array<{ message?: { content?: string } }>
-            usage?: { prompt_tokens?: number; completion_tokens?: number }
-          }
-          const text = data.choices?.[0]?.message?.content ?? ''
-          this.statsCollector.record(
-            resolved.modelID,
-            data.usage?.prompt_tokens ?? 0,
-            data.usage?.completion_tokens ?? 0,
-            Date.now() - t0,
-          )
-          if (opts.sessionID) {
-            const inTok = data.usage?.prompt_tokens ?? 0
-            const outTok = data.usage?.completion_tokens ?? 0
-            const [inputPrice, outputPrice] = priceFor(resolved.modelID)
-            const cost = (inTok * inputPrice + outTok * outputPrice) / 1_000_000
-            const sess = sessionCosts.get(opts.sessionID) ?? {
-              costUSD: 0,
-              inputTokens: 0,
-              outputTokens: 0,
-              requests: 0,
+          const controller = new AbortController()
+          let res: Response | undefined
+          let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+          let rejectTimeout!: (error: Error) => void
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            rejectTimeout = reject
+          })
+          const timer = setTimeout(() => {
+            rejectTimeout(new Error(`Provider request timed out after ${timeout}ms`))
+            controller.abort()
+            if (reader) void reader.cancel().catch(() => {})
+            else if (res?.body) void res.body.cancel().catch(() => {})
+          }, timeout)
+          try {
+            res = await Promise.race([
+              fetch(fetchUrl, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${key}`,
+                  'HTTP-Referer': 'https://mira.ai',
+                  'X-Title': 'Mira',
+                  ...resolved.headers,
+                },
+                body: JSON.stringify({
+                  model: resolved.modelID,
+                  messages: [
+                    ...(opts.system ? [{ role: 'system', content: opts.system }] : []),
+                    { role: 'user', content: opts.prompt },
+                  ],
+                  max_tokens: opts.maxTokens ?? 1024,
+                }),
+                signal: controller.signal,
+              }),
+              timeoutPromise,
+            ])
+            const responseText = await readResponseTextWithTimeout(
+              res,
+              timeoutPromise,
+              (bodyReader) => {
+                reader = bodyReader
+              },
+            )
+            if (!res.ok) {
+              const txt = responseText.slice(0, 500)
+              const status = res.status
+              if (
+                (status === 429 || status === 401) &&
+                keysToTry.length > 1 &&
+                key !== keysToTry[keysToTry.length - 1]
+              ) {
+                lastError = new Error(`Gateway ${status}: ${txt}`)
+                continue
+              }
+              throw new SubgatewayError({
+                message: `complete() ${status}: ${txt}`,
+                code:
+                  status === 429
+                    ? 'RATE_LIMITED'
+                    : status === 401
+                      ? 'UNAUTHORIZED'
+                      : 'PROVIDER_ERROR',
+                provider: resolved.providerKey,
+                lane: this.lane,
+                status,
+              })
             }
-            sess.costUSD += cost
-            sess.inputTokens += inTok
-            sess.outputTokens += outTok
-            sess.requests++
-            sessionCosts.set(opts.sessionID, sess)
-          }
-          this.recordSuccess()
-          this.recordProviderOutcome(resolved.providerKey, true, t0)
-          return {
-            text,
-            inputTokens: data.usage?.prompt_tokens,
-            outputTokens: data.usage?.completion_tokens,
+            const data = JSON.parse(responseText) as {
+              choices?: Array<{ message?: { content?: string } }>
+              usage?: { prompt_tokens?: number; completion_tokens?: number }
+            }
+            const text = data.choices?.[0]?.message?.content ?? ''
+            this.statsCollector.record(
+              resolved.modelID,
+              data.usage?.prompt_tokens ?? 0,
+              data.usage?.completion_tokens ?? 0,
+              Date.now() - t0,
+            )
+            if (opts.sessionID) {
+              const inTok = data.usage?.prompt_tokens ?? 0
+              const outTok = data.usage?.completion_tokens ?? 0
+              const [inputPrice, outputPrice] = priceFor(resolved.modelID)
+              const cost = (inTok * inputPrice + outTok * outputPrice) / 1_000_000
+              const sess = sessionCosts.get(opts.sessionID) ?? {
+                costUSD: 0,
+                inputTokens: 0,
+                outputTokens: 0,
+                requests: 0,
+              }
+              sess.costUSD += cost
+              sess.inputTokens += inTok
+              sess.outputTokens += outTok
+              sess.requests++
+              sessionCosts.set(opts.sessionID, sess)
+            }
+            this.recordSuccess()
+            this.recordProviderOutcome(resolved.providerKey, true, t0)
+            return {
+              text,
+              inputTokens: data.usage?.prompt_tokens,
+              outputTokens: data.usage?.completion_tokens,
+            }
+          } finally {
+            clearTimeout(timer)
+            if (reader) {
+              try {
+                reader.releaseLock()
+              } catch {}
+            }
           }
         } catch (e) {
           lastError = e as Error

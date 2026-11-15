@@ -609,6 +609,16 @@ const TOKEN_KEY = 'mira_token'
 // gate can never escape "Invalid token".
 const TOKEN_CLEARED_KEY = 'mira_token_cleared'
 
+function tokenWasCleared(): boolean {
+  try {
+    if (sessionStorage.getItem(TOKEN_CLEARED_KEY) === '1') return true
+  } catch {}
+  try {
+    if (localStorage.getItem(TOKEN_CLEARED_KEY) === '1') return true
+  } catch {}
+  return false
+}
+
 export class ApiError extends Error {
   status: number
   body: string
@@ -624,20 +634,24 @@ export async function ensureToken(): Promise<string> {
   const t = getToken()
   if (t && t !== 'dev-local-token-not-secret') return t
   try {
-    const res = await fetch('/auth/token').then((r) => r.json()).catch(() => null)
+    const res = await fetch('/auth/token')
+      .then((r) => r.json())
+      .catch(() => null)
     if (res?.token && res.token !== 'dev-local-token-not-secret') {
       setToken(res.token)
       return res.token
     }
   } catch {}
   try {
-    const res = await fetch('/__mira/token').then((r) => r.json()).catch(() => null)
+    const res = await fetch('/__mira/token')
+      .then((r) => r.json())
+      .catch(() => null)
     if (res?.token && res.token !== 'dev-local-token-not-secret') {
       setToken(res.token)
       return res.token
     }
   } catch {}
-  const envToken = (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
+  const envToken = tokenWasCleared() ? '' : ((import.meta.env.VITE_MIRA_TOKEN as string) ?? '')
   if (envToken && envToken !== 'dev-local-token-not-secret') {
     setToken(envToken)
     return envToken
@@ -649,7 +663,7 @@ export function getToken(): string {
   try {
     const stored = sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY)
     if (stored && stored !== 'dev-local-token-not-secret') return stored
-    const envToken = (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
+    const envToken = tokenWasCleared() ? '' : ((import.meta.env.VITE_MIRA_TOKEN as string) ?? '')
     if (envToken && envToken !== 'dev-local-token-not-secret') return envToken
     return stored || ''
   } catch {
@@ -661,14 +675,26 @@ export function setToken(token: string): void {
   try {
     if (token) {
       sessionStorage.setItem(TOKEN_KEY, token)
-      try { localStorage.setItem(TOKEN_KEY, token) } catch {}
-      try { sessionStorage.removeItem(TOKEN_CLEARED_KEY) } catch {}
-      try { localStorage.removeItem(TOKEN_CLEARED_KEY) } catch {}
+      try {
+        localStorage.setItem(TOKEN_KEY, token)
+      } catch {}
+      try {
+        sessionStorage.removeItem(TOKEN_CLEARED_KEY)
+      } catch {}
+      try {
+        localStorage.removeItem(TOKEN_CLEARED_KEY)
+      } catch {}
     } else {
       sessionStorage.removeItem(TOKEN_KEY)
-      try { localStorage.removeItem(TOKEN_KEY) } catch {}
-      try { sessionStorage.setItem(TOKEN_CLEARED_KEY, '1') } catch {}
-      try { localStorage.setItem(TOKEN_CLEARED_KEY, '1') } catch {}
+      try {
+        localStorage.removeItem(TOKEN_KEY)
+      } catch {}
+      try {
+        sessionStorage.setItem(TOKEN_CLEARED_KEY, '1')
+      } catch {}
+      try {
+        localStorage.setItem(TOKEN_CLEARED_KEY, '1')
+      } catch {}
     }
     // notify same-tab listeners (storage event only fires cross-tab)
     try {
@@ -680,7 +706,9 @@ export function setToken(token: string): void {
 export function clearTokenOn401(): void {
   try {
     sessionStorage.removeItem(TOKEN_KEY)
-    try { localStorage.removeItem(TOKEN_KEY) } catch {}
+    try {
+      localStorage.removeItem(TOKEN_KEY)
+    } catch {}
     try {
       sessionStorage.setItem(TOKEN_CLEARED_KEY, '1')
       localStorage.setItem(TOKEN_CLEARED_KEY, '1')
@@ -842,7 +870,9 @@ const TOOL_CACHE_TTL = 30_000
 let toolCache: { data: ToolInfo[]; ts: number } | null = null
 
 async function listToolsRaw(): Promise<ToolInfo[]> {
-  return req<ToolInfo[] | { tools: ToolInfo[] }>('/tools').then((r) => (Array.isArray(r) ? r : ((r as any)?.tools ?? [])))
+  return req<ToolInfo[] | { tools: ToolInfo[] }>('/tools').then((r) =>
+    Array.isArray(r) ? r : ((r as any)?.tools ?? []),
+  )
 }
 
 async function listToolsCached(): Promise<ToolInfo[]> {
@@ -1162,10 +1192,13 @@ export const api = {
       { method: 'POST' },
     ),
   testProviderCredentials: (body: { providerId: string; apiKey: string; baseURL?: string }) =>
-    req<{ ok: boolean; providerId?: string; modelCount?: number; latencyMs?: number; error?: string }>(
-      '/providers/test-credentials',
-      { method: 'POST', body: JSON.stringify(body) },
-    ),
+    req<{
+      ok: boolean
+      providerId?: string
+      modelCount?: number
+      latencyMs?: number
+      error?: string
+    }>('/providers/test-credentials', { method: 'POST', body: JSON.stringify(body) }),
   listProviderModels: (id: string) =>
     req<{ ok: boolean; models?: { id: string; name?: string }[]; error?: string }>(
       `/providers/${encodeURIComponent(id)}/models`,
@@ -1268,8 +1301,8 @@ export const api = {
       Array.isArray(r) ? r : ((r as any)?.agents ?? []),
     ),
   listCommands: () =>
-    req<CommandEntry[] | string[] | { commands: CommandEntry[] | string[] }>('/commands').then((r) =>
-      Array.isArray(r) ? r : ((r as any)?.commands ?? []),
+    req<CommandEntry[] | string[] | { commands: CommandEntry[] | string[] }>('/commands').then(
+      (r) => (Array.isArray(r) ? r : ((r as any)?.commands ?? [])),
     ),
   listSkills: () =>
     req<SkillEntry[] | string[] | { skills: SkillEntry[] | string[] }>('/skills').then((r) =>

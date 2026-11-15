@@ -31,6 +31,7 @@ jobs:
       server: ${{ steps.filter.outputs.server }}
       web: ${{ steps.filter.outputs.web }}
       slack: ${{ steps.filter.outputs.slack }}
+      deployment: ${{ steps.filter.outputs.deployment }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -43,6 +44,11 @@ jobs:
               - 'package.json'
               - 'bun.lock'
               - 'bunfig.toml'
+              - 'Dockerfile'
+              - '**/Dockerfile'
+              - 'docker-compose*'
+              - '.dockerignore'
+              - 'scripts/**'
             server:
               - 'packages/server/**'
               - 'packages/shared/**'
@@ -64,6 +70,11 @@ jobs:
               - 'bun.lock'
               - 'package.json'
               - 'bunfig.toml'
+            deployment:
+              - 'Dockerfile'
+              - '**/Dockerfile'
+              - 'docker-compose*'
+              - '.dockerignore'
 
   repo-hygiene:
     name: repo-hygiene
@@ -311,3 +322,21 @@ jobs:
             .turbo/**/eval-*.json
             packages/server/src/eval/results/**
           if-no-files-found: ignore
+
+  deployment-validation:
+    name: deployment-validation
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: ${{ needs.changes.outputs.deployment == 'true' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate staging Compose and build image
+        run: |
+          # The staging env file contains deployment secrets and is not committed.
+          # An empty temporary file is sufficient for structural config validation.
+          if [ ! -f .env.staging ]; then
+            touch .env.staging
+            trap 'rm -f .env.staging' EXIT
+          fi
+          docker compose -f docker-compose.staging.yml config --quiet
+          docker compose -f docker-compose.staging.yml build mira-server

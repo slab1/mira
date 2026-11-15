@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 
 # Dependencies stage (all deps — needed for build)
 FROM base AS deps
+ENV NODE_ENV=development
 COPY package.json bun.lock* ./
 COPY packages/server/package.json ./packages/server/
 COPY packages/shared/package.json ./packages/shared/

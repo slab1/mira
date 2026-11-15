@@ -7,6 +7,7 @@ import type { JsonValue } from '../types/index.js'
 import type { TodoStatus, TodoPriority } from '../types/index.js'
 import { isKnownAgent } from '../agents/templates.js'
 import { z } from 'zod'
+import { remapImportedSnapshotPath } from '../storage/snapshot-paths.js'
 import { desc, eq } from 'drizzle-orm'
 import { sessions } from '../storage/schema.js'
 import { sessionVisibleTo as sessionVisibleToRow } from '../auth/session-access.js'
@@ -225,7 +226,8 @@ export function mountSessionRoutes(
     if (typeof body.title === 'string' && body.title.trim()) patch.title = body.title.trim()
     if (typeof body.model === 'string' && body.model.trim()) patch.model = body.model.trim()
     if (typeof body.agent === 'string') {
-      if (body.agent && !isKnownAgent(body.agent)) return c.json({ error: `unknown agent "${body.agent}"` }, 400)
+      if (body.agent && !isKnownAgent(body.agent))
+        return c.json({ error: `unknown agent "${body.agent}"` }, 400)
       patch.agent = body.agent.trim() || null
     }
     await db
@@ -234,7 +236,11 @@ export function mountSessionRoutes(
       .where(eq(db.schema.sessions.id, id))
     const updated = await deps.authorizedSession(id, c)
     if (updated) {
-      bus.publish({ type: 'session.updated', payload: JSON.parse(JSON.stringify(updated)) as JsonValue, timestamp: Date.now() })
+      bus.publish({
+        type: 'session.updated',
+        payload: JSON.parse(JSON.stringify(updated)) as JsonValue,
+        timestamp: Date.now(),
+      })
     }
     return c.json(updated ?? { ok: true })
   })
@@ -366,7 +372,8 @@ export function mountSessionRoutes(
       agent: agent ?? undefined,
       ownerID: owner,
       orgID: owner ? (deps.orgOfOwner(owner) ?? null) : null,
-      cwd: srcSession.cwd ?? undefined,
+      // Imported cwd is untrusted; snapshots are rebased into this server workspace.
+      cwd: process.cwd(),
       projectId: srcSession.projectId ?? undefined,
     })
     let copiedMessages = 0
@@ -415,12 +422,14 @@ export function mountSessionRoutes(
     }
     let copiedSnapshots = 0
     for (const s of body.snapshots ?? []) {
+      const safePath = remapImportedSnapshotPath(s.path, srcSession.cwd, process.cwd())
+      if (!safePath) continue
       try {
         await db.insert(db.schema.fileSnapshots).values({
           id: crypto.randomUUID(),
           sessionID: created.id,
           messageID: s.messageID ?? null,
-          path: s.path,
+          path: safePath,
           content: s.content ?? null,
           createdAt: s.createdAt ?? Date.now(),
         })

@@ -21,6 +21,7 @@ async function mkSession(id: string) {
     title: id,
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    cwd: dir,
   })
 }
 
@@ -58,7 +59,7 @@ describe('snapshotFile', () => {
 
   test('returns null for unreadable paths', async () => {
     await mkSession('s1')
-    expect(snapshotFile(db, { sessionID: 's1', path: '/nonexistent-root-dir/x/y' })).not.toBeNull()
+    expect(snapshotFile(db, { sessionID: 's1', path: '/nonexistent-root-dir/x/y' })).toBeNull()
     expect(snapshotFile(db, { sessionID: 's1', path: '' })).toBeNull()
   })
 })
@@ -248,12 +249,26 @@ describe('getSnapshotContent', () => {
     const snap = snapshotFile(db, { sessionID: 's-detail', path: p })
     expect(snap).not.toBeNull()
 
-    const detail = getSnapshotContent(db, snap!.id)
+    const detail = getSnapshotContent(db, snap!.id, 's-detail')
     expect(detail).not.toBeNull()
     expect(detail!.path).toBe(p)
     expect(detail!.content).toBe('hello world snapshot')
     expect(detail!.existedBefore).toBe(true)
 
     expect(getSnapshotContent(db, 'nonexistent-id')).toBeNull()
+  })
+
+  test('refuses to restore a tampered snapshot outside the session workspace', async () => {
+    await mkSession('s-unsafe')
+    const outside = join(dir, '..', 'mira-outside-snapshot.txt')
+    writeFileSync(outside, 'must stay unchanged')
+    db.sqlite
+      .prepare(
+        'INSERT INTO file_snapshots (id, session_id, path, content, created_at) VALUES (?,?,?,?,?)',
+      )
+      .run('unsafe-row', 's-unsafe', outside, 'attacker content', Date.now())
+    expect(() => revertLast(db, 's-unsafe')).toThrow('outside the canonical session workspace')
+    expect(readFileSync(outside, 'utf-8')).toBe('must stay unchanged')
+    rmSync(outside, { force: true })
   })
 })

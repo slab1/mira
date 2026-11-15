@@ -11,6 +11,8 @@ import type { Bus } from '../bus/index.js'
 import type { KnowledgeBase } from '../learning/knowledge.js'
 import type { MiraDB } from '../storage/db.js'
 import { applyChange, isUnifiedDiff } from './apply-change.js'
+import { resolve } from 'node:path'
+import { safeWorkspacePath } from '../storage/snapshot-paths.js'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -49,7 +51,7 @@ export class Applier {
     config: ApplierConfig = {},
   ) {
     this.config = {
-      rootDir: config.rootDir ?? process.cwd(),
+      rootDir: resolve(config.rootDir ?? process.cwd()),
       dryRun: config.dryRun ?? false,
     }
   }
@@ -80,7 +82,18 @@ export class Applier {
       }
     }
 
-    const abs = `${this.config.rootDir}/${patch.targetFile}`
+    const abs = safeWorkspacePath(
+      resolve(this.config.rootDir, patch.targetFile),
+      this.config.rootDir,
+    )
+    if (!abs) {
+      return {
+        applied: false,
+        reason: `target is outside the configured project root: ${patch.targetFile}`,
+        patchId: patch.id,
+        targetFile: patch.targetFile,
+      }
+    }
     const file = Bun.file(abs)
     if (!(await file.exists())) {
       return {
@@ -102,7 +115,7 @@ export class Applier {
       try {
         this.deps.db.sqlite
           .prepare(
-            'INSERT OR IGNORE INTO sessions (id, title, model, provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+            'INSERT INTO sessions (id, title, model, provider, created_at, updated_at, cwd) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET cwd = excluded.cwd',
           )
           .run(
             EVOLUTION_SNAPSHOT_SESSION,
@@ -111,6 +124,7 @@ export class Applier {
             'p',
             Date.now(),
             Date.now(),
+            this.config.rootDir,
           )
         const { snapshotFile } = await import('../storage/snapshots.js')
         snapshotFile(this.deps.db, {
