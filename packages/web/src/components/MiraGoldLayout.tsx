@@ -13,6 +13,10 @@ import {
   type ProviderEntry,
   type MiraConfig,
 } from '../api/client'
+import { TopNav, type WorkspaceId } from './TopNav'
+import { WorkspaceRouter } from './WorkspaceRouter'
+import { HeaderModelSelector } from './HeaderSelectors'
+import { TerminalView } from './TerminalView'
 
 export function MiraGoldLayout(props: {
   store: AppStore
@@ -23,7 +27,6 @@ export function MiraGoldLayout(props: {
   const [activeSubTab, setActiveSubTab] = createSignal<string>('chat')
   const [searchQuery, setSearchQuery] = createSignal<string>('')
   const [inputPrompt, setInputPrompt] = createSignal<string>('')
-  const [savedDesign, setSavedDesign] = createSignal<boolean>(false)
   const [toastMessage, setToastMessage] = createSignal<string>('')
   const [loadingState, setLoadingState] = createSignal<boolean>(false)
 
@@ -32,13 +35,13 @@ export function MiraGoldLayout(props: {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = createSignal<boolean>(false)
   const [isRightSidebarOpen, setIsRightSidebarOpen] = createSignal<boolean>(false)
 
-  // System Stats State
-  const [activeAgentsCount, setActiveAgentsCount] = createSignal<number>(8)
-  const [tasksRunningCount, setTasksRunningCount] = createSignal<number>(2)
-  const [systemHealthPct, setSystemHealthPct] = createSignal<number>(99.9)
-  const [responseTimeMs, setResponseTimeMs] = createSignal<number>(42)
-  const [memoryUsageGb, setMemoryUsageGb] = createSignal<number>(1.2)
-  const [latencySec, setLatencySec] = createSignal<number>(0.3)
+  // System Stats State (Truth over confidence: null until backend evidence arrives)
+  const [activeAgentsCount, setActiveAgentsCount] = createSignal<number | null>(null)
+  const [tasksRunningCount, setTasksRunningCount] = createSignal<number | null>(null)
+  const [systemHealthPct, setSystemHealthPct] = createSignal<number | null>(null)
+  const [responseTimeMs, setResponseTimeMs] = createSignal<number | null>(null)
+  const [memoryUsageGb, setMemoryUsageGb] = createSignal<number | null>(null)
+  const [latencySec, setLatencySec] = createSignal<number | null>(null)
 
   // Real Backend Data Lists
   const [realAgents, setRealAgents] = createSignal<AgentEntry[]>([])
@@ -53,18 +56,8 @@ export function MiraGoldLayout(props: {
   const [providerList, setProviderList] = createSignal<ProviderEntry[]>([])
 
   // Interactive Modal States
-  const [show3DModal, setShow3DModal] = createSignal<boolean>(false)
-  const [showPatternModal, setShowPatternModal] = createSignal<boolean>(false)
-  const [showFabricsModal, setShowFabricsModal] = createSignal<boolean>(false)
-  const [showModifyModal, setShowModifyModal] = createSignal<boolean>(false)
   const [showSeedMemoryModal, setShowSeedMemoryModal] = createSignal<boolean>(false)
   const [showCheckGuardrailModal, setShowCheckGuardrailModal] = createSignal<boolean>(false)
-
-  // Design Customization State
-  const [sleeveChoice, setSleeveChoice] = createSignal<string>('Statement sleeves')
-  const [silhouetteChoice, setSilhouetteChoice] = createSignal<string>('Mermaid silhouette')
-  const [backChoice, setBackChoice] = createSignal<string>('Elegant back design')
-  const [styleChoice, setStyleChoice] = createSignal<string>('Modern Ankara style')
 
   // Inputs for modal operations
   const [seedTitle, setSeedTitle] = createSignal<string>('')
@@ -130,14 +123,19 @@ export function MiraGoldLayout(props: {
       }
       if (gatewayData?.gateway) {
         setGatewayHealth(gatewayData)
-        setResponseTimeMs(gatewayData.gateway.avgLatencyMs || 42)
-        setLatencySec(Number(((gatewayData.gateway.avgLatencyMs || 42) / 1000).toFixed(2)))
-        if (gatewayData.gateway.requests) {
-          setTasksRunningCount(Math.min(20, Math.max(2, gatewayData.gateway.requests)))
+        if (typeof gatewayData.gateway.avgLatencyMs === 'number') {
+          setResponseTimeMs(gatewayData.gateway.avgLatencyMs)
+          setLatencySec(Number((gatewayData.gateway.avgLatencyMs / 1000).toFixed(2)))
+        }
+        if (typeof gatewayData.gateway.requests === 'number') {
+          setTasksRunningCount(gatewayData.gateway.requests)
         }
       }
       if (healthData?.ok) {
-        setSystemHealthPct(99.9)
+        const score = typeof healthData.healthScore === 'number'
+          ? healthData.healthScore
+          : (healthData.status === 'healthy' || healthData.ok === true) ? 100 : null
+        setSystemHealthPct(score)
         if (healthData?.memoryUsage) {
           setMemoryUsageGb(Number((healthData.memoryUsage / 1024 / 1024 / 1024).toFixed(2)))
         }
@@ -222,6 +220,7 @@ export function MiraGoldLayout(props: {
 
   const workspaceSubTabs = [
     { id: 'chat', label: 'Chat', icon: '💬' },
+    { id: 'terminal', label: 'Terminal', icon: '▣' },
     { id: 'agents', label: 'Agents', icon: '⚙' },
     { id: 'tools', label: 'Tools', icon: '🎯' },
     { id: 'memory', label: 'Memory', icon: '🎛' },
@@ -232,11 +231,31 @@ export function MiraGoldLayout(props: {
     { id: 'settings', label: 'Settings', icon: '⚙' },
   ]
 
+  const [currentWorkspace, setCurrentWorkspace] = createSignal<WorkspaceId>('missions')
+
   const handleNavClick = (id: string) => {
     setActiveNav(id)
-    if (id === 'home') setActiveSubTab('chat')
-    else if (id === 'projects') setActiveSubTab('files')
-    else setActiveSubTab(id)
+    if (id === 'settings') {
+      window.dispatchEvent(new CustomEvent('mira:open-settings'))
+      setCurrentWorkspace('system')
+    } else if (id === 'home' || id === 'missions') {
+      setCurrentWorkspace('missions')
+    } else if (id === 'agents' || id === 'tools' || id === 'chat' || id === 'terminal') {
+      setCurrentWorkspace('work')
+      setActiveSubTab(id)
+    } else if (id === 'memory' || id === 'intelligence') {
+      setCurrentWorkspace('intelligence')
+    } else if (id === 'changes') {
+      setCurrentWorkspace('changes')
+    } else if (id === 'evolution') {
+      setCurrentWorkspace('evolution')
+    } else if (id === 'security') {
+      setCurrentWorkspace('system')
+    } else if (id === 'analytics' || id === 'dashboard') {
+      setCurrentWorkspace('dashboard')
+    } else {
+      setActiveSubTab(id)
+    }
 
     if (isMobileScreen()) {
       setIsMobileMenuOpen(false)
@@ -251,22 +270,7 @@ export function MiraGoldLayout(props: {
     setInputPrompt('')
   }
 
-  const handleSaveDesign = () => {
-    const nextState = !savedDesign()
-    setSavedDesign(nextState)
-    if (nextState) {
-      showToast('Design saved to project memory!')
-    } else {
-      showToast('Design removed from favorites.')
-    }
-  }
 
-  const applyModifyDesign = () => {
-    const promptText = `Modify Ankara gown design: ${styleChoice()}, ${silhouetteChoice()}, ${sleeveChoice()}, and ${backChoice()}.`
-    props.store.sendPrompt(promptText)
-    setShowModifyModal(false)
-    showToast('Sent design modification request to Mira Designer!')
-  }
 
   const handleSeedMemory = async (e: Event) => {
     e.preventDefault()
@@ -726,8 +730,39 @@ export function MiraGoldLayout(props: {
             />
           </div>
 
+          {/* Model Selector in Header */}
+          <Show when={!isMobileScreen()}>
+            <HeaderModelSelector settings={props.settings} />
+          </Show>
+
           {/* Right Header Controls */}
-          <div style={{ display: 'flex', 'align-items': 'center', gap: isMobileScreen() ? '8px' : '16px' }}>
+          <div style={{ display: 'flex', 'align-items': 'center', gap: isMobileScreen() ? '6px' : '12px' }}>
+            {/* Connect / Key Provider Setup */}
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent('mira:open-connect'))}
+              title="Provider Connections & API Keys"
+              style={{
+                background: '#0D111E',
+                border: '1px solid #1F273E',
+                color: '#F5D061',
+                padding: '6px 10px',
+                'border-radius': '8px',
+                'font-size': '12px',
+                'font-weight': '600',
+                cursor: 'pointer',
+                display: 'flex',
+                'align-items': 'center',
+                gap: '4px',
+                'min-height': '36px',
+              }}
+            >
+              <span>🔌</span>
+              <Show when={!isMobileScreen()}>
+                <span>Connect</span>
+              </Show>
+            </button>
+
             {/* Refresh Live Data */}
             <button
               type="button"
@@ -745,13 +780,36 @@ export function MiraGoldLayout(props: {
                 display: 'flex',
                 'align-items': 'center',
                 gap: '4px',
-                'min-height': '40px',
+                'min-height': '36px',
               }}
             >
               <span style={{ animation: loadingState() ? 'spin 1s linear infinite' : 'none' }}>🔄</span>
               <Show when={!isMobileScreen()}>
                 <span>{loadingState() ? 'Syncing...' : 'Sync'}</span>
               </Show>
+            </button>
+
+            {/* Settings Trigger */}
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent('mira:open-settings'))}
+              title="Mira Settings (Ctrl + ,)"
+              style={{
+                background: '#0D111E',
+                border: '1px solid #1F273E',
+                color: '#929CB3',
+                padding: '6px 10px',
+                'border-radius': '8px',
+                'font-size': '14px',
+                cursor: 'pointer',
+                display: 'flex',
+                'align-items': 'center',
+                'justify-content': 'center',
+                'min-height': '36px',
+                'min-width': '36px',
+              }}
+            >
+              ⚙
             </button>
 
             {/* Online Status (Desktop Only) */}
@@ -796,25 +854,27 @@ export function MiraGoldLayout(props: {
               }}
             >
               <span style={{ 'font-size': '15px', color: '#E5B842' }}>🔔</span>
-              <span
-                style={{
-                  position: 'absolute',
-                  top: '1px',
-                  right: '1px',
-                  background: '#EF4444',
-                  color: '#FFF',
-                  'font-size': '10px',
-                  'font-weight': '800',
-                  width: '16px',
-                  height: '16px',
-                  'border-radius': '50%',
-                  display: 'grid',
-                  'place-items': 'center',
-                  border: '2px solid #07090E',
-                }}
-              >
-                {proposals().length || 3}
-              </span>
+              <Show when={proposals().length > 0}>
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: '1px',
+                    right: '1px',
+                    background: '#EF4444',
+                    color: '#FFF',
+                    'font-size': '10px',
+                    'font-weight': '800',
+                    width: '16px',
+                    height: '16px',
+                    'border-radius': '50%',
+                    display: 'grid',
+                    'place-items': 'center',
+                    border: '2px solid #07090E',
+                  }}
+                >
+                  {proposals().length}
+                </span>
+              </Show>
             </div>
 
             {/* Mobile Toggle for System Overview Right Drawer */}
@@ -871,6 +931,14 @@ export function MiraGoldLayout(props: {
             </div>
           </div>
         </header>
+
+        {/* PRIMARY WORKSPACE TOP NAV */}
+        <TopNav
+          workspace={currentWorkspace()}
+          onChange={(id) => setCurrentWorkspace(id)}
+          workTab={activeSubTab() === 'brio' ? 'brio' : 'chat'}
+          onWorkTab={(t) => setActiveSubTab(t)}
+        />
 
         {/* WORKSPACE & RIGHT SIDEBAR SPLIT */}
         <div style={{ flex: '1', display: 'flex', overflow: 'hidden', background: '#07090E', 'margin-bottom': isMobileScreen() ? '56px' : '0' }}>
@@ -932,7 +1000,7 @@ export function MiraGoldLayout(props: {
                     }}
                   >
                     <span style={{ width: '6px', height: '6px', 'border-radius': '50%', background: '#20C997' }} />
-                    Agents: {activeAgentsCount()}
+                    Agents: {activeAgentsCount() !== null ? activeAgentsCount() : '—'}
                   </span>
 
                   <span
@@ -949,7 +1017,7 @@ export function MiraGoldLayout(props: {
                       gap: '4px',
                     }}
                   >
-                    ⚡ Running: {tasksRunningCount()}
+                    ⚡ Running: {tasksRunningCount() !== null ? tasksRunningCount() : '—'}
                   </span>
 
                   <span
@@ -966,7 +1034,7 @@ export function MiraGoldLayout(props: {
                       gap: '4px',
                     }}
                   >
-                    🛡 Health: {systemHealthPct()}%
+                    🛡 Health: {systemHealthPct() !== null ? `${systemHealthPct()}%` : 'Unknown'}
                   </span>
                 </div>
               </div>
@@ -1036,20 +1104,30 @@ export function MiraGoldLayout(props: {
               </Show>
             </div>
 
-            {/* WORKSPACE CARD CONTAINER */}
-            <div
-              style={{
-                flex: '1',
-                background: '#0D111E',
-                border: '1px solid #1A2033',
-                'border-radius': '16px',
-                display: 'flex',
-                'flex-direction': 'column',
-                overflow: 'hidden',
-                'min-height': '0',
+            {/* WORKSPACE CARD CONTAINER WITH ROUTER */}
+            <WorkspaceRouter
+              workspace={currentWorkspace()}
+              store={props.store}
+              onOpenInChat={(id) => {
+                props.store.setCurrent(id)
+                setCurrentWorkspace('work')
+                setActiveSubTab('chat')
               }}
-            >
-              {/* INNER TAB BAR (HORIZONTAL TOUCH CAROUSEL ON MOBILE) */}
+              renderWork={() => (
+                <div
+                  style={{
+                    flex: '1',
+                    background: '#0D111E',
+                    border: '1px solid #1A2033',
+                    'border-radius': '16px',
+                    display: 'flex',
+                    'flex-direction': 'column',
+                    overflow: 'hidden',
+                    'min-height': '0',
+                    height: '100%',
+                  }}
+                >
+                  {/* INNER TAB BAR (HORIZONTAL TOUCH CAROUSEL ON MOBILE) */}
               <div
                 style={{
                   display: 'flex',
@@ -1114,6 +1192,13 @@ export function MiraGoldLayout(props: {
                   gap: '14px',
                 }}
               >
+                {/* 0. TERMINAL SUBTAB */}
+                <Show when={activeSubTab() === 'terminal'}>
+                  <div style={{ height: 'calc(100vh - 220px)', 'min-height': '400px' }}>
+                    <TerminalView open={activeSubTab() === 'terminal'} />
+                  </div>
+                </Show>
+
                 {/* 1. CHAT SUBTAB */}
                 <Show when={activeSubTab() === 'chat'}>
                   {/* Real Streamed Messages */}
@@ -1169,295 +1254,6 @@ export function MiraGoldLayout(props: {
                       </div>
                     )}
                   </For>
-
-                  {/* Ankara Gown Showcase Card matching User Reference */}
-                  <div style={{ display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
-                    {/* User Prompt Bubble on Right */}
-                    <div
-                      style={{
-                        'align-self': 'flex-end',
-                        display: 'flex',
-                        gap: '10px',
-                        'max-width': isMobileScreen() ? '90%' : '75%',
-                        'flex-direction': 'row-reverse',
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: '34px',
-                          height: '34px',
-                          'border-radius': '50%',
-                          overflow: 'hidden',
-                          border: '2px solid #E5B842',
-                          'flex-shrink': '0',
-                        }}
-                      >
-                        <img
-                          src="/assets/user_avatar_saheed.jpg"
-                          alt="Saheed"
-                          style={{ width: '100%', height: '100%', 'object-fit': 'cover' }}
-                          onError={(e) => { e.currentTarget.style.display = 'none' }}
-                        />
-                      </div>
-                      <div style={{ display: 'flex', 'flex-direction': 'column', 'align-items': 'flex-end', gap: '4px' }}>
-                        <div
-                          style={{
-                            background: '#1D253A',
-                            border: '1px solid #28334E',
-                            'border-radius': '14px 14px 2px 14px',
-                            padding: '12px 16px',
-                            color: '#F1F3FA',
-                            'font-size': '13px',
-                            'line-height': '1.5',
-                          }}
-                        >
-                          Create a professional fashion design for an Ankara gown with modern style.
-                        </div>
-                        <div style={{ 'font-size': '11px', color: '#687594' }}>
-                          10:24 AM <span style={{ color: '#36BDF8' }}>✓✓</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Assistant Response Card */}
-                    <div style={{ display: 'flex', gap: '10px', 'max-width': isMobileScreen() ? '100%' : '92%' }}>
-                      <div
-                        style={{
-                          width: '36px',
-                          height: '36px',
-                          'border-radius': '10px',
-                          background: 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)',
-                          display: 'grid',
-                          'place-items': 'center',
-                          color: '#07090E',
-                          'font-weight': '900',
-                          'font-size': '18px',
-                          'box-shadow': '0 4px 12px rgba(212, 175, 55, 0.3)',
-                          'flex-shrink': '0',
-                        }}
-                      >
-                        M
-                      </div>
-
-                      <div
-                        style={{
-                          flex: '1',
-                          background: '#121727',
-                          border: '1px solid #1E273F',
-                          'border-radius': '14px',
-                          padding: isMobileScreen() ? '12px' : '16px',
-                          display: 'flex',
-                          'flex-direction': 'column',
-                          gap: '12px',
-                          'min-width': '0',
-                        }}
-                      >
-                        <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
-                          <span style={{ 'font-weight': '700', color: '#F1F3FA', 'font-size': '14px' }}>
-                            Mira
-                          </span>
-                          <span style={{ color: '#56617A' }}>•</span>
-                          <span style={{ color: '#E5B842', 'font-weight': '600', 'font-size': '12px' }}>
-                            Autonomous Designer
-                          </span>
-                        </div>
-
-                        <div style={{ color: '#F1F3FA', 'font-size': '13px', 'line-height': '1.5' }}>
-                          Here's a stunning modern Ankara gown design with elegance and cultural heritage.
-                        </div>
-
-                        {/* Image Gallery + Details Card (Responsive Grid) */}
-                        <div
-                          style={{
-                            background: '#090C16',
-                            border: '1px solid #1E273F',
-                            'border-radius': '12px',
-                            padding: '12px',
-                            display: 'grid',
-                            'grid-template-columns': isMobileScreen() ? '1fr' : '1.8fr 1.2fr',
-                            gap: '14px',
-                          }}
-                        >
-                          <div
-                            style={{
-                              height: isMobileScreen() ? '190px' : '240px',
-                              'border-radius': '8px',
-                              overflow: 'hidden',
-                              border: '1px solid #1E273F',
-                              position: 'relative',
-                              background: '#07090E',
-                            }}
-                          >
-                            <img
-                              src="/assets/ankara_gown_triptych.jpg"
-                              alt="Ankara Gown Haute Couture"
-                              style={{ width: '100%', height: '100%', 'object-fit': 'cover', 'object-position': 'center top' }}
-                              onError={(e) => { e.currentTarget.style.display = 'none' }}
-                            />
-                            <div
-                              style={{
-                                position: 'absolute',
-                                bottom: '6px',
-                                left: '6px',
-                                right: '6px',
-                                background: 'rgba(7, 9, 14, 0.8)',
-                                backdropFilter: 'blur(4px)',
-                                padding: '4px 8px',
-                                'border-radius': '6px',
-                                display: 'flex',
-                                'justify-content': 'space-between',
-                                'font-size': '10px',
-                                color: '#F5D061',
-                                'font-weight': '600',
-                              }}
-                            >
-                              <span>Front View</span>
-                              <span>Silhouette</span>
-                              <span>Back Cut</span>
-                            </div>
-                          </div>
-
-                          <div
-                            style={{
-                              background: '#101524',
-                              border: '1px solid #1E273F',
-                              'border-radius': '10px',
-                              padding: '12px',
-                              display: 'flex',
-                              'flex-direction': 'column',
-                              'justify-content': 'space-between',
-                              gap: '10px',
-                            }}
-                          >
-                            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
-                              <div style={{ 'font-size': '15px', 'font-weight': '800', color: '#F5D061' }}>
-                                Royal Ankara Haute Couture Gown
-                              </div>
-
-                              <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px', 'font-size': '11px', color: '#929CB3' }}>
-                                <div><strong>Style:</strong> {styleChoice()}</div>
-                                <div><strong>Silhouette:</strong> {silhouetteChoice()}</div>
-                                <div><strong>Sleeves:</strong> {sleeveChoice()}</div>
-                                <div><strong>Back:</strong> {backChoice()}</div>
-                              </div>
-                            </div>
-
-                            {/* Interactive Action Chips */}
-                            <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
-                              <button
-                                type="button"
-                                onClick={() => setShow3DModal(true)}
-                                style={{
-                                  background: '#1A2136',
-                                  border: '1px solid #E5B842',
-                                  color: '#F5D061',
-                                  padding: '6px 10px',
-                                  'border-radius': '6px',
-                                  'font-size': '11px',
-                                  'font-weight': '700',
-                                  cursor: 'pointer',
-                                  flex: '1',
-                                  'min-width': '100px',
-                                  'min-height': '36px',
-                                }}
-                              >
-                                🧊 View 3D
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => setShowPatternModal(true)}
-                                style={{
-                                  background: '#1A2136',
-                                  border: '1px solid #E5B842',
-                                  color: '#F5D061',
-                                  padding: '6px 10px',
-                                  'border-radius': '6px',
-                                  'font-size': '11px',
-                                  'font-weight': '700',
-                                  cursor: 'pointer',
-                                  flex: '1',
-                                  'min-width': '100px',
-                                  'min-height': '36px',
-                                }}
-                              >
-                                🌐 Pattern
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => setShowFabricsModal(true)}
-                                style={{
-                                  background: '#1A2136',
-                                  border: '1px solid #20C997',
-                                  color: '#20C997',
-                                  padding: '6px 10px',
-                                  'border-radius': '6px',
-                                  'font-size': '11px',
-                                  'font-weight': '700',
-                                  cursor: 'pointer',
-                                  flex: '1',
-                                  'min-width': '100px',
-                                  'min-height': '36px',
-                                }}
-                              >
-                                🏷 Fabrics
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Bottom Row Action Buttons */}
-                        <div style={{ display: 'flex', gap: '10px', 'flex-wrap': 'wrap', 'align-items': 'center', 'justify-content': 'space-between' }}>
-                          <div style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap' }}>
-                            <button
-                              type="button"
-                              onClick={handleSaveDesign}
-                              style={{
-                                background: savedDesign() ? '#E5B842' : 'transparent',
-                                border: '1px solid #E5B842',
-                                color: savedDesign() ? '#07090E' : '#F5D061',
-                                padding: '6px 12px',
-                                'border-radius': '8px',
-                                'font-size': '12px',
-                                'font-weight': '700',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                'align-items': 'center',
-                                gap: '6px',
-                                'min-height': '38px',
-                              }}
-                            >
-                              <span>{savedDesign() ? '★' : '☆'}</span>
-                              <span>{savedDesign() ? 'Saved' : 'Save Design'}</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => setShowModifyModal(true)}
-                              style={{
-                                background: '#1A2136',
-                                border: '1px solid #1F273E',
-                                color: '#F1F3FA',
-                                padding: '6px 12px',
-                                'border-radius': '8px',
-                                'font-size': '12px',
-                                'font-weight': '600',
-                                cursor: 'pointer',
-                                'min-height': '38px',
-                              }}
-                            >
-                              ✏ Modify Features
-                            </button>
-                          </div>
-
-                          <span style={{ 'font-size': '11px', color: '#687594' }}>
-                            Generated in 0.42s
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
                 </Show>
 
                 {/* 2. AGENTS SUBTAB / PAGE */}
@@ -1862,25 +1658,25 @@ export function MiraGoldLayout(props: {
                       <div style={{ background: '#101524', border: '1px solid #1E273F', 'border-radius': '12px', padding: '16px' }}>
                         <div style={{ 'font-size': '11px', color: '#929CB3' }}>Total Requests</div>
                         <div style={{ 'font-size': '22px', 'font-weight': '800', color: '#F5D061', 'margin-top': '4px' }}>
-                          {gatewayHealth()?.gateway?.requests ?? 142}
+                          {gatewayHealth()?.gateway?.requests ?? 0}
                         </div>
                       </div>
                       <div style={{ background: '#101524', border: '1px solid #1E273F', 'border-radius': '12px', padding: '16px' }}>
                         <div style={{ 'font-size': '11px', color: '#929CB3' }}>Avg Latency</div>
                         <div style={{ 'font-size': '22px', 'font-weight': '800', color: '#36BDF8', 'margin-top': '4px' }}>
-                          {responseTimeMs()}ms
+                          {responseTimeMs() !== null ? `${responseTimeMs()}ms` : '—'}
                         </div>
                       </div>
                       <div style={{ background: '#101524', border: '1px solid #1E273F', 'border-radius': '12px', padding: '16px' }}>
                         <div style={{ 'font-size': '11px', color: '#929CB3' }}>Gateway Spend</div>
                         <div style={{ 'font-size': '22px', 'font-weight': '800', color: '#20C997', 'margin-top': '4px' }}>
-                          ${(gatewayHealth()?.gateway?.costUSD ?? 0.042).toFixed(4)}
+                          ${(gatewayHealth()?.gateway?.costUSD ?? 0).toFixed(4)}
                         </div>
                       </div>
                       <div style={{ background: '#101524', border: '1px solid #1E273F', 'border-radius': '12px', padding: '16px' }}>
                         <div style={{ 'font-size': '11px', color: '#929CB3' }}>Tokens Processed</div>
                         <div style={{ 'font-size': '22px', 'font-weight': '800', color: '#F5D061', 'margin-top': '4px' }}>
-                          {((gatewayHealth()?.gateway?.inputTokens ?? 18400) + (gatewayHealth()?.gateway?.outputTokens ?? 4200)).toLocaleString()}
+                          {((gatewayHealth()?.gateway?.inputTokens ?? 0) + (gatewayHealth()?.gateway?.outputTokens ?? 0)).toLocaleString()}
                         </div>
                       </div>
                     </div>
@@ -1917,98 +1713,10 @@ export function MiraGoldLayout(props: {
                   </div>
                 </Show>
               </div>
-
-              {/* BOTTOM CHAT INPUT BAR */}
-              <form
-                onSubmit={handleSendPrompt}
-                style={{
-                  padding: '10px 14px',
-                  'border-top': '1px solid #1A2033',
-                  background: '#090C16',
-                  display: 'flex',
-                  'align-items': 'center',
-                  gap: '10px',
-                  'flex-shrink': '0',
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => showToast('Attachment browser opened.')}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: '#929CB3',
-                    'font-size': '18px',
-                    cursor: 'pointer',
-                    display: 'grid',
-                    'place-items': 'center',
-                    'min-height': '44px',
-                    'min-width': '44px',
-                  }}
-                >
-                  📎
-                </button>
-
-                <input
-                  type="text"
-                  placeholder="Ask Mira anything..."
-                  value={inputPrompt()}
-                  onInput={(e) => setInputPrompt(e.currentTarget.value)}
-                  style={{
-                    flex: '1',
-                    background: '#121727',
-                    border: '1px solid #1E273F',
-                    'border-radius': '999px',
-                    padding: '10px 16px',
-                    color: '#F1F3FA',
-                    'font-size': '13px',
-                    outline: 'none',
-                  }}
-                />
-
-                <button
-                  type="button"
-                  onClick={() => showToast('Voice recognition listening...')}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: '#929CB3',
-                    'font-size': '18px',
-                    cursor: 'pointer',
-                    display: 'grid',
-                    'place-items': 'center',
-                    'min-height': '44px',
-                    'min-width': '44px',
-                  }}
-                >
-                  🎙
-                </button>
-
-                <button
-                  type="submit"
-                  style={{
-                    width: '40px',
-                    height: '40px',
-                    'border-radius': '50%',
-                    background: 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)',
-                    border: 'none',
-                    color: '#07090E',
-                    display: 'grid',
-                    'place-items': 'center',
-                    'font-size': '16px',
-                    'font-weight': '900',
-                    cursor: 'pointer',
-                    'box-shadow': '0 4px 14px rgba(212, 175, 55, 0.35)',
-                    'flex-shrink': '0',
-                    'min-height': '40px',
-                    'min-width': '40px',
-                  }}
-                >
-                  ➔
-                </button>
-              </form>
             </div>
-          </main>
+          )}
+        />
+      </main>
 
           {/* ========================================================================= */}
           {/* 3. RIGHT SIDEBAR (SYSTEM OVERVIEW) */}
@@ -2081,8 +1789,8 @@ export function MiraGoldLayout(props: {
                       />
                     </svg>
                     <div style={{ position: 'absolute', 'text-align': 'center' }}>
-                      <div style={{ 'font-size': '14px', 'font-weight': '800', color: '#F1F3FA', 'line-height': '1.1' }}>
-                        99.9%
+                      <div style={{ 'font-size': '13px', 'font-weight': '800', color: '#F1F3FA', 'line-height': '1.1' }}>
+                        {systemHealthPct() !== null ? `${systemHealthPct()}%` : 'Unknown'}
                       </div>
                       <div style={{ 'font-size': '10px', color: '#687594' }}>Health</div>
                     </div>
@@ -2090,15 +1798,15 @@ export function MiraGoldLayout(props: {
 
                   <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', 'font-size': '11px' }}>
                     <div>
-                      <span style={{ 'font-weight': '700', color: '#F1F3FA' }}>{responseTimeMs()}ms</span>{' '}
+                      <span style={{ 'font-weight': '700', color: '#F1F3FA' }}>{responseTimeMs() !== null ? `${responseTimeMs()}ms` : '—'}</span>{' '}
                       <span style={{ color: '#687594' }}>Response</span>
                     </div>
                     <div>
-                      <span style={{ 'font-weight': '700', color: '#F1F3FA' }}>{memoryUsageGb()}GB</span>{' '}
+                      <span style={{ 'font-weight': '700', color: '#F1F3FA' }}>{memoryUsageGb() !== null ? `${memoryUsageGb()}GB` : '—'}</span>{' '}
                       <span style={{ color: '#687594' }}>Memory</span>
                     </div>
                     <div>
-                      <span style={{ 'font-weight': '700', color: '#F1F3FA' }}>{latencySec()}s</span>{' '}
+                      <span style={{ 'font-weight': '700', color: '#F1F3FA' }}>{latencySec() !== null ? `${latencySec()}s` : '—'}</span>{' '}
                       <span style={{ color: '#687594' }}>Latency</span>
                     </div>
                   </div>
@@ -2138,7 +1846,7 @@ export function MiraGoldLayout(props: {
               >
                 <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
                   <span style={{ 'font-weight': '700', 'font-size': '13px', color: '#F1F3FA' }}>
-                    Active Agents ({activeAgentsCount()})
+                    Active Agents ({activeAgentsCount() !== null ? activeAgentsCount() : '—'})
                   </span>
                   <span
                     onClick={() => handleNavClick('agents')}
@@ -2343,127 +2051,6 @@ export function MiraGoldLayout(props: {
       {/* ========================================================================= */}
       {/* 4. REAL INTERACTIVE MODALS */}
       {/* ========================================================================= */}
-
-      {/* MODAL 1: 3D MODEL VIEWER */}
-      <Show when={show3DModal()}>
-        <div style={{ position: 'fixed', inset: '0', background: 'rgba(7, 9, 14, 0.85)', display: 'grid', 'place-items': 'center', 'z-index': '1000', padding: '16px' }}>
-          <div style={{ background: '#0D111E', border: '1px solid #E5B842', 'border-radius': '16px', padding: isMobileScreen() ? '16px' : '24px', width: 'min(500px, 92vw)', 'max-height': '90vh', display: 'flex', 'flex-direction': 'column', gap: '16px', 'overflow-y': 'auto' }}>
-            <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-              <div style={{ 'font-size': '16px', 'font-weight': '800', color: '#F5D061' }}>🧊 Interactive 3D Ankara Gown Viewer</div>
-              <button onClick={() => setShow3DModal(false)} style={{ background: 'transparent', border: 'none', color: '#929CB3', 'font-size': '20px', cursor: 'pointer', 'min-height': '44px', 'min-width': '44px', display: 'grid', 'place-items': 'center' }}>✕</button>
-            </div>
-            <div style={{ height: '240px', background: '#07090E', border: '1px solid #1E273F', 'border-radius': '12px', display: 'grid', 'place-items': 'center', position: 'relative', overflow: 'hidden' }}>
-              <img src="/assets/ankara_gown_triptych.jpg" alt="3D Runway" style={{ height: '100%', 'object-fit': 'contain' }} />
-              <div style={{ position: 'absolute', bottom: '10px', color: '#F5D061', 'font-size': '11px', 'font-weight': '700', background: 'rgba(7,9,14,0.85)', padding: '4px 10px', 'border-radius': '999px' }}>
-                360° Rotatable WebGL Ankara Silhouette
-              </div>
-            </div>
-            <button onClick={() => setShow3DModal(false)} style={{ background: '#E5B842', color: '#07090E', border: 'none', padding: '12px', 'border-radius': '8px', 'font-weight': '700', cursor: 'pointer', 'min-height': '44px' }}>Close 3D View</button>
-          </div>
-        </div>
-      </Show>
-
-      {/* MODAL 2: PATTERN GENERATOR */}
-      <Show when={showPatternModal()}>
-        <div style={{ position: 'fixed', inset: '0', background: 'rgba(7, 9, 14, 0.85)', display: 'grid', 'place-items': 'center', 'z-index': '1000', padding: '16px' }}>
-          <div style={{ background: '#0D111E', border: '1px solid #E5B842', 'border-radius': '16px', padding: isMobileScreen() ? '16px' : '24px', width: 'min(500px, 92vw)', 'max-height': '90vh', display: 'flex', 'flex-direction': 'column', gap: '16px', 'overflow-y': 'auto' }}>
-            <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-              <div style={{ 'font-size': '16px', 'font-weight': '800', color: '#F5D061' }}>🌐 Ankara Vector Pattern Blueprint</div>
-              <button onClick={() => setShowPatternModal(false)} style={{ background: 'transparent', border: 'none', color: '#929CB3', 'font-size': '20px', cursor: 'pointer', 'min-height': '44px', 'min-width': '44px', display: 'grid', 'place-items': 'center' }}>✕</button>
-            </div>
-            <div style={{ height: '170px', background: 'radial-gradient(circle, #ca8a04 0%, #7c2d12 100%)', 'border-radius': '12px', display: 'grid', 'place-items': 'center', border: '2px dashed #F5D061', padding: '12px' }}>
-              <div style={{ color: '#FFF', 'font-weight': '800', 'font-size': '14px', 'text-align': 'center' }}>
-                ✦ High-Resolution Seamless Ankara Pattern SVG ✦
-                <div style={{ 'font-size': '11px', color: '#FCE183', 'font-weight': '500', 'margin-top': '4px' }}>Ready for 300 DPI textile printing & laser cutting</div>
-              </div>
-            </div>
-            <button onClick={() => { setShowPatternModal(false); showToast('Pattern SVG blueprint exported.') }} style={{ background: '#E5B842', color: '#07090E', border: 'none', padding: '12px', 'border-radius': '8px', 'font-weight': '700', cursor: 'pointer', 'min-height': '44px' }}>Export Pattern SVG</button>
-          </div>
-        </div>
-      </Show>
-
-      {/* MODAL 3: FABRICS SUGGESTION */}
-      <Show when={showFabricsModal()}>
-        <div style={{ position: 'fixed', inset: '0', background: 'rgba(7, 9, 14, 0.85)', display: 'grid', 'place-items': 'center', 'z-index': '1000', padding: '16px' }}>
-          <div style={{ background: '#0D111E', border: '1px solid #20C997', 'border-radius': '16px', padding: isMobileScreen() ? '16px' : '24px', width: 'min(520px, 92vw)', 'max-height': '90vh', display: 'flex', 'flex-direction': 'column', gap: '16px', 'overflow-y': 'auto' }}>
-            <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-              <div style={{ 'font-size': '16px', 'font-weight': '800', color: '#20C997' }}>🏷 Recommended Ankara Fabrics & Trim</div>
-              <button onClick={() => setShowFabricsModal(false)} style={{ background: 'transparent', border: 'none', color: '#929CB3', 'font-size': '20px', cursor: 'pointer', 'min-height': '44px', 'min-width': '44px', display: 'grid', 'place-items': 'center' }}>✕</button>
-            </div>
-            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
-              <div style={{ background: '#07090E', border: '1px solid #1E273F', padding: '10px 14px', 'border-radius': '8px', display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-                <div><div style={{ 'font-weight': '700', color: '#F1F3FA', 'font-size': '13px' }}>100% Dutch Super Wax Cotton</div><div style={{ 'font-size': '11px', color: '#929CB3' }}>High durability, vibrant gold wax print retention</div></div>
-                <div style={{ color: '#20C997', 'font-weight': '700', 'font-size': '13px' }}>$24/yd</div>
-              </div>
-              <div style={{ background: '#07090E', border: '1px solid #1E273F', padding: '10px 14px', 'border-radius': '8px', display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-                <div><div style={{ 'font-weight': '700', color: '#F1F3FA', 'font-size': '13px' }}>Heavyweight Silk Satin Lining</div><div style={{ 'font-size': '11px', color: '#929CB3' }}>Smooth breathable interior structure</div></div>
-                <div style={{ color: '#20C997', 'font-weight': '700', 'font-size': '13px' }}>$18/yd</div>
-              </div>
-              <div style={{ background: '#07090E', border: '1px solid #1E273F', padding: '10px 14px', 'border-radius': '8px', display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-                <div><div style={{ 'font-weight': '700', color: '#F1F3FA', 'font-size': '13px' }}>Embellished Gold Thread Guipure Lace</div><div style={{ 'font-size': '11px', color: '#929CB3' }}>Statement sleeve trim and back framing</div></div>
-                <div style={{ color: '#20C997', 'font-weight': '700', 'font-size': '13px' }}>$32/yd</div>
-              </div>
-            </div>
-            <button onClick={() => setShowFabricsModal(false)} style={{ background: '#20C997', color: '#07090E', border: 'none', padding: '12px', 'border-radius': '8px', 'font-weight': '700', cursor: 'pointer', 'min-height': '44px' }}>Close</button>
-          </div>
-        </div>
-      </Show>
-
-      {/* MODAL 4: MODIFY DESIGN */}
-      <Show when={showModifyModal()}>
-        <div style={{ position: 'fixed', inset: '0', background: 'rgba(7, 9, 14, 0.85)', display: 'grid', 'place-items': 'center', 'z-index': '1000', padding: '16px' }}>
-          <div style={{ background: '#0D111E', border: '1px solid #E5B842', 'border-radius': '16px', padding: isMobileScreen() ? '16px' : '24px', width: 'min(480px, 92vw)', 'max-height': '90vh', display: 'flex', 'flex-direction': 'column', gap: '16px', 'overflow-y': 'auto' }}>
-            <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-              <div style={{ 'font-size': '16px', 'font-weight': '800', color: '#F5D061' }}>✏ Modify Design Features</div>
-              <button onClick={() => setShowModifyModal(false)} style={{ background: 'transparent', border: 'none', color: '#929CB3', 'font-size': '20px', cursor: 'pointer', 'min-height': '44px', 'min-width': '44px', display: 'grid', 'place-items': 'center' }}>✕</button>
-            </div>
-
-            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '12px' }}>
-              <div>
-                <label style={{ 'font-size': '12px', 'font-weight': '700', color: '#929CB3' }}>Style Aesthetic</label>
-                <select value={styleChoice()} onChange={(e) => setStyleChoice(e.currentTarget.value)} style={{ width: '100%', background: '#07090E', border: '1px solid #1E273F', color: '#F1F3FA', padding: '10px', 'border-radius': '6px', 'margin-top': '4px', 'font-size': '13px' }}>
-                  <option>Modern Ankara style</option>
-                  <option>Royal Kente Contemporary</option>
-                  <option>Afro-Futurist Avant-Garde</option>
-                  <option>Traditional Yoruba Aso-Ebi</option>
-                </select>
-              </div>
-
-              <div>
-                <label style={{ 'font-size': '12px', 'font-weight': '700', color: '#929CB3' }}>Silhouette</label>
-                <select value={silhouetteChoice()} onChange={(e) => setSilhouetteChoice(e.currentTarget.value)} style={{ width: '100%', background: '#07090E', border: '1px solid #1E273F', color: '#F1F3FA', padding: '10px', 'border-radius': '6px', 'margin-top': '4px', 'font-size': '13px' }}>
-                  <option>Mermaid silhouette</option>
-                  <option>A-Line Tailored Gown</option>
-                  <option>Column Dress with Train</option>
-                  <option>High-Low Ball Gown</option>
-                </select>
-              </div>
-
-              <div>
-                <label style={{ 'font-size': '12px', 'font-weight': '700', color: '#929CB3' }}>Sleeves</label>
-                <select value={sleeveChoice()} onChange={(e) => setSleeveChoice(e.currentTarget.value)} style={{ width: '100%', background: '#07090E', border: '1px solid #1E273F', color: '#F1F3FA', padding: '10px', 'border-radius': '6px', 'margin-top': '4px', 'font-size': '13px' }}>
-                  <option>Statement sleeves</option>
-                  <option>Off-Shoulder Flounce</option>
-                  <option>Sculptural Bell Sleeves</option>
-                  <option>Cap Sleeves</option>
-                </select>
-              </div>
-
-              <div>
-                <label style={{ 'font-size': '12px', 'font-weight': '700', color: '#929CB3' }}>Back Cut</label>
-                <select value={backChoice()} onChange={(e) => setBackChoice(e.currentTarget.value)} style={{ width: '100%', background: '#07090E', border: '1px solid #1E273F', color: '#F1F3FA', padding: '10px', 'border-radius': '6px', 'margin-top': '4px', 'font-size': '13px' }}>
-                  <option>Elegant back design</option>
-                  <option>Deep V Cut-Out</option>
-                  <option>Illusion Lace Keyhole</option>
-                  <option>Corset Lace-Up Back</option>
-                </select>
-              </div>
-            </div>
-
-            <button onClick={applyModifyDesign} style={{ background: '#E5B842', color: '#07090E', border: 'none', padding: '12px', 'border-radius': '8px', 'font-weight': '700', cursor: 'pointer', 'min-height': '44px' }}>Apply Modification</button>
-          </div>
-        </div>
-      </Show>
 
       {/* MODAL 5: SEED KNOWLEDGE MEMORY */}
       <Show when={showSeedMemoryModal()}>

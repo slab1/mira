@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createSignal, onMount, Show, For } from 'solid-js'
 import { req } from '../api/client'
 import { DataStateBadge, type OperationalState } from '../components/DataState'
@@ -37,17 +36,25 @@ export default function ChangesPage() {
 
   onMount(async () => {
     try {
-      const c = await req<ChangeEntry[]>('/changes')
-      setChanges(c ?? [])
-      setState(c ? 'live' : 'empty')
+      const res = await req<any>('/changes')
+      const list: ChangeEntry[] = Array.isArray(res)
+        ? res
+        : (res && Array.isArray(res.changes)
+            ? res.changes
+            : (res && Array.isArray(res.items)
+                ? res.items
+                : []))
+      setChanges(list)
+      setState(list.length > 0 ? 'live' : 'empty')
     } catch (e) {
       setError(String(e))
       setState('error')
     }
   })
 
-  const visibleChanges = () => (showAll() ? changes() : changes().slice(0, 5))
-  const hasHidden = () => changes().length > 5
+  const safeChanges = (): ChangeEntry[] => (Array.isArray(changes()) ? changes() : [])
+  const visibleChanges = (): ChangeEntry[] => (showAll() ? safeChanges() : safeChanges().slice(0, 5))
+  const hasHidden = (): boolean => safeChanges().length > 5
 
   return (
     <div
@@ -104,7 +111,7 @@ export default function ChangesPage() {
           </div>
         </Show>
 
-        <Show when={changes().length === 0 && state() !== 'loading'}>
+        <Show when={safeChanges().length === 0 && state() !== 'loading'}>
           <div class="card" style={{ padding: '16px', color: 'var(--fg-muted)' }}>
             No changes recorded yet.
           </div>
@@ -116,7 +123,7 @@ export default function ChangesPage() {
             <div style={{ padding: '12px 16px', 'border-bottom': '1px solid var(--border)' }}>
               <SectionHeader
                 title="Change History"
-                sub={`${changes().length} total · showing ${visibleChanges().length}`}
+                sub={`${safeChanges().length} total · showing ${visibleChanges().length}`}
                 right={
                   <Show when={hasHidden()}>
                     <button
@@ -132,7 +139,7 @@ export default function ChangesPage() {
                         cursor: 'pointer',
                       }}
                     >
-                      {showAll() ? 'Show less' : `Show all ${changes().length}`}
+                      {showAll() ? 'Show less' : `Show all ${safeChanges().length}`}
                     </button>
                   </Show>
                 }
@@ -143,8 +150,8 @@ export default function ChangesPage() {
                 <ProgressiveDisclosure
                   title={c.path}
                   metric={c.type}
-                  badgeLabel={c.approval}
-                  badgeTone={approvalTone(c.approval)}
+                  badgeLabel={c.approval || 'unreviewed'}
+                  badgeTone={approvalTone(c.approval || 'unreviewed')}
                 >
                   <div
                     style={{
@@ -177,14 +184,14 @@ export default function ChangesPage() {
                         color: 'var(--fg-subtle)',
                       }}
                     >
-                      <span>Agent: {c.agent}</span>
-                      <span>Tools: {c.tools.join(', ')}</span>
+                      <span>Agent: {c.agent ?? 'mira'}</span>
+                      <span>Tools: {Array.isArray(c.tools) && c.tools.length > 0 ? c.tools.join(', ') : 'none'}</span>
                     </div>
 
                     {/* Before/After */}
                     <div style={{ display: 'flex', gap: '12px', 'flex-wrap': 'wrap' }}>
-                      <span style={{ color: 'var(--danger)' }}>Before: {c.before}</span>
-                      <span style={{ color: 'var(--ok)' }}>After: {c.after}</span>
+                      <span style={{ color: 'var(--danger)' }}>Before: {c.before ? (c.before.length > 80 ? c.before.slice(0, 80) + '…' : c.before) : '(empty)'}</span>
+                      <span style={{ color: 'var(--ok)' }}>After: {c.after ? (c.after.length > 80 ? c.after.slice(0, 80) + '…' : c.after) : '(modified)'}</span>
                     </div>
 
                     {/* Verification */}
@@ -196,8 +203,8 @@ export default function ChangesPage() {
                         color: 'var(--fg-subtle)',
                       }}
                     >
-                      <span>Tests: {c.tests}</span>
-                      <span>Verification: {c.verification}</span>
+                      <span>Tests: {c.tests ?? 'none'}</span>
+                      <span>Verification: {c.verification ?? 'unverified'}</span>
                     </div>
 
                     {/* Snapshot & Rollback */}
@@ -209,8 +216,8 @@ export default function ChangesPage() {
                         color: 'var(--fg-faint)',
                       }}
                     >
-                      <span>Snapshot: {c.snapshot}</span>
-                      <span>Rollback: {c.rollback}</span>
+                      <span>Snapshot: {c.snapshot ?? c.id}</span>
+                      <span>Rollback: {c.rollback ?? 'available'}</span>
                     </div>
 
                     {/* Timestamp */}

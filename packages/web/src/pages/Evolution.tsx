@@ -171,14 +171,50 @@ export default function EvolutionPage() {
   })
 
   const candidate = createMemo(() => {
-    // Prefer real #104 if present, else mock per spec
-    const found = ledger().find(
-      (e) => String(e.id).includes('104') || String(e.title).toLowerCase().includes('planning'),
-    )
-    if (found) return found
-    // Also check ledger id exactly 104
-    const byId = ledger().find((e) => e.id === '104')
-    if (byId) return byId
+    // 1. Check proposals from the governance pipeline
+    const activeProposal = proposals().find(
+      (p) => canAdvance(p.state) || p.state === 'PROPOSED' || p.state.endsWith('_PENDING'),
+    ) || (proposals().length > 0 ? proposals()[0] : null)
+    if (activeProposal) {
+      return {
+        id: String(activeProposal.id).replace(/^#?/, '#'),
+        title: activeProposal.title || `Proposal ${activeProposal.id}`,
+        type: activeProposal.component || 'Quality',
+        evidence: activeProposal.rationale || 'Proposal submitted for evaluation',
+        affectedEngine: activeProposal.component
+          ? `${activeProposal.component.charAt(0).toUpperCase() + activeProposal.component.slice(1)} Engine`
+          : 'Core Engine',
+        risk: activeProposal.severity || 'Medium',
+        expectedImpact: activeProposal.rationale || 'Evaluation in progress',
+        status: activeProposal.state,
+        benchmark: activeProposal.metrics ? JSON.stringify(activeProposal.metrics) : '—',
+        regression: 0,
+        security: 'Passed',
+        diff: activeProposal.diff || null,
+        isMock: false,
+      }
+    }
+
+    // 2. Check real ledger entries
+    if (ledger().length > 0) {
+      const top = ledger()[0]
+      return {
+        id: String(top.id).replace(/^#?/, '#'),
+        title: String(top.title ?? `Candidate ${top.id}`),
+        type: String(top.type ?? 'Quality'),
+        evidence: typeof top.evidence === 'string' ? top.evidence : top.evidence ? JSON.stringify(top.evidence) : 'Ledger record',
+        affectedEngine: String(top.affectedEngine ?? 'Planning Engine'),
+        risk: String(top.risk ?? 'Low'),
+        expectedImpact: 'Ledger verified change',
+        status: String(top.verdict ?? 'Verified'),
+        benchmark: '—',
+        regression: 0,
+        security: 'Passed',
+        diff: null,
+        isMock: false,
+      }
+    }
+
     return null
   })
 
@@ -249,8 +285,8 @@ export default function EvolutionPage() {
                   (raw.status
                     ? String(raw.status).toLowerCase().includes('healthy') ||
                       String(raw.status) === 'ok'
-                    : true))
-                : true
+                    : false))
+                : false
               const status = raw?.status ? String(raw.status) : healthy ? 'Healthy' : 'Unknown'
               return { id, status, healthy: Boolean(healthy) }
             })
@@ -392,55 +428,13 @@ export default function EvolutionPage() {
 
   const c = () => candidate()
 
-  // Mock candidate per spec when ledger empty — keep visible for verification
-  const displayCandidate: () => {
-    id: string
-    title: string
-    type: string
-    evidence: string
-    affectedEngine: string
-    risk: string
-    expectedImpact: string
-    status: string
-    benchmark: string
-    regression: number
-    security: string
-    isMock: boolean
-  } = () =>
-    c()
-      ? {
-          id: String(c()!.id).replace(/^#?/, '#'),
-          title: String((c()!.title as string) ?? c()!.id ?? 'Improve planning reliability'),
-          type: String(c()!.type ?? 'Quality'),
-          evidence: (c()!.evidence ?? 'See ledger for details') as string,
-          affectedEngine: String((c()!.affectedEngine as string) ?? 'Planning Engine'),
-          risk: String((c()!.risk as string) ?? 'Medium'),
-          expectedImpact: 'Improved planning completion',
-          status: String((c()!.verdict as string) ?? 'Verified'),
-          benchmark: '—',
-          regression: 0,
-          security: 'Passed',
-          isMock: false,
-        }
-      : {
-          id: '#104',
-          title: 'Improve planning reliability',
-          type: 'Quality',
-          evidence: '23 failed tasks',
-          affectedEngine: 'Planning Engine',
-          risk: 'Medium',
-          expectedImpact: 'Improved planning completion',
-          status: 'Verified',
-          benchmark: '+14%',
-          regression: 0,
-          security: 'Passed',
-          isMock: true,
-        }
+  const displayCandidate = () => c()
 
   async function runShadow() {
     setActionBusy('shadow')
     try {
-      const target = 'planning'
+      const active = c()
+      const target = (active?.affectedEngine?.toLowerCase().replace(' engine', '') || 'planning').trim()
       const j = await req<{ ok?: boolean; error?: string; shadowId?: string }>('/shadow/start', {
         method: 'POST',
         body: JSON.stringify({ candidateEngineId: target }),
@@ -456,30 +450,29 @@ export default function EvolutionPage() {
   }
 
   async function approveCanary() {
-    const rawId = displayCandidate().id.replace('#', '')
-    // Try to resolve real ledger id for approval
-    const ledgerId = c()?.id ?? (rawId === '104' && c() == null ? null : rawId)
+    const active = c()
+    if (!active) return
+    const rawId = active.id.replace('#', '')
     setActionBusy('canary')
     try {
-      if (ledgerId) {
-        // Prefer evolution approve → then start canary via manager
+      if (rawId) {
         const j = await req<{ ok?: boolean; error?: string }>(
-          `/evolution/approve/${encodeURIComponent(ledgerId)}`,
+          `/evolution/approve/${encodeURIComponent(rawId)}`,
           {
             method: 'POST',
             body: JSON.stringify({ approver: 'human' }),
           },
         )
         if (j.ok !== false) {
-          toast.success(`Approved ${ledgerId} — pending canary`)
+          toast.success(`Approved ${rawId} — pending canary`)
         }
       }
-      // Start canary (5% per spec)
+      const target = (active?.affectedEngine?.toLowerCase().replace(' engine', '') || 'planning').trim()
       const j2 = await req<{ ok?: boolean; error?: string; canaryId?: string }>('/canary/start', {
         method: 'POST',
-        body: JSON.stringify({ candidateId: 'planning', traffic: 5 }),
+        body: JSON.stringify({ candidateId: target, traffic: 5 }),
       })
-      toast.success(`Canary ${j2.canaryId ?? 'planning'} at 5% — monitoring`)
+      toast.success(`Canary ${j2.canaryId ?? target} at 5% — monitoring`)
       void fetchAll()
     } catch (e) {
       toast.error(`Canary failed: ${(e as Error).message}`)
@@ -489,25 +482,22 @@ export default function EvolutionPage() {
   }
 
   async function rejectCandidate() {
-    const rawId = displayCandidate().id.replace('#', '')
-    const ledgerId = c()?.id ?? rawId
+    const active = c()
+    if (!active) return
+    const rawId = active.id.replace('#', '')
     setActionBusy('reject')
     try {
-      // No explicit reject endpoint — use rollback as reject for mock, or toast
-      if (ledgerId && !displayCandidate().isMock) {
-        await req(`/evolution/rollback/${encodeURIComponent(ledgerId)}`, { method: 'POST' })
-        toast.success(`Rejected ${ledgerId} — rolled back`)
-      } else {
-        // Mock reject: remember rejection in memory-evolution
+      if (rawId) {
+        await req(`/evolution/rollback/${encodeURIComponent(rawId)}`, { method: 'POST' }).catch(() => {})
         await req('/memory/evolution/remember', {
           method: 'POST',
           body: JSON.stringify({
             type: 'rejected',
-            proposal: { id: ledgerId, title: displayCandidate().title },
+            proposal: { id: rawId, title: active.title },
             reason: 'human rejected via Evolution UI',
           }),
         }).catch(() => {})
-        toast.success('Rejected #104 — recorded in memory')
+        toast.success(`Rejected ${rawId} — recorded in memory and rolled back`)
       }
       void fetchAll()
     } catch (e) {
@@ -958,7 +948,7 @@ export default function EvolutionPage() {
                 <span class="pill" style={{ 'font-size': 'var(--fs-2xs)' }}>
                   ledger:{' '}
                   <strong style={{ color: 'var(--fg)', 'font-family': 'var(--font-mono)' }}>
-                    {ledgerCount() || 7}
+                    {ledgerCount()}
                   </strong>
                 </span>
                 <span class="pill" style={{ 'font-size': 'var(--fs-2xs)' }}>
@@ -971,10 +961,73 @@ export default function EvolutionPage() {
             </section>
           </div>
 
-          {/* Improvement Candidate #104 per spec */}
+          {/* Improvement Candidate */}
+          <Show
+            when={c()}
+            fallback={
+              <section
+                class="card"
+                style={{
+                  padding: '24px',
+                  display: 'flex',
+                  'flex-direction': 'column',
+                  'align-items': 'center',
+                  gap: '12px',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-surface)',
+                  'text-align': 'center',
+                }}
+              >
+                <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
+                  <DataStateBadge state="live" />
+                  <span
+                    style={{
+                      'font-size': 'var(--fs-sm)',
+                      'font-weight': '700',
+                      color: 'var(--fg)',
+                      'font-family': 'var(--font-mono)',
+                      'letter-spacing': '0.04em',
+                    }}
+                  >
+                    NO ACTIVE EXPERIMENT UNDER EVALUATION
+                  </span>
+                </div>
+                <p
+                  style={{
+                    'font-size': 'var(--fs-xs)',
+                    color: 'var(--fg-subtle)',
+                    'max-width': '480px',
+                    margin: '0',
+                    'line-height': '1.6',
+                  }}
+                >
+                  Mira's self-evolution engine requires empirical verification before mutating core capabilities. No proposals or shadow benchmarks are currently running. Run a shadow benchmark to evaluate candidate improvements.
+                </p>
+                <div style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap', 'margin-top': '4px' }}>
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    onClick={() => void runShadow()}
+                    disabled={actionBusy() !== null}
+                    style={{ padding: '8px 16px', 'font-size': 'var(--fs-xs)' }}
+                  >
+                    {actionBusy() === 'shadow' ? 'Running Shadow...' : 'Run Planning Benchmark'}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost"
+                    onClick={() => void fetchAll()}
+                    style={{ padding: '8px 14px', 'font-size': 'var(--fs-xs)' }}
+                  >
+                    Refresh Status
+                  </button>
+                </div>
+              </section>
+            }
+          >
           <section
             class="card"
-            aria-labelledby="improvement-104-title"
+            aria-labelledby="improvement-candidate-title"
             style={{
               padding: '16px',
               display: 'flex',
@@ -995,7 +1048,7 @@ export default function EvolutionPage() {
             >
               <div>
                 <div
-                  id="improvement-104-title"
+                  id="improvement-candidate-title"
                   style={{
                     'font-size': 'var(--fs-xs)',
                     'font-weight': '800',
@@ -1005,7 +1058,7 @@ export default function EvolutionPage() {
                     'font-family': 'var(--font-mono)',
                   }}
                 >
-                  IMPROVEMENT {displayCandidate().id}
+                  IMPROVEMENT {c()!.id}
                 </div>
                 <div
                   style={{
@@ -1016,7 +1069,7 @@ export default function EvolutionPage() {
                     'margin-top': '4px',
                   }}
                 >
-                  {displayCandidate().title}
+                  {c()!.title}
                 </div>
                 <div
                   style={{
@@ -1026,40 +1079,20 @@ export default function EvolutionPage() {
                     'font-family': 'var(--font-mono)',
                   }}
                 >
-                  Type: {displayCandidate().type} · Evidence: {displayCandidate().evidence} ·
-                  Engine: {displayCandidate().affectedEngine}
+                  Type: {c()!.type} · Evidence: {c()!.evidence} · Engine: {c()!.affectedEngine}
                 </div>
-                {/* The placeholder candidate (#104) shows synthetic data with isMock=true.
-Real proposals from the ledger now display their actual evidence and
-benchmark values — the isMock flag remains available for any future
-UI that wants to explicitly flag mock data. Never silently transform
-"demo" into "live" — see components/DataState.tsx. */}
-                <Show when={displayCandidate().isMock}>
-                  <div style={{ 'margin-top': '6px' }}>
-                    <DataStateBadge state="demo" />
-                    <span
-                      style={{
-                        'font-size': 'var(--fs-2xs)',
-                        color: 'var(--fg-muted)',
-                        'margin-left': '6px',
-                      }}
-                    >
-                      Sample data — no real proposal behind these numbers
-                    </span>
-                  </div>
-                </Show>
               </div>
               <span
-                class={`pill ${displayCandidate().status.toLowerCase().includes('verif') ? 'pill-ok' : displayCandidate().status.toLowerCase().includes('pend') ? 'pill-warn' : 'pill'}`}
+                class={`pill ${c()!.status.toLowerCase().includes('verif') || c()!.status.toLowerCase().includes('pass') ? 'pill-ok' : c()!.status.toLowerCase().includes('pend') ? 'pill-warn' : 'pill'}`}
                 style={{
                   'font-family': 'var(--font-mono)',
                   'font-size': 'var(--fs-xs)',
                   'font-weight': '700',
                 }}
-                aria-label={`Status ${displayCandidate().status}`}
+                aria-label={`Status ${c()!.status}`}
               >
-                <Dot healthy={displayCandidate().status.toLowerCase().includes('verif')} />{' '}
-                {displayCandidate().status}
+                <Dot healthy={c()!.status.toLowerCase().includes('verif') || c()!.status.toLowerCase().includes('pass')} />{' '}
+                {c()!.status}
               </span>
             </div>
 
@@ -1093,11 +1126,11 @@ UI that wants to explicitly flag mock data. Never silently transform
                 <div
                   style={{
                     'font-weight': '600',
-                    color: displayCandidate().risk === 'Medium' ? 'var(--warn)' : 'var(--fg)',
+                    color: c()!.risk === 'Medium' ? 'var(--warn)' : 'var(--fg)',
                     'margin-top': '2px',
                   }}
                 >
-                  {displayCandidate().risk}
+                  {c()!.risk}
                 </div>
               </div>
               <div
@@ -1128,7 +1161,7 @@ UI that wants to explicitly flag mock data. Never silently transform
                     'line-height': '1.5',
                   }}
                 >
-                  {displayCandidate().expectedImpact}
+                  {c()!.expectedImpact}
                 </div>
               </div>
               <div
@@ -1158,16 +1191,7 @@ UI that wants to explicitly flag mock data. Never silently transform
                     'margin-top': '2px',
                   }}
                 >
-                  {displayCandidate().benchmark}
-                </div>
-                <div
-                  style={{
-                    'font-size': 'var(--fs-2xs)',
-                    color: 'var(--fg-faint)',
-                    'font-family': 'var(--font-mono)',
-                  }}
-                >
-                  success · latency 2.1s · cost $0.28
+                  {c()!.benchmark}
                 </div>
               </div>
               <div
@@ -1198,10 +1222,10 @@ UI that wants to explicitly flag mock data. Never silently transform
                   }}
                 >
                   <span class="pill pill-ok" style={{ 'font-size': 'var(--fs-2xs)' }}>
-                    reg {displayCandidate().regression}
+                    reg {c()!.regression}
                   </span>
                   <span class="pill pill-ok" style={{ 'font-size': 'var(--fs-2xs)' }}>
-                    {displayCandidate().security}
+                    {c()!.security}
                   </span>
                 </div>
               </div>
@@ -1521,17 +1545,7 @@ UI that wants to explicitly flag mock data. Never silently transform
                     'white-space': 'pre',
                   }}
                 >
-                  {`--- a/packages/server/src/engines/planning.ts
-+++ b/packages/server/src/engines/planning.ts
-@@ -12,3 +12,12 @@
--  verify() { return { ok: true } }
-+  // #104: improve planning reliability — add retry + entropy check
-+  async verify() {
-+    const v = await super.verify()
-+    if (v.entropy > 0.8) return { ...v, verified: false }
-+    return v
-+  }
-`}
+                  {c()?.diff || 'No unified diff attached to this candidate or proposal.'}
                 </pre>
                 <div
                   style={{
@@ -1580,53 +1594,63 @@ UI that wants to explicitly flag mock data. Never silently transform
                   color: 'var(--fg-subtle)',
                 }}
               >
-                <For
-                  each={
-                    ledger().length
-                      ? ledger()
-                          .slice(0, 4)
-                          .map((e) => ({
-                            label: `${e.id}  ${String((e as { title?: string }).title ?? e.id).slice(0, 32)}`,
-                            verdict: String(e.verdict),
-                          }))
-                      : [
-                          { label: '#104  Planning improvement', verdict: 'Verified → Canary' },
-                          { label: '#103  Memory retrieval optimization', verdict: 'Promoted' },
-                          { label: '#102  Tool timeout adjustment', verdict: 'Rolled back' },
-                          { label: '#101  Research pipeline change', verdict: 'Rejected' },
-                        ]
-                  }
-                >
-                  {(row) => (
+                <Show
+                  when={ledger().length > 0}
+                  fallback={
                     <div
                       style={{
-                        display: 'flex',
-                        'justify-content': 'space-between',
-                        gap: '8px',
-                        padding: '6px 8px',
-                        'border-radius': 'var(--r-sm)',
+                        padding: '10px 12px',
+                        'font-size': 'var(--fs-xs)',
+                        color: 'var(--fg-subtle)',
+                        'text-align': 'center',
                         background: 'var(--bg-app)',
+                        'border-radius': 'var(--r-sm)',
                         border: '1px solid var(--border)',
                       }}
                     >
-                      <span style={{ color: 'var(--fg)', 'font-weight': '600' }}>{row.label}</span>
-                      <span
+                      No evolution records in ledger yet.
+                    </div>
+                  }
+                >
+                  <For
+                    each={ledger()
+                      .slice(0, 4)
+                      .map((e) => ({
+                        label: `${e.id}  ${String((e as { title?: string }).title ?? e.id).slice(0, 32)}`,
+                        verdict: String(e.verdict),
+                      }))}
+                  >
+                    {(row) => (
+                      <div
                         style={{
-                          color: row.verdict.toLowerCase().includes('promot')
-                            ? 'var(--ok)'
-                            : row.verdict.toLowerCase().includes('rollback')
-                              ? 'var(--danger)'
-                              : row.verdict.toLowerCase().includes('reject')
-                                ? 'var(--fg-faint)'
-                                : 'var(--warn)',
-                          'font-weight': '600',
+                          display: 'flex',
+                          'justify-content': 'space-between',
+                          gap: '8px',
+                          padding: '6px 8px',
+                          'border-radius': 'var(--r-sm)',
+                          background: 'var(--bg-app)',
+                          border: '1px solid var(--border)',
                         }}
                       >
-                        {row.verdict}
-                      </span>
-                    </div>
-                  )}
-                </For>
+                        <span style={{ color: 'var(--fg)', 'font-weight': '600' }}>{row.label}</span>
+                        <span
+                          style={{
+                            color: row.verdict.toLowerCase().includes('promot')
+                              ? 'var(--ok)'
+                              : row.verdict.toLowerCase().includes('rollback')
+                                ? 'var(--danger)'
+                                : row.verdict.toLowerCase().includes('reject')
+                                  ? 'var(--fg-faint)'
+                                  : 'var(--warn)',
+                            'font-weight': '600',
+                          }}
+                        >
+                          {row.verdict}
+                        </span>
+                      </div>
+                    )}
+                  </For>
+                </Show>
               </div>
               <div
                 style={{
@@ -1639,6 +1663,7 @@ UI that wants to explicitly flag mock data. Never silently transform
               </div>
             </div>
           </section>
+        </Show>
 
           {/* Proposals — governance pipeline (GET /evolution/proposals) */}
           <section

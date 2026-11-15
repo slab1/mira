@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { createSignal, onMount, Show, For } from 'solid-js'
+import { createSignal, createMemo, onMount, Show, For } from 'solid-js'
 import { req } from '../api/client'
 import { DataStateBadge, type OperationalState } from '../components/DataState'
 import { createIntelligenceFeatureStore } from '../features/intelligence'
@@ -60,12 +60,49 @@ export default function IntelligencePage() {
   const [state, setState] = createSignal<OperationalState>('loading')
   const intelligenceStore = createIntelligenceFeatureStore()
 
+  const repo = createMemo(() => {
+    const d = repoStats() as any
+    if (!d) return null
+    return d.repo ?? (d.nodes !== undefined ? d : null)
+  })
+
+  const filteredMemories = createMemo(() => {
+    const q = intelligenceStore.state().searchQuery.trim().toLowerCase()
+    const tier = intelligenceStore.state().tierFilter
+    return memories().filter((m) => {
+      if (tier !== 'all' && m.tier !== tier) return false
+      if (!q) return true
+      return (
+        (m.title ?? '').toLowerCase().includes(q) ||
+        (m.content ?? '').toLowerCase().includes(q) ||
+        (m.tags ?? []).some((t) => t.toLowerCase().includes(q))
+      )
+    })
+  })
+
+  const filteredNodes = createMemo(() => {
+    const g = graph()
+    if (!g?.nodes) return []
+    const q = intelligenceStore.state().searchQuery.trim().toLowerCase()
+    const tier = intelligenceStore.state().tierFilter
+    return g.nodes.filter((n) => {
+      if (tier !== 'all' && n.tier !== tier) return false
+      if (!q) return true
+      return (
+        (n.label ?? '').toLowerCase().includes(q) ||
+        (n.source ?? '').toLowerCase().includes(q) ||
+        (n.tags ?? []).some((t) => t.toLowerCase().includes(q)) ||
+        (n.entities ?? []).some((e) => e.toLowerCase().includes(q))
+      )
+    })
+  })
+
   onMount(async () => {
     try {
       const [g, m, r] = await Promise.all([
         req<KnowledgeGraph>('/knowledge/graph').catch(() => null),
         req<MemoryEntry[]>('/memory').catch(() => null),
-        req<RepoStats>('/dashboard').catch(() => null),
+        req<any>('/dashboard').catch(() => null),
       ])
       setGraph(g)
       setMemories(m ?? [])
@@ -182,11 +219,11 @@ export default function IntelligencePage() {
                   sub={`${g().nodes.length} nodes · ${g().edges.length} edges`}
                 />
               </div>
-              <For each={g().nodes.slice(0, 20)}>
+              <For each={filteredNodes().slice(0, 30)}>
                 {(n) => (
                   <ProgressiveDisclosure
                     title={n.label}
-                    metric={`${n.accessCount} accesses`}
+                    metric={`${n.accessCount ?? 0} accesses`}
                     badgeLabel={n.tier}
                     badgeTone="info"
                   >
@@ -202,16 +239,16 @@ export default function IntelligencePage() {
                         <span style={{ color: 'var(--fg-subtle)' }}>Source: {n.source}</span>
                         <span style={{ color: 'var(--fg-subtle)' }}>Kind: {n.kind}</span>
                       </div>
-                      <Show when={n.tags.length > 0}>
+                      <Show when={(n.tags ?? []).length > 0}>
                         <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
-                          <For each={n.tags}>
+                          <For each={n.tags ?? []}>
                             {(tag) => <StatusBadge label={tag} tone="muted" />}
                           </For>
                         </div>
                       </Show>
-                      <Show when={n.entities.length > 0}>
+                      <Show when={(n.entities ?? []).length > 0}>
                         <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
-                          <For each={n.entities}>
+                          <For each={n.entities ?? []}>
                             {(entity) => <StatusBadge label={entity} tone="info" />}
                           </For>
                         </div>
@@ -236,16 +273,16 @@ export default function IntelligencePage() {
         </Show>
 
         {/* Memory — Progressive Disclosure */}
-        <Show when={memories().length > 0}>
+        <Show when={filteredMemories().length > 0}>
           <Card padding="0">
             <div style={{ padding: '12px 16px', 'border-bottom': '1px solid var(--border)' }}>
-              <SectionHeader title="Memory" sub={`${memories().length} entries`} />
+              <SectionHeader title="Memory" sub={`${filteredMemories().length} entries`} />
             </div>
-            <For each={memories().slice(0, 10)}>
+            <For each={filteredMemories().slice(0, 30)}>
               {(m) => (
                 <ProgressiveDisclosure
                   title={m.title}
-                  metric={`${(m.confidence * 100).toFixed(0)}%`}
+                  metric={`${((m.confidence ?? 0.5) * 100).toFixed(0)}%`}
                   badgeLabel={m.provenance}
                   badgeTone={provenanceTone(m.provenance)}
                 >
@@ -264,9 +301,9 @@ export default function IntelligencePage() {
                       <span style={{ color: 'var(--fg-subtle)' }}>Tier: {m.tier}</span>
                       <span style={{ color: 'var(--fg-subtle)' }}>Source: {m.source}</span>
                     </div>
-                    <Show when={m.tags.length > 0}>
+                    <Show when={(m.tags ?? []).length > 0}>
                       <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
-                        <For each={m.tags}>{(tag) => <StatusBadge label={tag} tone="muted" />}</For>
+                        <For each={m.tags ?? []}>{(tag) => <StatusBadge label={tag} tone="muted" />}</For>
                       </div>
                     </Show>
                     <div style={{ display: 'flex', gap: '12px', color: 'var(--fg-faint)' }}>
@@ -281,14 +318,14 @@ export default function IntelligencePage() {
         </Show>
 
         {/* Repository Understanding */}
-        <Show when={repoStats()}>
+        <Show when={repo()}>
           {(r) => (
             <Card padding="16px">
               <SectionHeader title="Repository Understanding" sub="Codebase structure overview" />
               <div style={{ display: 'flex', gap: '16px', 'flex-wrap': 'wrap' }}>
-                <span style={{ 'font-size': 'var(--fs-sm)' }}>{r().nodes} nodes</span>
-                <span style={{ 'font-size': 'var(--fs-sm)' }}>{r().edges} edges</span>
-                <For each={Object.entries(r().byKind)}>
+                <span style={{ 'font-size': 'var(--fs-sm)' }}>{r().nodes ?? 0} nodes</span>
+                <span style={{ 'font-size': 'var(--fs-sm)' }}>{r().edges ?? 0} edges</span>
+                <For each={Object.entries(r().byKind ?? {})}>
                   {([kind, count]) => (
                     <span style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>
                       {kind}: {count}

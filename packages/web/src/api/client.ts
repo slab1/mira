@@ -1609,15 +1609,108 @@ export function getWsUrl(): string {
   const base = baseUrl()
   if (!base) {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${window.location.host}/`
+    return `${proto}//${window.location.host}/ws`
   }
   try {
     const u = new URL(base)
     const proto = window.location.protocol === 'https:' || u.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${u.host}/`
+    return `${proto}//${u.host}/ws`
   } catch {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${window.location.host}/`
+    return `${proto}//${window.location.host}/ws`
+  }
+}
+
+export function getTerminalWsUrl(): string {
+  const base = baseUrl()
+  if (!base) {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${proto}//${window.location.host}/terminal`
+  }
+  try {
+    const u = new URL(base)
+    const proto = window.location.protocol === 'https:' || u.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${proto}//${u.host}/terminal`
+  } catch {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${proto}//${window.location.host}/terminal`
+  }
+}
+
+export type TerminalWSEvents = {
+  open: () => void
+  data: (data: string) => void
+  connected: (info: { cwd?: string; env?: Record<string, string> }) => void
+  exit: (code: number) => void
+  close: () => void
+  error: (err: Event) => void
+}
+
+export function createTerminalSocket(handlers: Partial<TerminalWSEvents> = {}): {
+  connect: () => WebSocket
+  disconnect: () => void
+  sendInput: (data: string) => void
+  resize: (cols: number, rows: number) => void
+  get ws(): WebSocket | null
+} {
+  let ws: WebSocket | null = null
+
+  function doConnect(): WebSocket {
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return ws
+    ws = new WebSocket(getTerminalWsUrl())
+    ws.onopen = async () => {
+      let t = getToken()
+      if (!t || t === 'dev-local-token-not-secret') {
+        t = await ensureToken().catch(() => '')
+      }
+      if (!t) {
+        t = (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
+      }
+      if (t) {
+        try {
+          ws?.send(JSON.stringify({ type: 'auth', token: t }))
+        } catch {}
+      }
+      handlers.open?.()
+    }
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(String(ev.data))
+        if (msg.type === 'terminal.output' || msg.type === 'output' || msg.type === 'data') {
+          handlers.data?.(msg.data ?? msg.text ?? '')
+        } else if (msg.type === 'terminal.connected') {
+          handlers.connected?.(msg)
+        } else if (msg.type === 'terminal.exit') {
+          handlers.exit?.(msg.code ?? 0)
+        }
+      } catch {
+        if (typeof ev.data === 'string') {
+          handlers.data?.(ev.data)
+        }
+      }
+    }
+    ws.onclose = () => handlers.close?.()
+    ws.onerror = (e) => handlers.error?.(e as Event)
+    return ws
+  }
+
+  return {
+    get ws() { return ws },
+    connect: doConnect,
+    disconnect() {
+      try { ws?.close() } catch {}
+      ws = null
+    },
+    sendInput(data: string) {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'terminal.input', data }))
+      }
+    },
+    resize(cols: number, rows: number) {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'terminal.resize', cols, rows }))
+      }
+    }
   }
 }
 

@@ -573,6 +573,54 @@ export function PromptInput(props: {
   cwd?: string | null
 }) {
   let textareaRef: HTMLTextAreaElement | undefined
+  let fileInputRef: HTMLInputElement | undefined
+  const [isListening, setIsListening] = createSignal(false)
+  let speechRec: any = null
+
+  const toggleVoice = () => {
+    if (isListening()) {
+      try { speechRec?.stop() } catch {}
+      setIsListening(false)
+      return
+    }
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SpeechRec) {
+      alert('Speech Recognition is not supported in this browser. Try Chrome, Edge, or Safari.')
+      return
+    }
+    try {
+      speechRec = new SpeechRec()
+      speechRec.continuous = true
+      speechRec.interimResults = true
+      speechRec.lang = 'en-US'
+      speechRec.onresult = (ev: any) => {
+        let transcript = ''
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          transcript += ev.results[i][0].transcript
+        }
+        if (transcript.trim()) {
+          const cur = props.value
+          props.onInput(cur ? `${cur} ${transcript.trim()}` : transcript.trim())
+        }
+      }
+      speechRec.onerror = () => setIsListening(false)
+      speechRec.onend = () => setIsListening(false)
+      speechRec.start()
+      setIsListening(true)
+    } catch {
+      setIsListening(false)
+    }
+  }
+
+  const handleFileUpload = (e: Event & { currentTarget: HTMLInputElement }) => {
+    const files = e.currentTarget.files
+    if (!files || files.length === 0) return
+    for (let i = 0; i < files.length; i++) {
+      props.onAddPill?.(files[i].name)
+    }
+    e.currentTarget.value = ''
+  }
+
   const [atQuery, setAtQuery] = createSignal('')
   const [atIndex, setAtIndex] = createSignal(0)
   const [atVisible, setAtVisible] = createSignal(false)
@@ -786,7 +834,7 @@ export function PromptInput(props: {
           gap: '10px',
         }}
       >
-        <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
+        <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'flex-wrap': 'wrap' }}>
           <ModelSelector
             settings={props.settings}
             value={props.selectedModel}
@@ -796,19 +844,56 @@ export function PromptInput(props: {
             value={props.selectedAgent}
             onSelect={props.onAgentSelect}
           />
-          <span
-            aria-hidden="true"
+
+          {/* Attachment File Input Button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef?.click()}
+            title="Attach files or screenshots (@pill)"
             style={{
-              'font-size': 'var(--fs-2xs)',
-              color: 'var(--fg-faint)',
-              display: 'flex',
-              gap: '5px',
+              display: 'inline-flex',
               'align-items': 'center',
+              gap: '4px',
+              padding: '4px 8px',
+              'font-size': 'var(--fs-xs)',
+              border: '1px solid var(--border)',
+              'border-radius': 'var(--r-md)',
+              background: 'var(--bg-surface)',
+              color: 'var(--fg-muted)',
+              cursor: 'pointer',
             }}
           >
-            <span class="kbd">↵</span> send <span style={{ opacity: '0.5' }}>·</span>{' '}
-            <span class="kbd">⇧↵</span> newline
-          </span>
+            📎 Attach
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            style={{ display: 'none' }}
+            onChange={handleFileUpload}
+          />
+
+          {/* Voice Recognition Dictation Button */}
+          <button
+            type="button"
+            onClick={toggleVoice}
+            title={isListening() ? 'Stop voice dictation' : 'Start voice recognition (Speech-to-text)'}
+            style={{
+              display: 'inline-flex',
+              'align-items': 'center',
+              gap: '4px',
+              padding: '4px 8px',
+              'font-size': 'var(--fs-xs)',
+              border: isListening() ? '1px solid #EF4444' : '1px solid var(--border)',
+              'border-radius': 'var(--r-md)',
+              background: isListening() ? 'rgba(239, 68, 68, 0.15)' : 'var(--bg-surface)',
+              color: isListening() ? '#EF4444' : 'var(--fg-muted)',
+              cursor: 'pointer',
+              'font-weight': isListening() ? '700' : '500',
+            }}
+          >
+            {isListening() ? '🎙 Listening...' : '🎤 Voice'}
+          </button>
         </div>
         <Show
           when={!props.streaming}

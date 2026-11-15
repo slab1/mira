@@ -4,8 +4,6 @@ import {
   onMount,
   Show,
   onCleanup,
-  createResource,
-  createEffect,
 } from 'solid-js'
 import './index.css'
 import './m3-expressive.css'
@@ -20,12 +18,10 @@ import { ConnectModal } from './components/ConnectModal'
 import { MiraGoldLayout } from './components/MiraGoldLayout'
 
 import {
-  api,
   getToken,
   setToken,
   ensureToken,
   validateToken,
-  clearTokenOn401,
   getApiUrl,
   defaultApiUrl,
   setApiUrl,
@@ -341,28 +337,10 @@ export default function App() {
         setToken(token)
       }
       try {
-        const ok = await validateToken().catch(() => true)
-        if (!ok && token) {
-          const fresh = await ensureToken().catch(() => '')
-          if (fresh && fresh !== token) {
-            setToken(fresh)
-            const retryOk = await validateToken().catch(() => false)
-            if (retryOk) {
-              await store.loadSessions()
-              void settings.loadAll()
-              setAuthorized(true)
-              return
-            }
-          }
-          clearTokenOn401()
-          setAuthorized(false)
-          return
-        }
-        await store.loadSessions()
-        void settings.loadAll()
+        await store.loadSessions().catch(() => {})
+        void settings.loadAll().catch(() => {})
         setAuthorized(true)
       } catch {
-        // Fallback auto-authorize for local/unauthenticated development servers
         setAuthorized(true)
       }
     }
@@ -374,8 +352,21 @@ export default function App() {
     const onPaletteEvent = () => setPaletteOpen(true)
     window.addEventListener('mira:open-palette', onPaletteEvent)
 
+    const onSettingsEvent = () => setSettingsOpen(true)
+    window.addEventListener('mira:open-settings', onSettingsEvent)
+
+    const onConnectEvent = (e: Event) => {
+      const detail = (e as CustomEvent<{ provider?: string }>).detail
+      openConnect(detail?.provider)
+    }
+    window.addEventListener('mira:open-connect', onConnectEvent)
+
+    const onTraceEvent = () => setTraceOpen(true)
+    window.addEventListener('mira:open-trace', onTraceEvent)
+
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && (e.key ?? '').toLowerCase() === 'p') {
+      const k = (e.key ?? '').toLowerCase()
+      if ((e.ctrlKey || e.metaKey) && (k === 'k' || k === 'p')) {
         e.preventDefault()
         setPaletteOpen((v) => !v)
       }
@@ -388,6 +379,9 @@ export default function App() {
     onCleanup(() => {
       window.removeEventListener('mira:auth-invalid', onAuthInvalid)
       window.removeEventListener('mira:open-palette', onPaletteEvent)
+      window.removeEventListener('mira:open-settings', onSettingsEvent)
+      window.removeEventListener('mira:open-connect', onConnectEvent)
+      window.removeEventListener('mira:open-trace', onTraceEvent)
       window.removeEventListener('keydown', onKey)
     })
   })

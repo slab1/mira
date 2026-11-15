@@ -81,11 +81,11 @@ export default function DashboardPage() {
 
   const metrics = (): KeyMetric[] => {
     const list: KeyMetric[] = []
-    const engCount = engines().length || 15
+    const healthyCount = Object.keys(engineHealth()).length
     const healthyEngs = Object.values(engineHealth()).filter((h) => h.status === 'healthy').length
     list.push({
       label: 'Engines Active',
-      value: `${healthyEngs || engCount}/${engCount}`,
+      value: healthyCount > 0 ? `${healthyEngs}/${engCount}` : 'Unknown',
       sub: 'modular engines in registry',
     })
 
@@ -95,7 +95,7 @@ export default function DashboardPage() {
     ).length
     list.push({
       label: 'Specialized Agents',
-      value: specAgentsCount > 0 ? specAgentsCount : 8,
+      value: specAgentsCount > 0 ? `${specAgentsCount}` : '—',
       sub: 'orchestrated lane personas',
     })
 
@@ -103,10 +103,10 @@ export default function DashboardPage() {
       list.push(
         {
           label: 'Total Agents',
-          value: d.agents.total || agentTemplates().length || 8,
+          value: d.agents.total || agentTemplates().length || 0,
           sub: `avg reliability ${(d.agents.avgReliability * 100).toFixed(0)}%`,
         },
-        { label: 'Top Performer', value: d.agents.topPerformer ?? 'Mira Developer' },
+        { label: 'Top Performer', value: d.agents.topPerformer ?? '—' },
         {
           label: 'Proposals',
           value: d.governance.totalProposals,

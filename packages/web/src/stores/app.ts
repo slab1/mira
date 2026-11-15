@@ -373,7 +373,11 @@ export function createAppStore() {
   async function loadMessages(id: string) {
     try {
       const msgs = await api.getMessages(id)
-      setState('messages', msgs)
+      if (Array.isArray(msgs) && msgs.length > 0) {
+        setState('messages', msgs)
+      } else if (state.messages.length === 0 && Array.isArray(msgs)) {
+        setState('messages', msgs)
+      }
       // Reconcile queue with server truth (queued items drain as chained turns)
       try {
         setState('queued', await api.getQueue(id))
@@ -452,7 +456,16 @@ export function createAppStore() {
   /** Send a prompt — `model` is a per-message override for this send only. */
   async function sendPrompt(text?: string, model?: string) {
     const prompt = (text ?? input()).trim()
-    if (!prompt || !state.currentId) return
+    if (!prompt) return
+    if (!state.currentId) {
+      try {
+        const newSess = await createSession('New Chat')
+        if (!newSess) return
+      } catch (e) {
+        toast.error(`Failed to create chat session: ${(e as Error).message}`)
+        return
+      }
+    }
     setInput('')
 
     // Agent busy → queue the message instead of dropping it (Mira-parity UX)

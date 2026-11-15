@@ -51,7 +51,7 @@ function miraEnvToken(): string {
     try {
       if (!existsSync(p)) continue
       const raw = readFileSync(p, 'utf-8')
-      const m = raw.match(/MIRA_TOKEN\s*=\s*(['"]?)([0-9a-fA-F]{32,})\1/)
+      const m = raw.match(/MIRA_TOKEN\s*=\s*(['"]?)([0-9a-fA-F]{32,64})/)
       const tok = m?.[2]
       if (tok) return tok
     } catch {}
@@ -142,7 +142,7 @@ export default defineConfig({
       '/workspace': { target: API_TARGET, changeOrigin: true },
       '/complete': { target: API_TARGET, changeOrigin: true },
       '/autocomplete': { target: API_TARGET, changeOrigin: true },
-      '/terminal': { target: API_TARGET, changeOrigin: true },
+      '/terminal': { target: API_TARGET, changeOrigin: true, ws: true },
       '/metrics': { target: API_TARGET, changeOrigin: true },
       '/dashboard': { target: API_TARGET, changeOrigin: true },
       '/evolution': { target: API_TARGET, changeOrigin: true },

@@ -159,7 +159,7 @@ export default function SystemPage() {
             <For each={engines()}>
               {(eng) => {
                 const rep = () => engineHealth()[eng.id]
-                const status = () => rep()?.status ?? 'healthy'
+                const status = () => rep()?.status ?? 'unknown'
                 const ok = () => status() === 'healthy'
                 const latency = () => (rep()?.latencyMs !== undefined ? `${rep()!.latencyMs}ms` : '—')
                 const message = () => rep()?.message ? ` · ${rep()!.message}` : ''

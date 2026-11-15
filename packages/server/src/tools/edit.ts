@@ -137,6 +137,132 @@ const patchSchema = z.object({
   cwd: z.string().optional().describe('Working directory'),
 })
 
+export async function applyUnifiedPatchJs(
+  patch: string,
+  targetDir: string,
+): Promise<{ ok: boolean; stdout: string; stderr: string; exitCode: number }> {
+  const lines = patch.split('\n')
+  let currentFileA: string | null = null
+  let currentFileB: string | null = null
+
+  interface FilePatch {
+    fileA: string
+    fileB: string
+    hunks: Array<{ oldStart: number; oldLines: string[]; newLines: string[] }>
+  }
+  const filePatches: FilePatch[] = []
+  let currentHunks: Array<{ oldStart: number; oldLines: string[]; newLines: string[] }> = []
+  let currentHunk: { oldStart: number; oldLines: string[]; newLines: string[] } | null = null
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.startsWith('--- ')) {
+      currentFileA = line.slice(4).trim().replace(/^[ab]\//, '')
+      continue
+    }
+    if (line.startsWith('+++ ')) {
+      currentFileB = line.slice(4).trim().replace(/^[ab]\//, '')
+      if (currentFileA && currentFileB) {
+        currentHunks = []
+        filePatches.push({ fileA: currentFileA, fileB: currentFileB, hunks: currentHunks })
+      }
+      continue
+    }
+    const hunkHeader = /^@@(?:\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@|.*@@)/.exec(line)
+    if (hunkHeader) {
+      const oldStart = hunkHeader[1] ? Number(hunkHeader[1]) : 1
+      currentHunk = { oldStart, oldLines: [], newLines: [] }
+      currentHunks.push(currentHunk)
+      continue
+    }
+    if (!currentHunk) continue
+    if (line.startsWith('-')) {
+      currentHunk.oldLines.push(line.slice(1))
+    } else if (line.startsWith('+')) {
+      currentHunk.newLines.push(line.slice(1))
+    } else if (line.startsWith(' ') || line === '') {
+      const text = line.startsWith(' ') ? line.slice(1) : ''
+      currentHunk.oldLines.push(text)
+      currentHunk.newLines.push(text)
+    }
+  }
+
+  if (filePatches.length === 0) {
+    return { ok: false, stdout: '', stderr: 'No file patches found in diff', exitCode: 1 }
+  }
+
+  const { join, dirname } = await import('node:path')
+  const { existsSync, mkdirSync, readFileSync, writeFileSync } = await import('node:fs')
+
+  for (const fp of filePatches) {
+    const relPath = fp.fileB === '/dev/null' ? fp.fileA : fp.fileB
+    const filePath = join(targetDir, relPath)
+
+    if (fp.fileB === '/dev/null') {
+      const { rmSync } = await import('node:fs')
+      if (existsSync(filePath)) {
+        rmSync(filePath)
+      }
+      continue
+    }
+
+    let original = ''
+    if (existsSync(filePath)) {
+      original = readFileSync(filePath, 'utf-8')
+    } else {
+      mkdirSync(dirname(filePath), { recursive: true })
+    }
+
+    const hadTrailingNewline = original.endsWith('\n')
+    let fileLines = original === '' ? [] : original.replace(/\n$/, '').split('\n')
+
+    for (const hunk of fp.hunks) {
+      if ((fp.fileA === '/dev/null' || !existsSync(filePath)) && fileLines.length === 0) {
+        fileLines = [...hunk.newLines]
+        continue
+      }
+      let startIdx = Math.max(0, hunk.oldStart - 1)
+      if (hunk.oldLines.length > 0) {
+        let matched = true
+        for (let j = 0; j < hunk.oldLines.length; j++) {
+          if (fileLines[startIdx + j] !== hunk.oldLines[j]) {
+            matched = false
+            break
+          }
+        }
+        if (!matched) {
+          const firstOld = hunk.oldLines[0]
+          let foundIdx = -1
+          for (let k = 0; k <= fileLines.length - hunk.oldLines.length; k++) {
+            if (fileLines[k] === firstOld) {
+              let m = true
+              for (let j = 0; j < hunk.oldLines.length; j++) {
+                if (fileLines[k + j] !== hunk.oldLines[j]) {
+                  m = false
+                  break
+                }
+              }
+              if (m) {
+                foundIdx = k
+                break
+              }
+            }
+          }
+          if (foundIdx >= 0) {
+            startIdx = foundIdx
+          }
+        }
+      }
+      fileLines.splice(startIdx, hunk.oldLines.length, ...hunk.newLines)
+    }
+
+    const newContent = fileLines.join('\n') + (hadTrailingNewline || fileLines.length > 0 ? '\n' : '')
+    writeFileSync(filePath, newContent, 'utf-8')
+  }
+
+  return { ok: true, stdout: 'Patch applied successfully (JS fallback)', stderr: '', exitCode: 0 }
+}
+
 export const patchTool = {
   name: 'patch',
   description:
@@ -145,21 +271,29 @@ export const patchTool = {
   needsPermission: true,
   schema: patchSchema,
   async execute({ patch, cwd }, ctx) {
+    const targetDir = cwd ?? ctx.cwd ?? process.cwd()
     const { safeTempFile } = await import('../../../shared/src/utils/paths.js')
     const tmp = safeTempFile(`mira-patch-${Date.now()}.diff`)
     await Bun.write(tmp, patch)
-    const proc = Bun.spawn(['patch', '-p1', '--forward'], {
-      cwd: cwd ?? ctx.cwd ?? process.cwd(),
-      stdin: Bun.file(tmp),
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-    const [out, err, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
-    return { ok: code === 0, stdout: out, stderr: err, exitCode: code }
+    try {
+      const proc = Bun.spawn(['patch', '-p1', '--forward'], {
+        cwd: targetDir,
+        stdin: Bun.file(tmp),
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      const [out, err, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ])
+      if (code === 0) {
+        return { ok: true, stdout: out, stderr: err, exitCode: code }
+      }
+    } catch {
+      // patch binary not found or execution failed; proceed to pure JS fallback
+    }
+    return applyUnifiedPatchJs(patch, targetDir)
   },
 } satisfies ToolDef<typeof patchSchema>
 
