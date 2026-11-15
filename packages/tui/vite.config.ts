@@ -1,8 +1,26 @@
-import { defineConfig } from 'vite'
+import { defineConfig, createLogger } from 'vite'
 import solid from 'vite-plugin-solid'
 import { fileURLToPath } from 'node:url'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve, dirname, join } from 'node:path'
+
+const logger = createLogger()
+const originalLoggerError = logger.error.bind(logger)
+logger.error = (msg, options) => {
+  const errMsg = String((options?.error as Error | undefined)?.message ?? '')
+  const errCode = (options?.error as { code?: string } | undefined)?.code ?? ''
+  const text = `${msg} ${errMsg} ${errCode}`
+  if (
+    (text.includes('ws proxy socket error') || text.includes('ws proxy error')) &&
+    (text.includes('ECONNRESET') ||
+      text.includes('ECONNREFUSED') ||
+      text.includes('EPIPE') ||
+      text.includes('writeAfterFIN'))
+  ) {
+    return
+  }
+  originalLoggerError(msg, options)
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(__dirname, '../..')
@@ -47,6 +65,7 @@ const API_TARGET =
   process.env.MIRA_DEV_API ?? `http://localhost:${process.env.MIRA_DEV_PORT ?? miraPortFallback()}`
 
 export default defineConfig({
+  customLogger: logger,
   plugins: [solid()],
   server: {
     port: Number(process.env.MIRA_TUI_PORT ?? 3002),
@@ -93,6 +112,7 @@ export default defineConfig({
         target: API_TARGET,
         ws: true,
         changeOrigin: true,
+        rewriteWsOrigin: true,
         bypass: (req) => {
           const upgrade = (req.headers?.upgrade || '').toLowerCase()
           if (upgrade === 'websocket') return null

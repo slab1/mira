@@ -1731,11 +1731,18 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
     if (ws && ws.readyState === WebSocket.OPEN) return ws
     // fresh baseUrl + token on each connect (handles VITE_API_URL watchdog redeploy)
     ws = new WebSocket(wsUrl())
-    ws.onopen = () => {
+    ws.onopen = async () => {
       // Servers with auth enabled close unauthenticated sockets after 5s —
       // browsers cannot set WS headers, so authenticate via first message.
-      const t = getToken()
-      if (t) ws?.send(JSON.stringify({ type: 'auth', token: t }))
+      let t = getToken()
+      if (!t || t === 'dev-local-token-not-secret') {
+        t = await ensureToken().catch(() => '')
+      }
+      if (t && ws?.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ type: 'auth', token: t }))
+        } catch {}
+      }
       handlers.open?.()
     }
     ws.onmessage = (ev) => {

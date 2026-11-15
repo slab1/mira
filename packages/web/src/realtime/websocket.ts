@@ -10,7 +10,7 @@
  */
 
 import { deduplicate, detectGaps, createEvent, type ReconciledEvent } from '../state/reconciliation'
-import { getWsUrl } from '../api/client'
+import { getWsUrl, getToken, ensureToken } from '../api/client'
 
 export interface WebSocketConfig {
   url: string
@@ -60,7 +60,9 @@ export class RealtimeLayer {
     try {
       const targetUrl = this.config.url || getWsUrl()
       this.ws = new WebSocket(targetUrl)
-      this.ws.onopen = () => this.handleOpen()
+      this.ws.onopen = () => {
+        void this.handleOpen()
+      }
       this.ws.onmessage = (e) => this.handleMessage(e)
       this.ws.onclose = () => this.handleClose()
       this.ws.onerror = () => this.handleError()
@@ -100,9 +102,18 @@ export class RealtimeLayer {
     return [...this.eventStore]
   }
 
-  private handleOpen(): void {
+  private async handleOpen(): Promise<void> {
     this._connectionState = 'open'
     this.reconnectAttempts = 0
+    try {
+      let token = getToken()
+      if (!token || token === 'dev-local-token-not-secret') {
+        token = await ensureToken().catch(() => '')
+      }
+      if (token && this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: 'auth', token }))
+      }
+    } catch {}
     this.startHeartbeat()
   }
 

@@ -5,7 +5,7 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "prepare": "husky || true",
-    "dev": "bunx turbo dev --continue --filter=!@mira/slack",
+    "dev": "node scripts/dev-supervisor.mjs",
     "dev:all": "turbo dev --continue",
     "build": "turbo build",
     "build:bin": "bun build packages/cli/src/cli.ts --compile --outfile dist/mira",
