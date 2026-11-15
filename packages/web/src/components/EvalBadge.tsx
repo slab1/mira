@@ -76,42 +76,26 @@ export function EvalBadge(props: Props) {
   }
 
   return (
-    <span
-      class="pill"
-      style={{
-        'font-size': 'var(--fs-2xs)',
-        'font-family': 'var(--font-mono)',
-        padding: '2px 8px',
-        background: bgBand(),
-        color: colorBand(),
-        border: `1px solid ${borderBand()}`,
-        'white-space': 'nowrap',
-      }}
-      title={
-        data()
-          ? `Eval: ${percent()}% success over ${runs()} runs${data()?.lastEvalAt ? ` · last ${new Date(data()!.lastEvalAt!).toLocaleDateString()}` : ''}`
-          : 'Eval'
-      }
-    >
-      <Show
-        when={loading()}
-        fallback={
-          <Show
-            when={error()}
-            fallback={
-              <Show when={data()} fallback={<span style={{ opacity: 0.6 }}>eval —</span>}>
-                <span>
-                  ✓ {percent()}% · {runs()}
-                </span>
-              </Show>
-            }
-          >
-            <span style={{ opacity: 0.7 }}>⚠ err</span>
-          </Show>
+    <Show when={percent() != null}>
+      <span
+        class="pill"
+        style={{
+          'font-size': 'var(--fs-2xs)',
+          'font-family': 'var(--font-mono)',
+          padding: '2px 8px',
+          background: bgBand(),
+          color: colorBand(),
+          border: `1px solid ${borderBand()}`,
+          'white-space': 'nowrap',
+        }}
+        title={
+          data()
+            ? `Eval: ${percent()}% success over ${runs()} runs${data()?.lastEvalAt ? ` · last ${new Date(data()!.lastEvalAt!).toLocaleDateString()}` : ''}`
+            : 'Eval'
         }
       >
-        <span style={{ opacity: 0.7 }}>…</span>
-      </Show>
-    </span>
+        ✓ {percent()}% · {runs()}
+      </span>
+    </Show>
   )
 }

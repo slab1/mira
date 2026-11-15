@@ -141,11 +141,26 @@ function isSecretKey(key: string): boolean {
 /**
  * Check if a value looks like a secret
  */
-function isPotentiallySecretValue(value: string): boolean {
+function isPotentiallySecretValue(value: string, path: string = ''): boolean {
   if (!value || value.length < 8) return false
   // Check against known secret patterns
   if (SECRET_VALUE_PATTERNS.some(pattern => pattern.test(value))) {
     return true
+  }
+
+  // Model references, aliases, base URLs, and descriptive names are not secrets
+  if (
+    path.startsWith('routing.') ||
+    path === 'model' ||
+    path === 'smallModel' ||
+    path.includes('.models.') ||
+    path.endsWith('.baseURL') ||
+    path.endsWith('.name')
+  ) {
+    return false
+  }
+  if (value.includes('/') && !SECRET_VALUE_PATTERNS.some(pattern => pattern.test(value))) {
+    return false
   }
   
   // Check for high entropy (likely a secret)
@@ -183,18 +198,44 @@ export function checkForSecretsInConfig(
     
     for (const [key, value] of Object.entries(obj)) {
       const currentPath = path ? `${path}.${key}` : key
+
+      // Check if value is a template (allowed across any field)
+      if (typeof value === 'string' && (value.includes('{env:') || value === '***')) {
+        continue
+      }
+
+      // Check array values (e.g. rotated apiKeys)
+      if (Array.isArray(value)) {
+        for (let i = 0; i < value.length; i++) {
+          const item = value[i]
+          if (typeof item === 'string') {
+            if (item.includes('{env:') || item === '***') continue
+            const itemPath = `${currentPath}[${i}]`
+            if (isSecretKey(key)) {
+              if (isPotentiallySecretValue(item, itemPath)) {
+                errors.push(
+                  `${RED}❌${RESET} Potential secret detected at ${itemPath} in ${source}`
+                )
+              } else {
+                warnings.push(
+                  `${YELLOW}⚠️${RESET} Secret key ${itemPath} should use {env:VAR} template in ${source}`
+                )
+              }
+            } else if (isPotentiallySecretValue(item, itemPath)) {
+              warnings.push(
+                `${YELLOW}⚠️${RESET} Potential secret value at ${itemPath} in ${source}`
+              )
+            }
+          }
+        }
+        continue
+      }
       
       // Check if key is a secret key
       if (isSecretKey(key)) {
         if (typeof value === 'string') {
-          // Check if value is a template (allowed)
-          if (typeof value === 'string' && value.includes('{env:')) {
-            // Template is OK
-            continue
-          }
-          
           // Check if value looks like a secret
-          if (isPotentiallySecretValue(value)) {
+          if (isPotentiallySecretValue(value, currentPath)) {
             errors.push(
               `${RED}❌${RESET} Potential secret detected at ${currentPath} in ${source}`
             )
@@ -207,7 +248,7 @@ export function checkForSecretsInConfig(
       }
       
       // Check if value looks like a secret (even if key doesn't suggest it)
-      if (typeof value === 'string' && isPotentiallySecretValue(value)) {
+      if (typeof value === 'string' && isPotentiallySecretValue(value, currentPath)) {
         warnings.push(
           `${YELLOW}⚠️${RESET} Potential secret value at ${currentPath} in ${source}`
         )

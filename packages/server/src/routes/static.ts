@@ -30,6 +30,7 @@ const API_ROUTE_PREFIXES = [
   '/autocomplete',
   '/workspaces',
   '/workspace',
+  '/voice',
   // Phase 1-6 evolution stack + pre-existing routes that were being
   // swallowed by the SPA fallback when static was mounted before them:
   '/evolution',

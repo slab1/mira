@@ -11,11 +11,19 @@ export const PRICING_TABLE: Array<{
   output: number
 }> = [
   { match: (m) => m.includes('claude-opus'), input: 15, output: 75 },
+  { match: (m) => m.includes('claude-3-7-sonnet') || m.includes('claude-sonnet-4'), input: 3, output: 15 },
   { match: (m) => m.includes('claude-sonnet'), input: 3, output: 15 },
   { match: (m) => m.includes('haiku'), input: 0.8, output: 4 },
+  { match: (m) => m.includes('gpt-4o-mini') || m.includes('o3-mini'), input: 0.15, output: 0.60 },
   { match: (m) => m.includes('gpt-4o'), input: 2.5, output: 10 },
   { match: (m) => m.includes('gpt-4'), input: 10, output: 30 },
+  { match: (m) => m.includes('o1'), input: 15, output: 60 },
+  { match: (m) => m.includes('deepseek-v4-flash') || m.includes('deepseek-chat'), input: 0.14, output: 0.28 },
+  { match: (m) => m.includes('deepseek-v4-pro') || m.includes('deepseek-reasoner'), input: 0.55, output: 2.19 },
   { match: (m) => m.includes('deepseek'), input: 0.27, output: 1.1 },
+  { match: (m) => m.includes('nemotron-3.5-bolt') || m.includes('nemotron-3.5-lightning'), input: 0.12, output: 0.30 },
+  { match: (m) => m.includes('nemotron-3-ultra') || m.includes('nemotron-3.5-super'), input: 0.50, output: 1.50 },
+  { match: (m) => m.includes('nemotron') || m.includes('laguna') || m.includes('minimax'), input: 0.20, output: 0.60 },
   { match: (m) => m.includes('gemini'), input: 1.25, output: 5 },
   { match: (m) => m.includes('llama') || m.includes('mistral'), input: 0.5, output: 0.8 },
 ]

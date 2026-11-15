@@ -76,17 +76,21 @@ export const DEFAULT_CONFIG: MiraConfig = {
         kind: 'nvidia',
       },
       models: {
-        'deepseek-ai/deepseek-v4-flash': {
-          name: 'DeepSeek V4 Flash (cheap/fast)',
+        'nvidia/nemotron-3.5-lightning-30b-a3b': {
+          name: 'Nemotron 3.5 Lightning 30B (fast/balanced)',
           limit: { context: 128000, output: 8192 },
         },
-        'deepseek-ai/deepseek-v4-pro': {
-          name: 'DeepSeek V4 Pro (reasoning)',
+        'nvidia/nemotron-3.5-bolt-e4b': {
+          name: 'Nemotron 3.5 Bolt E4B (ultra-fast)',
           limit: { context: 128000, output: 8192 },
         },
-        'meta/llama-3.3-70b-instruct': {
-          name: 'Llama 3.3 70B (fallback)',
-          limit: { context: 128000, output: 4096 },
+        'nvidia/nemotron-3-ultra-550b-a55b': {
+          name: 'Nemotron 3 Ultra 550B (reasoning)',
+          limit: { context: 128000, output: 8192 },
+        },
+        'nvidia/nemotron-3.5-super-vl-120b-a12b': {
+          name: 'Nemotron 3.5 Super VL 120B',
+          limit: { context: 128000, output: 8192 },
         },
       },
     },
@@ -106,25 +110,93 @@ export const DEFAULT_CONFIG: MiraConfig = {
         'glm-5.2': { name: 'GLM-5.2 744B MoE (372GB)', limit: { context: 131072, output: 8192 } },
       },
     },
+    openrouter: {
+      npm: '@ai-sdk/openai-compatible',
+      name: 'OpenRouter',
+      options: {
+        baseURL: 'https://openrouter.ai/api/v1',
+        apiKey: '{env:OPENROUTER_API_KEY}',
+        headers: {},
+        timeout: 120_000,
+        kind: 'openrouter',
+      },
+      models: {},
+    },
+    groq: {
+      npm: '@ai-sdk/openai-compatible',
+      name: 'Groq Cloud',
+      options: {
+        baseURL: 'https://api.groq.com/openai/v1',
+        apiKey: '{env:GROQ_API_KEY}',
+        headers: {},
+        timeout: 60_000,
+        kind: 'groq',
+      },
+      models: {},
+    },
+    mistral: {
+      npm: '@ai-sdk/openai-compatible',
+      name: 'Mistral AI',
+      options: {
+        baseURL: 'https://api.mistral.ai/v1',
+        apiKey: '{env:MISTRAL_API_KEY}',
+        headers: {},
+        timeout: 120_000,
+        kind: 'mistral',
+      },
+      models: {},
+    },
+    together: {
+      npm: '@ai-sdk/openai-compatible',
+      name: 'Together AI',
+      options: {
+        baseURL: 'https://api.together.xyz/v1',
+        apiKey: '{env:TOGETHER_API_KEY}',
+        headers: {},
+        timeout: 120_000,
+        kind: 'together',
+      },
+      models: {},
+    },
   },
   routing: {
-    aliases: {},
+    aliases: {
+      sonnet: 'anthropic/claude-sonnet-4',
+      'claude-sonnet': 'anthropic/claude-sonnet-4',
+      opus: 'anthropic/claude-opus-4',
+      'claude-opus': 'anthropic/claude-opus-4',
+      haiku: 'anthropic/claude-haiku-3',
+      'gpt-4o': 'openai/gpt-4o',
+      'gpt-4o-mini': 'openai/gpt-4o-mini',
+      deepseek: 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b',
+      flash: 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b',
+      pro: 'nvidia/nvidia/nemotron-3-ultra-550b-a55b',
+      llama: 'nvidia/nvidia/nemotron-3.5-bolt-e4b',
+      nemotron: 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b',
+      gemini: 'google/gemini-2.0-flash',
+    },
     // Nvidia is primary — auto-pick keeps costs low; anthropic/openai/google stay as fallbacks
     fallbacks: [
       'anthropic/claude-sonnet-4',
       'openai/gpt-4o',
       'google/gemini-2.0-flash',
+      'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b',
     ],
     defaultProvider: 'nvidia',
-    retiredModels: ['claude-3-opus-20240229'],
+    retiredModels: [
+      'claude-3-opus-20240229',
+      'meta/llama-3.3-70b-instruct',
+      'deepseek-ai/deepseek-v4-flash',
+      'deepseek-ai/deepseek-v4-pro',
+    ],
   },
   subgateways: {
     default: {
       provider: 'nvidia',
-      model: 'nvidia/deepseek-ai/deepseek-v4-flash',
+      model: 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b',
       fallback: [
-        'nvidia/deepseek-ai/deepseek-v4-pro',
-        'nvidia/meta/llama-3.3-70b-instruct',
+        'nvidia/nvidia/nemotron-3.5-bolt-e4b',
+        'nvidia/nvidia/nemotron-3-ultra-550b-a55b',
         'anthropic/claude-sonnet-4',
       ],
       rateLimit: { rps: 10, burst: 20 },
@@ -135,9 +207,9 @@ export const DEFAULT_CONFIG: MiraConfig = {
     },
     cheap: {
       provider: 'nvidia',
-      model: 'nvidia/deepseek-ai/deepseek-v4-flash',
+      model: 'nvidia/nvidia/nemotron-3.5-bolt-e4b',
       fallback: [
-        'nvidia/meta/llama-3.3-70b-instruct',
+        'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b',
         'anthropic/claude-3.5-sonnet',
       ],
       rateLimit: { rps: 20, burst: 40 },
@@ -149,7 +221,7 @@ export const DEFAULT_CONFIG: MiraConfig = {
     vision: {
       provider: 'openai',
       model: 'openai/gpt-4o',
-      fallback: ['google/gemini-2.0-flash', 'anthropic/claude-sonnet-4'],
+      fallback: ['nvidia/nvidia/nemotron-3.5-super-vl-120b-a12b', 'google/gemini-2.0-flash', 'anthropic/claude-sonnet-4'],
       rateLimit: { rps: 5, burst: 10 },
       retry: { maxAttempts: 3, baseMs: 500, maxMs: 10_000 },
       timeout: 120_000,
@@ -158,8 +230,8 @@ export const DEFAULT_CONFIG: MiraConfig = {
     },
     local: {
       provider: 'nvidia',
-      model: 'nvidia/deepseek-ai/deepseek-v4-flash',
-      fallback: ['colibri/qwen3.6', 'colibri/olmoe', 'nvidia/meta/llama-3.3-70b-instruct', 'anthropic/claude-sonnet-4'],
+      model: 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b',
+      fallback: ['colibri/qwen3.6', 'colibri/olmoe', 'nvidia/nvidia/nemotron-3.5-bolt-e4b', 'anthropic/claude-sonnet-4'],
       rateLimit: { rps: 10, burst: 20 },
       retry: { maxAttempts: 2, baseMs: 500, maxMs: 5_000 },
       timeout: 180_000,
@@ -168,8 +240,8 @@ export const DEFAULT_CONFIG: MiraConfig = {
     },
     compaction: {
       provider: 'nvidia',
-      model: 'nvidia/deepseek-ai/deepseek-v4-flash',
-      fallback: ['colibri/olmoe', 'colibri/qwen3.6', 'nvidia/meta/llama-3.3-70b-instruct'],
+      model: 'nvidia/nvidia/nemotron-3.5-bolt-e4b',
+      fallback: ['colibri/olmoe', 'colibri/qwen3.6', 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b'],
       rateLimit: { rps: 10, burst: 20 },
       retry: { maxAttempts: 2, baseMs: 300, maxMs: 5_000 },
       timeout: 180_000,
@@ -178,8 +250,8 @@ export const DEFAULT_CONFIG: MiraConfig = {
     },
     'agent:ask': {
       provider: 'nvidia',
-      model: 'nvidia/deepseek-ai/deepseek-v4-flash',
-      fallback: ['nvidia/meta/llama-3.3-70b-instruct', 'anthropic/claude-3.5-sonnet'],
+      model: 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b',
+      fallback: ['nvidia/nvidia/nemotron-3.5-bolt-e4b', 'anthropic/claude-3.5-sonnet'],
       rateLimit: { rps: 20, burst: 40 },
       retry: { maxAttempts: 3, baseMs: 300, maxMs: 5_000 },
       timeout: 60_000,

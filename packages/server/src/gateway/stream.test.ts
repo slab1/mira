@@ -352,3 +352,82 @@ describe('error mapping', () => {
     expect(err!.message).toContain('upstream error')
   })
 })
+
+describe('tool message wire serialization', () => {
+  test('serializes assistant tool_calls and expands batched toolResults into individual tool_call_id messages', async () => {
+    const { captured, restore } = stubFetch('data: [DONE]\n\n')
+    await drain(
+      await liveOpenAIStream({
+        baseURL: BASE,
+        apiKey: 'k',
+        modelID: 'm',
+        opts: makeOpts({
+          messages: [
+            { role: 'user', content: 'run two tools' },
+            {
+              role: 'assistant',
+              content: '',
+              toolCalls: [
+                { id: 'call_1', name: 'read', args: { path: 'a.ts' } },
+                { id: 'call_2', name: 'bash', args: { command: 'ls' } },
+              ],
+            },
+            {
+              role: 'tool',
+              content: JSON.stringify([
+                { toolCallID: 'call_1', name: 'read', result: 'ok-1', isError: false },
+                { toolCallID: 'call_2', name: 'bash', result: 'ok-2', isError: false },
+              ]),
+              toolResults: [
+                { toolCallID: 'call_1', name: 'read', result: 'ok-1', isError: false },
+                { toolCallID: 'call_2', name: 'bash', result: 'ok-2', isError: false },
+              ],
+            },
+          ],
+        }),
+      }),
+    )
+    restore()
+
+    const msgs = captured[0].body.messages as Array<{
+      role: string
+      content: string
+      tool_call_id?: string
+      tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>
+    }>
+    expect(msgs).toHaveLength(4)
+    expect(msgs[1]?.role).toBe('assistant')
+    expect(msgs[1]?.tool_calls?.map((t) => t.id)).toEqual(['call_1', 'call_2'])
+    expect(msgs[2]).toEqual({ role: 'tool', tool_call_id: 'call_1', content: '"ok-1"' })
+    expect(msgs[3]).toEqual({ role: 'tool', tool_call_id: 'call_2', content: '"ok-2"' })
+  })
+
+  test('downgrades unattributable role=tool message without tool_call_id so gateway never receives invalid tool role', async () => {
+    const { captured, restore } = stubFetch('data: [DONE]\n\n')
+    await drain(
+      await liveOpenAIStream({
+        baseURL: BASE,
+        apiKey: 'k',
+        modelID: 'm',
+        opts: makeOpts({
+          messages: [
+            { role: 'user', content: 'hello' },
+            { role: 'tool', content: 'orphaned output' },
+          ],
+        }),
+      }),
+    )
+    restore()
+
+    const msgs = captured[0].body.messages as Array<{
+      role: string
+      content: string
+      tool_call_id?: string
+    }>
+    const toolMsgsWithoutId = msgs.filter((m) => m.role === 'tool' && !m.tool_call_id)
+    expect(toolMsgsWithoutId).toHaveLength(0)
+    expect(msgs[1]?.role).toBe('user')
+    expect(msgs[1]?.content).toContain('orphaned output')
+  })
+})
+

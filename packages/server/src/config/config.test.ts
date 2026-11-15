@@ -466,7 +466,7 @@ describe('auto-generate mira.json from example', () => {
     expect(config.model).toBeDefined()
     // Verify the generated file has the example content
     const written = JSON.parse(readFileSync(miraPath, 'utf-8'))
-    expect(written.model).toBe('nvidia/deepseek-ai/deepseek-v4-flash')
+    expect(written.model).toBe('nvidia/nvidia/nemotron-3.5-lightning-30b-a3b')
   })
 
   test('does not overwrite existing mira.json', async () => {

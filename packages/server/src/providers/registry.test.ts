@@ -92,6 +92,22 @@ describe('resolve', () => {
     expect(r.modelID).toBe('nope/m1')
   })
 
+  test('unprefixed model resolves to owning provider catalog before defaultProvider', () => {
+    const anthropicCfg = {
+      ...prov('https://anthropic.test'),
+      models: {
+        'claude-sonnet-4': { name: 'Claude Sonnet 4', limit: { context: 200000, output: 8192 } },
+      },
+    }
+    const reg = new ProviderRegistry(
+      { nvidia: prov('https://nvidia.test'), anthropic: anthropicCfg },
+      { defaultProvider: 'nvidia' },
+    )
+    const r = reg.resolve('claude-sonnet-4')
+    expect(r.providerKey).toBe('anthropic')
+    expect(r.modelID).toBe('claude-sonnet-4')
+  })
+
   test('a provider key that is a prefix of another still matches longest', () => {
     const reg = new ProviderRegistry({
       nvidia: prov('https://n.test'),

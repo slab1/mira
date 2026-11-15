@@ -295,18 +295,46 @@ function ReasoningBlock(props: { text: string }) {
 // ── Error recovery card ───────────────────────────────────────────────
 
 function ErrorCard(props: { message: string; onRetry?: () => void; onDismiss: () => void }) {
+  const missingProvider = () => {
+    const m = /No API key configured for provider "([^"]+)"/i.exec(props.message)
+    return m?.[1]
+  }
+  const isMissingKey = () =>
+    /no api key configured|NO_API_KEY/i.test(props.message)
+
   return (
     <div class="error-card" role="alert">
-      <div class="error-card-title">Something went wrong</div>
+      <div class="error-card-title">
+        {isMissingKey() ? 'Provider API key required' : 'Something went wrong'}
+      </div>
       <div class="error-card-why">
         <strong>What happened:</strong> {props.message}
       </div>
       <div class="error-card-why">
-        <strong>Why:</strong> The request failed or the agent encountered an error. Check your
-        connection and try again.
+        <strong>Why:</strong>{' '}
+        {isMissingKey()
+          ? 'No API key is configured for this model or provider yet. Connect a provider key or switch to a configured model.'
+          : 'The request failed or the agent encountered an error. Check your connection and try again.'}
       </div>
       <div class="error-card-next">
-        <Show when={props.onRetry}>
+        <Show when={isMissingKey()}>
+          <button
+            type="button"
+            class="btn btn-solid"
+            onClick={() => {
+              window.dispatchEvent(
+                new CustomEvent('mira:open-connect', {
+                  detail: missingProvider() ? { provider: missingProvider() } : undefined,
+                }),
+              )
+              props.onDismiss()
+            }}
+            style={{ padding: '6px 12px', 'font-size': 'var(--fs-xs)' }}
+          >
+            Connect API Key
+          </button>
+        </Show>
+        <Show when={props.onRetry && !isMissingKey()}>
           <button
             type="button"
             class="btn btn-solid"
@@ -340,8 +368,13 @@ export function ChatView(props: {
   store: AppStore
   settings?: SettingsStore
   onPaletteOpen?: () => void
+  sessionsOpen?: boolean
+  onToggleSessions?: () => void
+  activityOpen?: boolean
+  onToggleActivity?: () => void
 }) {
   const s = () => props.store.state
+  const activeSession = () => s().sessions.find((sess) => sess.id === s().currentId)
   let scrollRef: HTMLDivElement | undefined
   let inputRef: HTMLTextAreaElement | undefined
 
@@ -389,8 +422,43 @@ export function ChatView(props: {
     setInlineSel({})
   }
 
-  // Model selector
+  // Model selector — sync with active session model if set
   const [selectedModel, setSelectedModel] = createSignal('')
+  createEffect(() => {
+    const sess = activeSession()
+    setSelectedModel(sess?.model ?? '')
+  })
+
+  // Clear per-session ephemeral UI state when switching sessions
+  let prevChatSessionId: string | null = null
+  createEffect(() => {
+    const id = s().currentId
+    if (prevChatSessionId !== null && prevChatSessionId !== id) {
+      setPinnedIds(new Set<string>())
+      setFilePills([])
+      setInlineSel({})
+      setPinned(true)
+    }
+    prevChatSessionId = id
+  })
+
+  // Live 1s ticker while waiting on any tool approval gate
+  const [nowMs, setNowMs] = createSignal(Date.now())
+  let permTimer: number | undefined
+  onCleanup(() => {
+    if (permTimer) clearInterval(permTimer)
+  })
+  createEffect(() => {
+    const hasPending = s().pendingPermissions.length > 0
+    if (permTimer) {
+      clearInterval(permTimer)
+      permTimer = undefined
+    }
+    if (hasPending) {
+      setNowMs(Date.now())
+      permTimer = window.setInterval(() => setNowMs(Date.now()), 1000)
+    }
+  })
   const currentCwd = createMemo(() => {
     const sess = s().sessions.find((sess) => sess.id === s().currentId) as
       { cwd?: string | null } | undefined
@@ -608,17 +676,106 @@ export function ChatView(props: {
         overflow: 'hidden',
       }}
     >
-      {/* Zeriq-inspired Multi-Agent Workspace Status Bar */}
-      <div class="mira-agent-bar">
-        <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
-          <span class="mira-agent-avatar">M</span>
-          <span style={{ 'font-weight': '600', color: 'var(--fg)' }}>Mira Agent Teammate</span>
-          <span class={`pill ${s().streaming ? 'pill-brand' : ''}`} style={{ 'font-size': '10px' }}>
-            {s().streaming ? '● Active Turn' : 'Idle'}
+      {/* Compact Session Bar */}
+      <div class="mira-agent-bar" style={{ 'justify-content': 'space-between', 'flex-wrap': 'wrap', gap: '8px' }}>
+        <div style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'min-width': '0', flex: '1' }}>
+          <Show when={props.onToggleSessions}>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              onClick={() => props.onToggleSessions?.()}
+              aria-expanded={props.sessionsOpen ? 'true' : 'false'}
+              title="Toggle sessions list"
+              aria-label="Toggle sessions list"
+              style={{
+                padding: '4px 8px',
+                'min-height': '28px',
+                'font-size': 'var(--fs-xs)',
+                border: '1px solid var(--border)',
+                'border-radius': 'var(--r-sm)',
+                background: props.sessionsOpen ? 'var(--accent-soft)' : 'transparent',
+                color: props.sessionsOpen ? 'var(--accent)' : 'var(--fg-muted)',
+                'flex-shrink': '0',
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect width="18" height="18" x="3" y="3" rx="2" />
+                <path d="M9 3v18" />
+              </svg>
+              <span>Sessions</span>
+              <span class="tabular-nums" style={{ opacity: '0.75', 'font-family': 'var(--font-mono)' }}>
+                {s().sessions.length}
+              </span>
+            </button>
+          </Show>
+          <span
+            style={{
+              'font-weight': '600',
+              color: 'var(--fg)',
+              overflow: 'hidden',
+              'text-overflow': 'ellipsis',
+              'white-space': 'nowrap',
+            }}
+            title={activeSession()?.title || s().currentId || 'No active session'}
+          >
+            {activeSession()?.title || (s().currentId ? `Session ${s().currentId.slice(0, 8)}` : 'No active session')}
+          </span>
+          <span
+            class={`pill ${s().streaming ? 'pill-warn' : s().connected ? 'pill-ok' : ''}`}
+            style={{ 'font-size': '10.5px', padding: '1px 7px', 'flex-shrink': '0' }}
+          >
+            <span
+              class={`dot ${s().streaming ? 'dot-pulse' : ''}`}
+              style={{
+                width: '6px',
+                height: '6px',
+                background: s().streaming ? 'var(--warn)' : s().connected ? 'var(--ok)' : 'var(--fg-faint)',
+              }}
+            />
+            {s().streaming ? 'Streaming' : s().connected ? 'Ready' : 'Offline'}
           </span>
         </div>
-        <div style={{ 'margin-left': 'auto', display: 'flex', 'align-items': 'center', gap: '12px', color: 'var(--fg-muted)' }}>
-          <span>Roles: <b>Coder</b> · <b>Reviewer</b> · <b>Verifier</b></span>
+        <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'flex-shrink': '0' }}>
+          <button
+            type="button"
+            class="btn btn-ghost"
+            onClick={() => void props.store.createSession().catch(() => {})}
+            title="Start a new session"
+            style={{
+              padding: '4px 9px',
+              'min-height': '28px',
+              'font-size': 'var(--fs-xs)',
+              border: '1px solid var(--border)',
+              'border-radius': 'var(--r-sm)',
+              color: 'var(--accent)',
+            }}
+          >
+            + New
+          </button>
+          <Show when={props.onToggleActivity}>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              onClick={() => props.onToggleActivity?.()}
+              aria-expanded={props.activityOpen ? 'true' : 'false'}
+              title="Toggle activity & governance inspector"
+              aria-label="Toggle activity inspector"
+              style={{
+                padding: '4px 9px',
+                'min-height': '28px',
+                'font-size': 'var(--fs-xs)',
+                border: '1px solid var(--border)',
+                'border-radius': 'var(--r-sm)',
+                background: props.activityOpen ? 'var(--accent-soft)' : 'transparent',
+                color: props.activityOpen ? 'var(--accent)' : 'var(--fg-muted)',
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+              </svg>
+              <span>Activity</span>
+            </button>
+          </Show>
         </div>
       </div>
 
@@ -641,34 +798,6 @@ export function ChatView(props: {
               'min-height': '100%',
             }}
           >
-            {/* Zeriq-inspired 6-Stage Lifecycle Stepper */}
-            <Show when={s().currentId}>
-              <div class="mira-stepper">
-                <div class={`mira-step-item ${s().streaming ? 'completed' : 'completed'}`}>
-                  <span class="mira-step-dot" /> Explore
-                </div>
-                <div class="mira-step-connector" />
-                <div class={`mira-step-item ${s().streaming ? 'completed' : 'completed'}`}>
-                  <span class="mira-step-dot" /> Understand
-                </div>
-                <div class="mira-step-connector" />
-                <div class={`mira-step-item ${s().streaming ? 'active' : 'completed'}`}>
-                  <span class="mira-step-dot" /> Plan
-                </div>
-                <div class="mira-step-connector" />
-                <div class={`mira-step-item ${s().streaming ? 'active' : 'completed'}`}>
-                  <span class="mira-step-dot" /> Implement
-                </div>
-                <div class="mira-step-connector" />
-                <div class={`mira-step-item ${s().streaming ? '' : 'completed'}`}>
-                  <span class="mira-step-dot" /> Verify
-                </div>
-                <div class="mira-step-connector" />
-                <div class={`mira-step-item ${s().streaming ? '' : 'completed'}`}>
-                  <span class="mira-step-dot" /> Report
-                </div>
-              </div>
-            </Show>
 
             <Show
               when={s().currentId}
@@ -1145,6 +1274,147 @@ export function ChatView(props: {
               >
                 SSE stream open
               </span>
+            </div>
+          </Show>
+          {/* inline tool permission gates */}
+          <Show when={s().pendingPermissions.length > 0}>
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px', 'margin-bottom': '8px' }}>
+              <For each={s().pendingPermissions}>
+                {(perm) => {
+                  const remainingSec = () =>
+                    perm.expiresAt ? Math.max(0, Math.ceil((perm.expiresAt - nowMs()) / 1000)) : null
+                  const argsPreview = () => {
+                    const a = perm.args
+                    if (!a || typeof a !== 'object') return ''
+                    if (typeof (a as { command?: unknown }).command === 'string') {
+                      return (a as { command: string }).command
+                    }
+                    try {
+                      return JSON.stringify(a, null, 2).slice(0, 320)
+                    } catch {
+                      return String(a)
+                    }
+                  }
+                  return (
+                    <div
+                      class="approval-gate"
+                      role="dialog"
+                      aria-label={`Permission required for ${perm.tool}`}
+                      style={{
+                        border: '1px solid var(--warn-border)',
+                        background: 'var(--bg-surface)',
+                      }}
+                    >
+                      <div
+                        class="approval-gate-title"
+                        style={{
+                          display: 'flex',
+                          'align-items': 'center',
+                          'justify-content': 'space-between',
+                          gap: '8px',
+                          'flex-wrap': 'wrap',
+                        }}
+                      >
+                        <span style={{ display: 'inline-flex', 'align-items': 'center', gap: '8px' }}>
+                          <span>🛡 Permission required</span>
+                          <code
+                            style={{
+                              'font-family': 'var(--font-mono)',
+                              'font-size': 'var(--fs-xs)',
+                              padding: '1px 6px',
+                              'border-radius': 'var(--r-sm)',
+                              background: 'var(--warn-soft)',
+                              color: 'var(--warn)',
+                              border: '1px solid var(--warn-border)',
+                            }}
+                          >
+                            {perm.tool}
+                          </code>
+                          <Show when={perm.risk && perm.risk !== 'low'}>
+                            <span
+                              style={{
+                                'font-size': 'var(--fs-2xs)',
+                                color: perm.risk === 'critical' || perm.risk === 'high' ? 'var(--danger)' : 'var(--warn)',
+                                'text-transform': 'uppercase',
+                                'font-weight': '700',
+                              }}
+                            >
+                              {perm.risk}
+                            </span>
+                          </Show>
+                        </span>
+                        <Show when={remainingSec() !== null}>
+                          <span
+                            class="tabular-nums"
+                            style={{
+                              'font-size': 'var(--fs-2xs)',
+                              'font-family': 'var(--font-mono)',
+                              color: remainingSec()! <= 30 ? 'var(--danger)' : 'var(--fg-faint)',
+                            }}
+                          >
+                            {remainingSec()}s left
+                          </span>
+                        </Show>
+                      </div>
+                      <Show when={argsPreview()}>
+                        <pre
+                          style={{
+                            margin: '0',
+                            padding: '8px 10px',
+                            'border-radius': 'var(--r-sm)',
+                            background: 'var(--bg-app)',
+                            border: '1px solid var(--border)',
+                            'font-family': 'var(--font-mono)',
+                            'font-size': 'var(--fs-xs)',
+                            'white-space': 'pre-wrap',
+                            'word-break': 'break-word',
+                            'max-height': '140px',
+                            overflow: 'auto',
+                            color: 'var(--fg)',
+                          }}
+                        >
+                          {argsPreview()}
+                        </pre>
+                      </Show>
+                      <Show when={perm.reason}>
+                        <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>
+                          {perm.reason}
+                        </div>
+                      </Show>
+                      <div style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap', 'margin-top': '2px' }}>
+                        <button
+                          type="button"
+                          class="btn btn-solid"
+                          onClick={() => void props.store.answerPermission(perm.toolCallID, perm.nonce, 'allow')}
+                          style={{ padding: '6px 12px', 'font-size': 'var(--fs-xs)', 'min-height': '32px' }}
+                        >
+                          ✓ Allow Once
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-outline"
+                          onClick={() =>
+                            void props.store.answerPermission(perm.toolCallID, perm.nonce, 'allow', {
+                              alwaysAllowTool: perm.tool,
+                            })
+                          }
+                          style={{ padding: '6px 12px', 'font-size': 'var(--fs-xs)', 'min-height': '32px' }}
+                        >
+                          Always Allow {perm.tool}
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-danger-ghost"
+                          onClick={() => void props.store.answerPermission(perm.toolCallID, perm.nonce, 'deny')}
+                          style={{ padding: '6px 12px', 'font-size': 'var(--fs-xs)', 'min-height': '32px' }}
+                        >
+                          ✕ Deny
+                        </button>
+                      </div>
+                    </div>
+                  )
+                }}
+              </For>
             </div>
           </Show>
           {/* inline HITL — same wiring as floating QuestionPrompt, but anchored above composer so mobile keeps it visible */}

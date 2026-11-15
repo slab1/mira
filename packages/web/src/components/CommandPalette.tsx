@@ -103,23 +103,7 @@ export function CommandPalette(props: {
     }
   }
 
-  // Global Ctrl+P / Cmd+P listener — also "/" when not in input
-  createEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const isModP = (e.ctrlKey || e.metaKey) && (e.key ?? '').toLowerCase() === 'p'
-      if (isModP) {
-        e.preventDefault()
-        if (props.open) props.onClose()
-        else {
-          // Open palette — parent controls open state via App
-          // Dispatch custom event so App can react even if this component isn't mounted open
-          window.dispatchEvent(new CustomEvent('mira:open-palette'))
-        }
-      }
-    }
-    window.addEventListener('keydown', handler)
-    onCleanup(() => window.removeEventListener('keydown', handler))
-  })
+  // Global Ctrl+K / Ctrl+P toggling is handled centrally in App.tsx
 
   return (
     <Show when={props.open}>

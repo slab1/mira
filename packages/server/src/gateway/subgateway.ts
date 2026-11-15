@@ -399,13 +399,28 @@ export class Subgateway implements Gateway {
    */
   private qualifyWithLaneProvider(modelID: string): string {
     const laneProvider = this.subConfig.provider
-    if (!laneProvider) return modelID
     if (!modelID) return modelID
     // Already provider-qualified (e.g. "openai/gpt-4o") → leave it.
     if (modelID.includes('/')) {
       const prefix = modelID.split('/')[0].toLowerCase()
       if (this.registry.keys().some((k) => k.toLowerCase() === prefix)) return modelID
     }
+    // If another provider explicitly owns this unprefixed model (e.g. anthropic/claude-sonnet-4),
+    // prefer the owning provider instead of blindly prepending the lane provider (e.g. nvidia/).
+    const targetLower = modelID.toLowerCase()
+    const owners = this.registry.keys().filter((k) => {
+      const models = this.registry.getProvider(k)?.models
+      if (!models) return false
+      return (
+        Object.prototype.hasOwnProperty.call(models, modelID) ||
+        Object.keys(models).some((m) => m.toLowerCase() === targetLower)
+      )
+    })
+    if (owners.length > 0) {
+      const owner = owners.find((k) => this.registry.hasKey(k)) ?? owners[0]
+      return `${owner}/${modelID}`
+    }
+    if (!laneProvider) return modelID
     return `${laneProvider}/${modelID}`
   }
 

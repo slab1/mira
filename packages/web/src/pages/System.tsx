@@ -54,7 +54,9 @@ export default function SystemPage() {
   const [error, setError] = createSignal<string | null>(null)
   const [state, setState] = createSignal<OperationalState>('loading')
 
-  onMount(async () => {
+  const loadSystem = async () => {
+    setState('loading')
+    setError(null)
     try {
       const [h, c, d, engRes, healthRes] = await Promise.all([
         req<HealthStatus>('/health').catch(() => null),
@@ -73,6 +75,10 @@ export default function SystemPage() {
       setError(String(e))
       setState('error')
     }
+  }
+
+  onMount(() => {
+    void loadSystem()
   })
 
   return (
@@ -96,7 +102,7 @@ export default function SystemPage() {
           gap: '14px',
         }}
       >
-        <Card padding="14px 16px" style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
+        <Card padding="14px 16px" style={{ display: 'flex', 'align-items': 'center', gap: '10px', 'flex-wrap': 'wrap' }}>
           <div
             style={{
               width: '28px',
@@ -113,13 +119,28 @@ export default function SystemPage() {
           >
             S
           </div>
-          <div>
+          <div style={{ flex: '1', 'min-width': '160px' }}>
             <div style={{ 'font-size': 'var(--fs-lg)', 'font-weight': '700' }}>System Control Center</div>
             <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>
-              Operational governance, 15 modular engines, runtime health, and resource monitoring
+              Operational governance, modular engines, runtime health, and security audit trail
             </div>
           </div>
-          <div style={{ 'margin-left': 'auto' }}>
+          <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              onClick={() => void loadSystem()}
+              disabled={state() === 'loading'}
+              style={{
+                padding: '5px 10px',
+                'font-size': 'var(--fs-xs)',
+                border: '1px solid var(--border)',
+                'border-radius': 'var(--r-sm)',
+                'min-height': '32px',
+              }}
+            >
+              ↻ Refresh
+            </button>
             <DataStateBadge state={state()} />
           </div>
         </Card>
@@ -159,7 +180,7 @@ export default function SystemPage() {
             <For each={engines()}>
               {(eng) => {
                 const rep = () => engineHealth()[eng.id]
-                const status = () => rep()?.status ?? 'healthy'
+                const status = () => rep()?.status ?? 'unknown'
                 const ok = () => status() === 'healthy'
                 const latency = () => (rep()?.latencyMs !== undefined ? `${rep()!.latencyMs}ms` : '—')
                 const message = () => rep()?.message ? ` · ${rep()!.message}` : ''
@@ -173,9 +194,19 @@ export default function SystemPage() {
               }}
             </For>
             <Show when={engines().length === 0}>
-              <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)', padding: '6px 0' }}>
-                Connecting to Engine Registry...
-              </div>
+              <Show
+                when={state() === 'loading'}
+                fallback={
+                  <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)', padding: '6px 0' }}>
+                    No engines registered or health telemetry unavailable.
+                  </div>
+                }
+              >
+                <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', padding: '4px 0' }}>
+                  <div class="skeleton" style={{ height: '24px', width: '100%' }} />
+                  <div class="skeleton" style={{ height: '24px', width: '90%' }} />
+                </div>
+              </Show>
             </Show>
           </div>
         </Card>

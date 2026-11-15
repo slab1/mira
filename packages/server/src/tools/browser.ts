@@ -57,7 +57,7 @@ async function getBrowser(): Promise<Browser | null> {
       })
       return b
     })
-    .catch((err) => {
+    .catch((err: unknown) => {
       _launching = null
       console.error('[browser] failed to launch chromium:', err)
       return null
@@ -349,7 +349,7 @@ async function pwScrollWithUrl(
     if (selector) {
       // Scroll a specific element
       await page.evaluate(
-        ({ sel, dir, amt }) => {
+        ({ sel, dir, amt }: { sel: string; dir: string; amt: number }) => {
           const el = document.querySelector(sel)
           if (!el) throw new Error(`Element not found: ${sel}`)
           const scrollMap: Record<string, [number, number]> = {
@@ -383,7 +383,7 @@ async function pwScrollWithUrl(
     }
     const [x, y] = scrollMap[direction] ?? [0, amount]
     await page.evaluate(
-      ({ px, py }) => window.scrollBy({ left: px, top: py, behavior: 'smooth' }),
+      ({ px, py }: { px: number; py: number }) => window.scrollBy({ left: px, top: py, behavior: 'smooth' }),
       { px: x, py: y },
     )
 

@@ -20,6 +20,20 @@ import type { BusEvent, BusEventType, SessionID, JsonValue } from '../types/inde
 type Handler<T = JsonValue> = (event: BusEvent<T>) => void
 type Unsubscribe = () => void
 
+export interface PendingPermissionInfo {
+  toolCallID: string
+  sessionID?: SessionID
+  tool?: string
+  args?: JsonValue
+  nonce: string
+  reason?: string
+  risk?: string
+  blastRadius?: string
+  canUndo?: boolean
+  createdAt: number
+  expiresAt: number
+}
+
 // ── GlobalBus ──────────────────────────────────────────────────────
 
 export class Bus {
@@ -29,10 +43,16 @@ export class Bus {
   private history: BusEvent[] = []
   private readonly maxHistory = 1000
 
-  // Pending permission waiters: toolCallID → { resolver, nonce }
+  // Pending permission waiters: toolCallID → { resolve, reject, timer, nonce, meta }
   private waiters = new Map<
     string,
-    { resolve: (decision: 'allow' | 'deny') => void; nonce: string }
+    {
+      resolve: (decision: 'allow' | 'deny') => void
+      reject: (err: Error) => void
+      timer: ReturnType<typeof setTimeout>
+      nonce: string
+      meta: PendingPermissionInfo
+    }
   >()
 
   // ── Publish ──────────────────────────────────────────────────────
@@ -52,12 +72,13 @@ export class Bus {
         action?: 'allow' | 'deny'
         nonce?: string
       }
-      const key = payload.toolCallID ?? payload.id ?? ''
+      const key = payload?.toolCallID ?? payload?.id ?? ''
       const waiter = this.waiters.get(key)
       // Verify nonce — prevents spoofed replies from attacker who knows toolCallID
-      if (waiter && payload.nonce === waiter.nonce) {
-        waiter.resolve(payload.decision ?? payload.action ?? 'deny')
+      if (waiter && payload?.nonce === waiter.nonce) {
+        clearTimeout(waiter.timer)
         this.waiters.delete(key)
+        waiter.resolve(payload.decision ?? payload.action ?? 'deny')
       }
     }
 
@@ -128,8 +149,24 @@ export class Bus {
   waitForPermissionReply(
     toolCallID: string,
     nonce: string,
-    timeoutMs = 60_000,
+    timeoutMs = 300_000,
+    meta?: {
+      sessionID?: SessionID
+      tool?: string
+      args?: JsonValue
+      reason?: string
+      risk?: string
+      blastRadius?: string
+      canUndo?: boolean
+    },
   ): Promise<'allow' | 'deny'> {
+    const existing = this.waiters.get(toolCallID)
+    if (existing) {
+      clearTimeout(existing.timer)
+      this.waiters.delete(toolCallID)
+    }
+    const createdAt = Date.now()
+    const expiresAt = createdAt + timeoutMs
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.waiters.delete(toolCallID)
@@ -140,9 +177,71 @@ export class Bus {
           clearTimeout(timer)
           resolve(decision)
         },
+        reject: (err) => {
+          clearTimeout(timer)
+          reject(err)
+        },
+        timer,
         nonce,
+        meta: {
+          toolCallID,
+          sessionID: meta?.sessionID,
+          tool: meta?.tool,
+          args: meta?.args,
+          nonce,
+          reason: meta?.reason,
+          risk: meta?.risk,
+          blastRadius: meta?.blastRadius,
+          canUndo: meta?.canUndo,
+          createdAt,
+          expiresAt,
+        },
       })
     })
+  }
+
+  /** List pending permission prompts (optionally filtered by sessionID) */
+  listPendingPermissions(sessionID?: SessionID): PendingPermissionInfo[] {
+    const list: PendingPermissionInfo[] = []
+    for (const w of this.waiters.values()) {
+      if (!sessionID || w.meta.sessionID === sessionID) {
+        list.push(w.meta)
+      }
+    }
+    return list.sort((a, b) => a.createdAt - b.createdAt)
+  }
+
+  /** Resolve a pending permission reply via REST/IPC (validates nonce and emits permission.reply) */
+  resolvePermissionReply(opts: {
+    toolCallID: string
+    nonce: string
+    decision: 'allow' | 'deny'
+  }): { ok: boolean; status: 'resolved' | 'not_found' | 'nonce_mismatch'; sessionID?: SessionID } {
+    const waiter = this.waiters.get(opts.toolCallID)
+    if (!waiter) return { ok: false, status: 'not_found' }
+    if (opts.nonce !== waiter.nonce) return { ok: false, status: 'nonce_mismatch' }
+    const sessionID = waiter.meta.sessionID
+    this.publish({
+      type: 'permission.reply',
+      sessionID,
+      payload: {
+        toolCallID: opts.toolCallID,
+        nonce: opts.nonce,
+        decision: opts.decision,
+      },
+      timestamp: Date.now(),
+    })
+    return { ok: true, status: 'resolved', sessionID }
+  }
+
+  /** Cancel a pending permission waiter (e.g. session abort/disconnect) */
+  cancelPermissionWait(toolCallID: string, decision: 'allow' | 'deny' = 'deny'): boolean {
+    const waiter = this.waiters.get(toolCallID)
+    if (!waiter) return false
+    clearTimeout(waiter.timer)
+    this.waiters.delete(toolCallID)
+    waiter.resolve(decision)
+    return true
   }
 
   /** Wait for any event matching predicate (generic) */
@@ -175,6 +274,10 @@ export class Bus {
     this.typedHandlers.clear()
     this.sessionHandlers.clear()
     this.history = []
+    for (const w of this.waiters.values()) {
+      clearTimeout(w.timer)
+    }
+    this.waiters.clear()
   }
 }
 

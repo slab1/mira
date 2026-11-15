@@ -5,7 +5,7 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "prepare": "husky || true",
-    "dev": "bunx turbo dev --continue --filter=!@mira/slack",
+    "dev": "node scripts/dev-supervisor.mjs",
     "dev:all": "turbo dev --continue",
     "build": "turbo build",
     "build:bin": "bun build packages/cli/src/cli.ts --compile --outfile dist/mira",
@@ -32,6 +32,7 @@
     "typescript-eslint": "^8.71.0"
   },
   "dependencies": {
+    "@google/genai": "^3.3.0",
     "esbuild": "^0.28.2",
     "escape-string-regexp": "^5.0.0",
     "find-up": "^8.0.0",

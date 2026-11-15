@@ -271,10 +271,40 @@ export type MiraConfig = {
     contextLimit?: number
     compactionThreshold?: number
     smallModel?: string
+    permissionTimeoutMs?: number
   }
   features?: Record<string, boolean>
   tools?: Record<string, JsonValue>
   costCap?: { perSession?: number; perTask?: number }
+}
+
+export type PendingPermission = {
+  sessionID: string
+  toolCallID: string
+  tool: string
+  args?: Record<string, JsonValue>
+  nonce: string
+  reason?: string
+  risk?: 'low' | 'medium' | 'high' | 'critical'
+  blastRadius?: string
+  canUndo?: boolean
+  timeoutMs?: number
+  expiresAt?: number
+}
+
+export type VoiceStatus = {
+  available: boolean
+  provider: 'gemini' | 'openai' | null
+  model: string | null
+}
+
+export type VoiceTranscribeResponse = {
+  ok: boolean
+  text?: string
+  provider?: string
+  model?: string
+  error?: string
+  code?: string
 }
 
 export type MCPServerConfig = {
@@ -288,6 +318,7 @@ export type MCPServerConfig = {
 
 export type ProviderConfig = {
   npm?: string
+  kind?: string
   name: string
   options: { baseURL: string; apiKey: string }
   models: Record<string, { name: string; limit: { context: number; output: number } }>
@@ -1058,6 +1089,25 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  listPendingPermissions: (sessionID?: string) =>
+    req<{ pending: PendingPermission[] }>(
+      sessionID ? `/permission/pending?sessionID=${encodeURIComponent(sessionID)}` : '/permission/pending',
+    ),
+
+  replyPermission: (body: { toolCallID: string; nonce: string; decision: 'allow' | 'deny' }) =>
+    req<{ ok: boolean; status: string; decision: string }>('/permission/reply', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  voiceStatus: () => req<VoiceStatus>('/voice/status'),
+
+  transcribeVoice: (body: { audioBase64: string; mimeType?: string; language?: string }) =>
+    req<VoiceTranscribeResponse>('/voice/transcribe', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   checkGuardrails: (body: { tool: string; args?: Record<string, JsonValue>; sessionID?: string }) =>
     req<{ decision: 'allow' | 'deny' | 'warn'; reason?: string; tool: string; sessionID: string }>(
       '/guardrails/check',
@@ -1202,6 +1252,13 @@ export const api = {
   listProviderModels: (id: string) =>
     req<{ ok: boolean; models?: { id: string; name?: string }[]; error?: string }>(
       `/providers/${encodeURIComponent(id)}/models`,
+    req<{ ok: boolean; providerId?: string; modelCount?: number; latencyMs?: number; error?: string }>(
+      '/providers/test-credentials',
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  listProviderModels: (id: string, refresh = false) =>
+    req<{ ok: boolean; models?: { id: string; name?: string }[]; warning?: string; error?: string }>(
+      `/providers/${encodeURIComponent(id)}/models${refresh ? '?refresh=1' : ''}`,
     ),
   removeProvider: (id: string) =>
     req<{ ok: boolean }>(`/providers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
@@ -1642,15 +1699,118 @@ export function getWsUrl(): string {
   const base = baseUrl()
   if (!base) {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${window.location.host}/`
+    return `${proto}//${window.location.host}/ws`
   }
   try {
     const u = new URL(base)
     const proto = window.location.protocol === 'https:' || u.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${u.host}/`
+    return `${proto}//${u.host}/ws`
   } catch {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${window.location.host}/`
+    return `${proto}//${window.location.host}/ws`
+  }
+}
+
+export function getTerminalWsUrl(): string {
+  const base = baseUrl()
+  if (!base) {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${proto}//${window.location.host}/terminal`
+  }
+  try {
+    const u = new URL(base)
+    const proto = window.location.protocol === 'https:' || u.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${proto}//${u.host}/terminal`
+  } catch {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${proto}//${window.location.host}/terminal`
+  }
+}
+
+export type TerminalWSEvents = {
+  open: () => void
+  data: (data: string) => void
+  connected: (info: { cwd?: string; pty?: boolean; platform?: string; env?: Record<string, string> }) => void
+  exit: (code: number) => void
+  close: () => void
+  error: (err: Event) => void
+}
+
+export function createTerminalSocket(handlers: Partial<TerminalWSEvents> = {}): {
+  connect: () => WebSocket
+  disconnect: () => void
+  sendInput: (data: string) => void
+  sendSignal: (signal: string) => void
+  resize: (cols: number, rows: number) => void
+  get ws(): WebSocket | null
+} {
+  let ws: WebSocket | null = null
+
+  function doConnect(): WebSocket {
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return ws
+    ws = new WebSocket(getTerminalWsUrl())
+    ws.onopen = async () => {
+      let t = getToken()
+      if (!t || t === 'dev-local-token-not-secret') {
+        t = await ensureToken().catch(() => '')
+      }
+      if (!t) {
+        t = (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
+      }
+      if (t) {
+        try {
+          ws?.send(JSON.stringify({ type: 'auth', token: t }))
+        } catch {}
+      }
+      handlers.open?.()
+    }
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(String(ev.data))
+        if (msg.type === 'terminal.output' || msg.type === 'output' || msg.type === 'data') {
+          const text = msg.payload?.data ?? msg.data ?? msg.text ?? ''
+          if (text) handlers.data?.(String(text))
+        } else if (msg.type === 'terminal.connected') {
+          handlers.connected?.(msg.payload ?? msg)
+        } else if (msg.type === 'terminal.exit') {
+          handlers.exit?.(msg.payload?.code ?? msg.code ?? 0)
+        } else if (msg.type === 'terminal.error') {
+          const errMsg = msg.payload?.error ?? msg.error ?? ''
+          if (errMsg) handlers.data?.(`\r\n[error] ${String(errMsg)}\r\n`)
+        }
+      } catch {
+        if (typeof ev.data === 'string') {
+          handlers.data?.(ev.data)
+        }
+      }
+    }
+    ws.onclose = () => handlers.close?.()
+    ws.onerror = (e) => handlers.error?.(e as Event)
+    return ws
+  }
+
+  return {
+    get ws() { return ws },
+    connect: doConnect,
+    disconnect() {
+      try { ws?.close() } catch {}
+      ws = null
+    },
+    sendInput(data: string) {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'terminal.input', data }))
+      }
+    },
+    sendSignal(signal: string) {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'terminal.signal', signal }))
+      }
+    },
+    resize(cols: number, rows: number) {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'terminal.resize', cols, rows }))
+      }
+    }
   }
 }
 
@@ -1671,11 +1831,18 @@ export function createSocket(handlers: Partial<WSEvents> = {}): {
     if (ws && ws.readyState === WebSocket.OPEN) return ws
     // fresh baseUrl + token on each connect (handles VITE_API_URL watchdog redeploy)
     ws = new WebSocket(wsUrl())
-    ws.onopen = () => {
+    ws.onopen = async () => {
       // Servers with auth enabled close unauthenticated sockets after 5s —
       // browsers cannot set WS headers, so authenticate via first message.
-      const t = getToken()
-      if (t) ws?.send(JSON.stringify({ type: 'auth', token: t }))
+      let t = getToken()
+      if (!t || t === 'dev-local-token-not-secret') {
+        t = await ensureToken().catch(() => '')
+      }
+      if (t && ws?.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ type: 'auth', token: t }))
+        } catch {}
+      }
       handlers.open?.()
     }
     ws.onmessage = (ev) => {

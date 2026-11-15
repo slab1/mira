@@ -10,17 +10,18 @@ type ProviderPreset = {
   label: string
   desc: string
   baseURL: string
+  npm: string
   placeholder: string
 }
 
 const PRESETS: ProviderPreset[] = [
-  { id: 'openrouter', label: 'OpenRouter', desc: 'Unified API — Claude, GPT, Gemini, DeepSeek', baseURL: 'https://openrouter.ai/api/v1', placeholder: 'sk-or-v1-…' },
-  { id: 'anthropic', label: 'Anthropic', desc: 'Claude direct', baseURL: 'https://api.anthropic.com', placeholder: 'sk-ant-…' },
-  { id: 'openai', label: 'OpenAI', desc: 'GPT-4o, o1, etc.', baseURL: 'https://api.openai.com/v1', placeholder: 'sk-…' },
-  { id: 'google', label: 'Google', desc: 'Gemini', baseURL: 'https://generativelanguage.googleapis.com/v1beta', placeholder: 'AIza…' },
-  { id: 'deepseek', label: 'DeepSeek', desc: 'DeepSeek Chat / Reasoner', baseURL: 'https://api.deepseek.com', placeholder: 'sk-…' },
-  { id: 'nvidia', label: 'NVIDIA', desc: 'NIM API', baseURL: 'https://integrate.api.nvidia.com/v1', placeholder: 'nvapi-…' },
-  { id: 'custom', label: 'Custom', desc: 'Any OpenAI-compatible endpoint', baseURL: '', placeholder: 'sk-…' },
+  { id: 'openrouter', label: 'OpenRouter', desc: 'Unified API — Claude, GPT, Gemini, DeepSeek', baseURL: 'https://openrouter.ai/api/v1', npm: '@ai-sdk/openai-compatible', placeholder: 'sk-or-v1-…' },
+  { id: 'anthropic', label: 'Anthropic', desc: 'Claude direct', baseURL: 'https://api.anthropic.com', npm: '@ai-sdk/anthropic', placeholder: 'sk-ant-…' },
+  { id: 'openai', label: 'OpenAI', desc: 'GPT-4o, o1, etc.', baseURL: 'https://api.openai.com/v1', npm: '@ai-sdk/openai', placeholder: 'sk-…' },
+  { id: 'google', label: 'Google', desc: 'Gemini', baseURL: 'https://generativelanguage.googleapis.com/v1beta', npm: '@ai-sdk/google', placeholder: 'AIza…' },
+  { id: 'deepseek', label: 'DeepSeek', desc: 'DeepSeek Chat / Reasoner', baseURL: 'https://api.deepseek.com', npm: '@ai-sdk/openai-compatible', placeholder: 'sk-…' },
+  { id: 'nvidia', label: 'NVIDIA', desc: 'NIM API', baseURL: 'https://integrate.api.nvidia.com/v1', npm: '@ai-sdk/openai-compatible', placeholder: 'nvapi-…' },
+  { id: 'custom', label: 'Custom', desc: 'Any OpenAI-compatible endpoint', baseURL: '', npm: '@ai-sdk/openai-compatible', placeholder: 'sk-…' },
 ]
 
 function findPreset(id: string): ProviderPreset | undefined {
@@ -145,26 +146,27 @@ export function ConnectModal(props: {
     }
     setSaving(true)
     try {
-      const cfg = props.settings.state.config
-      const existingProvider = (cfg?.provider ?? {}) as Record<string, unknown>
-      const patch = {
-        provider: {
-          ...existingProvider,
-          [id]: {
-            npm: '@ai-sdk/openai-compatible',
-            name: id,
-            options: { baseURL: urlTrimmed || preset.baseURL || 'https://api.openai.com/v1', apiKey: key },
-            models: {},
-          },
-        },
-      }
-      const res = await props.settings.saveConfig(patch as never)
-      if (res) {
-        await props.settings.loadProviders()
-        toast.success(`Connected to ${id} ✓`)
+      const res = await props.settings.connectProvider({
+        id,
+        apiKey: key,
+        baseURL: urlTrimmed || preset.baseURL || undefined,
+        npm: preset.npm,
+        name: isCustom ? id : preset.label,
+        setDefaultModel: true,
+      })
+      if (res.ok) {
+        if (res.modelCount > 0) {
+          toast.success(
+            `Connected to ${id} · ${res.modelCount} model${res.modelCount === 1 ? '' : 's'} loaded ✓`,
+          )
+        } else if (res.warning) {
+          toast.warn(`Connected to ${id}, model list warning: ${res.warning}`)
+        } else {
+          toast.success(`Connected to ${id} ✓`)
+        }
         props.onClose()
       } else {
-        toast.error(props.settings.state.error ?? 'Failed to save provider')
+        toast.error(res.error ?? props.settings.state.error ?? 'Failed to save provider')
       }
     } finally {
       setSaving(false)

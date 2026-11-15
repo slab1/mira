@@ -544,6 +544,155 @@ export function createSettingsStore() {
     return merged
   }
 
+  const PROVIDER_DEFAULTS: Record<string, { npm: string; kind: string; baseURL: string }> = {
+    anthropic: { npm: '@ai-sdk/anthropic', kind: 'anthropic', baseURL: 'https://api.anthropic.com' },
+    openai: { npm: '@ai-sdk/openai', kind: 'openai', baseURL: 'https://api.openai.com/v1' },
+    google: {
+      npm: '@ai-sdk/google',
+      kind: 'google',
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta',
+    },
+    openrouter: {
+      npm: '@ai-sdk/openai-compatible',
+      kind: 'openrouter',
+      baseURL: 'https://openrouter.ai/api/v1',
+    },
+    deepseek: {
+      npm: '@ai-sdk/openai-compatible',
+      kind: 'deepseek',
+      baseURL: 'https://api.deepseek.com',
+    },
+    nvidia: {
+      npm: '@ai-sdk/openai-compatible',
+      kind: 'nvidia',
+      baseURL: 'https://integrate.api.nvidia.com/v1',
+    },
+  }
+
+  function resolveProviderDefaults(id: string) {
+    const low = id.toLowerCase().trim()
+    return (
+      PROVIDER_DEFAULTS[low] ?? {
+        npm: '@ai-sdk/openai-compatible',
+        kind: undefined,
+        baseURL: 'https://api.openai.com/v1',
+      }
+    )
+  }
+
+  function formatFullModelId(providerId: string, rawModelId: string): string {
+    const trimmed = rawModelId.trim()
+    if (!trimmed) return ''
+    if (trimmed.startsWith(`${providerId}/`)) return trimmed
+    return `${providerId}/${trimmed}`
+  }
+
+  async function refreshProviderModels(
+    id: string,
+    opts: { refresh?: boolean; selectDefaultIfUnset?: boolean } = {},
+  ): Promise<{ ok: boolean; models: Array<{ id: string; name?: string }>; warning?: string; error?: string }> {
+    const r = await api.listProviderModels(id, opts.refresh ?? true)
+    if (!r.ok || !r.models) {
+      return { ok: false, models: [], error: r.error ?? 'Failed to fetch models' }
+    }
+    const providers = { ...((state.config?.provider ?? {}) as Record<string, ProviderConfig>) }
+    const existing = providers[id]
+    const merged: Record<string, { name: string; limit: { context: number; output: number } }> = {
+      ...(existing?.models ?? {}),
+    }
+    for (const m of r.models) {
+      const mid = m?.id
+      if (!mid) continue
+      const fullId = formatFullModelId(id, mid)
+      merged[fullId] = {
+        name: m.name || mid,
+        limit: merged[fullId]?.limit ?? merged[mid]?.limit ?? { context: 128000, output: 4096 },
+      }
+    }
+    const defaults = resolveProviderDefaults(id)
+    const patch: Partial<MiraConfig> = {
+      provider: {
+        ...providers,
+        [id]: {
+          npm: existing?.npm ?? defaults.npm,
+          ...(existing?.kind ? { kind: existing.kind } : defaults.kind ? { kind: defaults.kind } : {}),
+          name: existing?.name ?? id,
+          options: existing?.options ?? { baseURL: defaults.baseURL, apiKey: '' },
+          models: merged,
+        },
+      },
+    }
+    if (opts.selectDefaultIfUnset && r.models.length > 0) {
+      const curModel = (state.config?.model ?? '').trim()
+      const curProvider = curModel.includes('/') ? curModel.split('/')[0] : ''
+      const hasConfiguredCurProvider = state.providers.some(
+        (p) => p.id === curProvider && p.status === 'ok',
+      )
+      if (!curModel || !hasConfiguredCurProvider) {
+        patch.model = formatFullModelId(id, r.models[0].id)
+      }
+    }
+    const saved = await saveConfig(patch)
+    if (!saved) {
+      return { ok: false, models: r.models, error: state.error ?? 'Failed to save discovered models' }
+    }
+    await Promise.all([loadConfig(), loadProviders()])
+    return { ok: true, models: r.models, warning: r.warning }
+  }
+
+  async function connectProvider(input: {
+    id: string
+    apiKey: string
+    baseURL?: string
+    npm?: string
+    name?: string
+    setDefaultModel?: boolean
+  }): Promise<{ ok: boolean; modelCount: number; warning?: string; error?: string }> {
+    const id = input.id.trim().toLowerCase()
+    const defaults = resolveProviderDefaults(id)
+    const existing = state.config?.provider?.[id]
+    const baseURL = (input.baseURL ?? '').trim() || existing?.options?.baseURL || defaults.baseURL
+    const npm = input.npm || defaults.npm
+    const kind = existing?.kind ?? defaults.kind
+
+    const initialPatch: Partial<MiraConfig> = {
+      provider: {
+        ...(state.config?.provider ?? {}),
+        [id]: {
+          npm,
+          ...(kind ? { kind } : {}),
+          name: input.name || existing?.name || id,
+          options: { baseURL, apiKey: input.apiKey.trim() },
+          models: existing?.models ?? {},
+        },
+      },
+    }
+    const saved = await saveConfig(initialPatch)
+    if (!saved) {
+      return { ok: false, modelCount: 0, error: state.error ?? 'Failed to save provider config' }
+    }
+
+    let discoveredCount = 0
+    let warning: string | undefined
+    try {
+      const disc = await refreshProviderModels(id, {
+        refresh: true,
+        selectDefaultIfUnset: input.setDefaultModel ?? true,
+      })
+      if (disc.ok) {
+        discoveredCount = disc.models.length
+        warning = disc.warning
+      } else {
+        warning = disc.error
+        await Promise.all([loadConfig(), loadProviders()])
+      }
+    } catch (e) {
+      warning = (e as Error).message
+      await Promise.all([loadConfig(), loadProviders()])
+    }
+    return { ok: true, modelCount: discoveredCount, warning }
+  }
+
   return {
     state,
     saving,
@@ -561,6 +710,8 @@ export function createSettingsStore() {
     // mutations
     saveConfig,
     patchConfigField,
+    connectProvider,
+    refreshProviderModels,
     testProvider,
     removeProvider,
     addMcp,

@@ -24,6 +24,20 @@ describe('resolveEffectiveModel retired guard', () => {
     expect(model).toContain('claude-sonnet-4')
   })
 
+  it('falls back when NVIDIA EOL models (llama-3.3-70b-instruct / deepseek-v4-flash) are requested', () => {
+    const m1 = resolveEffectiveModel({
+      sessionModel: 'meta/llama-3.3-70b-instruct',
+      task: 'stream',
+    })
+    expect(m1).not.toContain('llama-3.3-70b-instruct')
+
+    const m2 = resolveEffectiveModel({
+      explicitModel: 'nvidia/deepseek-ai/deepseek-v4-flash',
+      task: 'stream',
+    })
+    expect(m2).not.toContain('deepseek-v4-flash')
+  })
+
   it('keeps valid model', () => {
     const model = resolveEffectiveModel({
       explicitModel: 'anthropic/claude-sonnet-4',

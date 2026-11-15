@@ -103,6 +103,29 @@ describe('Configuration Validation', () => {
       expect(result.errors.length).toBe(0)
     })
 
+    it('should NOT flag array env template values as secrets', () => {
+      const config = {
+        model: 'google/gemini-2.0-flash',
+        provider: {
+          google: {
+            options: {
+              apiKey: ['{env:GOOGLE_GENERATIVE_AI_API_KEY}', '{env:GOOGLE_API_KEY}'],
+            },
+          },
+        },
+        routing: {
+          aliases: {
+            opus: 'anthropic/claude-opus-4',
+            haiku: 'anthropic/claude-haiku-3',
+          },
+        },
+      }
+      
+      const result = checkForSecretsInConfig(config as any, 'test-config')
+      expect(result.errors.length).toBe(0)
+      expect(result.warnings.length).toBe(0)
+    })
+
     it('should warn about keys that look like secrets without templates', () => {
       const config = {
         model: 'openai/gpt-4o',

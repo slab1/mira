@@ -16,8 +16,13 @@ import { isBlockedFetchUrl } from '../guardrails/index.js'
 
 interface ChatRequestMessage {
   role: string
-  content: string | Array<Record<string, JsonValue>>
+  content: string | Array<Record<string, JsonValue>> | null
   tool_call_id?: string
+  tool_calls?: Array<{
+    id: string
+    type: 'function'
+    function: { name: string; arguments: string }
+  }>
 }
 
 interface ChatCompletionRequest {
@@ -75,16 +80,97 @@ export async function liveOpenAIStream(ctx: {
       }
     : null
 
+  const wireMessages: ChatRequestMessage[] = []
+  if (systemMsg) wireMessages.push(systemMsg)
+
+  for (const m of opts.messages) {
+    const contentStr = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '')
+    if (m.role === 'assistant' && Array.isArray(m.toolCalls) && m.toolCalls.length > 0) {
+      wireMessages.push({
+        role: 'assistant',
+        content: contentStr,
+        tool_calls: m.toolCalls.map((tc, idx) => ({
+          id: typeof tc.id === 'string' && tc.id.trim() ? tc.id.trim() : `call_${idx}`,
+          type: 'function' as const,
+          function: {
+            name: typeof tc.name === 'string' && tc.name.trim() ? tc.name.trim() : 'unknown',
+            arguments:
+              typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.args ?? {}),
+          },
+        })),
+      })
+      continue
+    }
+
+    if (m.role === 'tool') {
+      if (typeof m.toolCallID === 'string' && m.toolCallID.trim().length > 0) {
+        wireMessages.push({
+          role: 'tool',
+          tool_call_id: m.toolCallID.trim(),
+          content: contentStr,
+        })
+        continue
+      }
+
+      if (Array.isArray(m.toolResults) && m.toolResults.length > 0) {
+        let emitted = 0
+        for (const tr of m.toolResults) {
+          if (typeof tr?.toolCallID === 'string' && tr.toolCallID.trim().length > 0) {
+            wireMessages.push({
+              role: 'tool',
+              tool_call_id: tr.toolCallID.trim(),
+              content: JSON.stringify(tr.result ?? null),
+            })
+            emitted++
+          }
+        }
+        if (emitted > 0) continue
+      }
+
+      // Recover legacy serialized arrays/objects inside m.content if present
+      let recovered = false
+      try {
+        const parsed = JSON.parse(contentStr) as unknown
+        const items = Array.isArray(parsed) ? parsed : parsed && typeof parsed === 'object' ? [parsed] : []
+        for (const item of items) {
+          if (!item || typeof item !== 'object') continue
+          const rec = item as Record<string, unknown>
+          const cid =
+            typeof rec.toolCallID === 'string'
+              ? rec.toolCallID.trim()
+              : typeof rec.tool_call_id === 'string'
+                ? rec.tool_call_id.trim()
+                : ''
+          if (cid) {
+            wireMessages.push({
+              role: 'tool',
+              tool_call_id: cid,
+              content:
+                'result' in rec ? JSON.stringify(rec.result ?? null) : JSON.stringify(rec),
+            })
+            recovered = true
+          }
+        }
+      } catch {}
+      if (recovered) continue
+
+      // Never emit role='tool' without tool_call_id — downgrade orphaned output safely
+      wireMessages.push({
+        role: 'user',
+        content: `[Tool output]\n${contentStr}`,
+      })
+      continue
+    }
+
+    wireMessages.push({
+      role: m.role,
+      content: contentStr,
+    })
+  }
+
   const body: ChatCompletionRequest = {
     model: modelID,
-    messages: [
-      ...(systemMsg ? [systemMsg] : []),
-      ...opts.messages.map((m) => ({
-        role: m.role === 'tool' ? 'tool' : m.role,
-        content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
-        ...(m.role === 'tool' ? { tool_call_id: m.toolCallID } : {}),
-      })),
-    ],
+    messages: wireMessages,
     stream: true,
     stream_options: { include_usage: true },
     ...(opts.tools

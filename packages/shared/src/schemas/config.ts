@@ -122,6 +122,7 @@ export const loopConfigSchema = z.object({
   contextLimit: z.number().int().positive().optional(),
   compactionThreshold: z.number().min(0).max(1).optional(),
   smallModel: z.string().optional(),
+  permissionTimeoutMs: z.number().int().min(10_000).max(3_600_000).optional(),
 })
 export type LoopConfig = z.infer<typeof loopConfigSchema>
 

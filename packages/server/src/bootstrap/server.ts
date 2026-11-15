@@ -20,6 +20,7 @@ import { mountSessionExtrasRoutes } from '../routes/session-extras.js'
 import { mountCommunityRoutes } from '../routes/community.js'
 import { mountOrgRoutes } from '../routes/orgs.js'
 import { mountToolsRoutes } from '../routes/tools-routes.js'
+import { mountVoiceRoutes } from '../routes/voice.js'
 import { mountWorkspaceRoutes } from '../routes/workspace.js'
 import { mountWorkspacesRoutes } from '../routes/workspaces.js'
 import { mountSymbolRoutes } from '../routes/symbol.js'
@@ -108,7 +109,8 @@ export function createApp(serverConfig: ServerConfig): Hono {
   mountOrgRoutes(app, { db } as any)
 
   // Tools routes
-  mountToolsRoutes(app, { tools, permissions, guardrails, gateway } as any)
+  mountToolsRoutes(app, { tools, permissions, guardrails, gateway, bus } as any)
+  mountVoiceRoutes(app)
 
   // Workspace routes
   mountWorkspaceRoutes(app)

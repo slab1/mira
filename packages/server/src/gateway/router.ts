@@ -28,9 +28,9 @@ export interface RouteContext {
 
 /** Nvidia auto-pick catalog — cheapest/fastest → reasoning → fallback */
 export const NVIDIA_AUTO_MODELS = {
-  flash: 'nvidia/deepseek-ai/deepseek-v4-flash',
-  pro: 'nvidia/deepseek-ai/deepseek-v4-pro',
-  llama: 'nvidia/meta/llama-3.3-70b-instruct',
+  flash: 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b',
+  pro: 'nvidia/nvidia/nemotron-3-ultra-550b-a55b',
+  llama: 'nvidia/nvidia/nemotron-3.5-bolt-e4b',
   // Vision stays on openai, anthropic as generic fallback
   vision: 'openai/gpt-4o',
   anthropicFallback: 'anthropic/claude-sonnet-4',

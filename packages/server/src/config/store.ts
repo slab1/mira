@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { warn, log } from '../util/logger.js'
 import { parseEnvConfig } from '../../../shared/src/schemas/config.js'
 import { validateConfig as validateConfigEnhanced, checkForSecretsInConfig } from './validation.js'
+import { writeMiraEnvKey } from '../providers/auth.js'
 
 const configCache = new Map<string, MiraConfig>()
 let cached: MiraConfig | null = null
@@ -266,9 +267,12 @@ function mergePartialMiraConfig(
       ) as never
     } else {
       // Redaction sentinel: the web/TUI clients round-trip masked keys as
-      // "***". Never let that clobber a real key (or {env:VAR} reference)
-      // already stored — keep the existing value instead.
-      if (k === 'apiKey' && v === '***' && prev !== undefined && prev !== '') {
+      // "***" (or ["***", ...]). Never write a redaction sentinel into config
+      // or let it clobber an existing real key / {env:VAR} reference.
+      const isSentinel =
+        v === '***' ||
+        (Array.isArray(v) && v.length > 0 && v.every((item) => item === '***'))
+      if (k === 'apiKey' && isSentinel) {
         continue
       }
       out[k as keyof PartialMiraConfig] = v as never
@@ -475,6 +479,35 @@ export async function saveConfig(
   cwd = process.cwd(),
 ): Promise<MiraConfig> {
   const parsed = miraConfigPatchSchema.partial().parse(patch) as Partial<MiraConfig>
+  // Auto-offload literal secrets in provider options to ~/.mira/mira.env to ensure mira.json stays secret-free
+  if (parsed.provider && typeof parsed.provider === 'object') {
+    for (const [provId, provCfg] of Object.entries(parsed.provider)) {
+      if (!provCfg || typeof provCfg !== 'object') continue
+      const opts = (provCfg as { options?: { apiKey?: unknown } }).options
+      if (!opts || !opts.apiKey) continue
+
+      const defaultEnvVar = `${provId.toUpperCase().replace(/[^A-Z0-9_]/g, '_')}_API_KEY`
+
+      if (typeof opts.apiKey === 'string') {
+        const key = opts.apiKey.trim()
+        if (key && !key.startsWith('{env:') && !/^\*+$/.test(key)) {
+          writeMiraEnvKey(defaultEnvVar, key)
+          opts.apiKey = `{env:${defaultEnvVar}}`
+        }
+      } else if (Array.isArray(opts.apiKey)) {
+        opts.apiKey = (opts.apiKey as unknown[]).map((item, idx) => {
+          if (typeof item !== 'string') return item
+          const k = item.trim()
+          if (k && !k.startsWith('{env:') && !/^\*+$/.test(k)) {
+            const varName = idx === 0 ? defaultEnvVar : `${defaultEnvVar}_${idx + 1}`
+            writeMiraEnvKey(varName, k)
+            return `{env:${varName}}`
+          }
+          return item
+        })
+      }
+    }
+  }
   const targetPath = layer === 'local' ? `${cwd}/.mira/local.json` : `${cwd}/mira.json`
   // Ensure directory exists
   const dir = targetPath.slice(0, targetPath.lastIndexOf('/'))

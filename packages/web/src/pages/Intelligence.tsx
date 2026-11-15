@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { createSignal, onMount, Show, For } from 'solid-js'
+import { createSignal, createMemo, onMount, Show, For } from 'solid-js'
 import { req } from '../api/client'
 import { DataStateBadge, type OperationalState } from '../components/DataState'
 import { createIntelligenceFeatureStore } from '../features/intelligence'
@@ -60,21 +60,67 @@ export default function IntelligencePage() {
   const [state, setState] = createSignal<OperationalState>('loading')
   const intelligenceStore = createIntelligenceFeatureStore()
 
-  onMount(async () => {
+  const repo = createMemo(() => {
+    const d = repoStats() as any
+    if (!d) return null
+    return d.repo ?? (d.nodes !== undefined ? d : null)
+  })
+
+  const filteredMemories = createMemo(() => {
+    const q = intelligenceStore.state().searchQuery.trim().toLowerCase()
+    const tier = intelligenceStore.state().tierFilter
+    return memories().filter((m) => {
+      if (tier !== 'all' && m.tier !== tier) return false
+      if (!q) return true
+      return (
+        (m.title ?? '').toLowerCase().includes(q) ||
+        (m.content ?? '').toLowerCase().includes(q) ||
+        (m.tags ?? []).some((t) => t.toLowerCase().includes(q))
+      )
+    })
+  })
+
+  const filteredNodes = createMemo(() => {
+    const g = graph()
+    if (!g?.nodes) return []
+    const q = intelligenceStore.state().searchQuery.trim().toLowerCase()
+    const tier = intelligenceStore.state().tierFilter
+    return g.nodes.filter((n) => {
+      if (tier !== 'all' && n.tier !== tier) return false
+      if (!q) return true
+      return (
+        (n.label ?? '').toLowerCase().includes(q) ||
+        (n.source ?? '').toLowerCase().includes(q) ||
+        (n.tags ?? []).some((t) => t.toLowerCase().includes(q)) ||
+        (n.entities ?? []).some((e) => e.toLowerCase().includes(q))
+      )
+    })
+  })
+
+  const loadIntelligence = async () => {
+    setState('loading')
+    setError(null)
     try {
       const [g, m, r] = await Promise.all([
         req<KnowledgeGraph>('/knowledge/graph').catch(() => null),
         req<MemoryEntry[]>('/memory').catch(() => null),
-        req<RepoStats>('/dashboard').catch(() => null),
+        req<any>('/dashboard').catch(() => null),
       ])
       setGraph(g)
-      setMemories(m ?? [])
+      setMemories(Array.isArray(m) ? m : [])
       setRepoStats(r)
-      setState(g || m ? 'live' : 'empty')
+      const hasNodes = (g?.nodes?.length ?? 0) > 0
+      const hasMemories = Array.isArray(m) && m.length > 0
+      const hasRepo = (r?.repo?.nodes ?? r?.nodes ?? 0) > 0
+      setState(hasNodes || hasMemories || hasRepo ? 'live' : 'empty')
     } catch (e) {
       setError(String(e))
       setState('error')
     }
+  }
+
+  onMount(() => {
+    void loadIntelligence()
   })
 
   return (
@@ -98,7 +144,7 @@ export default function IntelligencePage() {
           gap: '14px',
         }}
       >
-        <Card padding="14px 16px" style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
+        <Card padding="14px 16px" style={{ display: 'flex', 'align-items': 'center', gap: '10px', 'flex-wrap': 'wrap' }}>
           <div
             style={{
               width: '28px',
@@ -110,33 +156,35 @@ export default function IntelligencePage() {
               color: 'var(--on-accent)',
               'font-weight': '800',
               'font-size': '14px',
+              'flex-shrink': '0',
             }}
             aria-hidden="true"
           >
             I
           </div>
-          <div>
+          <div style={{ 'min-width': '160px', flex: '1' }}>
             <div style={{ 'font-size': 'var(--fs-lg)', 'font-weight': '700' }}>Intelligence</div>
             <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>
               What does Mira know, and why does Mira believe it?
             </div>
           </div>
           <div
-            style={{ 'margin-left': 'auto', display: 'flex', 'align-items': 'center', gap: '8px' }}
+            style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'flex-wrap': 'wrap' }}
           >
             <input
               type="text"
-              placeholder="Search knowledge..."
+              placeholder="Search knowledge…"
               value={intelligenceStore.state().searchQuery}
               onInput={(e) => intelligenceStore.setSearch(e.currentTarget.value)}
               style={{
-                padding: '4px 8px',
-                'border-radius': '4px',
+                padding: '5px 10px',
+                'border-radius': 'var(--r-sm)',
                 border: '1px solid var(--border)',
                 background: 'var(--bg-surface)',
                 color: 'var(--fg)',
                 'font-size': 'var(--fs-xs)',
                 width: '160px',
+                'min-height': '32px',
               }}
               aria-label="Search knowledge"
             />
@@ -148,12 +196,13 @@ export default function IntelligencePage() {
                 )
               }
               style={{
-                padding: '4px 8px',
-                'border-radius': '4px',
+                padding: '5px 8px',
+                'border-radius': 'var(--r-sm)',
                 border: '1px solid var(--border)',
                 background: 'var(--bg-surface)',
                 color: 'var(--fg)',
                 'font-size': 'var(--fs-xs)',
+                'min-height': '32px',
               }}
               aria-label="Filter by tier"
             >
@@ -162,6 +211,21 @@ export default function IntelligencePage() {
               <option value="semantic">Semantic</option>
               <option value="procedural">Procedural</option>
             </select>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              onClick={() => void loadIntelligence()}
+              disabled={state() === 'loading'}
+              style={{
+                padding: '5px 10px',
+                'font-size': 'var(--fs-xs)',
+                border: '1px solid var(--border)',
+                'border-radius': 'var(--r-sm)',
+                'min-height': '32px',
+              }}
+            >
+              ↻ Refresh
+            </button>
             <DataStateBadge state={state()} />
           </div>
         </Card>
@@ -170,6 +234,25 @@ export default function IntelligencePage() {
           <div class="card" style={{ padding: '12px 16px', color: 'var(--danger)' }}>
             Error: {error()}
           </div>
+        </Show>
+
+        <Show when={state() === 'loading'}>
+          <Card padding="16px" style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
+            <div class="skeleton" style={{ height: '18px', width: '40%' }} />
+            <div class="skeleton" style={{ height: '42px', width: '100%' }} />
+            <div class="skeleton" style={{ height: '42px', width: '100%' }} />
+          </Card>
+        </Show>
+
+        <Show when={state() === 'empty'}>
+          <Card padding="24px" style={{ 'text-align': 'center', color: 'var(--fg-subtle)', display: 'flex', 'flex-direction': 'column', 'align-items': 'center', gap: '8px' }}>
+            <div style={{ 'font-size': 'var(--fs-sm)', 'font-weight': '600', color: 'var(--fg)' }}>
+              No knowledge nodes or memories indexed yet
+            </div>
+            <div style={{ 'font-size': 'var(--fs-xs)', 'max-width': '48ch', 'line-height': '1.5' }}>
+              Memories and repository entities are automatically extracted during Mira sessions.
+            </div>
+          </Card>
         </Show>
 
         {/* Knowledge Graph — Progressive Disclosure */}
@@ -182,11 +265,11 @@ export default function IntelligencePage() {
                   sub={`${g().nodes.length} nodes · ${g().edges.length} edges`}
                 />
               </div>
-              <For each={g().nodes.slice(0, 20)}>
+              <For each={filteredNodes().slice(0, 30)}>
                 {(n) => (
                   <ProgressiveDisclosure
                     title={n.label}
-                    metric={`${n.accessCount} accesses`}
+                    metric={`${n.accessCount ?? 0} accesses`}
                     badgeLabel={n.tier}
                     badgeTone="info"
                   >
@@ -202,16 +285,16 @@ export default function IntelligencePage() {
                         <span style={{ color: 'var(--fg-subtle)' }}>Source: {n.source}</span>
                         <span style={{ color: 'var(--fg-subtle)' }}>Kind: {n.kind}</span>
                       </div>
-                      <Show when={n.tags.length > 0}>
+                      <Show when={(n.tags ?? []).length > 0}>
                         <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
-                          <For each={n.tags}>
+                          <For each={n.tags ?? []}>
                             {(tag) => <StatusBadge label={tag} tone="muted" />}
                           </For>
                         </div>
                       </Show>
-                      <Show when={n.entities.length > 0}>
+                      <Show when={(n.entities ?? []).length > 0}>
                         <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
-                          <For each={n.entities}>
+                          <For each={n.entities ?? []}>
                             {(entity) => <StatusBadge label={entity} tone="info" />}
                           </For>
                         </div>
@@ -236,16 +319,16 @@ export default function IntelligencePage() {
         </Show>
 
         {/* Memory — Progressive Disclosure */}
-        <Show when={memories().length > 0}>
+        <Show when={filteredMemories().length > 0}>
           <Card padding="0">
             <div style={{ padding: '12px 16px', 'border-bottom': '1px solid var(--border)' }}>
-              <SectionHeader title="Memory" sub={`${memories().length} entries`} />
+              <SectionHeader title="Memory" sub={`${filteredMemories().length} entries`} />
             </div>
-            <For each={memories().slice(0, 10)}>
+            <For each={filteredMemories().slice(0, 30)}>
               {(m) => (
                 <ProgressiveDisclosure
                   title={m.title}
-                  metric={`${(m.confidence * 100).toFixed(0)}%`}
+                  metric={`${((m.confidence ?? 0.5) * 100).toFixed(0)}%`}
                   badgeLabel={m.provenance}
                   badgeTone={provenanceTone(m.provenance)}
                 >
@@ -264,9 +347,9 @@ export default function IntelligencePage() {
                       <span style={{ color: 'var(--fg-subtle)' }}>Tier: {m.tier}</span>
                       <span style={{ color: 'var(--fg-subtle)' }}>Source: {m.source}</span>
                     </div>
-                    <Show when={m.tags.length > 0}>
+                    <Show when={(m.tags ?? []).length > 0}>
                       <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
-                        <For each={m.tags}>{(tag) => <StatusBadge label={tag} tone="muted" />}</For>
+                        <For each={m.tags ?? []}>{(tag) => <StatusBadge label={tag} tone="muted" />}</For>
                       </div>
                     </Show>
                     <div style={{ display: 'flex', gap: '12px', color: 'var(--fg-faint)' }}>
@@ -281,14 +364,14 @@ export default function IntelligencePage() {
         </Show>
 
         {/* Repository Understanding */}
-        <Show when={repoStats()}>
+        <Show when={repo()}>
           {(r) => (
             <Card padding="16px">
               <SectionHeader title="Repository Understanding" sub="Codebase structure overview" />
               <div style={{ display: 'flex', gap: '16px', 'flex-wrap': 'wrap' }}>
-                <span style={{ 'font-size': 'var(--fs-sm)' }}>{r().nodes} nodes</span>
-                <span style={{ 'font-size': 'var(--fs-sm)' }}>{r().edges} edges</span>
-                <For each={Object.entries(r().byKind)}>
+                <span style={{ 'font-size': 'var(--fs-sm)' }}>{r().nodes ?? 0} nodes</span>
+                <span style={{ 'font-size': 'var(--fs-sm)' }}>{r().edges ?? 0} edges</span>
+                <For each={Object.entries(r().byKind ?? {})}>
                   {([kind, count]) => (
                     <span style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>
                       {kind}: {count}

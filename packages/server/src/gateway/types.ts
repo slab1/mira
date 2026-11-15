@@ -36,7 +36,18 @@ export interface GatewayMessage {
   role: string
   content: string
   toolCallID?: string
-  toolCalls?: Array<{ id?: string; name?: string }>
+  toolCalls?: Array<{
+    id?: string
+    name?: string
+    args?: Record<string, JsonValue>
+    arguments?: string
+  }>
+  toolResults?: Array<{
+    toolCallID?: string
+    name?: string
+    result?: JsonValue
+    isError?: boolean
+  }>
 }
 
 export type GatewayContentPart =

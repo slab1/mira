@@ -1,11 +1,11 @@
 {
-  "_comment": "Nvidia is primary (auto-pick): deepseek-v4-flash for default/cheap/compaction, deepseek-v4-pro for reasoning, llama-3.3-70b fallback. Subagents MUST use gateway lanes local/compaction (not opencode/deepseek free tier). Health at GET /gateway/health, cost caps per lane.",
-  "model": "nvidia/deepseek-ai/deepseek-v4-flash",
+  "_comment": "Nvidia is primary (auto-pick): nemotron-3.5-lightning-30b-a3b for default/agent, nemotron-3.5-bolt-e4b for cheap/compaction, nemotron-3-ultra-550b-a55b for reasoning. Health at GET /gateway/health, cost caps per lane.",
+  "model": "nvidia/nvidia/nemotron-3.5-lightning-30b-a3b",
   "loop": {
     "maxSteps": 32,
     "contextLimit": 128000,
     "compactionThreshold": 0.8,
-    "smallModel": "nvidia/deepseek-ai/deepseek-v4-flash"
+    "smallModel": "nvidia/nvidia/nemotron-3.5-bolt-e4b"
   },
   "provider": {
     "openrouter": {
@@ -113,8 +113,8 @@
   "routing": {
     "aliases": {},
     "fallbacks": [
-      "nvidia/deepseek-ai/deepseek-v4-pro",
-      "nvidia/meta/llama-3.3-70b-instruct",
+      "nvidia/nvidia/nemotron-3.5-bolt-e4b",
+      "nvidia/nvidia/nemotron-3-ultra-550b-a55b",
       "anthropic/claude-sonnet-4",
       "openai/gpt-4o"
     ],

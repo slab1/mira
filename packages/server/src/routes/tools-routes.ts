@@ -3,6 +3,7 @@ import type { ToolRegistry } from '../tools/registry.js'
 import type { PermissionManager } from '../permission/index.js'
 import type { GuardrailsManager } from '../guardrails/index.js'
 import type { Gateway } from '../gateway/index.js'
+import { GlobalBus, type Bus } from '../bus/index.js'
 import { getAgentTemplates, AGENT_TEMPLATES } from '../agents/templates.js'
 import type { JsonValue, MiraConfig } from '../types/index.js'
 import { getConfig } from '../config/index.js'
@@ -28,9 +29,11 @@ export function mountToolsRoutes(
     permissions: PermissionManager
     guardrails: GuardrailsManager
     gateway: Gateway
+    bus?: Bus
   },
 ) {
   const { tools, permissions, guardrails, gateway } = deps
+  const bus = deps.bus ?? GlobalBus
 
   // Skills — [{ name, description }] (web client also accepts legacy string[])
   app.get('/skills', async (c: Context) => {
@@ -131,6 +134,37 @@ export function mountToolsRoutes(
         })
     }
     return c.json(decision)
+  })
+
+  // Pending permission prompts (reconcile on reconnect / reload)
+  app.get('/permission/pending', (c: Context) => {
+    const sessionID = c.req.query('sessionID') || undefined
+    return c.json({ pending: bus.listPendingPermissions(sessionID) })
+  })
+
+  // Reply to a pending permission prompt over REST (paired with WS permission.reply)
+  app.post('/permission/reply', async (c: Context) => {
+    const body = (await c.req.json().catch(() => null)) as {
+      toolCallID?: string
+      nonce?: string
+      decision?: string
+      action?: string
+    } | null
+    const toolCallID = typeof body?.toolCallID === 'string' ? body.toolCallID.trim() : ''
+    const nonce = typeof body?.nonce === 'string' ? body.nonce.trim() : ''
+    const rawDecision = body?.decision ?? body?.action
+    const decision = rawDecision === 'allow' ? 'allow' : rawDecision === 'deny' ? 'deny' : null
+    if (!toolCallID || !nonce || !decision) {
+      return c.json({ ok: false, error: 'toolCallID, nonce, and decision ("allow"|"deny") required' }, 400)
+    }
+    const result = bus.resolvePermissionReply({ toolCallID, nonce, decision })
+    if (!result.ok) {
+      return c.json(
+        { ok: false, status: result.status, error: result.status === 'nonce_mismatch' ? 'Invalid nonce' : 'Permission request not found or already resolved' },
+        result.status === 'nonce_mismatch' ? 403 : 404,
+      )
+    }
+    return c.json({ ok: true, status: 'resolved', decision })
   })
 
   // Guardrails audit preview (dry-run)

@@ -235,7 +235,7 @@ describe('Mira server E2E', () => {
     process.env.GOOGLE_API_KEY ??
     process.env.GEMINI_API_KEY
   const LIVE_MODEL = process.env.NVIDIA_API_KEY
-    ? 'nvidia/meta/llama-3.3-70b-instruct'
+    ? 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b'
     : process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY
       ? 'google/gemini-2.0-flash'
       : 'openrouter/anthropic/claude-sonnet-4'

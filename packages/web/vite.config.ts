@@ -1,9 +1,27 @@
-import { defineConfig } from 'vite'
+import { defineConfig, createLogger } from 'vite'
 import solid from 'vite-plugin-solid'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { resolve, join, dirname } from 'node:path'
+
+const logger = createLogger()
+const originalLoggerError = logger.error.bind(logger)
+logger.error = (msg, options) => {
+  const errMsg = String((options?.error as Error | undefined)?.message ?? '')
+  const errCode = (options?.error as { code?: string } | undefined)?.code ?? ''
+  const text = `${msg} ${errMsg} ${errCode}`
+  if (
+    (text.includes('ws proxy socket error') || text.includes('ws proxy error')) &&
+    (text.includes('ECONNRESET') ||
+      text.includes('ECONNREFUSED') ||
+      text.includes('EPIPE') ||
+      text.includes('writeAfterFIN'))
+  ) {
+    return
+  }
+  originalLoggerError(msg, options)
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(__dirname, '../..')
@@ -51,7 +69,7 @@ function miraEnvToken(): string {
     try {
       if (!existsSync(p)) continue
       const raw = readFileSync(p, 'utf-8')
-      const m = raw.match(/MIRA_TOKEN\s*=\s*(['"]?)([0-9a-fA-F]{32,})\1/)
+      const m = raw.match(/MIRA_TOKEN\s*=\s*(['"]?)([0-9a-fA-F]{32,64})/)
       const tok = m?.[2]
       if (tok) return tok
     } catch {}
@@ -78,6 +96,7 @@ const API_TARGET =
 
 export default defineConfig({
   root: __dirname,
+  customLogger: logger,
   plugins: [
     solid(),
     {
@@ -140,9 +159,21 @@ export default defineConfig({
       '/admin': { target: API_TARGET, changeOrigin: true },
       '/workspaces': { target: API_TARGET, changeOrigin: true },
       '/workspace': { target: API_TARGET, changeOrigin: true },
+      '/voice': { target: API_TARGET, changeOrigin: true },
       '/complete': { target: API_TARGET, changeOrigin: true },
       '/autocomplete': { target: API_TARGET, changeOrigin: true },
-      '/terminal': { target: API_TARGET, changeOrigin: true },
+      '/terminal': {
+        target: API_TARGET,
+        changeOrigin: true,
+        ws: true,
+        rewriteWsOrigin: true,
+        configure: (proxy) => {
+          proxy.on('error', () => {})
+          proxy.on('proxyReqWs', (_proxyReq, _req, socket) => {
+            socket.on('error', () => {})
+          })
+        },
+      },
       '/metrics': { target: API_TARGET, changeOrigin: true },
       '/dashboard': { target: API_TARGET, changeOrigin: true },
       '/evolution': { target: API_TARGET, changeOrigin: true },
@@ -154,6 +185,7 @@ export default defineConfig({
         target: API_TARGET,
         ws: true,
         changeOrigin: true,
+        rewriteWsOrigin: true,
         configure: (proxy) => {
           // Gracefully ignore writeAfterFIN during watch restart (HMR reconnect)
           // and ECONNREFUSED/ECONNRESET while the server is (re)starting or client disconnects.
