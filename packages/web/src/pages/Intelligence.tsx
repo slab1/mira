@@ -97,7 +97,9 @@ export default function IntelligencePage() {
     })
   })
 
-  onMount(async () => {
+  const loadIntelligence = async () => {
+    setState('loading')
+    setError(null)
     try {
       const [g, m, r] = await Promise.all([
         req<KnowledgeGraph>('/knowledge/graph').catch(() => null),
@@ -105,13 +107,20 @@ export default function IntelligencePage() {
         req<any>('/dashboard').catch(() => null),
       ])
       setGraph(g)
-      setMemories(m ?? [])
+      setMemories(Array.isArray(m) ? m : [])
       setRepoStats(r)
-      setState(g || m ? 'live' : 'empty')
+      const hasNodes = (g?.nodes?.length ?? 0) > 0
+      const hasMemories = Array.isArray(m) && m.length > 0
+      const hasRepo = (r?.repo?.nodes ?? r?.nodes ?? 0) > 0
+      setState(hasNodes || hasMemories || hasRepo ? 'live' : 'empty')
     } catch (e) {
       setError(String(e))
       setState('error')
     }
+  }
+
+  onMount(() => {
+    void loadIntelligence()
   })
 
   return (
@@ -135,7 +144,7 @@ export default function IntelligencePage() {
           gap: '14px',
         }}
       >
-        <Card padding="14px 16px" style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
+        <Card padding="14px 16px" style={{ display: 'flex', 'align-items': 'center', gap: '10px', 'flex-wrap': 'wrap' }}>
           <div
             style={{
               width: '28px',
@@ -147,33 +156,35 @@ export default function IntelligencePage() {
               color: 'var(--on-accent)',
               'font-weight': '800',
               'font-size': '14px',
+              'flex-shrink': '0',
             }}
             aria-hidden="true"
           >
             I
           </div>
-          <div>
+          <div style={{ 'min-width': '160px', flex: '1' }}>
             <div style={{ 'font-size': 'var(--fs-lg)', 'font-weight': '700' }}>Intelligence</div>
             <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>
               What does Mira know, and why does Mira believe it?
             </div>
           </div>
           <div
-            style={{ 'margin-left': 'auto', display: 'flex', 'align-items': 'center', gap: '8px' }}
+            style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'flex-wrap': 'wrap' }}
           >
             <input
               type="text"
-              placeholder="Search knowledge..."
+              placeholder="Search knowledge…"
               value={intelligenceStore.state().searchQuery}
               onInput={(e) => intelligenceStore.setSearch(e.currentTarget.value)}
               style={{
-                padding: '4px 8px',
-                'border-radius': '4px',
+                padding: '5px 10px',
+                'border-radius': 'var(--r-sm)',
                 border: '1px solid var(--border)',
                 background: 'var(--bg-surface)',
                 color: 'var(--fg)',
                 'font-size': 'var(--fs-xs)',
                 width: '160px',
+                'min-height': '32px',
               }}
               aria-label="Search knowledge"
             />
@@ -185,12 +196,13 @@ export default function IntelligencePage() {
                 )
               }
               style={{
-                padding: '4px 8px',
-                'border-radius': '4px',
+                padding: '5px 8px',
+                'border-radius': 'var(--r-sm)',
                 border: '1px solid var(--border)',
                 background: 'var(--bg-surface)',
                 color: 'var(--fg)',
                 'font-size': 'var(--fs-xs)',
+                'min-height': '32px',
               }}
               aria-label="Filter by tier"
             >
@@ -199,6 +211,21 @@ export default function IntelligencePage() {
               <option value="semantic">Semantic</option>
               <option value="procedural">Procedural</option>
             </select>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              onClick={() => void loadIntelligence()}
+              disabled={state() === 'loading'}
+              style={{
+                padding: '5px 10px',
+                'font-size': 'var(--fs-xs)',
+                border: '1px solid var(--border)',
+                'border-radius': 'var(--r-sm)',
+                'min-height': '32px',
+              }}
+            >
+              ↻ Refresh
+            </button>
             <DataStateBadge state={state()} />
           </div>
         </Card>
@@ -207,6 +234,25 @@ export default function IntelligencePage() {
           <div class="card" style={{ padding: '12px 16px', color: 'var(--danger)' }}>
             Error: {error()}
           </div>
+        </Show>
+
+        <Show when={state() === 'loading'}>
+          <Card padding="16px" style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
+            <div class="skeleton" style={{ height: '18px', width: '40%' }} />
+            <div class="skeleton" style={{ height: '42px', width: '100%' }} />
+            <div class="skeleton" style={{ height: '42px', width: '100%' }} />
+          </Card>
+        </Show>
+
+        <Show when={state() === 'empty'}>
+          <Card padding="24px" style={{ 'text-align': 'center', color: 'var(--fg-subtle)', display: 'flex', 'flex-direction': 'column', 'align-items': 'center', gap: '8px' }}>
+            <div style={{ 'font-size': 'var(--fs-sm)', 'font-weight': '600', color: 'var(--fg)' }}>
+              No knowledge nodes or memories indexed yet
+            </div>
+            <div style={{ 'font-size': 'var(--fs-xs)', 'max-width': '48ch', 'line-height': '1.5' }}>
+              Memories and repository entities are automatically extracted during Mira sessions.
+            </div>
+          </Card>
         </Show>
 
         {/* Knowledge Graph — Progressive Disclosure */}

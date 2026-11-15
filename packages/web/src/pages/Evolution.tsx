@@ -149,6 +149,8 @@ export default function EvolutionPage() {
   const [proposalsLoading, setProposalsLoading] = createSignal(true)
   const [proposalsUnavailable, setProposalsUnavailable] = createSignal(false)
   const [stateFilter, setStateFilter] = createSignal('')
+  const [rollbackTarget, setRollbackTarget] = createSignal<PatchProposal | null>(null)
+  const [rollbackReason, setRollbackReason] = createSignal('')
 
   const summary = createMemo<HealthSummary>(() => {
     const healthy = engines().filter((e) => e.healthy).length
@@ -536,21 +538,28 @@ export default function EvolutionPage() {
     }
   }
 
-  async function rollbackOne(p: PatchProposal) {
-    const reason = window.prompt(`Rollback reason for ${p.id}:`)
-    if (reason === null) return // dismissed — no action
-    const trimmed = reason.trim()
+  function rollbackOne(p: PatchProposal) {
+    setRollbackReason('')
+    setRollbackTarget(p)
+  }
+
+  async function confirmRollback(e?: Event) {
+    e?.preventDefault()
+    const target = rollbackTarget()
+    if (!target) return
+    const trimmed = rollbackReason().trim()
     if (!trimmed) {
       toast.error('Rollback needs a reason')
       return
     }
-    setActionBusy(`rollback:${p.id}`)
+    setRollbackTarget(null)
+    setActionBusy(`rollback:${target.id}`)
     try {
-      await api.rollbackProposal(p.id, trimmed)
-      toast.success(`Rolled back ${p.id}`)
+      await api.rollbackProposal(target.id, trimmed)
+      toast.success(`Rolled back ${target.id}`)
       void loadProposals()
-    } catch (e) {
-      toast.error(`Rollback failed: ${(e as Error).message}`)
+    } catch (err) {
+      toast.error(`Rollback failed: ${(err as Error).message}`)
     } finally {
       setActionBusy(null)
     }
@@ -2060,6 +2069,114 @@ export default function EvolutionPage() {
           </div>
         </div>
       </div>
+
+      {/* Rollback Reason Modal */}
+      <Show when={rollbackTarget()}>
+        {(target) => (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rollback-modal-title"
+            onClick={() => setRollbackTarget(null)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setRollbackTarget(null)
+            }}
+            style={{
+              position: 'fixed',
+              inset: '0',
+              background: 'rgba(7, 9, 14, 0.82)',
+              'backdrop-filter': 'blur(4px)',
+              display: 'grid',
+              'place-items': 'center',
+              padding: '16px',
+              'z-index': '1200',
+            }}
+          >
+            <form
+              onSubmit={(e) => void confirmRollback(e)}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: 'min(440px, calc(100vw - 32px))',
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--danger-border)',
+                'border-radius': 'var(--r-lg)',
+                padding: '20px',
+                display: 'flex',
+                'flex-direction': 'column',
+                gap: '12px',
+                'box-shadow': 'var(--shadow-pop)',
+              }}
+            >
+              <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
+                <div id="rollback-modal-title" style={{ 'font-size': 'var(--fs-md)', 'font-weight': '700', color: 'var(--fg)' }}>
+                  Rollback Proposal <span style={{ color: 'var(--accent)', 'font-family': 'var(--font-mono)' }}>{target().id}</span>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  aria-label="Close rollback dialog"
+                  onClick={() => setRollbackTarget(null)}
+                  style={{ width: '32px', height: '32px', padding: '0' }}
+                >
+                  ✕
+                </button>
+              </div>
+              <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)', 'line-height': '1.5' }}>
+                Provide a recorded reason for rolling back this promoted proposal. This is written to the evolution audit ledger.
+              </div>
+              <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
+                {['Benchmark regression', 'Elevated error rate', 'Operator precaution'].map((preset) => (
+                  <button
+                    type="button"
+                    class="chip"
+                    onClick={() => setRollbackReason(preset)}
+                    style={{ 'font-size': 'var(--fs-2xs)' }}
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="text"
+                autofocus
+                required
+                value={rollbackReason()}
+                onInput={(e) => setRollbackReason(e.currentTarget.value)}
+                placeholder="Reason for rollback…"
+                aria-label="Rollback reason"
+                class="input"
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  'border-radius': 'var(--r-md)',
+                  border: '1px solid var(--border-strong)',
+                  background: 'var(--bg-app)',
+                  color: 'var(--fg)',
+                  'font-size': 'var(--fs-sm)',
+                }}
+              />
+              <div style={{ display: 'flex', 'justify-content': 'flex-end', gap: '8px', 'margin-top': '4px' }}>
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  onClick={() => setRollbackTarget(null)}
+                  style={{ padding: '7px 14px', 'font-size': 'var(--fs-xs)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  class="btn btn-danger-ghost"
+                  disabled={!rollbackReason().trim()}
+                  style={{ padding: '7px 14px', 'font-size': 'var(--fs-xs)', 'font-weight': '700' }}
+                >
+                  Confirm Rollback
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+      </Show>
     </div>
   )
 }

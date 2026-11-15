@@ -20,8 +20,15 @@ interface CacheEntry {
 const TTL_MS = 5 * 60 * 1000
 const cache = new Map<string, CacheEntry>()
 
-export function clearModelsCache() {
-  cache.clear()
+export function clearModelsCache(providerKey?: string) {
+  if (!providerKey) {
+    cache.clear()
+    return
+  }
+  const prefix = `${providerKey}:`
+  for (const k of cache.keys()) {
+    if (k.startsWith(prefix)) cache.delete(k)
+  }
 }
 
 export async function listModels(opts: {
@@ -30,10 +37,11 @@ export async function listModels(opts: {
   headers: Record<string, string>
   providerKey: string
   modelID?: string
+  bypassCache?: boolean
 }): Promise<ModelInfo[]> {
   const cacheKey = `${opts.providerKey}:${opts.baseURL}`
   const cached = cache.get(cacheKey)
-  if (cached && Date.now() < cached.expiresAt) return cached.models
+  if (!opts.bypassCache && cached && Date.now() < cached.expiresAt) return cached.models
 
   const key = opts.providerKey.toLowerCase()
   const base = (opts.baseURL || 'https://api.openai.com/v1').replace(/\/$/, '')
@@ -52,7 +60,7 @@ export async function listModels(opts: {
       if (res.ok) {
         const data = (await res.json()) as { data?: Array<{ id?: string; display_name?: string }> }
         const models = (data.data ?? []).map((m) => ({
-          id: `anthropic/${m.id}`,
+          id: m.id?.startsWith(`${opts.providerKey}/`) ? m.id : `anthropic/${m.id}`,
           name: m.display_name ?? m.id ?? '',
           context: 200_000,
         }))
@@ -72,9 +80,9 @@ export async function listModels(opts: {
     }
     // Static fallback for Anthropic if models endpoint fails
     const staticModels = [
+      { id: 'anthropic/claude-sonnet-4-20250514', name: 'Claude Sonnet 4', context: 200_000 },
       { id: 'anthropic/claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', context: 200_000 },
       { id: 'anthropic/claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', context: 200_000 },
-      { id: 'anthropic/claude-3-opus-20240229', name: 'Claude 3 Opus', context: 200_000 },
     ]
     cache.set(cacheKey, { models: staticModels, expiresAt: Date.now() + TTL_MS })
     return staticModels
@@ -111,6 +119,13 @@ export async function listModels(opts: {
     } catch (e) {
       if (e instanceof ProviderError) throw e
     }
+    const staticGemini = [
+      { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash', context: 1_000_000 },
+      { id: 'google/gemini-2.5-pro', name: 'Gemini 2.5 Pro', context: 1_000_000 },
+      { id: 'google/gemini-2.0-flash', name: 'Gemini 2.0 Flash', context: 1_000_000 },
+    ]
+    cache.set(cacheKey, { models: staticGemini, expiresAt: Date.now() + TTL_MS })
+    return staticGemini
   }
 
   // 3. OpenRouter & Standard OpenAI-Compatible Endpoints (/v1/models or /models)
@@ -128,11 +143,19 @@ export async function listModels(opts: {
         const rawList = data.data ?? (Array.isArray(data) ? data : [])
         const models = (rawList as Array<{ id?: string; name?: string; context_length?: number; contextLength?: number }>)
           .slice(0, 100)
-          .map((m) => ({
-            id: key === 'openrouter' ? `openrouter/${m.id}` : `${opts.providerKey}/${m.id ?? ''}`,
-            name: m.name ?? m.id ?? '',
-            context: (m.context_length ?? m.contextLength ?? 128_000) as number,
-          }))
+          .map((m) => {
+            const rawId = m.id ?? ''
+            const id = !rawId
+              ? ''
+              : key === 'openrouter'
+                ? (rawId.startsWith('openrouter/') ? rawId : `openrouter/${rawId}`)
+                : (rawId.startsWith(`${opts.providerKey}/`) ? rawId : `${opts.providerKey}/${rawId}`)
+            return {
+              id,
+              name: m.name ?? rawId,
+              context: (m.context_length ?? m.contextLength ?? 128_000) as number,
+            }
+          })
           .filter((m) => m.id && m.id !== `${opts.providerKey}/`)
         if (models.length) {
           cache.set(cacheKey, { models, expiresAt: Date.now() + TTL_MS })

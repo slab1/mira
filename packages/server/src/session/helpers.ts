@@ -238,24 +238,29 @@ export function resolveEffectiveModel(input: {
     candidate = cfg.model
   }
 
-  // If candidate is retired, fall back to configured fallbacks
+  // If candidate is retired, fall back to configured fallbacks (preferring keyed providers)
   if (isRetired(candidate)) {
     const fallbacks = (cfg.routing?.fallbacks as string[] | undefined) ?? []
-    let resolvedFallback: string | null = null
+    const candidates = [...fallbacks, cfg.model].filter((m) => m && !isRetired(m))
+    let keyedFallback: string | null = null
+    let firstResolvable: string | null = null
     try {
       const reg = buildRegistry(cfg)
-      for (const fb of fallbacks) {
-        if (isRetired(fb)) continue
+      for (const fb of candidates) {
         try {
           const r = reg.resolve(fb)
-          resolvedFallback = `${r.providerKey}/${r.modelID}`
-          break
+          const canonical = `${r.providerKey}/${r.modelID}`
+          if (!firstResolvable) firstResolvable = canonical
+          if (reg.hasKey(r.providerKey)) {
+            keyedFallback = canonical
+            break
+          }
         } catch {
           continue
         }
       }
     } catch {}
-    candidate = resolvedFallback ?? fallbacks.find((fb) => !isRetired(fb)) ?? cfg.model
+    candidate = keyedFallback ?? firstResolvable ?? candidates[0] ?? cfg.model
   }
 
   return resolveModelViaGateway(candidate)

@@ -80,7 +80,7 @@
   /* Elevation & focus */
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55), 0 4px 12px rgba(0, 0, 0, 0.4);
-  --ring: 0 0 0 3px rgba(139, 92, 246, 0.35);
+  --ring: 0 0 0 3px rgba(229, 184, 66, 0.35);
 
   /* Motion */
   --dur-fast: 110ms;
@@ -155,8 +155,8 @@
   --fg-subtle: #71717a;
   --fg-faint: #a1a1aa;
 
-  --accent-soft: rgba(139, 92, 246, 0.09);
-  --accent-border: rgba(139, 92, 246, 0.32);
+  --accent-soft: rgba(212, 175, 55, 0.12);
+  --accent-border: rgba(212, 175, 55, 0.38);
   --ok-soft: rgba(16, 185, 129, 0.1);
   --warn-soft: rgba(245, 158, 11, 0.1);
   --danger-soft: rgba(239, 68, 68, 0.08);
@@ -647,7 +647,7 @@ input:focus-visible,
   color: inherit;
   font-family: inherit;
   cursor: pointer;
-  padding: 9px 30px 9px 12px;
+  padding: 9px 92px 9px 12px;
   border-radius: inherit;
 }
 .session-del {
@@ -655,8 +655,8 @@ input:focus-visible,
   top: 50%;
   right: 6px;
   transform: translateY(-50%);
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
   border: none;
@@ -665,6 +665,7 @@ input:focus-visible,
   border-radius: var(--r-sm);
   cursor: pointer;
   opacity: 0;
+  pointer-events: none;
   font-size: 13px;
   line-height: 1;
   transition:
@@ -675,6 +676,7 @@ input:focus-visible,
 .session-row:hover .session-del,
 .session-row:focus-within .session-del {
   opacity: 1;
+  pointer-events: auto;
 }
 .session-del:hover {
   color: var(--danger);
@@ -683,6 +685,7 @@ input:focus-visible,
 @media (hover: none) {
   .session-del {
     opacity: 1;
+    pointer-events: auto;
   }
 }
 
@@ -1971,6 +1974,7 @@ input:focus-visible,
   border-radius: var(--r-sm);
   cursor: pointer;
   opacity: 0;
+  pointer-events: none;
   font-size: 13px;
   line-height: 1;
   transition:
@@ -1981,6 +1985,7 @@ input:focus-visible,
 .session-row:hover .session-export-btn,
 .session-row:focus-within .session-export-btn {
   opacity: 1;
+  pointer-events: auto;
 }
 .session-export-btn:hover {
   color: var(--accent);
@@ -1989,6 +1994,7 @@ input:focus-visible,
 @media (hover: none) {
   .session-export-btn {
     opacity: 1;
+    pointer-events: auto;
   }
 }
 .session-export-scrim {
@@ -2407,9 +2413,16 @@ html {
       100% 8px;
     background-attachment: local, local, scroll, scroll;
   }
-  /* Header: allow the right-side actions to scroll instead of overflowing.
-     Add scroll-shadow hint so users discover there are more controls. */
-  header {
+  /* Allow SessionList inside MiraGoldLayout mobile drawer to flow naturally */
+  .mira-gold-drawer-sessions .mira-sidebar {
+    position: relative !important;
+    inset: auto !important;
+    z-index: 1 !important;
+    transform: none !important;
+    height: 100% !important;
+  }
+  /* Header: allow right-side actions to scroll in legacy AppLayout without clipping MiraGoldLayout header. */
+  header:not(.mira-gold-header) {
     gap: var(--sp-2);
     overflow-x: auto;
     overflow-y: hidden;
@@ -2422,7 +2435,7 @@ html {
       transparent 100%
     );
   }
-  header > * {
+  header:not(.mira-gold-header) > * {
     flex-shrink: 0;
   }
 }
@@ -2703,7 +2716,7 @@ html {
   box-shadow: 0 0 6px var(--accent);
 }
 .mira-step-item.completed .mira-step-dot {
-  background: var(--success);
+  background: var(--ok);
 }
 .mira-step-connector {
   width: 12px;
@@ -2733,5 +2746,25 @@ html {
   color: var(--accent);
   font-weight: 700;
   font-size: 11px;
+}
+
+/* ── Utility Classes & Accessible Focus ── */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.pill-brand {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-border);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 

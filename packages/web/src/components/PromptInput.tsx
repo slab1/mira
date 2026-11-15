@@ -4,6 +4,7 @@ import type { SettingsStore } from '../stores/settings'
 import { filterCommands } from './CommandPalette'
 import type { CommandEntry } from '../api/client'
 import { providerModelId, api } from '../api/client'
+import { toast } from './Toast'
 
 // ── File pill ────────────────────────────────────────────────────────
 
@@ -428,16 +429,16 @@ function AgentSelector(props: {
   let containerRef: HTMLDivElement | undefined
 
   const lanes = [
-    { id: 'general', label: 'general', icon: '🤖', desc: 'General Partner' },
+    { id: 'general', label: 'general', icon: '◈', desc: 'General Partner' },
     { id: 'code', label: 'code', icon: '⌨', desc: 'Coding & Implementation' },
-    { id: 'ask', label: 'ask', icon: '❓', desc: 'Q&A & Explanations' },
-    { id: 'plan', label: 'plan', icon: '📐', desc: 'Architecture & Planning' },
-    { id: 'explorer', label: 'explorer', icon: '🧭', desc: 'Search & Discovery' },
-    { id: 'fixer', label: 'fixer', icon: '🛠', desc: 'Bug & Error Fixing' },
-    { id: 'review', label: 'review', icon: '👁', desc: 'Code Review' },
-    { id: 'debug', label: 'debug', icon: '🐞', desc: 'Deep Diagnostics' },
-    { id: 'architect', label: 'architect', icon: '🏛', desc: 'System Design' },
-    { id: 'security', label: 'security', icon: '🛡', desc: 'Security & Audit' },
+    { id: 'ask', label: 'ask', icon: '?', desc: 'Q&A & Explanations' },
+    { id: 'plan', label: 'plan', icon: '▤', desc: 'Architecture & Planning' },
+    { id: 'explorer', label: 'explorer', icon: '⌕', desc: 'Search & Discovery' },
+    { id: 'fixer', label: 'fixer', icon: '⚒', desc: 'Bug & Error Fixing' },
+    { id: 'review', label: 'review', icon: '◎', desc: 'Code Review' },
+    { id: 'debug', label: 'debug', icon: '◷', desc: 'Deep Diagnostics' },
+    { id: 'architect', label: 'architect', icon: '⬢', desc: 'System Design' },
+    { id: 'security', label: 'security', icon: '⬣', desc: 'Security & Audit' },
   ]
 
   const currentLane = () => lanes.find((l) => l.id === (props.value || 'general')) ?? lanes[0]
@@ -575,40 +576,219 @@ export function PromptInput(props: {
   let textareaRef: HTMLTextAreaElement | undefined
   let fileInputRef: HTMLInputElement | undefined
   const [isListening, setIsListening] = createSignal(false)
+  const [isTranscribing, setIsTranscribing] = createSignal(false)
+  const [voiceAvailable, setVoiceAvailable] = createSignal(false)
   let speechRec: any = null
+  let mediaRecorder: MediaRecorder | null = null
+  let mediaStream: MediaStream | null = null
+  let audioChunks: BlobPart[] = []
+  let speechBaseText = ''
 
-  const toggleVoice = () => {
-    if (isListening()) {
-      try { speechRec?.stop() } catch {}
-      setIsListening(false)
-      return
+  onMount(() => {
+    void api
+      .voiceStatus()
+      .then((res) => {
+        if (res?.available) setVoiceAvailable(true)
+      })
+      .catch(() => {})
+  })
+
+  const stopMediaTracks = () => {
+    if (mediaStream) {
+      for (const track of mediaStream.getTracks()) {
+        try {
+          track.stop()
+        } catch {}
+      }
+      mediaStream = null
     }
+  }
+
+  onCleanup(() => {
+    try {
+      speechRec?.stop()
+    } catch {}
+    try {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop()
+      }
+    } catch {}
+    stopMediaTracks()
+  })
+
+  const blobToBase64 = (blob: Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        const res = String(reader.result ?? '')
+        const idx = res.indexOf('base64,')
+        resolve(idx >= 0 ? res.slice(idx + 7) : res)
+      }
+      reader.onerror = () => reject(reader.error ?? new Error('Failed to read audio'))
+      reader.readAsDataURL(blob)
+    })
+
+  const appendTranscript = (text: string) => {
+    const clean = text.trim()
+    if (!clean) return
+    const cur = props.value
+    const sep = cur && !/\s$/.test(cur) ? ' ' : ''
+    props.onInput(`${cur}${sep}${clean}`)
+    queueMicrotask(() => {
+      textareaRef?.focus()
+      autoGrow()
+    })
+  }
+
+  const startSpeechFallback = () => {
     const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SpeechRec) {
-      alert('Speech Recognition is not supported in this browser. Try Chrome, Edge, or Safari.')
+      toast.error('Voice transcription requires a Gemini/OpenAI API key on the server or browser SpeechRecognition.')
       return
     }
     try {
+      speechBaseText = props.value.trimEnd()
       speechRec = new SpeechRec()
       speechRec.continuous = true
       speechRec.interimResults = true
-      speechRec.lang = 'en-US'
+      speechRec.lang = navigator.language || 'en-US'
       speechRec.onresult = (ev: any) => {
-        let transcript = ''
-        for (let i = ev.resultIndex; i < ev.results.length; i++) {
-          transcript += ev.results[i][0].transcript
+        let finalSeg = ''
+        let interimSeg = ''
+        for (let i = 0; i < ev.results.length; i++) {
+          const piece = ev.results[i]?.[0]?.transcript ?? ''
+          if (ev.results[i]?.isFinal) finalSeg += piece + ' '
+          else interimSeg += piece
         }
-        if (transcript.trim()) {
-          const cur = props.value
-          props.onInput(cur ? `${cur} ${transcript.trim()}` : transcript.trim())
+        const combined = `${finalSeg}${interimSeg}`.trim()
+        if (combined) {
+          props.onInput(speechBaseText ? `${speechBaseText} ${combined}` : combined)
+          queueMicrotask(autoGrow)
         }
       }
-      speechRec.onerror = () => setIsListening(false)
-      speechRec.onend = () => setIsListening(false)
+      speechRec.onerror = (ev: any) => {
+        setIsListening(false)
+        const err = String(ev?.error ?? '')
+        if (err === 'not-allowed' || err === 'service-not-allowed') {
+          toast.error('Microphone permission denied. Allow mic access in browser settings.')
+        } else if (err === 'audio-capture') {
+          toast.error('No microphone detected.')
+        } else if (err && err !== 'no-speech' && err !== 'aborted') {
+          toast.error(`Speech recognition failed: ${err}`)
+        }
+      }
+      speechRec.onend = () => {
+        setIsListening(false)
+        speechRec = null
+      }
       speechRec.start()
       setIsListening(true)
-    } catch {
+    } catch (e) {
       setIsListening(false)
+      toast.error(`Voice recognition failed: ${(e as Error).message}`)
+    }
+  }
+
+  const startServerRecording = async () => {
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const preferredTypes = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4',
+        'audio/ogg;codecs=opus',
+      ]
+      const mimeType =
+        preferredTypes.find((t) => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported?.(t)) ||
+        ''
+      audioChunks = []
+      mediaRecorder = mimeType ? new MediaRecorder(mediaStream, { mimeType }) : new MediaRecorder(mediaStream)
+      mediaRecorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) audioChunks.push(ev.data)
+      }
+      mediaRecorder.onstop = async () => {
+        const recMime = mediaRecorder?.mimeType || mimeType || 'audio/webm'
+        const chunks = audioChunks.slice()
+        audioChunks = []
+        stopMediaTracks()
+        setIsListening(false)
+
+        if (chunks.length === 0) return
+        const blob = new Blob(chunks, { type: recMime })
+        if (blob.size < 256) {
+          toast.info('Recording too short — hold/speak a little longer.')
+          return
+        }
+        setIsTranscribing(true)
+        try {
+          const audioBase64 = await blobToBase64(blob)
+          const res = await api.transcribeVoice({
+            audioBase64,
+            mimeType: recMime.split(';')[0] || 'audio/webm',
+            language: navigator.language || 'en-US',
+          })
+          if (res.ok && res.text?.trim()) {
+            appendTranscript(res.text)
+          } else {
+            toast.info('No speech detected in recording.')
+          }
+        } catch (err) {
+          const msg = (err as Error).message ?? String(err)
+          if (msg.includes('501') || msg.includes('NO_VOICE_PROVIDER')) {
+            setVoiceAvailable(false)
+            toast.warn('Server voice provider unavailable — using browser speech recognition next time.')
+          } else {
+            toast.error(`Transcription failed: ${msg}`)
+          }
+        } finally {
+          setIsTranscribing(false)
+        }
+      }
+      mediaRecorder.start(250)
+      setIsListening(true)
+    } catch (err) {
+      stopMediaTracks()
+      setIsListening(false)
+      const name = (err as Error)?.name ?? ''
+      if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+        toast.error('Microphone permission denied. Allow mic access in browser settings.')
+      } else if (name === 'NotFoundError') {
+        toast.error('No microphone found.')
+      } else {
+        // Fallback to browser SpeechRecognition if MediaRecorder fails
+        startSpeechFallback()
+      }
+    }
+  }
+
+  const toggleVoice = () => {
+    if (isTranscribing()) return
+    if (isListening()) {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        try {
+          mediaRecorder.stop()
+        } catch {
+          stopMediaTracks()
+          setIsListening(false)
+        }
+        return
+      }
+      try {
+        speechRec?.stop()
+      } catch {}
+      setIsListening(false)
+      return
+    }
+
+    const canRecord =
+      voiceAvailable() &&
+      typeof MediaRecorder !== 'undefined' &&
+      typeof navigator !== 'undefined' &&
+      !!navigator.mediaDevices?.getUserMedia
+    if (canRecord) {
+      void startServerRecording()
+    } else {
+      startSpeechFallback()
     }
   }
 
@@ -850,20 +1030,25 @@ export function PromptInput(props: {
             type="button"
             onClick={() => fileInputRef?.click()}
             title="Attach files or screenshots (@pill)"
+            aria-label="Attach files"
             style={{
               display: 'inline-flex',
               'align-items': 'center',
-              gap: '4px',
-              padding: '4px 8px',
+              gap: '5px',
+              padding: '4px 9px',
               'font-size': 'var(--fs-xs)',
               border: '1px solid var(--border)',
               'border-radius': 'var(--r-md)',
               background: 'var(--bg-surface)',
               color: 'var(--fg-muted)',
               cursor: 'pointer',
+              'min-height': '32px',
             }}
           >
-            📎 Attach
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+            </svg>
+            <span>Attach</span>
           </button>
           <input
             ref={fileInputRef}
@@ -876,23 +1061,40 @@ export function PromptInput(props: {
           {/* Voice Recognition Dictation Button */}
           <button
             type="button"
+            disabled={isTranscribing()}
             onClick={toggleVoice}
-            title={isListening() ? 'Stop voice dictation' : 'Start voice recognition (Speech-to-text)'}
+            title={
+              isTranscribing()
+                ? 'Transcribing audio…'
+                : isListening()
+                  ? 'Stop recording & transcribe'
+                  : voiceAvailable()
+                    ? 'Record voice note (Server AI transcription)'
+                    : 'Start voice dictation (Speech-to-text)'
+            }
+            aria-label={isTranscribing() ? 'Transcribing audio' : isListening() ? 'Stop voice dictation' : 'Start voice recognition'}
+            aria-pressed={isListening() ? 'true' : 'false'}
             style={{
               display: 'inline-flex',
               'align-items': 'center',
-              gap: '4px',
-              padding: '4px 8px',
+              gap: '5px',
+              padding: '4px 9px',
               'font-size': 'var(--fs-xs)',
-              border: isListening() ? '1px solid #EF4444' : '1px solid var(--border)',
+              border: isListening() ? '1px solid var(--danger)' : isTranscribing() ? '1px solid var(--accent-border)' : '1px solid var(--border)',
               'border-radius': 'var(--r-md)',
-              background: isListening() ? 'rgba(239, 68, 68, 0.15)' : 'var(--bg-surface)',
-              color: isListening() ? '#EF4444' : 'var(--fg-muted)',
-              cursor: 'pointer',
-              'font-weight': isListening() ? '700' : '500',
+              background: isListening() ? 'var(--danger-soft)' : isTranscribing() ? 'var(--accent-soft)' : 'var(--bg-surface)',
+              color: isListening() ? 'var(--danger)' : isTranscribing() ? 'var(--accent)' : 'var(--fg-muted)',
+              cursor: isTranscribing() ? 'wait' : 'pointer',
+              'font-weight': isListening() || isTranscribing() ? '700' : '500',
+              'min-height': '32px',
             }}
           >
-            {isListening() ? '🎙 Listening...' : '🎤 Voice'}
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" x2="12" y1="19" y2="22" />
+            </svg>
+            <span>{isTranscribing() ? 'Transcribing…' : isListening() ? 'Stop' : 'Voice'}</span>
           </button>
         </div>
         <Show

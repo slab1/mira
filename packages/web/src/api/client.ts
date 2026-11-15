@@ -271,10 +271,40 @@ export type MiraConfig = {
     contextLimit?: number
     compactionThreshold?: number
     smallModel?: string
+    permissionTimeoutMs?: number
   }
   features?: Record<string, boolean>
   tools?: Record<string, JsonValue>
   costCap?: { perSession?: number; perTask?: number }
+}
+
+export type PendingPermission = {
+  sessionID: string
+  toolCallID: string
+  tool: string
+  args?: Record<string, JsonValue>
+  nonce: string
+  reason?: string
+  risk?: 'low' | 'medium' | 'high' | 'critical'
+  blastRadius?: string
+  canUndo?: boolean
+  timeoutMs?: number
+  expiresAt?: number
+}
+
+export type VoiceStatus = {
+  available: boolean
+  provider: 'gemini' | 'openai' | null
+  model: string | null
+}
+
+export type VoiceTranscribeResponse = {
+  ok: boolean
+  text?: string
+  provider?: string
+  model?: string
+  error?: string
+  code?: string
 }
 
 export type MCPServerConfig = {
@@ -288,6 +318,7 @@ export type MCPServerConfig = {
 
 export type ProviderConfig = {
   npm?: string
+  kind?: string
   name: string
   options: { baseURL: string; apiKey: string }
   models: Record<string, { name: string; limit: { context: number; output: number } }>
@@ -1028,6 +1059,25 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  listPendingPermissions: (sessionID?: string) =>
+    req<{ pending: PendingPermission[] }>(
+      sessionID ? `/permission/pending?sessionID=${encodeURIComponent(sessionID)}` : '/permission/pending',
+    ),
+
+  replyPermission: (body: { toolCallID: string; nonce: string; decision: 'allow' | 'deny' }) =>
+    req<{ ok: boolean; status: string; decision: string }>('/permission/reply', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  voiceStatus: () => req<VoiceStatus>('/voice/status'),
+
+  transcribeVoice: (body: { audioBase64: string; mimeType?: string; language?: string }) =>
+    req<VoiceTranscribeResponse>('/voice/transcribe', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   checkGuardrails: (body: { tool: string; args?: Record<string, JsonValue>; sessionID?: string }) =>
     req<{ decision: 'allow' | 'deny' | 'warn'; reason?: string; tool: string; sessionID: string }>(
       '/guardrails/check',
@@ -1166,9 +1216,9 @@ export const api = {
       '/providers/test-credentials',
       { method: 'POST', body: JSON.stringify(body) },
     ),
-  listProviderModels: (id: string) =>
-    req<{ ok: boolean; models?: { id: string; name?: string }[]; error?: string }>(
-      `/providers/${encodeURIComponent(id)}/models`,
+  listProviderModels: (id: string, refresh = false) =>
+    req<{ ok: boolean; models?: { id: string; name?: string }[]; warning?: string; error?: string }>(
+      `/providers/${encodeURIComponent(id)}/models${refresh ? '?refresh=1' : ''}`,
     ),
   removeProvider: (id: string) =>
     req<{ ok: boolean }>(`/providers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
@@ -1640,7 +1690,7 @@ export function getTerminalWsUrl(): string {
 export type TerminalWSEvents = {
   open: () => void
   data: (data: string) => void
-  connected: (info: { cwd?: string; env?: Record<string, string> }) => void
+  connected: (info: { cwd?: string; pty?: boolean; platform?: string; env?: Record<string, string> }) => void
   exit: (code: number) => void
   close: () => void
   error: (err: Event) => void
@@ -1650,6 +1700,7 @@ export function createTerminalSocket(handlers: Partial<TerminalWSEvents> = {}): 
   connect: () => WebSocket
   disconnect: () => void
   sendInput: (data: string) => void
+  sendSignal: (signal: string) => void
   resize: (cols: number, rows: number) => void
   get ws(): WebSocket | null
 } {
@@ -1677,11 +1728,15 @@ export function createTerminalSocket(handlers: Partial<TerminalWSEvents> = {}): 
       try {
         const msg = JSON.parse(String(ev.data))
         if (msg.type === 'terminal.output' || msg.type === 'output' || msg.type === 'data') {
-          handlers.data?.(msg.data ?? msg.text ?? '')
+          const text = msg.payload?.data ?? msg.data ?? msg.text ?? ''
+          if (text) handlers.data?.(String(text))
         } else if (msg.type === 'terminal.connected') {
-          handlers.connected?.(msg)
+          handlers.connected?.(msg.payload ?? msg)
         } else if (msg.type === 'terminal.exit') {
-          handlers.exit?.(msg.code ?? 0)
+          handlers.exit?.(msg.payload?.code ?? msg.code ?? 0)
+        } else if (msg.type === 'terminal.error') {
+          const errMsg = msg.payload?.error ?? msg.error ?? ''
+          if (errMsg) handlers.data?.(`\r\n[error] ${String(errMsg)}\r\n`)
         }
       } catch {
         if (typeof ev.data === 'string') {
@@ -1704,6 +1759,11 @@ export function createTerminalSocket(handlers: Partial<TerminalWSEvents> = {}): 
     sendInput(data: string) {
       if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'terminal.input', data }))
+      }
+    },
+    sendSignal(signal: string) {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'terminal.signal', signal }))
       }
     },
     resize(cols: number, rows: number) {

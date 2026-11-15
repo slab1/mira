@@ -60,32 +60,43 @@ export default function DashboardPage() {
   const [agentTemplates, setAgentTemplates] = createSignal<AgentTemplateItem[]>([])
   const [error, setError] = createSignal<string | null>(null)
 
-  onMount(async () => {
+  const [loading, setLoading] = createSignal(true)
+
+  const loadDashboard = async () => {
+    setLoading(true)
+    setError(null)
     try {
-      const [d, engRes, healthRes, agentsRes] = await Promise.all([
+      const [dashRes, engRes, healthRes, agentsRes] = await Promise.all([
         req<DashboardData>('/dashboard').catch(() => null),
         req<{ ok: boolean; engines: EngineItem[] }>('/engines').catch(() => ({ ok: false, engines: [] })),
         req<EngineHealthMap>('/engines/health').catch(() => ({ ok: false, count: 0, health: {} })),
         req<AgentTemplateItem[]>('/agents').catch(() => []),
       ])
-      if (d) setData(d)
+      if (dashRes) setData(dashRes)
       if (engRes?.engines) setEngines(engRes.engines)
       if (healthRes?.health) setEngineHealth(healthRes.health)
       if (Array.isArray(agentsRes)) setAgentTemplates(agentsRes)
     } catch (e) {
       setError(String(e))
+    } finally {
+      setLoading(false)
     }
+  }
+
+  onMount(() => {
+    void loadDashboard()
   })
 
-  const d = data()
+  const d = () => data()
 
   const metrics = (): KeyMetric[] => {
     const list: KeyMetric[] = []
-    const healthyCount = Object.keys(engineHealth()).length
-    const healthyEngs = Object.values(engineHealth()).filter((h) => h.status === 'healthy').length
+    const healthEntries = Object.values(engineHealth())
+    const engTotal = engines().length || healthEntries.length
+    const healthyEngs = healthEntries.filter((h) => h.status === 'healthy').length
     list.push({
       label: 'Engines Active',
-      value: healthyCount > 0 ? `${healthyEngs}/${engCount}` : 'Unknown',
+      value: engTotal > 0 ? `${healthyEngs}/${engTotal}` : 'Unknown',
       sub: 'modular engines in registry',
     })
 
@@ -95,32 +106,33 @@ export default function DashboardPage() {
     ).length
     list.push({
       label: 'Specialized Agents',
-      value: specAgentsCount > 0 ? `${specAgentsCount}` : '—',
+      value: specAgentsCount > 0 ? `${specAgentsCount}` : `${agentTemplates().length || '—'}`,
       sub: 'orchestrated lane personas',
     })
 
-    if (d) {
+    const dash = d()
+    if (dash) {
       list.push(
         {
           label: 'Total Agents',
-          value: d.agents.total || agentTemplates().length || 0,
-          sub: `avg reliability ${(d.agents.avgReliability * 100).toFixed(0)}%`,
+          value: dash.agents.total || agentTemplates().length || 0,
+          sub: `avg reliability ${(dash.agents.avgReliability * 100).toFixed(0)}%`,
         },
-        { label: 'Top Performer', value: d.agents.topPerformer ?? '—' },
+        { label: 'Top Performer', value: dash.agents.topPerformer ?? '—' },
         {
           label: 'Proposals',
-          value: d.governance.totalProposals,
-          sub: `${Object.keys(d.governance.byState).length} states`,
+          value: dash.governance.totalProposals,
+          sub: `${Object.keys(dash.governance.byState).length} states`,
         },
         {
           label: 'Memories',
-          value: d.learning.totalMemories,
-          sub: `${d.learning.retirementCandidates} to retire`,
+          value: dash.learning.totalMemories,
+          sub: `${dash.learning.retirementCandidates} to retire`,
         },
         {
           label: 'Total Cost',
-          value: `${(d.cost.totalTokens / 1000000).toFixed(1)}M`,
-          sub: `tokens across ${d.cost.totalRuns} runs`,
+          value: `${(dash.cost.totalTokens / 1000000).toFixed(1)}M`,
+          sub: `tokens across ${dash.cost.totalRuns} runs`,
         },
       )
     }
@@ -128,17 +140,18 @@ export default function DashboardPage() {
   }
 
   const alerts = (): AlertItem[] => {
-    if (!d) return []
+    const dash = d()
+    if (!dash) return []
     const items: AlertItem[] = []
-    if (d.learning.retirementCandidates > 0) {
+    if (dash.learning.retirementCandidates > 0) {
       items.push({
-        message: `${d.learning.retirementCandidates} memories flagged for retirement`,
+        message: `${dash.learning.retirementCandidates} memories flagged for retirement`,
         tone: 'warning',
       })
     }
-    if (d.workspace.openItems > 10) {
+    if (dash.workspace.openItems > 10) {
       items.push({
-        message: `${d.workspace.openItems} open workspace items require attention`,
+        message: `${dash.workspace.openItems} open workspace items require attention`,
         tone: 'info',
       })
     }
@@ -288,7 +301,7 @@ export default function DashboardPage() {
         }}
       >
         {/* Flagship Header Banner */}
-        <Card padding="16px 20px" style={{ display: 'flex', 'align-items': 'center', gap: '14px' }}>
+        <Card padding="16px 20px" style={{ display: 'flex', 'align-items': 'center', gap: '14px', 'flex-wrap': 'wrap' }}>
           <div
             style={{
               width: '36px',
@@ -306,15 +319,16 @@ export default function DashboardPage() {
           >
             M
           </div>
-          <div style={{ flex: '1' }}>
-            <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
+          <div style={{ flex: '1', 'min-width': '200px' }}>
+            <div style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'flex-wrap': 'wrap' }}>
               <div style={{ 'font-size': 'var(--fs-lg)', 'font-weight': '700' }}>
-                Mira Autonomous Agent Platform
+                Mira Analytics & Telemetry
               </div>
               <span
                 style={{
-                  background: 'var(--accent)',
-                  color: 'var(--on-accent)',
+                  background: 'var(--accent-soft)',
+                  color: 'var(--accent)',
+                  border: '1px solid var(--accent-border)',
                   'font-size': '11px',
                   'font-weight': '700',
                   padding: '2px 8px',
@@ -323,13 +337,29 @@ export default function DashboardPage() {
                   'letter-spacing': '0.04em',
                 }}
               >
-                Hoodx Flagship AI
+                Live Telemetry
               </span>
             </div>
             <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)', 'margin-top': '2px' }}>
-              Intelligent autonomous platform capable of understanding objectives, reasoning, coordinating specialized agents, learning from evaluations, and self-improving.
+              Agent reliability, engine readiness, governance state distribution, memory quality, and token spend.
             </div>
           </div>
+          <button
+            type="button"
+            class="btn btn-ghost"
+            onClick={() => void loadDashboard()}
+            disabled={loading()}
+            aria-busy={loading() ? 'true' : 'false'}
+            style={{
+              padding: '6px 12px',
+              'font-size': 'var(--fs-xs)',
+              border: '1px solid var(--border)',
+              'border-radius': 'var(--r-md)',
+              'min-height': '32px',
+            }}
+          >
+            {loading() ? 'Refreshing…' : '↻ Refresh'}
+          </button>
         </Card>
 
         <Show when={error()}>
@@ -361,8 +391,9 @@ export default function DashboardPage() {
             <For each={flagshipInitiatives}>
               {(init) => {
                 const health = () => engineHealth()[init.id]
-                const status = () => health()?.status ?? 'healthy'
+                const status = () => health()?.status ?? 'unknown'
                 const isHealthy = () => status() === 'healthy'
+                const isUnknown = () => status() === 'unknown'
                 return (
                   <div
                     style={{
@@ -375,18 +406,28 @@ export default function DashboardPage() {
                       gap: '6px',
                     }}
                   >
-                    <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
+                    <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', gap: '8px' }}>
                       <span style={{ 'font-weight': '700', 'font-size': 'var(--fs-sm)' }}>
                         {init.name}
                       </span>
                       <span
+                        class="tabular-nums"
                         style={{
                           'font-size': '11px',
                           'font-weight': '600',
                           padding: '2px 6px',
                           'border-radius': '4px',
-                          background: isHealthy() ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-                          color: isHealthy() ? 'var(--ok)' : 'var(--danger)',
+                          background: isHealthy()
+                            ? 'var(--ok-soft)'
+                            : isUnknown()
+                              ? 'var(--bg-canvas)'
+                              : 'var(--danger-soft)',
+                          color: isHealthy()
+                            ? 'var(--ok)'
+                            : isUnknown()
+                              ? 'var(--fg-subtle)'
+                              : 'var(--danger)',
+                          border: isUnknown() ? '1px solid var(--border)' : 'none',
                         }}
                       >
                         {status().toUpperCase()}
@@ -526,79 +567,113 @@ export default function DashboardPage() {
           </div>
         </Card>
 
-        <Show when={d}>
-          {/* Agent Reliability Stats */}
-          <DetailsSection
-            title="Agent Reliability & Execution Runs"
-            sub="Per-agent run counts and reliability scores from telemetry"
-          >
-            <For each={d!.agents.stats}>
-              {(a) => (
-                <div
-                  style={{
-                    display: 'flex',
-                    'justify-content': 'space-between',
-                    padding: '6px 0',
-                    'border-bottom': '1px solid var(--border)',
-                  }}
+        <Show when={d()}>
+          {(dash) => (
+            <>
+              {/* Agent Reliability Stats */}
+              <DetailsSection
+                title="Agent Reliability & Execution Runs"
+                sub="Per-agent run counts and reliability scores from telemetry"
+              >
+                <Show
+                  when={dash().agents.stats.length > 0}
+                  fallback={
+                    <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)', padding: '6px 0' }}>
+                      No agent execution runs recorded yet.
+                    </div>
+                  }
                 >
-                  <span style={{ 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-sm)' }}>
-                    {a.agent}
-                  </span>
-                  <span style={{ 'font-size': 'var(--fs-sm)', color: 'var(--fg-subtle)' }}>
-                    {a.runs} runs · {(a.reliabilityScore * 100).toFixed(0)}% reliable ·{' '}
-                    {(a.successRate * 100).toFixed(0)}% success
-                  </span>
-                </div>
-              )}
-            </For>
-          </DetailsSection>
+                  <For each={dash().agents.stats}>
+                    {(a) => (
+                      <div
+                        style={{
+                          display: 'flex',
+                          'justify-content': 'space-between',
+                          gap: '8px',
+                          'flex-wrap': 'wrap',
+                          padding: '6px 0',
+                          'border-bottom': '1px solid var(--border)',
+                        }}
+                      >
+                        <span style={{ 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-sm)' }}>
+                          {a.agent}
+                        </span>
+                        <span class="tabular-nums" style={{ 'font-size': 'var(--fs-sm)', color: 'var(--fg-subtle)' }}>
+                          {a.runs} runs · {(a.reliabilityScore * 100).toFixed(0)}% reliable ·{' '}
+                          {(a.successRate * 100).toFixed(0)}% success
+                        </span>
+                      </div>
+                    )}
+                  </For>
+                </Show>
+              </DetailsSection>
 
-          {/* Governance Proposals by State */}
-          <DetailsSection title="Governance Proposals by State" sub="Current proposal distribution">
-            <For each={Object.entries(d!.governance.byState)}>
-              {([state, count]) => (
-                <div
-                  style={{ display: 'flex', 'justify-content': 'space-between', padding: '4px 0' }}
+              {/* Governance Proposals by State */}
+              <DetailsSection title="Governance Proposals by State" sub="Current proposal distribution">
+                <Show
+                  when={Object.keys(dash().governance.byState).length > 0}
+                  fallback={
+                    <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)', padding: '6px 0' }}>
+                      No governance proposals recorded yet.
+                    </div>
+                  }
                 >
-                  <span style={{ 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-sm)' }}>
-                    {state}
-                  </span>
-                  <span style={{ 'font-size': 'var(--fs-sm)', color: 'var(--fg-subtle)' }}>
-                    {count}
-                  </span>
-                </div>
-              )}
-            </For>
-          </DetailsSection>
+                  <For each={Object.entries(dash().governance.byState)}>
+                    {([state, count]) => (
+                      <div
+                        style={{ display: 'flex', 'justify-content': 'space-between', padding: '4px 0' }}
+                      >
+                        <span style={{ 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-sm)' }}>
+                          {state}
+                        </span>
+                        <span class="tabular-nums" style={{ 'font-size': 'var(--fs-sm)', color: 'var(--fg-subtle)' }}>
+                          {count}
+                        </span>
+                      </div>
+                    )}
+                  </For>
+                </Show>
+              </DetailsSection>
 
-          {/* Memory Quality */}
-          <DetailsSection title="Memory Quality" sub="Quality scores and recommendations">
-            <For each={d!.learning.qualityScores.slice(0, 10)}>
-              {(m) => (
-                <div
-                  style={{ display: 'flex', 'justify-content': 'space-between', padding: '4px 0' }}
+              {/* Memory Quality */}
+              <DetailsSection title="Memory Quality" sub="Quality scores and recommendations">
+                <Show
+                  when={dash().learning.qualityScores.length > 0}
+                  fallback={
+                    <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)', padding: '6px 0' }}>
+                      No memory quality scores evaluated yet.
+                    </div>
+                  }
                 >
-                  <span style={{ 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-sm)' }}>
-                    {m.memoryId}
-                  </span>
-                  <span
-                    style={{
-                      'font-size': 'var(--fs-sm)',
-                      color:
-                        m.recommendation === 'retire'
-                          ? 'var(--danger)'
-                          : m.recommendation === 'keep'
-                            ? 'var(--ok)'
-                            : 'var(--fg-subtle)',
-                    }}
-                  >
-                    {m.qualityScore.toFixed(2)} · {m.recommendation}
-                  </span>
-                </div>
-              )}
-            </For>
-          </DetailsSection>
+                  <For each={dash().learning.qualityScores.slice(0, 10)}>
+                    {(m) => (
+                      <div
+                        style={{ display: 'flex', 'justify-content': 'space-between', padding: '4px 0' }}
+                      >
+                        <span style={{ 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-sm)' }}>
+                          {m.memoryId}
+                        </span>
+                        <span
+                          class="tabular-nums"
+                          style={{
+                            'font-size': 'var(--fs-sm)',
+                            color:
+                              m.recommendation === 'retire'
+                                ? 'var(--danger)'
+                                : m.recommendation === 'keep'
+                                  ? 'var(--ok)'
+                                  : 'var(--fg-subtle)',
+                          }}
+                        >
+                          {m.qualityScore.toFixed(2)} · {m.recommendation}
+                        </span>
+                      </div>
+                    )}
+                  </For>
+                </Show>
+              </DetailsSection>
+            </>
+          )}
         </Show>
       </div>
     </div>

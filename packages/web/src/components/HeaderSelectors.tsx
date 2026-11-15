@@ -24,19 +24,18 @@ type LiveModel = {
 const AUTO_ID = 'auto'
 // NVIDIA auto-pick lane — per task spec: nvidia primary with healthiest cheapest
 const NVIDIA_AUTO_MODELS: Record<string, string> = {
-  default: 'nvidia/deepseek-ai/deepseek-v4-flash',
-  cheap: 'nvidia/deepseek-ai/deepseek-v4-flash',
-  compaction: 'nvidia/deepseek-ai/deepseek-v4-flash',
-  'agent:ask': 'nvidia/deepseek-ai/deepseek-v4-flash',
-  reasoning: 'nvidia/deepseek-ai/deepseek-v4-pro',
+  default: 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b',
+  cheap: 'nvidia/nvidia/nemotron-3.5-bolt-e4b',
+  compaction: 'nvidia/nvidia/nemotron-3.5-bolt-e4b',
+  'agent:ask': 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b',
+  reasoning: 'nvidia/nvidia/nemotron-3-ultra-550b-a55b',
   vision: 'openai/gpt-4o', // keep openai for vision unless nvidia vision present
 }
 const FALLBACK_CHAIN = [
-  'nvidia/deepseek-ai/deepseek-v4-flash',
-  'nvidia/deepseek-ai/deepseek-v4-pro',
-  'nvidia/meta/llama-3.3-70b',
-  'nvidia/mistral-large-3',
-  'nvidia/meta/llama-3.1-8b',
+  'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b',
+  'nvidia/nvidia/nemotron-3.5-bolt-e4b',
+  'nvidia/nvidia/nemotron-3-ultra-550b-a55b',
+  'nvidia/nvidia/nemotron-3.5-super-vl-120b-a12b',
 ]
 
 function providerDisplayName(raw: string): string {
@@ -435,7 +434,6 @@ export function HeaderModelSelector(props: { settings: SettingsStore; id?: strin
     if (cur.trim().toLowerCase() === AUTO_ID) {
       const resolved = resolvedAuto()
       const short = shortModelId(resolved)
-      // spec wants "nvidia • deepseek-v4-flash (auto)"
       const prov = resolved.split('/')[0] ?? 'nvidia'
       return `${prov} • ${short} (auto)`
     }
@@ -446,9 +444,11 @@ export function HeaderModelSelector(props: { settings: SettingsStore; id?: strin
   const healthLabel = () => {
     const h = healthForPill()
     if (!h) return null
-    const lat = h.latency ? `${Math.round(h.latency)}ms` : '—'
-    const state = h.circuit || h.status || 'unknown'
-    return { text: lat, state, variant: h.variant, cost: h.cost, failures: h.failures }
+    if (h.variant === 'unknown') return null
+    const lat = h.latency > 0 ? `${Math.round(h.latency)}ms` : ''
+    const state =
+      h.variant === 'danger' ? 'down' : h.variant === 'warn' ? 'degraded' : lat ? '' : 'ready'
+    return { text: lat || state, state: lat && state ? state : '', variant: h.variant, cost: h.cost, failures: h.failures }
   }
 
   const degradedCount = createMemo(() => {
@@ -558,7 +558,9 @@ export function HeaderModelSelector(props: { settings: SettingsStore; id?: strin
               }}
             />
             <span class="mira-health-pill__latency-text">{hl().text}</span>
-            <span style={{ 'font-size': '9px', 'text-transform': 'lowercase', opacity: '0.9' }}>{hl().state}</span>
+            <Show when={hl().state}>
+              <span style={{ 'font-size': '9px', 'text-transform': 'lowercase', opacity: '0.9' }}>{hl().state}</span>
+            </Show>
           </span>
         )}
       </Show>

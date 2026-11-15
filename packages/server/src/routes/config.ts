@@ -8,10 +8,15 @@ import {
 import { sanitizePath, isPathAllowed } from '../guardrails/index.js'
 import type { MiraConfig, JsonValue, ProviderConfig, BusEvent } from '../types/index.js'
 import type { Context } from 'hono'
+import { readMiraEnv } from '../providers/auth.js'
 
 function expandEnv(value: string | undefined | null): string {
   if (typeof value !== 'string' || !value) return value ?? ''
-  return value.replace(/\{env:([^}]+)\}/g, (_, name: string) => process.env[name] ?? '')
+  return value.replace(/\{env:([^}]+)\}/g, (_, name: string) => {
+    if (process.env[name]) return process.env[name]!
+    const envs = readMiraEnv()
+    return envs[name] ?? process.env[name] ?? ''
+  })
 }
 const PROVIDER_ENV_FALLBACKS: Record<string, string[]> = {
   nvidia: ['NVIDIA_API_KEY', 'NVAPI_KEY', 'NIM_API_KEY'],
@@ -32,6 +37,7 @@ const PROVIDER_ENV_FALLBACKS: Record<string, string[]> = {
  * First usable key from a provider's `apiKey`, which may be a single string or
  * an array of fallbacks (google lists two). If unconfigured or empty, checks
  * standard provider environment variable fallbacks (e.g. NVIDIA_API_KEY).
+ * Consults both process.env and readMiraEnv() for dynamic updates.
  * Returns '' when none is configured.
  */
 function expandApiKeyFirst(
@@ -51,8 +57,9 @@ function expandApiKeyFirst(
     const key = providerId.toLowerCase()
     const envVars = PROVIDER_ENV_FALLBACKS[key] ?? [`${key.toUpperCase()}_API_KEY`]
     for (const envVar of envVars) {
-      const val = process.env[envVar]
-      if (val) return val
+      if (process.env[envVar]) return process.env[envVar]!
+      const envs = readMiraEnv()
+      if (envs[envVar]) return envs[envVar]!
     }
   }
   return ''
@@ -213,6 +220,10 @@ export function mountConfigRoutes(
     }
     try {
       const merged = await saveConfig(patch, layer, cwd)
+      try {
+        const { clearModelsCache } = await import('../gateway/models.js')
+        clearModelsCache()
+      } catch {}
       try {
         opts?.bus?.publish({
           type: 'config.updated',
@@ -446,7 +457,7 @@ export function mountConfigRoutes(
     const baseURL = body.baseURL?.trim() ?? ''
     try {
       const { listModels } = await import('../gateway/models.js')
-      const models = await listModels({ baseURL, apiKey, headers: {}, providerKey: id })
+      const models = await listModels({ baseURL, apiKey, headers: {}, providerKey: id, bypassCache: true })
       return c.json({
         ok: true,
         providerId: id,
@@ -480,6 +491,7 @@ export function mountConfigRoutes(
     if (!id) return c.json({ ok: false, error: 'provider not found' }, 404)
     // Optional ?cwd= selects the project's config, matching PATCH /config.
     const cwdRaw = c.req.query('cwd')
+    const bypassCache = c.req.query('refresh') === '1' || c.req.query('refresh') === 'true'
     const cfg = (cwdRaw ? getConfig(cwdRaw) : getConfig()) as MiraConfig
     const prov = cfg.provider[id] as ProviderConfig | undefined
     if (!prov) return c.json({ ok: false, error: 'provider not found' }, 404)
@@ -488,13 +500,28 @@ export function mountConfigRoutes(
       // as a string threw "value.replace is not a function" and broke discovery.
       const rawKey = (prov as { options?: { apiKey?: string | string[] } }).options?.apiKey
       const apiKey = expandApiKeyFirst(rawKey, id)
-      if (!apiKey)
+      if (!apiKey) {
+        const staticModels = Object.entries(
+          ((prov as { models?: Record<string, JsonValue> }).models ?? {}) as Record<string, JsonValue>,
+        )
+        if (staticModels.length > 0) {
+          const models = staticModels.map(([mid, m]) => ({
+            id: mid,
+            name: (m as { name?: string } | null | undefined)?.name ?? mid,
+          }))
+          return c.json({
+            ok: true,
+            models,
+            warning: 'Provider has no API key configured; displaying configured static models.',
+          })
+        }
         return c.json({ ok: false, error: 'missing apiKey (check {env:VAR} + mira.env)' }, 400)
+      }
       const baseURL = expandEnv((prov as { options?: { baseURL?: string } }).options?.baseURL ?? '')
       const headers = ((prov as { options?: { headers?: Record<string, string> } }).options
         ?.headers ?? {}) as Record<string, string>
       const { listModels } = await import('../gateway/models.js')
-      const upstream = await listModels({ baseURL, apiKey, headers, providerKey: id })
+      const upstream = await listModels({ baseURL, apiKey, headers, providerKey: id, bypassCache })
       const models = (upstream as Array<string | { id?: string; name?: string }>)
         .map((m) =>
           typeof m === 'string'
@@ -505,6 +532,20 @@ export function mountConfigRoutes(
       return c.json({ ok: true, models })
     } catch (e) {
       const message = e instanceof Error && e.message ? e.message : String(e)
+      const staticModels = Object.entries(
+        ((prov as { models?: Record<string, JsonValue> }).models ?? {}) as Record<string, JsonValue>,
+      )
+      if (staticModels.length > 0) {
+        const models = staticModels.map(([mid, m]) => ({
+          id: mid,
+          name: (m as { name?: string } | null | undefined)?.name ?? mid,
+        }))
+        return c.json({
+          ok: true,
+          models,
+          warning: `Live discovery failed (${message}); using configured static models.`,
+        })
+      }
       return c.json({ ok: false, error: message }, 400)
     }
   })
@@ -514,6 +555,17 @@ export function mountConfigRoutes(
     const cfg = getConfig() as MiraConfig
     if (!cfg.provider[id]) return c.json({ error: 'provider not found' }, 404)
     await removeProviderFromConfig(id as string)
+    try {
+      const { clearModelsCache } = await import('../gateway/models.js')
+      clearModelsCache(id)
+    } catch {}
+    try {
+      opts?.bus?.publish({
+        type: 'config.updated',
+        payload: { config: getConfig() },
+        timestamp: Date.now(),
+      })
+    } catch {}
     return c.json({ ok: true })
   })
   app.delete('/provider/:id', async (c: Context) => {
@@ -522,6 +574,17 @@ export function mountConfigRoutes(
     const cfg = getConfig() as MiraConfig
     if (!cfg.provider[id]) return c.json({ error: 'provider not found' }, 404)
     await removeProviderFromConfig(id as string)
+    try {
+      const { clearModelsCache } = await import('../gateway/models.js')
+      clearModelsCache(id)
+    } catch {}
+    try {
+      opts?.bus?.publish({
+        type: 'config.updated',
+        payload: { config: getConfig() },
+        timestamp: Date.now(),
+      })
+    } catch {}
     return c.json({ ok: true })
   })
 }

@@ -2,8 +2,8 @@
 import { createSignal, createEffect, createMemo, For, Show, onCleanup } from 'solid-js'
 import type { SettingsStore } from '../stores/settings'
 import { api } from '../api/client'
-import type { MiraConfig, ThemeChoice, ProviderEntry, ProviderConfig } from '../api/client'
-import { getApiUrl, providerModelId } from '../api/client'
+import type { MiraConfig, ThemeChoice, ProviderEntry } from '../api/client'
+import { getApiUrl, getToken, ensureToken, providerModelId } from '../api/client'
 import { ConfirmDialog } from './ConfirmDialog'
 import { McpMarketplace } from './McpMarketplace'
 import { CommunityPanel } from './CommunityPanel'
@@ -722,6 +722,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
   const [loopContextLimit, setLoopContextLimit] = createSignal('')
   const [loopThreshold, setLoopThreshold] = createSignal('')
   const [loopSmallModel, setLoopSmallModel] = createSignal('')
+  const [loopPermTimeout, setLoopPermTimeout] = createSignal('')
   const [theme, setThemeLocal] = createSignal<ThemeChoice>('system')
 
   // Providers add form
@@ -805,6 +806,11 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
       setLoopContextLimit(loop.contextLimit != null ? String(loop.contextLimit) : '')
       setLoopThreshold(loop.compactionThreshold != null ? String(loop.compactionThreshold) : '')
       setLoopSmallModel(loop.smallModel ?? '')
+      setLoopPermTimeout(
+        (loop as { permissionTimeoutMs?: number }).permissionTimeoutMs != null
+          ? String((loop as { permissionTimeoutMs?: number }).permissionTimeoutMs)
+          : '',
+      )
       const guard = s().config?.guardrails ?? {}
       setGuardEnforce(!!guard.enforce)
       setGuardAllowedRoots((guard.allowedRoots ?? []).join(', '))
@@ -884,6 +890,11 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
       const v = parseFloat(loopThreshold().trim())
       if (!Number.isFinite(v) || v <= 0 || v > 1) errors.push('Compaction threshold must be 0–1')
     }
+    if (loopPermTimeout().trim()) {
+      const v = parseInt(loopPermTimeout().trim(), 10)
+      if (!Number.isFinite(v) || v < 10_000 || v > 3_600_000)
+        errors.push('Permission timeout must be 10000–3600000 ms')
+    }
     if (guardMaxBytes().trim()) {
       const v = parseInt(guardMaxBytes().trim(), 10)
       if (!Number.isFinite(v) || v < 1024) errors.push('Max output bytes must be ≥1024')
@@ -909,6 +920,9 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     const thresh = parseFloat(loopThreshold().trim())
     if (loopThreshold().trim() && Number.isFinite(thresh) && thresh > 0 && thresh <= 1)
       loopPatch.compactionThreshold = thresh
+    const permTimeout = parseInt(loopPermTimeout().trim(), 10)
+    if (loopPermTimeout().trim() && Number.isFinite(permTimeout) && permTimeout >= 10_000)
+      loopPatch.permissionTimeoutMs = permTimeout
     if (loopSmallModel().trim()) loopPatch.smallModel = loopSmallModel().trim()
     if (Object.keys(loopPatch).length > 0) patch.loop = loopPatch as MiraConfig['loop']
     // Guardrails — include when user touched fields (mira parity)
@@ -992,28 +1006,25 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
         return
       }
     }
-    // Save as provider.<name> via PATCH /config
-    const baseURL = urlTrimmed || undefined
-    const providerPatch = {
-      provider: {
-        ...(s().config?.provider ?? {}),
-        [name]: {
-          npm: '@ai-sdk/openai-compatible',
-          name,
-          options: { baseURL: baseURL ?? 'https://api.openai.com/v1', apiKey: key },
-          models: {},
-        },
-      },
-    }
-    const res = await props.store.saveConfig(providerPatch as Partial<MiraConfig>)
-    if (res) {
+    const res = await props.store.connectProvider({
+      id: name,
+      apiKey: key,
+      baseURL: urlTrimmed || undefined,
+      setDefaultModel: true,
+    })
+    if (res.ok) {
       setProvName('')
       setProvKey('')
       setProvUrl('')
-      void props.store.loadProviders()
-      toast.success(`Provider "${name}" added`)
+      if (res.modelCount > 0) {
+        toast.success(`Provider "${name}" added · ${res.modelCount} models loaded`)
+      } else if (res.warning) {
+        toast.warn(`Provider "${name}" saved, model refresh: ${res.warning}`)
+      } else {
+        toast.success(`Provider "${name}" added`)
+      }
     } else {
-      toast.error(props.store.state.error ?? 'Failed to add provider')
+      toast.error(res.error ?? props.store.state.error ?? 'Failed to add provider')
     }
   }
 
@@ -1051,39 +1062,26 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
     if (provRefreshing()) return
     setProvRefreshing(id)
     try {
-      const r = await api.listProviderModels(id)
-      if (!r.ok || !r.models) {
-        toast.error(`Refresh failed for "${id}": ${r.error ?? 'unknown error'}`)
+      const r = await props.store.refreshProviderModels(id, { refresh: true })
+      if (!r.ok) {
+        const err = r.error ?? 'unknown error'
+        if (err.includes('missing apiKey')) {
+          toast.warn(`Provider "${id}" has no API key configured. Add one via Connect or set ${id.toUpperCase()}_API_KEY in ~/.mira/mira.env.`)
+        } else {
+          toast.error(`Refresh failed for "${id}": ${err}`)
+        }
         return
       }
-      const providers = (s().config?.provider ?? {}) as Record<string, ProviderConfig>
-      const existing = providers[id] as
-        | { models?: Record<string, { name: string; limit: { context: number; output: number } }> }
-        | undefined
-      const merged: Record<string, { name: string; limit: { context: number; output: number } }> = {
-        ...(existing?.models ?? {}),
-      }
-      for (const m of r.models) {
-        const mid = m?.id
-        if (!mid) continue
-        merged[mid] = {
-          name: m.name || mid,
-          limit: merged[mid]?.limit ?? { context: 128000, output: 4096 },
-        }
-      }
-      const res = await props.store.saveConfig({
-        provider: { ...providers, [id]: { ...(existing ?? {}), models: merged } },
-      } as Partial<MiraConfig>)
-      if (res) {
-        void props.store.loadProviders()
-        toast.success(
-          `Refreshed ${r.models.length} model${r.models.length === 1 ? '' : 's'} for "${id}"`,
-        )
-      } else {
-        toast.error(props.store.state.error ?? `Failed to save models for "${id}"`)
-      }
+      toast.success(
+        `Refreshed ${r.models.length} model${r.models.length === 1 ? '' : 's'} for "${id}"`,
+      )
     } catch (e) {
-      toast.error(`Refresh failed for "${id}": ${(e as Error).message}`)
+      const msg = (e as Error).message ?? String(e)
+      if (msg.includes('missing apiKey')) {
+        toast.warn(`Provider "${id}" has no API key configured. Add one via Connect or set ${id.toUpperCase()}_API_KEY in ~/.mira/mira.env.`)
+      } else {
+        toast.error(`Refresh failed for "${id}": ${msg}`)
+      }
     } finally {
       setProvRefreshing(null)
     }
@@ -1325,7 +1323,20 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
           setTermTesting(false)
         }
       }, 6000)
-      ws.onopen = () => {}
+      ws.onopen = async () => {
+        let t = getToken()
+        if (!t || t === 'dev-local-token-not-secret') {
+          t = await ensureToken().catch(() => '')
+        }
+        if (!t) {
+          t = (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
+        }
+        if (t && ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify({ type: 'auth', token: t }))
+          } catch {}
+        }
+      }
       ws.onmessage = (ev) => {
         try {
           const m = JSON.parse(String(ev.data))
@@ -1747,6 +1758,24 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
                           />
                           <span class="settings-hint">Overrides smallModel for loops.</span>
                         </div>
+                      </div>
+                      <div class="settings-field">
+                        <label for="settings-loop-perm-timeout" class="settings-label">
+                          Permission timeout (ms)
+                        </label>
+                        <input
+                          id="settings-loop-perm-timeout"
+                          class="input"
+                          type="number"
+                          min="10000"
+                          max="3600000"
+                          step="10000"
+                          value={loopPermTimeout()}
+                          onInput={(e) => setLoopPermTimeout(e.currentTarget.value)}
+                          placeholder="300000"
+                          autocomplete="off"
+                        />
+                        <span class="settings-hint">Wait window for ask-mode tool approvals (default 300000ms = 5 min).</span>
                       </div>
 
                       <div

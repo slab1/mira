@@ -166,3 +166,93 @@ describe('provider listing surfaces model limits', () => {
     expect(big?.limit?.output).toBe(8192)
   })
 })
+
+describe('provider model discovery fallback and mira.env support', () => {
+  let dir: string
+  let server: { stop: (c?: boolean) => void; port: number | undefined }
+  let BASE: string
+
+  afterEach(() => {
+    resetConfigCache()
+    try {
+      server.stop(true)
+    } catch {}
+    try {
+      rmSync(dir, { recursive: true, force: true })
+    } catch {}
+  })
+
+  test('falls back to configured static models when no apiKey is set', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'mira-staticfall-'))
+    writeFileSync(
+      join(dir, 'mira.json'),
+      JSON.stringify({
+        provider: {
+          testprov: {
+            name: 'Test',
+            options: { baseURL: 'https://test.example/v1', apiKey: '' },
+            models: {
+              'static-model-1': { name: 'Static Model 1', limit: { context: 128000, output: 4096 } },
+            },
+          },
+        },
+      }),
+    )
+    resetConfigCache()
+    const app = new Hono<{ Variables: { requestId: string } }>()
+    mountConfigRoutes(app)
+    server = Bun.serve({ port: 0, fetch: app.fetch })
+    BASE = `http://127.0.0.1:${server.port}`
+
+    const res = await fetch(`${BASE}/providers/testprov/models?cwd=${encodeURIComponent(dir)}`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { ok: boolean; models?: Array<{ id: string; name: string }>; warning?: string }
+    expect(body.ok).toBe(true)
+    expect(body.models?.[0]?.id).toBe('static-model-1')
+    expect(body.warning).toContain('configured')
+  })
+
+  test('PATCH /config offloads literal apiKey to mira.env and keeps config secret-free', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'mira-patchsec-'))
+    const prevMiraDir = process.env.MIRA_DIR
+    const prevMyProv = process.env.MYPROVIDER_API_KEY
+    process.env.MIRA_DIR = dir
+    try {
+      writeFileSync(join(dir, 'mira.json'), JSON.stringify({ model: 'test/m1', provider: {} }))
+      resetConfigCache()
+      const app = new Hono<{ Variables: { requestId: string } }>()
+      mountConfigRoutes(app)
+      server = Bun.serve({ port: 0, fetch: app.fetch })
+      BASE = `http://127.0.0.1:${server.port}`
+
+      const res = await fetch(`${BASE}/config?cwd=${encodeURIComponent(dir)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patch: {
+            provider: {
+              myprovider: {
+                name: 'My Provider',
+                options: {
+                  baseURL: 'https://myprov.example/v1',
+                  apiKey: 'sk-ant-api03-verylongsecretkey1234567890abcdefghijklmnopqrstuvwxyz',
+                },
+              },
+            },
+          },
+        }),
+      })
+      expect(res.status).toBe(200)
+      const savedContent = JSON.parse(await Bun.file(join(dir, 'mira.json')).text())
+      expect(savedContent.provider?.myprovider?.options?.apiKey).toBe('{env:MYPROVIDER_API_KEY}')
+      const envContent = await Bun.file(join(dir, 'mira.env')).text()
+      expect(envContent).toContain('MYPROVIDER_API_KEY=sk-ant-api03-')
+    } finally {
+      if (prevMiraDir === undefined) delete process.env.MIRA_DIR
+      else process.env.MIRA_DIR = prevMiraDir
+      if (prevMyProv === undefined) delete process.env.MYPROVIDER_API_KEY
+      else process.env.MYPROVIDER_API_KEY = prevMyProv
+    }
+  })
+})
+

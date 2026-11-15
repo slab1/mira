@@ -34,7 +34,9 @@ export default function ChangesPage() {
   const [state, setState] = createSignal<OperationalState>('loading')
   const [showAll, setShowAll] = createSignal(false)
 
-  onMount(async () => {
+  const loadChanges = async () => {
+    setState('loading')
+    setError(null)
     try {
       const res = await req<any>('/changes')
       const list: ChangeEntry[] = Array.isArray(res)
@@ -50,6 +52,10 @@ export default function ChangesPage() {
       setError(String(e))
       setState('error')
     }
+  }
+
+  onMount(() => {
+    void loadChanges()
   })
 
   const safeChanges = (): ChangeEntry[] => (Array.isArray(changes()) ? changes() : [])
@@ -77,7 +83,7 @@ export default function ChangesPage() {
           gap: '14px',
         }}
       >
-        <Card padding="14px 16px" style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
+        <Card padding="14px 16px" style={{ display: 'flex', 'align-items': 'center', gap: '10px', 'flex-wrap': 'wrap' }}>
           <div
             style={{
               width: '28px',
@@ -94,13 +100,28 @@ export default function ChangesPage() {
           >
             C
           </div>
-          <div>
+          <div style={{ flex: '1', 'min-width': '160px' }}>
             <div style={{ 'font-size': 'var(--fs-lg)', 'font-weight': '700' }}>Changes</div>
             <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>
               Every autonomous mutation traceable — timeline / diff / rewind
             </div>
           </div>
-          <div style={{ 'margin-left': 'auto' }}>
+          <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              onClick={() => void loadChanges()}
+              disabled={state() === 'loading'}
+              style={{
+                padding: '5px 10px',
+                'font-size': 'var(--fs-xs)',
+                border: '1px solid var(--border)',
+                'border-radius': 'var(--r-sm)',
+                'min-height': '32px',
+              }}
+            >
+              ↻ Refresh
+            </button>
             <DataStateBadge state={state()} />
           </div>
         </Card>
@@ -111,9 +132,17 @@ export default function ChangesPage() {
           </div>
         </Show>
 
+        <Show when={state() === 'loading'}>
+          <Card padding="16px" style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
+            <div class="skeleton" style={{ height: '18px', width: '35%' }} />
+            <div class="skeleton" style={{ height: '48px', width: '100%' }} />
+            <div class="skeleton" style={{ height: '48px', width: '100%' }} />
+          </Card>
+        </Show>
+
         <Show when={safeChanges().length === 0 && state() !== 'loading'}>
-          <div class="card" style={{ padding: '16px', color: 'var(--fg-muted)' }}>
-            No changes recorded yet.
+          <div class="card" style={{ padding: '20px', color: 'var(--fg-muted)', 'text-align': 'center', 'font-size': 'var(--fs-xs)' }}>
+            No file changes recorded in this workspace yet.
           </div>
         </Show>
 

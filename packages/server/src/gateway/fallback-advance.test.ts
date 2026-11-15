@@ -148,6 +148,13 @@ describe('fallback advances on provider failure (P0-1)', () => {
     expect(hosts).toContain('b.test')
   })
 
+  test('410 Gone (model EOL) falls through immediately to fallback candidate', async () => {
+    respond = (host) => (host === 'a.test' ? 410 : 'sse')
+    const out = await drain(sub())
+    expect(out).toContain('ok')
+    expect(hosts).toEqual(['a.test', 'b.test'])
+  })
+
   test('both providers down → the request fails', async () => {
     respond = () => 503
     await expect(drain(sub())).rejects.toThrow()

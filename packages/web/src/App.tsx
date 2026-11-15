@@ -150,8 +150,9 @@ function AuthGate(props: { onReady: () => void }) {
         display: 'flex',
         'align-items': 'center',
         'justify-content': 'center',
-        height: '100vh',
+        height: '100dvh',
         width: '100vw',
+        padding: '16px',
         background: '#07090E',
         color: '#FFFFFF',
       }}
@@ -159,7 +160,7 @@ function AuthGate(props: { onReady: () => void }) {
       <form
         onSubmit={connect}
         style={{
-          width: '380px',
+          width: 'min(380px, calc(100vw - 32px))',
           padding: '24px',
           border: '1px solid rgba(229, 184, 66, 0.25)',
           'border-radius': '16px',
@@ -364,6 +365,22 @@ export default function App() {
     const onTraceEvent = () => setTraceOpen(true)
     window.addEventListener('mira:open-trace', onTraceEvent)
 
+    const onSignOut = () => {
+      setToken('')
+      setAuthorized(false)
+    }
+    window.addEventListener('mira:sign-out', onSignOut)
+
+    const unsubConfigBus = store.subscribeBus((e) => {
+      if (e.type === 'config.updated') {
+        void Promise.all([
+          settings.loadConfig(),
+          settings.loadProviders(),
+          settings.loadPermission(),
+        ])
+      }
+    })
+
     const onKey = (e: KeyboardEvent) => {
       const k = (e.key ?? '').toLowerCase()
       if ((e.ctrlKey || e.metaKey) && (k === 'k' || k === 'p')) {
@@ -377,11 +394,13 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     onCleanup(() => {
+      unsubConfigBus()
       window.removeEventListener('mira:auth-invalid', onAuthInvalid)
       window.removeEventListener('mira:open-palette', onPaletteEvent)
       window.removeEventListener('mira:open-settings', onSettingsEvent)
       window.removeEventListener('mira:open-connect', onConnectEvent)
       window.removeEventListener('mira:open-trace', onTraceEvent)
+      window.removeEventListener('mira:sign-out', onSignOut)
       window.removeEventListener('keydown', onKey)
     })
   })

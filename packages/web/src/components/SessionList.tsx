@@ -167,7 +167,23 @@ function SessionExportMenu(props: { sessionId: string; title: string }) {
   )
 }
 
-export function SessionList(props: { store: AppStore; open?: boolean; width?: number }) {
+function toEpochMs(v: unknown): number {
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  if (typeof v === 'string') {
+    const trimmed = v.trim()
+    if (/^\d{10,}$/.test(trimmed)) return Number(trimmed)
+    const parsed = Date.parse(trimmed)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
+export function SessionList(props: {
+  store: AppStore
+  open?: boolean
+  width?: number
+  onAfterSelect?: (id: string) => void
+}) {
   const s = () => props.store.state
   const [confirmDelete, setConfirmDelete] = createSignal<{ id: string; title: string } | null>(null)
   const [search, setSearch] = createSignal('')
@@ -252,9 +268,19 @@ export function SessionList(props: { store: AppStore; open?: boolean; width?: nu
     }
   }
 
+  const handleSelectSession = (id: string) => {
+    void props.store.selectSession(id)
+    props.onAfterSelect?.(id)
+  }
+
   const handleCreateSession = () => {
     const cwd = selectedWorkspace() || undefined
-    void props.store.createSession(undefined, cwd ? { cwd } : {}).catch(() => {})
+    void props.store
+      .createSession(undefined, cwd ? { cwd } : {})
+      .then((res) => {
+        if (res?.id) props.onAfterSelect?.(res.id)
+      })
+      .catch(() => {})
   }
 
   // ── Session import (P2-2) ────────────────────────────────────
@@ -274,7 +300,10 @@ export function SessionList(props: { store: AppStore; open?: boolean; width?: nu
     try {
       const res = await api.importSession(envelope)
       await props.store.loadSessions()
-      if (res?.id) await props.store.selectSession(res.id).catch(() => {})
+      if (res?.id) {
+        await props.store.selectSession(res.id).catch(() => {})
+        props.onAfterSelect?.(res.id)
+      }
       toast.success('Session imported')
     } catch (e) {
       toast.error(`Import failed: ${(e as Error).message}`)
@@ -323,8 +352,7 @@ export function SessionList(props: { store: AppStore; open?: boolean; width?: nu
       if (aPinned && !bPinned) return -1
       if (!aPinned && bPinned) return 1
       return (
-        new Date(b.updatedAt || b.createdAt).getTime() -
-        new Date(a.updatedAt || a.createdAt).getTime()
+        toEpochMs(b.updatedAt || b.createdAt) - toEpochMs(a.updatedAt || a.createdAt)
       )
     })
   })
@@ -824,7 +852,7 @@ export function SessionList(props: { store: AppStore; open?: boolean; width?: nu
                             type="button"
                             class="session-main"
                             aria-current={active() ? 'true' : undefined}
-                            onClick={() => props.store.selectSession(sess.id)}
+                            onClick={() => handleSelectSession(sess.id)}
                           >
                             {/* Status + pin row */}
                             <div
@@ -909,7 +937,7 @@ export function SessionList(props: { store: AppStore; open?: boolean; width?: nu
                               }}
                             >
                               {sess.model || 'default'} ·{' '}
-                              {new Date(sess.updatedAt || sess.createdAt).toLocaleString()}
+                              {new Date(toEpochMs(sess.updatedAt || sess.createdAt)).toLocaleString()}
                             </span>
                             <span
                               style={{
@@ -1046,7 +1074,7 @@ export function SessionList(props: { store: AppStore; open?: boolean; width?: nu
                                   type="button"
                                   class="session-main"
                                   aria-current={active() ? 'true' : undefined}
-                                  onClick={() => props.store.selectSession(sess.id)}
+                                  onClick={() => handleSelectSession(sess.id)}
                                 >
                                   <div
                                     style={{
@@ -1134,7 +1162,7 @@ export function SessionList(props: { store: AppStore; open?: boolean; width?: nu
                                     }}
                                   >
                                     {sess.model || 'default'} ·{' '}
-                                    {new Date(sess.updatedAt || sess.createdAt).toLocaleString()}
+                                    {new Date(toEpochMs(sess.updatedAt || sess.createdAt)).toLocaleString()}
                                   </span>
                                   <span
                                     style={{

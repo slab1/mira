@@ -159,6 +159,7 @@ export default defineConfig({
       '/admin': { target: API_TARGET, changeOrigin: true },
       '/workspaces': { target: API_TARGET, changeOrigin: true },
       '/workspace': { target: API_TARGET, changeOrigin: true },
+      '/voice': { target: API_TARGET, changeOrigin: true },
       '/complete': { target: API_TARGET, changeOrigin: true },
       '/autocomplete': { target: API_TARGET, changeOrigin: true },
       '/terminal': {

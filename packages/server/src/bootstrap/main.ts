@@ -79,6 +79,7 @@ import {
 } from '../ws-auth.js'
 import { deliveryModeFor, referencedSessionIds } from '../ws-events.js'
 import { mountToolsRoutes } from '../routes/tools-routes.js'
+import { mountVoiceRoutes } from '../routes/voice.js'
 import { mountWorkspaceRoutes } from '../routes/workspace.js'
 import { mountWorkspacesRoutes } from '../routes/workspaces.js'
 import { mountSymbolRoutes } from '../routes/symbol.js'
@@ -603,14 +604,18 @@ async function main() {
         id: string
         model: string
       }[]
+      const fallbackModel =
+        (typeof cfg.model === 'string' && cfg.model && !retired.has(cfg.model.toLowerCase()))
+          ? cfg.model
+          : 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b'
       let migrated = 0
       for (const r of rows) {
-        const m = r.model.toLowerCase()
+        const m = (r.model ?? '').toLowerCase()
         for (const rtd of retired) {
           if (m.includes(rtd)) {
             db.sqlite
               .prepare('UPDATE sessions SET model = ?, updated_at = ? WHERE id = ?')
-              .run('claude-sonnet-4', Date.now(), r.id)
+              .run(fallbackModel, Date.now(), r.id)
             migrated++
             break
           }
@@ -618,7 +623,7 @@ async function main() {
       }
       if (migrated)
         log(
-          `model migration: updated ${migrated} session(s) with retired models to claude-sonnet-4`,
+          `model migration: updated ${migrated} session(s) with retired models to ${fallbackModel}`,
         )
     }
   } catch (e) {
@@ -746,13 +751,14 @@ async function main() {
     `gateway ready — providers: ${Object.keys(config.provider).join(', ')} lanes: ${registry.lanes().join(', ')}`,
   )
 
-  // Hot-reload subgateways when config changes (PATCH /config)
+  // Hot-reload subgateways and permissions when config changes (PATCH /config)
   bus.subscribe('config.updated', (event) => {
     try {
       const newConfig = (event.payload as { config?: MiraConfig })?.config ?? getConfig()
       registry.syncFromConfig(newConfig)
       router.syncConfig(newConfig)
-      log(`subgateways reloaded from config.updated`)
+      permissions.setRules(newConfig.permission ?? {})
+      log(`subgateways and permissions reloaded from config.updated`)
     } catch (e) {
       warn('failed to reload subgateways:', String(e))
     }
@@ -986,7 +992,8 @@ async function main() {
 
   mountMcpRoutes(app, mcp)
   mountConfigRoutes(app, { bus, gateway })
-  mountToolsRoutes(app, { tools, permissions, guardrails, gateway })
+  mountToolsRoutes(app, { tools, permissions, guardrails, gateway, bus })
+  mountVoiceRoutes(app)
   mountLearningRoutes(app, learning)
   // Community distribution (P3.4) — install skills/agents/knowledge modules
   mountCommunityRoutes(app, { knowledge: learning.knowledge })
@@ -1376,6 +1383,9 @@ async function main() {
     __ac?: AbortController
     __idleTimer?: ReturnType<typeof setTimeout>
     __armIdle?: () => void
+    __write?: (data: string) => void
+    __resize?: (cols: number, rows: number) => void
+    __isPty?: boolean
     send(data: string): void
     close(code: number, reason?: string): void
     getBufferedAmount?(): number
@@ -1460,25 +1470,113 @@ async function main() {
     ws.__owner = owner ?? null
     ws.__token = token
     clearTimeout(ws.__authTimer)
-    ws.send(
-      JSON.stringify({
-        type: 'terminal.connected',
-        payload: { connected: true, owner: ws.__owner, sandbox: terminalSandboxed() },
-        timestamp: Date.now(),
-      }),
-    )
-    // Windows: `bash` resolves to WSL bash (C:\Windows\System32\bash.exe) which is
-    // unreliable with piped stdin/stdout — use cmd.exe for a platform-appropriate PTY.
+
     const shell = process.platform === 'win32' ? 'cmd.exe' : 'bash'
-    const proc = Bun.spawn([shell], {
-      stdin: 'pipe',
-      stdout: 'pipe',
-      stderr: 'pipe',
-      env: terminalEnv(),
-    })
+    const cwd = process.cwd()
+    const decoder = new TextDecoder()
+    const sendChunk = (streamName: string, text: string) => {
+      if (!text || !ws.__active) return
+      if (
+        !boundSend(
+          ws,
+          JSON.stringify({
+            type: 'terminal.output',
+            payload: { stream: streamName, data: text },
+            timestamp: Date.now(),
+          }),
+        )
+      ) {
+        evictSlowSocket(ws, 'terminal client too slow')
+      }
+    }
+
+    let proc: ReturnType<typeof Bun.spawn>
+    let isPty = false
+    if (process.platform !== 'win32') {
+      try {
+        proc = Bun.spawn([shell, '-i'], {
+          cwd,
+          env: { ...terminalEnv(), TERM: 'xterm-256color', PS1: '\\w \\$ ' },
+          terminal: {
+            cols: 100,
+            rows: 30,
+            name: 'xterm-256color',
+            data(_term, data) {
+              const text = decoder.decode(data, { stream: true })
+              sendChunk('stdout', text)
+            },
+          },
+        })
+        isPty = true
+      } catch {
+        proc = Bun.spawn([shell], {
+          cwd,
+          stdin: 'pipe',
+          stdout: 'pipe',
+          stderr: 'pipe',
+          env: terminalEnv(),
+        })
+      }
+    } else {
+      proc = Bun.spawn([shell], {
+        cwd,
+        stdin: 'pipe',
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: terminalEnv(),
+      })
+    }
+
     const ac = new AbortController()
     ws.__proc = proc
     ws.__ac = ac
+    ws.__isPty = isPty
+    ws.__write = (data: string) => {
+      try {
+        if (isPty && proc.terminal) {
+          proc.terminal.write(data)
+          return
+        }
+        const stdin = proc.stdin
+        if (
+          stdin &&
+          typeof stdin !== 'number' &&
+          typeof (stdin as Bun.FileSink).write === 'function'
+        ) {
+          ;(stdin as Bun.FileSink).write(data)
+        }
+      } catch {}
+    }
+    ws.__resize = (cols: number, rows: number) => {
+      try {
+        if (
+          isPty &&
+          proc.terminal &&
+          Number.isFinite(cols) &&
+          Number.isFinite(rows) &&
+          cols > 0 &&
+          rows > 0
+        ) {
+          proc.terminal.resize(Math.floor(cols), Math.floor(rows))
+        }
+      } catch {}
+    }
+
+    ws.send(
+      JSON.stringify({
+        type: 'terminal.connected',
+        payload: {
+          connected: true,
+          owner: ws.__owner,
+          sandbox: terminalSandboxed(),
+          cwd,
+          pty: isPty,
+          platform: process.platform,
+        },
+        timestamp: Date.now(),
+      }),
+    )
+
     ws.__armIdle = () => {
       if (ws.__idleTimer) clearTimeout(ws.__idleTimer)
       const ms = terminalTimeoutMs()
@@ -1500,6 +1598,9 @@ async function main() {
           ac.abort()
         } catch {}
         try {
+          proc.terminal?.close()
+        } catch {}
+        try {
           proc.kill()
         } catch {}
         try {
@@ -1508,37 +1609,32 @@ async function main() {
       }, ms)
     }
     ws.__armIdle()
-    const streamOutput = async (stream: ReadableStream<Uint8Array> | null, name: string) => {
-      if (!stream) return
-      const reader = stream.getReader() as ReadableStreamDefaultReader<Uint8Array>
-      const decoder = new TextDecoder()
-      try {
-        while (true) {
-          if (ac.signal.aborted || !ws.__active) break
-          const { value, done } = await reader.read()
-          if (done) break
-          if (!value?.length) continue
-          const text = decoder.decode(value, { stream: true })
-          if (
-            !boundSend(
-              ws,
-              JSON.stringify({
-                type: 'terminal.output',
-                payload: { stream: name, data: text },
-                timestamp: Date.now(),
-              }),
-            )
-          ) {
-            evictSlowSocket(ws, 'terminal client too slow')
-            break
+
+    if (!isPty) {
+      const streamOutput = async (stream: ReadableStream<Uint8Array> | null, name: string) => {
+        if (!stream) return
+        const reader = stream.getReader() as ReadableStreamDefaultReader<Uint8Array>
+        const streamDecoder = new TextDecoder()
+        try {
+          while (true) {
+            if (ac.signal.aborted || !ws.__active) break
+            const { value, done } = await reader.read()
+            if (done) break
+            if (!value?.length) continue
+            const text = streamDecoder.decode(value, { stream: true })
+            sendChunk(name, text)
           }
-        }
-      } catch {}
+        } catch {}
+      }
+      void streamOutput(proc.stdout as ReadableStream<Uint8Array>, 'stdout')
+      void streamOutput(proc.stderr as ReadableStream<Uint8Array>, 'stderr')
     }
-    void streamOutput(proc.stdout as ReadableStream<Uint8Array>, 'stdout')
-    void streamOutput(proc.stderr as ReadableStream<Uint8Array>, 'stderr')
+
     void (proc as { exited: Promise<number> }).exited.then((code: number) => {
       if (ws.__idleTimer) clearTimeout(ws.__idleTimer)
+      try {
+        proc.terminal?.close()
+      } catch {}
       try {
         ws.send(JSON.stringify({ type: 'terminal.exit', payload: { code }, timestamp: Date.now() }))
       } catch {}
@@ -1671,9 +1767,22 @@ async function main() {
               return
             }
             if ((w.data as MiraWSData | undefined)?.isTerminal) {
+              if (event?.type === 'terminal.resize') {
+                w.__armIdle?.()
+                const cols = Number(event.cols)
+                const rows = Number(event.rows)
+                w.__resize?.(cols, rows)
+                return
+              }
+              if (event?.type === 'terminal.signal') {
+                w.__armIdle?.()
+                w.__write?.('\x03')
+                return
+              }
               if (event?.type === 'terminal.input' && typeof event.data === 'string') {
                 w.__armIdle?.()
-                if (terminalSandboxed()) {
+                const isControlOnly = /^[\x00-\x1f\x7f]+$/.test(event.data)
+                if (terminalSandboxed() && !isControlOnly) {
                   const raw = event.data.trim()
                   if (raw && !raw.startsWith('#')) {
                     const first = raw.split(/[\s;|&]+/)[0] ?? ''
@@ -1702,6 +1811,8 @@ async function main() {
                       'printf',
                       'sed',
                       'awk',
+                      'clear',
+                      'exit',
                     ]
                     try {
                       const cfg = getConfig() as MiraConfig
@@ -1723,39 +1834,11 @@ async function main() {
                           }),
                         )
                       } catch {}
-                    } else {
-                      try {
-                        const stdin = w.__proc?.stdin
-                        if (
-                          stdin &&
-                          typeof stdin !== 'number' &&
-                          typeof (stdin as Bun.FileSink).write === 'function'
-                        )
-                          (stdin as Bun.FileSink).write(event.data)
-                      } catch {}
+                      return
                     }
-                  } else {
-                    try {
-                      const stdin = w.__proc?.stdin
-                      if (
-                        stdin &&
-                        typeof stdin !== 'number' &&
-                        typeof (stdin as Bun.FileSink).write === 'function'
-                      )
-                        (stdin as Bun.FileSink).write(event.data)
-                    } catch {}
                   }
-                } else {
-                  try {
-                    const stdin = w.__proc?.stdin
-                    if (
-                      stdin &&
-                      typeof stdin !== 'number' &&
-                      typeof (stdin as Bun.FileSink).write === 'function'
-                    )
-                      (stdin as Bun.FileSink).write(event.data)
-                  } catch {}
                 }
+                w.__write?.(event.data)
               }
               if (event?.type === 'permission.reply' || event?.type === 'question.reply')
                 bus.publish(event as BusEvent)
@@ -1767,11 +1850,15 @@ async function main() {
           close(ws) {
             const w = ws as object as MiraWS
             clearTimeout(w.__authTimer)
+            clearTimeout(w.__idleTimer)
             try {
               w.__unsub?.()
             } catch {}
             try {
               w.__ac?.abort()
+            } catch {}
+            try {
+              w.__proc?.terminal?.close()
             } catch {}
             try {
               w.__proc?.kill()

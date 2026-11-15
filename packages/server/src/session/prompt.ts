@@ -241,11 +241,10 @@ export class SessionPrompt {
         if (!orgID) orgID = (parent as { orgID?: string | null } | undefined)?.orgID ?? null
       } catch {}
     }
-    // Kilo K1+K8: explicit > agent.model > autoModel tier > default
+    // Kilo K1+K8: explicit > agent.model > config default
     const effectiveModel = resolveEffectiveModel({
       explicitModel: input.model,
       agent: input.agent ?? null,
-      sessionModel: 'claude-sonnet-4',
     })
     // Emit model.retired event if explicit model was retired and fallback occurred
     if (input.model && isRetired(input.model) && input.model !== effectiveModel) {
@@ -715,11 +714,11 @@ export class SessionPrompt {
     const span = tracer.startSpan('session.prompt.loop', {
       attributes: { session_id: sessionID, prompt_id: assistantMessageID },
     })
-    // Loop limits: explicit option > env/config (MIRA_MAX_STEPS etc.) > built-in default
     const limits = getLoopLimits()
     const MAX_STEPS = opts.maxSteps ?? limits.maxSteps
     let step = 0
     let accumulatedText = ''
+    let turnHadError = false
     this.getDoomDetector(sessionID).reset()
     const lf = initLangfuse()
     const trace = lf?.trace?.('session') ?? { update: () => {}, end: () => {} }
@@ -776,6 +775,7 @@ export class SessionPrompt {
         const curCost = estimateCostUSD(model, totalTokensIn, totalTokensOut)
         if (effectiveCap?.perTask !== undefined && curCost > effectiveCap.perTask) {
           const msg = `Cost cap exceeded: $${curCost.toFixed(4)} > $${effectiveCap.perTask.toFixed(4)} per-task limit (model ${model}, lane ${lane}, step ${step}). Aborting.`
+          turnHadError = true
           send('error', { error: msg })
           this.deps.bus.publish({
             type: 'server.error',
@@ -796,6 +796,7 @@ export class SessionPrompt {
           const sessCost = sessionBaseCost + curCost
           if (sessCost > effectiveCap.perSession) {
             const msg = `Cost cap exceeded: $${sessCost.toFixed(4)} > $${effectiveCap.perSession.toFixed(4)} per-session limit (model ${model}, lane ${lane}, step ${step}). Aborting.`
+            turnHadError = true
             send('error', { error: msg })
             this.deps.bus.publish({
               type: 'server.error',
@@ -872,73 +873,154 @@ export class SessionPrompt {
         })
       }
 
-      // ── LLM.stream (Vercel AI SDK v5) ──
+      // ── LLM.stream (Vercel AI SDK v5) with transient retry ──
       send('step_start', { step, model })
       let streamMessages = pruneReasoning(messages)
       streamMessages = summarizeToolTraces(streamMessages, step)
-      const stream = await this.deps.gateway.stream({
-        model,
-        messages: streamMessages,
-        tools: this.filterToolsForAgent(opts.agent), // lane-contract enforcement (agent allowlist)
-        system: systemPrompt,
-        signal: opts?.signal,
-        sessionID,
-      })
-
       let stepText = ''
       const toolCalls: Array<{ id: string; name: string; args: Record<string, JsonValue> }> = []
       let lastFlush = Date.now()
       let lastPersistedLen = accumulatedText.length
 
-      for await (const chunk of stream) {
-        if (chunk.type === 'text-delta' && chunk.text) {
-          stepText += chunk.text
-          accumulatedText += chunk.text
-          send('text_delta', { delta: chunk.text, step })
+      const isTransientStreamErr = (err: unknown): boolean => {
+        if (!err || opts.signal?.aborted) return false
+        const e = err as { name?: string; code?: string; status?: number; statusCode?: number; message?: string }
+        if (e.name === 'AbortError') return false
+        if (e.code === 'NO_API_KEY' || e.code === 'UNAUTHORIZED') return false
+        const status = e.status ?? e.statusCode
+        if (status && [400, 401, 403, 404, 410].includes(status)) return false
+        if (status && (status === 429 || status >= 500)) return true
+        const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+        if (msg.includes('gateway 400') || msg.includes('gateway 401') || msg.includes('gateway 403') || msg.includes('gateway 404') || msg.includes('gateway 410')) return false
+        return (
+          msg.includes('429') ||
+          msg.includes('502') ||
+          msg.includes('503') ||
+          msg.includes('504') ||
+          msg.includes('timeout') ||
+          msg.includes('timed out') ||
+          msg.includes('econnreset') ||
+          msg.includes('etimedout') ||
+          msg.includes('socket hang up') ||
+          msg.includes('fetch failed') ||
+          msg.includes('network')
+        )
+      }
 
-          // Batch persist: flush every 200ms or 200 chars to reduce SQLite WAL write amplification
-          const now = Date.now()
-          if (now - lastFlush > 200 || accumulatedText.length - lastPersistedLen > 200) {
-            await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
-            lastFlush = now
-            lastPersistedLen = accumulatedText.length
-          }
-          this.deps.bus.publish({
-            type: 'part.updated',
+      const maxStreamAttempts = 3
+      let streamDone = false
+      for (let attempt = 1; attempt <= maxStreamAttempts && !streamDone; attempt++) {
+        try {
+          const stream = await this.deps.gateway.stream({
+            model,
+            messages: streamMessages,
+            tools: this.filterToolsForAgent(opts.agent), // lane-contract enforcement (agent allowlist)
+            system: systemPrompt,
+            signal: opts?.signal,
             sessionID,
-            payload: { text: chunk.text, step },
+          })
+
+          for await (const chunk of stream) {
+            if (chunk.type === 'text-delta' && chunk.text) {
+              stepText += chunk.text
+              accumulatedText += chunk.text
+              send('text_delta', { delta: chunk.text, step })
+
+              // Batch persist: flush every 200ms or 200 chars to reduce SQLite WAL write amplification
+              const now = Date.now()
+              if (now - lastFlush > 200 || accumulatedText.length - lastPersistedLen > 200) {
+                await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
+                lastFlush = now
+                lastPersistedLen = accumulatedText.length
+              }
+              this.deps.bus.publish({
+                type: 'part.updated',
+                sessionID,
+                payload: { text: chunk.text, step },
+                timestamp: Date.now(),
+              })
+            } else if (chunk.type === 'tool-call' && chunk.toolCall) {
+              toolCalls.push(chunk.toolCall)
+              send('tool_call', chunk.toolCall)
+            } else if (chunk.type === 'finish') {
+              send('step_finish', { step, reason: chunk.finishReason, usage: chunk.usage })
+              const u = chunk.usage
+              if (u) {
+                totalTokensIn += Number(u.promptTokens ?? u.inputTokens ?? 0) || 0
+                totalTokensOut += Number(u.completionTokens ?? u.outputTokens ?? 0) || 0
+              }
+              if (chunk.finishReason === 'stop' && toolCalls.length === 0) {
+                // Flush any remaining batched text before exiting
+                if (accumulatedText.length !== lastPersistedLen) {
+                  await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
+                }
+                // Conversation turn complete — drain trailing chunks (e.g. usage-report)
+                // so gateway cost tracking sees them, then exit the loop.
+                for await (const tail of stream) {
+                  if (tail.type === 'usage-report') {
+                    const tu = tail.usage
+                    if (tu) {
+                      totalTokensIn += Number(tu.inputTokens ?? tu.prompt_tokens ?? 0) || 0
+                      totalTokensOut += Number(tu.outputTokens ?? tu.completion_tokens ?? 0) || 0
+                    }
+                  }
+                }
+                break loop
+              }
+            } else if (chunk.type === 'error') {
+              turnHadError = true
+              send('error', chunk)
+              break loop
+            }
+          }
+          streamDone = true
+        } catch (streamErr) {
+          const canRetry =
+            attempt < maxStreamAttempts &&
+            stepText.length === 0 &&
+            toolCalls.length === 0 &&
+            isTransientStreamErr(streamErr)
+          if (canRetry) {
+            const backoffMs = attempt * 900
+            console.warn(
+              `[mira] transient stream error (session ${sessionID}, attempt ${attempt}/${maxStreamAttempts}), retrying in ${backoffMs}ms: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`,
+            )
+            await new Promise((r) => setTimeout(r, backoffMs))
+            continue
+          }
+          turnHadError = true
+          const errObj = streamErr as { message?: string; code?: string; provider?: string }
+          const errCode = typeof errObj?.code === 'string' ? errObj.code : undefined
+          const errProvider = typeof errObj?.provider === 'string' ? errObj.provider : undefined
+          const errMsg = streamErr instanceof Error ? streamErr.message : String(streamErr)
+          if (errCode === 'NO_API_KEY') {
+            console.warn(`[mira] session ${sessionID} paused: ${errMsg}`)
+          } else {
+            console.error(`[mira] stream error (session ${sessionID}): ${errMsg}`)
+          }
+          send('error', {
+            error: errMsg,
+            ...(errCode ? { code: errCode } : {}),
+            ...(errProvider ? { provider: errProvider } : {}),
+          })
+          this.deps.bus.publish({
+            type: 'server.error',
+            sessionID,
+            payload: {
+              error: errMsg,
+              source: errCode === 'NO_API_KEY' ? 'provider' : 'stream',
+              ...(errCode ? { code: errCode } : {}),
+              ...(errProvider ? { provider: errProvider } : {}),
+            } as JsonValue,
             timestamp: Date.now(),
           })
-        } else if (chunk.type === 'tool-call' && chunk.toolCall) {
-          toolCalls.push(chunk.toolCall)
-          send('tool_call', chunk.toolCall)
-        } else if (chunk.type === 'finish') {
-          send('step_finish', { step, reason: chunk.finishReason, usage: chunk.usage })
-          const u = chunk.usage
-          if (u) {
-            totalTokensIn += Number(u.promptTokens ?? u.inputTokens ?? 0) || 0
-            totalTokensOut += Number(u.completionTokens ?? u.outputTokens ?? 0) || 0
-          }
-          if (chunk.finishReason === 'stop' && toolCalls.length === 0) {
-            // Flush any remaining batched text before exiting
-            if (accumulatedText.length !== lastPersistedLen) {
-              await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
-            }
-            // Conversation turn complete — drain trailing chunks (e.g. usage-report)
-            // so gateway cost tracking sees them, then exit the loop.
-            for await (const tail of stream) {
-              if (tail.type === 'usage-report') {
-                const tu = tail.usage
-                if (tu) {
-                  totalTokensIn += Number(tu.inputTokens ?? tu.prompt_tokens ?? 0) || 0
-                  totalTokensOut += Number(tu.outputTokens ?? tu.completion_tokens ?? 0) || 0
-                }
-              }
-            }
-            break loop
-          }
-        } else if (chunk.type === 'error') {
-          send('error', chunk)
+          const notice =
+            errCode === 'NO_API_KEY'
+              ? `⚠️ ${errMsg}. Open Connect to configure a provider API key.`
+              : `⚠️ ${errMsg}`
+          accumulatedText = accumulatedText ? `${accumulatedText}\n\n${notice}` : notice
+          await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
+          lastPersistedLen = accumulatedText.length
           break loop
         }
       }
@@ -1054,13 +1136,107 @@ export class SessionPrompt {
           continue
         }
         if (perm.action === 'ask') {
-          // Publish permission.ask → TUI shows prompt → user replies via WS → permission.reply
+          // Publish permission.ask → Web/TUI shows prompt → user replies via WS or REST → permission.reply
           // Nonce prevents reply spoofing — must be echoed back in permission.reply
           const nonce = crypto.randomUUID()
-          send('permission_ask', { toolCallID: tc.id, tool: tc.name, args: tc.args, nonce })
-          const decision = await this.deps.bus.waitForPermissionReply(tc.id, nonce, 120_000)
+          const cfgTimeout = Number(
+            process.env.MIRA_PERMISSION_TIMEOUT_MS ??
+              (getConfig().loop as { permissionTimeoutMs?: number } | undefined)?.permissionTimeoutMs ??
+              300_000,
+          )
+          const permissionTimeoutMs = Number.isFinite(cfgTimeout) && cfgTimeout > 0 ? cfgTimeout : 300_000
+          const expiresAt = Date.now() + permissionTimeoutMs
+          const askPayload = {
+            sessionID,
+            toolCallID: tc.id,
+            tool: tc.name,
+            args: tc.args,
+            nonce,
+            reason: perm.reason ?? 'Requires user approval',
+            risk: perm.risk?.riskLevel ?? null,
+            blastRadius: perm.approvalPayload?.blastRadius ?? null,
+            canUndo: perm.approvalPayload?.canUndo ?? perm.risk?.isReversible ?? null,
+            timeoutMs: permissionTimeoutMs,
+            expiresAt,
+          }
+          send('permission_ask', askPayload)
+          this.deps.bus.publish({
+            type: 'permission.ask',
+            sessionID,
+            payload: askPayload,
+            timestamp: Date.now(),
+          })
+
+          const onAbortDuringPerm = () => {
+            this.deps.bus.cancelPermissionWait?.(tc.id, 'deny')
+          }
+          opts.signal?.addEventListener('abort', onAbortDuringPerm, { once: true })
+
+          let decision: 'allow' | 'deny' = 'deny'
+          let timedOut = false
+          let timeoutErrMsg = ''
+          try {
+            decision = await this.deps.bus.waitForPermissionReply(
+              tc.id,
+              nonce,
+              permissionTimeoutMs,
+              {
+                sessionID,
+                tool: tc.name,
+                args: tc.args,
+                reason: perm.reason,
+                risk: perm.risk?.riskLevel,
+                blastRadius: perm.approvalPayload?.blastRadius,
+                canUndo: perm.approvalPayload?.canUndo ?? perm.risk?.isReversible,
+              },
+            )
+          } catch (permErr) {
+            timedOut = true
+            timeoutErrMsg = permErr instanceof Error ? permErr.message : String(permErr)
+          } finally {
+            opts.signal?.removeEventListener('abort', onAbortDuringPerm)
+          }
+
+          if (opts.signal?.aborted) {
+            const err = `Aborted while waiting permission for ${tc.name}`
+            send('tool_result', { toolCallID: tc.id, name: tc.name, error: err, isError: true })
+            await this.persistToolResult(assistantMessageID, sessionID, tc, { error: err }, true)
+            break loop
+          }
+
+          if (timedOut) {
+            const guidance = `${timeoutErrMsg}. No approval was received before timeout; explain what you needed approval for and continue with any safe read-only steps or ask the user how to proceed.`
+            send('permission_timeout', { toolCallID: tc.id, tool: tc.name, error: timeoutErrMsg })
+            send('tool_result', {
+              toolCallID: tc.id,
+              name: tc.name,
+              result: { error: guidance },
+              isError: true,
+            })
+            this.deps.bus.publish({
+              type: 'permission.timeout',
+              sessionID,
+              payload: {
+                toolCallID: tc.id,
+                tool: tc.name,
+                error: timeoutErrMsg,
+                timeoutMs: permissionTimeoutMs,
+              } as JsonValue,
+              timestamp: Date.now(),
+            })
+            await this.persistToolResult(assistantMessageID, sessionID, tc, { error: guidance }, true)
+            toolResults.push({
+              toolCallID: tc.id,
+              name: tc.name,
+              result: { error: guidance },
+              isError: true,
+            })
+            continue
+          }
+
           if (decision !== 'allow') {
             const err = `User denied ${tc.name}`
+            send('tool_result', { toolCallID: tc.id, name: tc.name, error: err, isError: true })
             await this.persistToolResult(assistantMessageID, sessionID, tc, { error: err }, true)
             toolResults.push({
               toolCallID: tc.id,
@@ -1237,15 +1413,26 @@ export class SessionPrompt {
 
       // ── finish-step: append tool results to context for next iteration ──
       messages.push({ role: 'assistant', content: stepText, toolCalls })
-      messages.push({
-        role: 'tool',
-        toolResults,
-        content: JSON.stringify(toolResults),
-        isExecutorContext: true,
-      })
+      for (const tr of toolResults) {
+        messages.push({
+          role: 'tool',
+          toolCallID: tr.toolCallID,
+          toolResults: [tr],
+          content: JSON.stringify(tr.result ?? null),
+          isExecutorContext: true,
+        })
+      }
 
       // Also persist accumulated text so far
       await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
+    }
+
+    if (step >= MAX_STEPS && !turnHadError && !opts.signal?.aborted) {
+      const limitNote = `\n\n[Reached maximum step limit (${MAX_STEPS}). Send "continue" to resume from here.]`
+      if (!accumulatedText.includes('Reached maximum step limit')) {
+        accumulatedText = accumulatedText ? `${accumulatedText}${limitNote}` : limitNote.trim()
+        send('text_delta', { delta: limitNote, step })
+      }
     }
 
     // Finalize
@@ -1319,8 +1506,9 @@ export class SessionPrompt {
     opts.onStreamClosed?.()
 
     // ── Drain queued messages: chain next turn automatically ──
-    const next = this.dequeueFirst(sessionID)
-    if (next) {
+    if (!turnHadError) {
+      const next = this.dequeueFirst(sessionID)
+      if (next) {
       this.deps.bus.publish({
         type: 'session.updated',
         sessionID,
@@ -1337,6 +1525,7 @@ export class SessionPrompt {
           timestamp: Date.now(),
         })
       })
+    }
     }
     span.end()
   }
@@ -1462,26 +1651,52 @@ export class SessionPrompt {
         })
       }
     } catch {}
+    const availableToolResultIds = new Set<string>()
+    for (const m of messages) {
+      for (const p of m.parts ?? []) {
+        if (p.type === 'tool-result' && p.toolCallID) {
+          availableToolResultIds.add(p.toolCallID)
+        }
+      }
+    }
+    const emittedToolCallIds = new Set<string>()
+
     for (const m of messages) {
       const parts = m.parts ?? []
       const text = parts
         .filter((p) => p.type === 'text')
         .map((p) => p.text)
         .join('\n')
-      if (text) context.push({ role: m.role, content: text })
-      // Re-hydrate tool calls for continuity
-      for (const p of parts.filter((p) => p.type === 'tool-call')) {
-        if (!p.toolCallID || !p.tool) continue
+      const pairedCalls = parts
+        .filter(
+          (p): p is typeof p & { toolCallID: string; tool: string } =>
+            p.type === 'tool-call' &&
+            !!p.toolCallID &&
+            !!p.tool &&
+            availableToolResultIds.has(p.toolCallID),
+        )
+        .map((p) => {
+          emittedToolCallIds.add(p.toolCallID)
+          return {
+            id: p.toolCallID,
+            name: p.tool,
+            args: (p.args ?? {}) as Record<string, JsonValue>,
+          }
+        })
+
+      if (pairedCalls.length > 0) {
         context.push({
           role: 'assistant',
-          content: '',
-          toolCalls: [
-            { id: p.toolCallID, name: p.tool, args: (p.args ?? {}) as Record<string, JsonValue> },
-          ],
+          content: text,
+          toolCalls: pairedCalls,
         })
+      } else if (text) {
+        context.push({ role: m.role, content: text })
       }
-      for (const p of parts.filter((p) => p.type === 'tool-result')) {
-        if (!p.toolCallID) continue
+
+      for (const p of parts) {
+        if (p.type !== 'tool-result' || !p.toolCallID) continue
+        if (!emittedToolCallIds.has(p.toolCallID)) continue
         context.push({
           role: 'tool',
           content: JSON.stringify(p.result ?? null),

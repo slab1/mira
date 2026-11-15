@@ -10,6 +10,7 @@ import { createSignal, createEffect, onCleanup } from 'solid-js'
 import { createStore } from 'solid-js/store'
 import {
   api,
+  addPermissionRule,
   ApiError,
   createSocket,
   type Session,
@@ -17,6 +18,7 @@ import {
   type Todo,
   type Job,
   type BusEvent,
+  type PendingPermission,
 } from '../api/client'
 import {
   createEvent,
@@ -48,6 +50,8 @@ type AppState = {
       multiple?: boolean
     }>
   } | null
+  /** pending tool approval requests awaiting user allow/deny */
+  pendingPermissions: PendingPermission[]
   /** messages queued while agent streams — mirrored from server */
   queued: string[]
   /** gateway spend for this server process */
@@ -96,6 +100,7 @@ export function createAppStore() {
     error: null,
     loading: false,
     pendingQuestion: null,
+    pendingPermissions: [],
     queued: [],
     cost: null,
     doomLoop: null,
@@ -123,6 +128,23 @@ export function createAppStore() {
   // Guard against concurrent session creates (race: user clicks "+" while
   // loadSessions auto-creates the first session, leading to two entries).
   let creating = false
+  // Monotonic sequence counter for selectSession so stale async fetches
+  // from a previously clicked session never overwrite a newer selection.
+  let selectSeq = 0
+  const CURRENT_SESSION_KEY = 'mira.currentSessionId'
+  const persistCurrentId = (id: string | null) => {
+    try {
+      if (id) localStorage.setItem(CURRENT_SESSION_KEY, id)
+      else localStorage.removeItem(CURRENT_SESSION_KEY)
+    } catch {}
+  }
+  const savedCurrentId = (): string | null => {
+    try {
+      return localStorage.getItem(CURRENT_SESSION_KEY) || null
+    } catch {
+      return null
+    }
+  }
 
   // ── WebSocket: GlobalBus subscription ────────────────────────────
   let reconnectAttempts = 0
@@ -149,6 +171,7 @@ export function createAppStore() {
         clearTimeout(reconnectTimer)
         reconnectTimer = null
       }
+      if (state.currentId) void loadPendingPermissions(state.currentId)
     },
     close: () => {
       setState('connected', false)
@@ -161,6 +184,32 @@ export function createAppStore() {
     event: (e: BusEvent) => handleBusEvent(e),
   })
 
+  function upsertPendingPermission(perm: PendingPermission) {
+    if (!perm?.toolCallID || !perm?.nonce) return
+    setState('pendingPermissions', (prev) => {
+      const filtered = prev.filter((p) => p.toolCallID !== perm.toolCallID)
+      return [...filtered, perm]
+    })
+  }
+
+  function removePendingPermission(toolCallID: string) {
+    if (!toolCallID) return
+    setState('pendingPermissions', (prev) => prev.filter((p) => p.toolCallID !== toolCallID))
+  }
+
+  async function loadPendingPermissions(sessionID?: string, expectedSeq?: number) {
+    try {
+      const res = await api.listPendingPermissions(sessionID)
+      if (expectedSeq !== undefined && expectedSeq !== selectSeq) return
+      const list = Array.isArray(res?.pending) ? res.pending : []
+      if (!sessionID || sessionID === state.currentId) {
+        setState('pendingPermissions', list)
+      }
+    } catch {
+      // Older servers or transient errors — non-fatal
+    }
+  }
+
   function handleBusEvent(e: BusEvent) {
     // Reconciliation guard — flag stale events that may have been
     // out-of-sync across REST/WebSocket/polling sources.
@@ -171,8 +220,39 @@ export function createAppStore() {
     }
     switch (e.type) {
       case 'question.ask': {
+        if (e.sessionID && state.currentId && e.sessionID !== state.currentId) break
         const q = e.payload as AppState['pendingQuestion']
         if (q?.questionID) setState('pendingQuestion', q)
+        break
+      }
+      case 'permission.ask': {
+        const p = e.payload as Partial<PendingPermission> | null
+        const sid = p?.sessionID ?? e.sessionID ?? state.currentId ?? ''
+        if (p?.toolCallID && p?.nonce && (!state.currentId || !sid || sid === state.currentId)) {
+          upsertPendingPermission({
+            sessionID: sid,
+            toolCallID: p.toolCallID,
+            tool: p.tool ?? 'tool',
+            args: p.args,
+            nonce: p.nonce,
+            reason: p.reason,
+            risk: p.risk,
+            blastRadius: p.blastRadius,
+            canUndo: p.canUndo,
+            timeoutMs: p.timeoutMs,
+            expiresAt: p.expiresAt,
+          })
+        }
+        break
+      }
+      case 'permission.reply': {
+        const p = e.payload as { toolCallID?: string } | null
+        if (p?.toolCallID) removePendingPermission(p.toolCallID)
+        break
+      }
+      case 'permission.timeout': {
+        const p = e.payload as { toolCallID?: string; tool?: string } | null
+        if (p?.toolCallID) removePendingPermission(p.toolCallID)
         break
       }
       case 'session.created': {
@@ -180,11 +260,39 @@ export function createAppStore() {
         if (s?.id) setState('sessions', (prev) => [s, ...prev.filter((x) => x.id !== s.id)])
         break
       }
+      case 'session.updated': {
+        const s = e.payload as Session
+        if (s?.id) {
+          setState('sessions', (prev) =>
+            prev.some((x) => x.id === s.id)
+              ? prev.map((x) => (x.id === s.id ? { ...x, ...s } : x))
+              : [s, ...prev],
+          )
+        }
+        break
+      }
       case 'session.deleted': {
         const { id } = e.payload as { id: string }
-        setState('sessions', (prev) => prev.filter((s) => s.id !== id))
+        const remaining = state.sessions.filter((s) => s.id !== id)
+        setState('sessions', remaining)
         if (state.currentId === id) {
-          setState({ currentId: state.sessions[0]?.id ?? null, messages: [], todos: [] })
+          persistCurrentId(null)
+          const next = remaining[0]?.id ?? null
+          if (next) {
+            void selectSession(next)
+          } else {
+            setState({
+              currentId: null,
+              messages: [],
+              todos: [],
+              queued: [],
+              pendingQuestion: null,
+              pendingPermissions: [],
+              streamText: '',
+              streaming: false,
+              liveStreamEvents: [],
+            })
+          }
         }
         break
       }
@@ -311,9 +419,16 @@ export function createAppStore() {
         sessions = await api.listSessions()
       }
       setState('sessions', sessions)
-      // auto-select first if none selected
-      if (!state.currentId && sessions.length > 0) {
-        await selectSession(sessions[0].id)
+      // Restore previously selected session if still present; otherwise fall back to first session
+      const currentValid = !!state.currentId && sessions.some((s) => s.id === state.currentId)
+      if (!currentValid && sessions.length > 0) {
+        const saved = savedCurrentId()
+        const target =
+          saved && sessions.some((s) => s.id === saved) ? saved : sessions[0].id
+        await selectSession(target)
+      } else if (!currentValid && sessions.length === 0) {
+        persistCurrentId(null)
+        setState('currentId', null)
       }
     } catch (e) {
       setState('error', (e as Error).message)
@@ -348,31 +463,64 @@ export function createAppStore() {
   }
 
   async function selectSession(id: string) {
+    if (!id) return
+    const seq = ++selectSeq
+    const switchedSession = state.currentId !== id
+    if (switchedSession && state.streaming) {
+      abort?.abort()
+    }
+    persistCurrentId(id)
     setState({
       currentId: id,
       messages: [],
       todos: [],
+      queued: [],
+      pendingQuestion: null,
+      streaming: false,
       streamText: '',
       error: null,
       doomLoop: null,
+      budgetWarning: null,
       liveJobs: {},
+      liveStreamEvents: [],
+      pendingPermissions: [],
     })
-    await Promise.all([loadMessages(id), loadTodos(id)])
+    await Promise.all([
+      loadMessages(id, seq),
+      loadTodos(id, seq),
+      loadPendingPermissions(id, seq),
+    ])
   }
 
   async function deleteSession(id: string) {
     await api.deleteSession(id)
-    setState('sessions', (prev) => prev.filter((s) => s.id !== id))
+    const remaining = state.sessions.filter((s) => s.id !== id)
+    setState('sessions', remaining)
     if (state.currentId === id) {
-      const next = state.sessions[0]?.id ?? null
-      setState({ currentId: next, messages: [], todos: [] })
-      if (next) await selectSession(next)
+      persistCurrentId(null)
+      const next = remaining[0]?.id ?? null
+      if (next) {
+        await selectSession(next)
+      } else {
+        setState({
+          currentId: null,
+          messages: [],
+          todos: [],
+          queued: [],
+          pendingQuestion: null,
+          pendingPermissions: [],
+          streamText: '',
+          streaming: false,
+          liveStreamEvents: [],
+        })
+      }
     }
   }
 
-  async function loadMessages(id: string) {
+  async function loadMessages(id: string, expectedSeq?: number) {
     try {
       const msgs = await api.getMessages(id)
+      if (state.currentId !== id || (expectedSeq !== undefined && expectedSeq !== selectSeq)) return
       if (Array.isArray(msgs) && msgs.length > 0) {
         setState('messages', msgs)
       } else if (state.messages.length === 0 && Array.isArray(msgs)) {
@@ -380,9 +528,12 @@ export function createAppStore() {
       }
       // Reconcile queue with server truth (queued items drain as chained turns)
       try {
-        setState('queued', await api.getQueue(id))
+        const q = await api.getQueue(id)
+        if (state.currentId !== id || (expectedSeq !== undefined && expectedSeq !== selectSeq)) return
+        setState('queued', q)
       } catch {}
     } catch (e) {
+      if (state.currentId !== id || (expectedSeq !== undefined && expectedSeq !== selectSeq)) return
       // 404 = new session, ignore
       if (!String((e as Error).message).includes('404')) setState('error', (e as Error).message)
     }
@@ -434,9 +585,10 @@ export function createAppStore() {
     document.addEventListener('visibilitychange', tick)
   }
 
-  async function loadTodos(id: string) {
+  async function loadTodos(id: string, expectedSeq?: number) {
     try {
       const todos = await api.getTodos(id)
+      if (state.currentId !== id || (expectedSeq !== undefined && expectedSeq !== selectSeq)) return
       setState('todos', todos)
     } catch {
       // todos optional
@@ -466,18 +618,21 @@ export function createAppStore() {
         return
       }
     }
+    const sessionId = state.currentId
+    if (!sessionId) return
     setInput('')
 
     // Agent busy → queue the message instead of dropping it (Mira-parity UX)
     if (state.streaming) {
       try {
-        const result = await api.queuePrompt(state.currentId, prompt)
+        const result = await api.queuePrompt(sessionId, prompt)
+        if (state.currentId !== sessionId) return
         setState('queued', (q) => [...q, prompt])
         setState('messages', (m) => [
           ...m,
           {
             id: `tmp-${uid()}`,
-            sessionId: state.currentId!,
+            sessionId,
             role: 'user',
             content: `${prompt}`,
             createdAt: new Date().toISOString(),
@@ -487,7 +642,8 @@ export function createAppStore() {
         toast.info(`Queued (#${result.position})`)
         // Reconcile queue with server in case server-side ordering differs
         try {
-          const serverQueue = await api.getQueue(state.currentId)
+          const serverQueue = await api.getQueue(sessionId)
+          if (state.currentId !== sessionId) return
           setState('queued', serverQueue)
           // If our prompt didn't make it to the queue, surface the failure
           if (!serverQueue.includes(prompt)) {
@@ -496,8 +652,10 @@ export function createAppStore() {
           }
         } catch {}
       } catch (e) {
-        setState('error', (e as Error).message)
-        setInput(prompt) // restore input on failure
+        if (state.currentId === sessionId) {
+          setState('error', (e as Error).message)
+          setInput(prompt) // restore input on failure
+        }
         toast.error(`Queue failed: ${(e as Error).message}`)
       }
       return
@@ -505,7 +663,7 @@ export function createAppStore() {
     // optimistic user message
     const userMsg: Message = {
       id: `tmp-${uid()}`,
-      sessionId: state.currentId,
+      sessionId,
       role: 'user',
       content: prompt,
       createdAt: new Date().toISOString(),
@@ -521,7 +679,7 @@ export function createAppStore() {
       ...m,
       {
         id: asstId,
-        sessionId: state.currentId!,
+        sessionId,
         role: 'assistant',
         content: '',
         createdAt: new Date().toISOString(),
@@ -529,10 +687,11 @@ export function createAppStore() {
     ])
 
     try {
-      await api.streamPrompt(state.currentId, prompt, {
+      await api.streamPrompt(sessionId, prompt, {
         model,
         signal: abort.signal,
         onChunk: (chunk) => {
+          if (state.currentId !== sessionId) return
           setState('streamText', (t) => t + chunk)
           // O(1) in-place update of the streaming assistant message (always last)
           const msgs = state.messages
@@ -543,6 +702,7 @@ export function createAppStore() {
           }
         },
         onEvent: (event) => {
+          if (state.currentId !== sessionId) return
           // Push live streaming events for the activity panel
           setState('liveStreamEvents', (prev) => [
             ...prev,
@@ -579,6 +739,30 @@ export function createAppStore() {
                 return { ...mm, content: cur ? `${cur}\n\n${banner}` : banner }
               }),
             )
+          } else if (event.type === 'permission_ask') {
+            const p = event.payload as Partial<PendingPermission> | null
+            if (p?.toolCallID && p?.nonce) {
+              upsertPendingPermission({
+                sessionID: p.sessionID ?? sessionId,
+                toolCallID: p.toolCallID,
+                tool: p.tool ?? 'tool',
+                args: p.args,
+                nonce: p.nonce,
+                reason: p.reason,
+                risk: p.risk,
+                blastRadius: p.blastRadius,
+                canUndo: p.canUndo,
+                timeoutMs: p.timeoutMs,
+                expiresAt: p.expiresAt,
+              })
+            }
+          } else if (event.type === 'permission_timeout') {
+            const p = event.payload as { toolCallID?: string; tool?: string } | null
+            if (p?.toolCallID) removePendingPermission(p.toolCallID)
+            toast.warn(`Permission request for "${p?.tool ?? 'tool'}" timed out`)
+          } else if (event.type === 'tool_result') {
+            const p = event.payload as { toolCallID?: string } | null
+            if (p?.toolCallID) removePendingPermission(p.toolCallID)
           } else if (event.type === 'doom_loop') {
             const p = event.payload as Record<string, unknown> | null
             if (!state.doomLoop) {
@@ -586,7 +770,7 @@ export function createAppStore() {
                 tool: (p?.tool as string) ?? 'unknown',
                 reason: (p?.reason as string) ?? 'repeating tool call',
                 pattern: p?.pattern as string[] | undefined,
-                sessionID: state.currentId ?? undefined,
+                sessionID: sessionId,
                 messageID: typeof p?.messageID === 'string' ? (p?.messageID as string) : undefined,
               })
             }
@@ -606,11 +790,15 @@ export function createAppStore() {
         },
       })
     } catch (e) {
-      if ((e as Error).name !== 'AbortError') setState('error', (e as Error).message)
+      if ((e as Error).name !== 'AbortError' && state.currentId === sessionId) {
+        setState('error', (e as Error).message)
+      }
     } finally {
-      setState({ streaming: false, streamText: '', liveStreamEvents: [] })
-      // final sync from server to get tool parts / persisted state + fresh spend
-      if (state.currentId) await loadMessages(state.currentId)
+      if (state.currentId === sessionId) {
+        setState({ streaming: false, streamText: '', liveStreamEvents: [] })
+        // final sync from server to get tool parts / persisted state + fresh spend
+        await loadMessages(sessionId)
+      }
       void loadCost()
     }
   }
@@ -629,6 +817,34 @@ export function createAppStore() {
   ) {
     socket.send({ type: 'question.reply', payload: { questionID, answers }, timestamp: Date.now() })
     setState('pendingQuestion', null)
+  }
+
+  /** Answer a pending tool permission gate via WS + REST fallback */
+  async function answerPermission(
+    toolCallID: string,
+    nonce: string,
+    decision: 'allow' | 'deny',
+    opts?: { alwaysAllowTool?: string },
+  ) {
+    removePendingPermission(toolCallID)
+    socket.send({
+      type: 'permission.reply',
+      payload: { toolCallID, nonce, decision },
+      timestamp: Date.now(),
+    })
+    try {
+      await api.replyPermission({ toolCallID, nonce, decision })
+    } catch {
+      // WS reply may have already resolved and cleared the waiter
+    }
+    if (decision === 'allow' && opts?.alwaysAllowTool) {
+      try {
+        await addPermissionRule(opts.alwaysAllowTool, '*', 'allow')
+        toast.success(`Always allowing "${opts.alwaysAllowTool}"`)
+      } catch (e) {
+        toast.warn(`Allowed once, but failed to persist rule: ${(e as Error).message}`)
+      }
+    }
   }
 
   /** Undo the agent's most recent file mutation (snapshot restore) */
@@ -709,6 +925,8 @@ export function createAppStore() {
     sendPrompt,
     stopStream,
     answerQuestion,
+    answerPermission,
+    loadPendingPermissions,
     undoLastMutation,
     clearDoomLoop,
     rewindDoomLoop,

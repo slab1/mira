@@ -111,6 +111,7 @@ export type BusEventType =
   | 'learning.updated'
   | 'permission.ask'
   | 'permission.reply'
+  | 'permission.timeout'
   | 'question.ask'
   | 'question.reply'
   | 'cost.warning'
@@ -154,6 +155,7 @@ export interface MiraConfig {
     contextLimit?: number
     compactionThreshold?: number
     smallModel?: string
+    permissionTimeoutMs?: number
   }
   /** @deprecated — use `loop`; kept for backward compat with older mira.json */
   loopLimits?: {

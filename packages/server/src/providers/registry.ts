@@ -49,6 +49,9 @@ const PROVIDER_CAPABILITIES: Record<string, Capability[]> = {
   google: ['vision', 'cost_optimized'],
   openrouter: ['coding', 'reasoning', 'vision', 'speed', 'cost_optimized'],
   nvidia: ['coding', 'speed'],
+  groq: ['speed', 'cost_optimized'],
+  mistral: ['coding', 'reasoning', 'speed'],
+  together: ['coding', 'speed', 'cost_optimized'],
 }
 
 export interface RegistryOptions {
@@ -137,12 +140,28 @@ export class ProviderRegistry {
       }
     }
 
-    // No prefix matched → use default provider
+    // No prefix matched → check if any registered provider explicitly owns this model
     if (!providerKey) {
-      providerKey = this.defaultProvider
-      if (!this.providers.has(providerKey)) {
-        if (this.providers.has('openrouter')) providerKey = 'openrouter'
-        else providerKey = sortedKeys[0] ?? 'openrouter'
+      const targetLower = expandedLower
+      const owners: string[] = []
+      for (const [k, cfg] of this.providers.entries()) {
+        const models = cfg.models
+        if (!models) continue
+        if (
+          Object.prototype.hasOwnProperty.call(models, expanded) ||
+          Object.keys(models).some((m) => m.toLowerCase() === targetLower)
+        ) {
+          owners.push(k)
+        }
+      }
+      if (owners.length > 0) {
+        providerKey = owners.find((k) => this.hasKey(k)) ?? owners[0]
+      } else {
+        providerKey = this.defaultProvider
+        if (!this.providers.has(providerKey)) {
+          if (this.providers.has('openrouter')) providerKey = 'openrouter'
+          else providerKey = sortedKeys[0] ?? 'openrouter'
+        }
       }
       modelID = expanded
     }
@@ -305,8 +324,8 @@ export class ProviderRegistry {
   static shouldFallback(error: ProviderError): boolean {
     const status = error.status ?? 0
     const cls = classifyError(status, error.message)
-    // retryable errors should fallback after retries exhausted
-    if (cls === 'retryable') return true
+    // retryable errors and dead/gone model errors (410) should fall back to next candidate
+    if (cls === 'retryable' || cls === 'fallback') return true
     // also check explicit codes
     if (error.code === 'RATE_LIMITED' || error.code === 'TIMEOUT' || error.code === 'NO_API_KEY') return true
     return false
@@ -339,8 +358,9 @@ export class ProviderRegistry {
         const error =
           err instanceof ProviderError ? err : new ProviderError({ message: String(err) })
 
-        // Only retry on retryable errors — 400/401/404 should NOT retry
-        if (!ProviderRegistry.shouldFallback(error)) {
+        // Only retry on transient retryable errors — 400/401/404/410 should NOT retry the same model
+        const cls = classifyError(error.status ?? 0, error.message)
+        if (cls !== 'retryable' && error.code !== 'RATE_LIMITED' && error.code !== 'TIMEOUT') {
           this.emitTrace('retry_skip', providerKey, modelID, 0, 0, error.message)
           throw error
         }

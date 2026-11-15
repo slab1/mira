@@ -5,9 +5,69 @@
  * Key rotation on 429/401
  */
 
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
+export function readMiraEnv(): Record<string, string> {
+  const out: Record<string, string> = {}
+  try {
+    const cands = [
+      process.env.MIRA_DIR?.trim() ? join(process.env.MIRA_DIR.trim(), 'mira.env') : null,
+      process.env.XDG_CONFIG_HOME?.trim()
+        ? join(process.env.XDG_CONFIG_HOME.trim(), 'mira', 'mira.env')
+        : null,
+      join(homedir(), '.mira', 'mira.env'),
+    ].filter(Boolean) as string[]
+    for (const p of cands) {
+      try {
+        if (!existsSync(p)) continue
+        for (const line of readFileSync(p, 'utf-8').split('\n')) {
+          const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/)
+          const k = m?.[1]
+          if (k && !(k in out)) out[k] = (m?.[2] ?? '').replace(/^(['"])(.*)\1$/, '$2').trim()
+        }
+        if (Object.keys(out).length) break
+      } catch {}
+    }
+  } catch {}
+  for (const [k, v] of Object.entries(out)) {
+    if (v && !process.env[k]) {
+      process.env[k] = v
+    }
+  }
+  return out
+}
+
+export function writeMiraEnvKey(name: string, value: string): void {
+  process.env[name] = value
+  try {
+    const dir = process.env.MIRA_DIR?.trim() || join(homedir(), '.mira')
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true })
+    }
+    const envFile = join(dir, 'mira.env')
+    let content = ''
+    if (existsSync(envFile)) {
+      content = readFileSync(envFile, 'utf-8')
+    }
+    const regex = new RegExp(`^\\s*${name}\\s*=.*$`, 'm')
+    if (regex.test(content)) {
+      content = content.replace(regex, `${name}=${value}`)
+    } else {
+      content = content.trimEnd() + (content ? '\n' : '') + `${name}=${value}\n`
+    }
+    writeFileSync(envFile, content, { mode: 0o600 })
+  } catch {}
+}
+
 export function expandEnv(value: string): string {
   if (!value) return value
-  return value.replace(/\{env:([^}]+)\}/g, (_, name: string) => process.env[name] ?? '')
+  return value.replace(/\{env:([^}]+)\}/g, (_, name: string) => {
+    if (process.env[name]) return process.env[name]!
+    const envs = readMiraEnv()
+    return envs[name] ?? process.env[name] ?? ''
+  })
 }
 
 export function expandEnvString(value: string | undefined): string {
@@ -77,8 +137,9 @@ export function expandApiKey(apiKey: string | string[] | undefined, providerId?:
     const key = providerId.toLowerCase()
     const envVars = PROVIDER_ENV_FALLBACKS[key] ?? [`${key.toUpperCase()}_API_KEY`]
     for (const envVar of envVars) {
-      const val = process.env[envVar]
-      if (val) return [val]
+      if (process.env[envVar]) return [process.env[envVar]!]
+      const envs = readMiraEnv()
+      if (envs[envVar]) return [envs[envVar]!]
     }
   }
   return []
@@ -153,6 +214,16 @@ export function exponentialBackoff(baseMs: number, attempts: number, jitterMs: n
  * - 'none': request-level errors (400, 401, 404) — client mistake, do NOT retry or fallback
  */
 export function classifyError(status: number, message: string): 'retryable' | 'fallback' | 'none' {
+  // Deprecated / gone / model unavailable -> immediate fallback (do NOT retry dead model)
+  if (status === 410) return 'fallback'
+  if (
+    status === 404 &&
+    /end of life|no longer available|model.*not found|does not exist|deprecated|retired|gone/i.test(
+      message,
+    )
+  ) {
+    return 'fallback'
+  }
   // Request-level errors — client mistakes, do NOT retry or fallback
   if (status === 400 || status === 401 || status === 404) return 'none'
   // Rate-limited — retry same model with backoff first, then fallback

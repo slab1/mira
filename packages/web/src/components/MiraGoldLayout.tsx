@@ -1,43 +1,146 @@
 // @ts-nocheck
-import { createSignal, onMount, onCleanup, Show, For } from 'solid-js'
+import { createSignal, createMemo, onMount, onCleanup, Show, For } from 'solid-js'
 import type { AppStore } from '../stores/app'
 import type { SettingsStore } from '../stores/settings'
 import {
   req,
   api,
+  getApiUrl,
   type AgentEntry,
   type ToolInfo,
   type PatchProposal,
   type AuditEntry,
-  type Finding,
-  type ProviderEntry,
-  type MiraConfig,
 } from '../api/client'
-import { TopNav, type WorkspaceId } from './TopNav'
+import { type WorkspaceId } from './TopNav'
 import { WorkspaceRouter } from './WorkspaceRouter'
 import { HeaderModelSelector } from './HeaderSelectors'
 import { TerminalView } from './TerminalView'
+import { ChatView } from './ChatView'
+import { SessionList } from './SessionList'
+import { ActivityPanel } from './ActivityPanel'
+import { toast } from './Toast'
+import BrioPage from '../pages/Brio'
+
+type WorkSubTabId = 'chat' | 'brio' | 'terminal' | 'agents' | 'tools' | 'files'
+
+function NavIcon(props: { name: string; size?: number }) {
+  const s = () => props.size ?? 16
+  switch (props.name) {
+    case 'work':
+      return (
+        <svg width={s()} height={s()} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        </svg>
+      )
+    case 'missions':
+      return (
+        <svg width={s()} height={s()} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 3v3M12 18v3M3 12h3M18 12h3" />
+        </svg>
+      )
+    case 'intelligence':
+      return (
+        <svg width={s()} height={s()} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="5" r="2.5" />
+          <circle cx="5" cy="18" r="2.5" />
+          <circle cx="19" cy="18" r="2.5" />
+          <path d="M10.5 7 6.5 15.8M13.5 7l4 8.8M7.5 18h9" />
+        </svg>
+      )
+    case 'changes':
+      return (
+        <svg width={s()} height={s()} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="18" cy="18" r="3" />
+          <circle cx="6" cy="6" r="3" />
+          <path d="M6 9v12M13 6h3a2 2 0 0 1 2 2v7" />
+        </svg>
+      )
+    case 'evolution':
+      return (
+        <svg width={s()} height={s()} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z" />
+        </svg>
+      )
+    case 'system':
+      return (
+        <svg width={s()} height={s()} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        </svg>
+      )
+    case 'dashboard':
+      return (
+        <svg width={s()} height={s()} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 3v18h18" />
+          <path d="M7 15v-3M12 15V8M17 15v-5" />
+        </svg>
+      )
+    case 'brio':
+      return (
+        <svg width={s()} height={s()} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polygon points="12 2 22 12 12 22 2 12 12 2" />
+        </svg>
+      )
+    case 'terminal':
+      return (
+        <svg width={s()} height={s()} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="4 17 10 11 4 5" />
+          <line x1="12" x2="20" y1="19" y2="19" />
+        </svg>
+      )
+    case 'agents':
+      return (
+        <svg width={s()} height={s()} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="4" y="4" width="16" height="16" rx="2" />
+          <path d="M9 9h6v6H9z" />
+        </svg>
+      )
+    case 'tools':
+      return (
+        <svg width={s()} height={s()} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+        </svg>
+      )
+    case 'files':
+      return (
+        <svg width={s()} height={s()} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+        </svg>
+      )
+    default:
+      return (
+        <svg width={s()} height={s()} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="4" x2="20" y1="6" y2="6" />
+          <line x1="4" x2="20" y1="12" y2="12" />
+          <line x1="4" x2="20" y1="18" y2="18" />
+        </svg>
+      )
+  }
+}
 
 export function MiraGoldLayout(props: {
   store: AppStore
   settings: SettingsStore
   children?: any
 }) {
-  const [activeNav, setActiveNav] = createSignal<string>('home')
-  const [activeSubTab, setActiveSubTab] = createSignal<string>('chat')
+  const [currentWorkspace, setCurrentWorkspace] = createSignal<WorkspaceId>('work')
+  const [activeSubTab, setActiveSubTab] = createSignal<WorkSubTabId>('chat')
   const [searchQuery, setSearchQuery] = createSignal<string>('')
-  const [inputPrompt, setInputPrompt] = createSignal<string>('')
-  const [toastMessage, setToastMessage] = createSignal<string>('')
   const [loadingState, setLoadingState] = createSignal<boolean>(false)
+  const [initialLoaded, setInitialLoaded] = createSignal<boolean>(false)
 
-  // Mobile UX & Drawer Controls
+  // Layout & Drawer Controls
   const [isMobileScreen, setIsMobileScreen] = createSignal<boolean>(window.innerWidth < 1024)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = createSignal<boolean>(false)
   const [isRightSidebarOpen, setIsRightSidebarOpen] = createSignal<boolean>(false)
+  const [showSessions, setShowSessions] = createSignal<boolean>(window.innerWidth >= 1024)
+  const [showActivity, setShowActivity] = createSignal<boolean>(false)
+  const [showProfileMenu, setShowProfileMenu] = createSignal<boolean>(false)
+  const [avatarFailed, setAvatarFailed] = createSignal<boolean>(false)
 
-  // System Stats State (Truth over confidence: null until backend evidence arrives)
+  // Live Telemetry State (null until verified from backend)
   const [activeAgentsCount, setActiveAgentsCount] = createSignal<number | null>(null)
-  const [tasksRunningCount, setTasksRunningCount] = createSignal<number | null>(null)
   const [systemHealthPct, setSystemHealthPct] = createSignal<number | null>(null)
   const [responseTimeMs, setResponseTimeMs] = createSignal<number | null>(null)
   const [memoryUsageGb, setMemoryUsageGb] = createSignal<number | null>(null)
@@ -48,27 +151,13 @@ export function MiraGoldLayout(props: {
   const [realTools, setRealTools] = createSignal<ToolInfo[]>([])
   const [proposals, setProposals] = createSignal<PatchProposal[]>([])
   const [auditLogs, setAuditLogs] = createSignal<AuditEntry[]>([])
-  const [knowledgeNodes, setKnowledgeNodes] = createSignal<any[]>([])
   const [workspaceFiles, setWorkspaceFiles] = createSignal<Array<{ path: string; isDir: boolean; size: number; mtime: number }>>([])
-  const [findingsList, setFindingsList] = createSignal<Finding[]>([])
   const [gatewayHealth, setGatewayHealth] = createSignal<any>(null)
-  const [miraConfig, setMiraConfig] = createSignal<MiraConfig | null>(null)
-  const [providerList, setProviderList] = createSignal<ProviderEntry[]>([])
 
   // Interactive Modal States
-  const [showSeedMemoryModal, setShowSeedMemoryModal] = createSignal<boolean>(false)
   const [showCheckGuardrailModal, setShowCheckGuardrailModal] = createSignal<boolean>(false)
-
-  // Inputs for modal operations
-  const [seedTitle, setSeedTitle] = createSignal<string>('')
-  const [seedContent, setSeedContent] = createSignal<string>('')
   const [guardrailToolInput, setGuardrailToolInput] = createSignal<string>('bash')
   const [guardrailResult, setGuardrailResult] = createSignal<string>('')
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg)
-    setTimeout(() => setToastMessage(''), 3500)
-  }
 
   const loadAllRealData = async () => {
     setLoadingState(true)
@@ -80,11 +169,7 @@ export function MiraGoldLayout(props: {
         toolsData,
         propsData,
         auditData,
-        graphData,
         filesData,
-        findingsData,
-        configData,
-        providersData,
       ] = await Promise.all([
         req<any>('/health').catch(() => null),
         api.getGatewayHealth().catch(() => null),
@@ -92,18 +177,14 @@ export function MiraGoldLayout(props: {
         api.listToolsCached().catch(() => []),
         req<{ proposals: PatchProposal[] }>('/evolution/proposals').catch(() => ({ proposals: [] })),
         api.listAuditTrail({ limit: 30 }).catch(() => ({ entries: [] })),
-        req<{ nodes?: any[] }>('/knowledge/graph').catch(() => ({ nodes: [] })),
         req<{ files?: any[] }>('/workspace/tree').catch(() => ({ files: [] })),
-        api.listFindings().catch(() => []),
-        api.getConfig().catch(() => null),
-        api.listProviders().catch(() => []),
       ])
 
-      if (agentsData && agentsData.length > 0) {
+      if (Array.isArray(agentsData)) {
         setRealAgents(agentsData)
         setActiveAgentsCount(agentsData.length)
       }
-      if (toolsData && toolsData.length > 0) {
+      if (Array.isArray(toolsData)) {
         setRealTools(toolsData)
       }
       if (propsData?.proposals) {
@@ -112,23 +193,14 @@ export function MiraGoldLayout(props: {
       if (auditData?.entries) {
         setAuditLogs(auditData.entries)
       }
-      if (graphData?.nodes) {
-        setKnowledgeNodes(graphData.nodes)
-      }
       if (filesData?.files) {
         setWorkspaceFiles(filesData.files.filter((f) => !f.isDir))
-      }
-      if (findingsData) {
-        setFindingsList(findingsData)
       }
       if (gatewayData?.gateway) {
         setGatewayHealth(gatewayData)
         if (typeof gatewayData.gateway.avgLatencyMs === 'number') {
           setResponseTimeMs(gatewayData.gateway.avgLatencyMs)
           setLatencySec(Number((gatewayData.gateway.avgLatencyMs / 1000).toFixed(2)))
-        }
-        if (typeof gatewayData.gateway.requests === 'number') {
-          setTasksRunningCount(gatewayData.gateway.requests)
         }
       }
       if (healthData?.ok) {
@@ -140,24 +212,11 @@ export function MiraGoldLayout(props: {
           setMemoryUsageGb(Number((healthData.memoryUsage / 1024 / 1024 / 1024).toFixed(2)))
         }
       }
-      if (configData) {
-        setMiraConfig(configData)
-      }
-      if (providersData) {
-        const provs = Array.isArray(providersData)
-          ? providersData
-          : Object.entries(providersData).map(([id, p]: [string, any]) => ({
-              id,
-              name: p.name || id,
-              baseURL: p.options?.baseURL,
-              maskedKey: '***',
-            }))
-        setProviderList(provs)
-      }
     } catch (e) {
       console.warn('Real data sync error:', e)
     } finally {
       setLoadingState(false)
+      setInitialLoaded(true)
     }
   }
 
@@ -165,130 +224,88 @@ export function MiraGoldLayout(props: {
     void loadAllRealData()
 
     const handleResize = () => {
-      setIsMobileScreen(window.innerWidth < 1024)
-      if (window.innerWidth >= 1024) {
+      const mobile = window.innerWidth < 1024
+      setIsMobileScreen(mobile)
+      if (!mobile) {
         setIsMobileMenuOpen(false)
-        setIsRightSidebarOpen(false)
+      } else {
+        setShowSessions(false)
       }
     }
     window.addEventListener('resize', handleResize)
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        const el = document.getElementById('mira-global-search') as HTMLInputElement | null
-        if (el) el.focus()
+      if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const target = e.target as HTMLElement | null
+        const tag = target?.tagName?.toLowerCase()
+        if (tag !== 'input' && tag !== 'textarea' && tag !== 'select' && !target?.isContentEditable) {
+          e.preventDefault()
+          const el = document.getElementById('mira-global-search') as HTMLInputElement | null
+          el?.focus()
+        }
       }
       if (e.key === 'Escape') {
         setIsMobileMenuOpen(false)
         setIsRightSidebarOpen(false)
-        setShow3DModal(false)
-        setShowPatternModal(false)
-        setShowFabricsModal(false)
-        setShowModifyModal(false)
-        setShowSeedMemoryModal(false)
         setShowCheckGuardrailModal(false)
+        setShowProfileMenu(false)
+        if (isMobileScreen()) {
+          setShowSessions(false)
+          setShowActivity(false)
+        }
       }
     }
     window.addEventListener('keydown', handleKeyDown)
 
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null
+      if (showProfileMenu() && !target?.closest('[data-slot="profile-menu-root"]')) {
+        setShowProfileMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleOutsideClick)
+
     onCleanup(() => {
       window.removeEventListener('resize', handleResize)
       window.removeEventListener('keydown', handleKeyDown)
+      document.removeEventListener('mousedown', handleOutsideClick)
     })
   })
 
-  const navItems = [
-    { id: 'home', label: 'Home', icon: '🏠' },
-    { id: 'agents', label: 'Agents', icon: '👥' },
-    { id: 'tools', label: 'Tools', icon: '🛠' },
-    { id: 'memory', label: 'Memory', icon: '💾' },
-    { id: 'evolution', label: 'Evolution', icon: '🧬' },
-    { id: 'security', label: 'Security', icon: '🛡' },
-    { id: 'projects', label: 'Projects', icon: '📅' },
-    { id: 'analytics', label: 'Analytics', icon: '📊' },
-    { id: 'settings', label: 'Settings', icon: '⚙' },
+  const navItems: Array<{ id: WorkspaceId; label: string; desc: string }> = [
+    { id: 'work', label: 'Work', desc: 'Chat, Brio, Terminal & Tools' },
+    { id: 'missions', label: 'Missions', desc: 'Autonomous execution cockpit' },
+    { id: 'intelligence', label: 'Intelligence', desc: 'Memory & knowledge graph' },
+    { id: 'changes', label: 'Changes', desc: 'File diffs & snapshots' },
+    { id: 'evolution', label: 'Evolution', desc: 'Proposals & canary gates' },
+    { id: 'system', label: 'System', desc: 'Health, security & config' },
+    { id: 'dashboard', label: 'Analytics', desc: 'Reliability & token spend' },
   ]
 
-  const mobileBottomNavItems = [
-    { id: 'home', label: 'Home', icon: '🏠' },
-    { id: 'agents', label: 'Agents', icon: '👥' },
-    { id: 'tools', label: 'Tools', icon: '🛠' },
-    { id: 'evolution', label: 'Evolution', icon: '🧬' },
-    { id: 'menu', label: 'Menu', icon: '☰' },
+  const mobileBottomNavItems: Array<{ id: WorkspaceId | 'menu'; label: string }> = [
+    { id: 'work', label: 'Work' },
+    { id: 'missions', label: 'Missions' },
+    { id: 'evolution', label: 'Evolution' },
+    { id: 'system', label: 'System' },
+    { id: 'menu', label: 'More' },
   ]
 
-  const workspaceSubTabs = [
-    { id: 'chat', label: 'Chat', icon: '💬' },
-    { id: 'terminal', label: 'Terminal', icon: '▣' },
-    { id: 'agents', label: 'Agents', icon: '⚙' },
-    { id: 'tools', label: 'Tools', icon: '🎯' },
-    { id: 'memory', label: 'Memory', icon: '🎛' },
-    { id: 'evolution', label: 'Evolution', icon: '🚀' },
-    { id: 'security', label: 'Security', icon: '🛡' },
-    { id: 'files', label: 'Files', icon: '📁' },
-    { id: 'analytics', label: 'Analytics', icon: '📊' },
-    { id: 'settings', label: 'Settings', icon: '⚙' },
+  const workSubTabs: Array<{ id: WorkSubTabId; label: string }> = [
+    { id: 'chat', label: 'Chat' },
+    { id: 'brio', label: 'Brio' },
+    { id: 'terminal', label: 'Terminal' },
+    { id: 'agents', label: 'Agents' },
+    { id: 'tools', label: 'Tools' },
+    { id: 'files', label: 'Files' },
   ]
 
-  const [currentWorkspace, setCurrentWorkspace] = createSignal<WorkspaceId>('missions')
-
-  const handleNavClick = (id: string) => {
-    setActiveNav(id)
-    if (id === 'settings') {
-      window.dispatchEvent(new CustomEvent('mira:open-settings'))
-      setCurrentWorkspace('system')
-    } else if (id === 'home' || id === 'missions') {
-      setCurrentWorkspace('missions')
-    } else if (id === 'agents' || id === 'tools' || id === 'chat' || id === 'terminal') {
-      setCurrentWorkspace('work')
-      setActiveSubTab(id)
-    } else if (id === 'memory' || id === 'intelligence') {
-      setCurrentWorkspace('intelligence')
-    } else if (id === 'changes') {
-      setCurrentWorkspace('changes')
-    } else if (id === 'evolution') {
-      setCurrentWorkspace('evolution')
-    } else if (id === 'security') {
-      setCurrentWorkspace('system')
-    } else if (id === 'analytics' || id === 'dashboard') {
-      setCurrentWorkspace('dashboard')
-    } else {
-      setActiveSubTab(id)
+  const selectWorkspace = (id: WorkspaceId, subTab?: WorkSubTabId) => {
+    setCurrentWorkspace(id)
+    if (subTab && id === 'work') {
+      setActiveSubTab(subTab)
     }
-
     if (isMobileScreen()) {
       setIsMobileMenuOpen(false)
-    }
-  }
-
-  const handleSendPrompt = (e?: Event) => {
-    e?.preventDefault()
-    const val = inputPrompt().trim()
-    if (!val) return
-    props.store.sendPrompt(val)
-    setInputPrompt('')
-  }
-
-
-
-  const handleSeedMemory = async (e: Event) => {
-    e.preventDefault()
-    if (!seedTitle().trim()) return
-    try {
-      await api.seedKnowledge({
-        title: seedTitle().trim(),
-        content: seedContent().trim() || seedTitle().trim(),
-        tier: 'semantic',
-        source: 'user_ui',
-      })
-      showToast(`Memory node "${seedTitle()}" saved to knowledge graph.`)
-      setSeedTitle('')
-      setSeedContent('')
-      setShowSeedMemoryModal(false)
-      void loadAllRealData()
-    } catch (err) {
-      showToast(`Seed memory: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
@@ -302,105 +319,106 @@ export function MiraGoldLayout(props: {
     }
   }
 
-  const handlePromoteProposal = async (id: string) => {
-    try {
-      await req(`/evolution/proposals/${encodeURIComponent(id)}/promote`, { method: 'POST' })
-      showToast(`Proposal ${id} promoted successfully!`)
-      void loadAllRealData()
-    } catch (err) {
-      showToast(`Promote failed: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }
-
-  const handleRollbackProposal = async (id: string) => {
-    try {
-      await req(`/evolution/proposals/${encodeURIComponent(id)}/rollback`, { method: 'POST' })
-      showToast(`Proposal ${id} rolled back.`)
-      void loadAllRealData()
-    } catch (err) {
-      showToast(`Rollback failed: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }
-
-  // Filter helpers based on search
-  const filteredAgents = () => {
+  const filteredAgents = createMemo(() => {
     const q = searchQuery().toLowerCase().trim()
-    const list = realAgents().length > 0 ? realAgents() : [
-      { name: 'Mira Architect', description: 'System design, workflow decomposition, and planning agent', tools: ['search', 'plan'], permissions: 'full' },
-      { name: 'Mira Developer', description: 'Autonomous patch creation, TypeScript code engine', tools: ['bash', 'edit'], permissions: 'full' },
-      { name: 'Mira Reviewer', description: 'Security audit, linter validation, and quality gate', tools: ['read', 'lint'], permissions: 'readonly' },
-      { name: 'Mira Researcher', description: 'Knowledge retrieval, document parsing, and analysis', tools: ['websearch', 'fetch'], permissions: 'readonly' },
-    ]
+    const list = realAgents()
     if (!q) return list
     return list.filter((a) => (a.name || '').toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q))
-  }
+  })
 
-  const filteredTools = () => {
+  const filteredTools = createMemo(() => {
     const q = searchQuery().toLowerCase().trim()
     const list = realTools()
     if (!q) return list
     return list.filter((t) => (t.name || '').toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q))
-  }
+  })
 
-  const filteredFiles = () => {
+  const filteredFiles = createMemo(() => {
     const q = searchQuery().toLowerCase().trim()
     const list = workspaceFiles()
     if (!q) return list
     return list.filter((f) => (f.path || '').toLowerCase().includes(q))
+  })
+
+  // Recent Activity derived exclusively from real backend data (audit logs, proposals, sessions)
+  const recentActivityItems = createMemo(() => {
+    const items: Array<{ id: string; label: string; kind: 'ok' | 'warn' | 'accent'; time: number }> = []
+    for (const log of auditLogs().slice(0, 3)) {
+      items.push({
+        id: `audit-${log.id}`,
+        label: `${log.tool} (${log.decision})`,
+        kind: log.decision === 'allow' ? 'ok' : 'warn',
+        time: typeof log.createdAt === 'number' ? log.createdAt : Date.now(),
+      })
+    }
+    for (const p of proposals().slice(0, 2)) {
+      items.push({
+        id: `prop-${p.id}`,
+        label: `${p.id}: ${p.state}`,
+        kind: p.state.includes('FAILED') ? 'warn' : 'accent',
+        time: typeof p.createdAt === 'number' ? p.createdAt : Date.now(),
+      })
+    }
+    if (items.length === 0) {
+      for (const s of props.store.state.sessions.slice(0, 3)) {
+        const ts = typeof s.updatedAt === 'number' ? s.updatedAt : Date.parse(String(s.updatedAt || s.createdAt || ''))
+        items.push({
+          id: `sess-${s.id}`,
+          label: s.title || `Session ${s.id.slice(0, 6)}`,
+          kind: 'accent',
+          time: Number.isFinite(ts) ? ts : 0,
+        })
+      }
+    }
+    return items.slice(0, 5)
+  })
+
+  const pendingProposalsCount = createMemo(
+    () => proposals().filter((p) => p.state === 'PROPOSED' || p.state.endsWith('_PENDING')).length,
+  )
+
+  const ringCircumference = 201.06
+  const ringOffset = createMemo(() => {
+    const pct = systemHealthPct()
+    if (pct === null) return ringCircumference
+    const clamped = Math.max(0, Math.min(100, pct))
+    return ringCircumference * (1 - clamped / 100)
+  })
+
+  const serverLabel = () => {
+    try {
+      const u = getApiUrl()
+      return u ? new URL(u).host : window.location.host
+    } catch {
+      return 'same-origin'
+    }
   }
 
   return (
     <div
       style={{
         display: 'flex',
-        height: '100vh',
+        'min-height': '100vh',
+        height: '100dvh',
         width: '100vw',
         overflow: 'hidden',
         background: '#07090E',
         color: '#F1F3FA',
-        'font-family': "'Plus Jakarta Sans', system-ui, -apple-system, sans-serif",
+        'font-family': "var(--font-sans)",
         position: 'relative',
       }}
     >
-      {/* Toast Notification */}
-      <Show when={toastMessage()}>
-        <div
-          style={{
-            position: 'fixed',
-            bottom: isMobileScreen() ? '70px' : 'auto',
-            top: isMobileScreen() ? 'auto' : '20px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            background: 'linear-gradient(135deg, #101524 0%, #1A2136 100%)',
-            border: '1px solid #E5B842',
-            color: '#F5D061',
-            padding: '10px 20px',
-            'border-radius': '999px',
-            'font-size': '13px',
-            'font-weight': '600',
-            'box-shadow': '0 8px 32px rgba(229, 184, 66, 0.4)',
-            'z-index': '9999',
-            display: 'flex',
-            'align-items': 'center',
-            gap: '8px',
-            'max-width': '90vw',
-          }}
-        >
-          <span>✦</span>
-          <span>{toastMessage()}</span>
-        </div>
-      </Show>
-
-      {/* ========================================================================= */}
-      {/* MOBILE BACKDROP & DRAWER OVERLAY */}
-      {/* ========================================================================= */}
+      {/* MOBILE DRAWER */}
       <Show when={isMobileScreen() && isMobileMenuOpen()}>
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Navigation menu"
           onClick={() => setIsMobileMenuOpen(false)}
           style={{
             position: 'fixed',
             inset: '0',
-            background: 'rgba(0, 0, 0, 0.75)',
+            background: 'rgba(0, 0, 0, 0.72)',
             'backdrop-filter': 'blur(4px)',
             'z-index': '1000',
             display: 'flex',
@@ -409,59 +427,74 @@ export function MiraGoldLayout(props: {
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: '270px',
+              width: '276px',
               height: '100%',
               background: '#090B12',
               'border-right': '1px solid #1A2033',
               display: 'flex',
               'flex-direction': 'column',
               padding: '16px 14px',
-              gap: '16px',
+              gap: '14px',
             }}
           >
-            {/* Header & Close Button */}
             <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', 'border-bottom': '1px solid #151A2C', 'padding-bottom': '12px' }}>
               <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
-                <div style={{ 'font-size': '20px', 'font-weight': '900', color: '#F5D061' }}>MIRA</div>
-                <span style={{ 'font-size': '10px', color: '#D4AF37' }}>by Hoodx</span>
+                <div style={{ 'font-size': '19px', 'font-weight': '900', color: '#F5D061', 'letter-spacing': '0.06em' }}>MIRA</div>
+                <span style={{ 'font-size': '11px', color: '#A0A9C0' }}>Platform</span>
               </div>
               <button
                 type="button"
+                aria-label="Close navigation menu"
                 onClick={() => setIsMobileMenuOpen(false)}
-                style={{ background: 'transparent', border: 'none', color: '#929CB3', 'font-size': '22px', cursor: 'pointer', 'min-height': '44px', 'min-width': '44px', display: 'grid', 'place-items': 'center' }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#A0A9C0',
+                  'font-size': '20px',
+                  cursor: 'pointer',
+                  'min-height': '44px',
+                  'min-width': '44px',
+                  display: 'grid',
+                  'place-items': 'center',
+                }}
               >
                 ✕
               </button>
             </div>
 
-            {/* Nav list */}
-            <nav style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', flex: '1', overflow: 'auto' }}>
+            <div style={{ 'padding-bottom': '8px', 'border-bottom': '1px solid #151A2C' }}>
+              <HeaderModelSelector settings={props.settings} />
+            </div>
+
+            <nav aria-label="Primary workspaces" style={{ display: 'flex', 'flex-direction': 'column', gap: '4px', flex: '1', overflow: 'auto' }}>
               <For each={navItems}>
                 {(item) => {
-                  const active = () => activeNav() === item.id
+                  const active = () => currentWorkspace() === item.id
                   return (
                     <button
                       type="button"
-                      onClick={() => handleNavClick(item.id)}
+                      onClick={() => selectWorkspace(item.id)}
+                      aria-current={active() ? 'page' : undefined}
                       style={{
                         display: 'flex',
                         'align-items': 'center',
                         'justify-content': 'space-between',
-                        padding: '12px 14px',
-                        'border-radius': '12px',
-                        border: 'none',
+                        padding: '10px 12px',
+                        'border-radius': '10px',
+                        border: active() ? '1px solid rgba(229, 184, 66, 0.35)' : '1px solid transparent',
                         background: active()
                           ? 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)'
                           : 'transparent',
-                        color: active() ? '#07090E' : '#929CB3',
-                        'font-size': '14px',
+                        color: active() ? '#07090E' : '#A0A9C0',
+                        'font-size': '13.5px',
                         'font-weight': active() ? '700' : '500',
                         cursor: 'pointer',
                         'min-height': '44px',
+                        'text-align': 'left',
                       }}
                     >
-                      <div style={{ display: 'flex', 'align-items': 'center', gap: '12px' }}>
-                        <span style={{ 'font-size': '18px' }}>{item.icon}</span>
+                      <div style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
+                        <NavIcon name={item.id} size={17} />
                         <span>{item.label}</span>
                       </div>
                       <Show when={active()}>
@@ -473,141 +506,199 @@ export function MiraGoldLayout(props: {
               </For>
             </nav>
 
-            <div
-              style={{
-                background: 'linear-gradient(180deg, rgba(229, 184, 66, 0.15) 0%, rgba(14, 18, 30, 0.95) 100%)',
-                border: '1px solid rgba(229, 184, 66, 0.3)',
-                'border-radius': '14px',
-                padding: '12px',
-                'font-size': '11px',
-                color: '#929CB3',
-              }}
-            >
-              Powered by <strong style={{ color: '#F5D061' }}>Hoodx</strong> • Next-Gen AI Architecture
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', 'padding-top': '8px', 'border-top': '1px solid #151A2C' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileMenuOpen(false)
+                  window.dispatchEvent(new CustomEvent('mira:open-palette'))
+                }}
+                style={{
+                  background: '#101522',
+                  border: '1px solid #1E253A',
+                  color: '#F1F3FA',
+                  padding: '10px 12px',
+                  'border-radius': '10px',
+                  'font-size': '12.5px',
+                  'font-weight': '600',
+                  cursor: 'pointer',
+                  'text-align': 'left',
+                }}
+              >
+                Command Palette (⌘K)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileMenuOpen(false)
+                  window.dispatchEvent(new CustomEvent('mira:open-connect'))
+                }}
+                style={{
+                  background: '#101522',
+                  border: '1px solid #1E253A',
+                  color: '#E5B842',
+                  padding: '10px 12px',
+                  'border-radius': '10px',
+                  'font-size': '12.5px',
+                  'font-weight': '600',
+                  cursor: 'pointer',
+                  'text-align': 'left',
+                }}
+              >
+                Provider Connections
+              </button>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMobileMenuOpen(false)
+                    void loadAllRealData()
+                  }}
+                  style={{
+                    flex: '1',
+                    background: '#101522',
+                    border: '1px solid #1E253A',
+                    color: '#A0A9C0',
+                    padding: '9px 10px',
+                    'border-radius': '10px',
+                    'font-size': '12px',
+                    'font-weight': '600',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ↻ Sync
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMobileMenuOpen(false)
+                    window.dispatchEvent(new CustomEvent('mira:open-settings'))
+                  }}
+                  style={{
+                    flex: '1',
+                    background: '#101522',
+                    border: '1px solid #1E253A',
+                    color: '#A0A9C0',
+                    padding: '9px 10px',
+                    'border-radius': '10px',
+                    'font-size': '12px',
+                    'font-weight': '600',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Settings
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </Show>
 
-      {/* ========================================================================= */}
       {/* 1. DESKTOP LEFT SIDEBAR NAVIGATION */}
-      {/* ========================================================================= */}
       <Show when={!isMobileScreen()}>
         <aside
+          aria-label="Primary navigation"
           style={{
-            width: '220px',
+            width: '216px',
             'flex-shrink': '0',
             background: '#090B12',
             'border-right': '1px solid #1A2033',
             display: 'flex',
             'flex-direction': 'column',
-            padding: '16px 12px',
-            gap: '16px',
+            padding: '14px 12px',
+            gap: '14px',
             'user-select': 'none',
           }}
         >
           {/* Brand Monogram Header */}
-          <div
+          <button
+            type="button"
+            onClick={() => selectWorkspace('work', 'chat')}
+            title="Go to Mira Chat"
             style={{
               display: 'flex',
-              'flex-direction': 'column',
               'align-items': 'center',
-              padding: '10px 0 16px',
+              gap: '10px',
+              padding: '6px 8px 14px',
               'border-bottom': '1px solid #151A2C',
+              background: 'transparent',
+              borderTop: 'none',
+              borderLeft: 'none',
+              borderRight: 'none',
+              cursor: 'pointer',
+              'text-align': 'left',
             }}
           >
-            <div
-              style={{
-                width: '54px',
-                height: '42px',
-                display: 'flex',
-                'align-items': 'center',
-                'justify-content': 'center',
-              }}
-            >
-              <svg width="48" height="38" viewBox="0 0 54 42" fill="none">
-                <defs>
-                  <linearGradient id="miraGold" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stop-color="#FCE183" />
-                    <stop offset="50%" stop-color="#E5B842" />
-                    <stop offset="100%" stop-color="#C5962B" />
-                  </linearGradient>
-                </defs>
-                <path
-                  d="M4 38 L16 4 L27 28 L38 4 L50 38"
-                  stroke="url(#miraGold)"
-                  stroke-width="5"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-                <path
-                  d="M12 38 L22 14 L27 24 L32 14 L42 38"
-                  stroke="url(#miraGold)"
-                  stroke-width="3"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  opacity="0.8"
-                />
-              </svg>
+            <svg width="34" height="28" viewBox="0 0 54 42" fill="none" aria-hidden="true">
+              <defs>
+                <linearGradient id="miraGold" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#FCE183" />
+                  <stop offset="50%" stop-color="#E5B842" />
+                  <stop offset="100%" stop-color="#C5962B" />
+                </linearGradient>
+              </defs>
+              <path d="M4 38 L16 4 L27 28 L38 4 L50 38" stroke="url(#miraGold)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M12 38 L22 14 L27 24 L32 14 L42 38" stroke="url(#miraGold)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.8" />
+            </svg>
+            <div>
+              <div style={{ 'font-size': '17px', 'font-weight': '900', 'letter-spacing': '0.08em', color: '#F5D061', 'line-height': '1.1' }}>
+                MIRA
+              </div>
+              <div style={{ 'font-size': '10.5px', color: '#7A859E', 'font-weight': '500' }}>
+                Autonomous AI
+              </div>
             </div>
-            <div
-              style={{
-                'font-size': '20px',
-                'font-weight': '900',
-                'letter-spacing': '0.08em',
-                color: '#F5D061',
-                'margin-top': '4px',
-              }}
-            >
-              MIRA
-            </div>
-            <div
-              style={{
-                'font-size': '11px',
-                color: '#D4AF37',
-                'font-weight': '500',
-                'letter-spacing': '0.05em',
-              }}
-            >
-              by Hoodx
-            </div>
-          </div>
+          </button>
 
           {/* Navigation List */}
-          <nav style={{ display: 'flex', 'flex-direction': 'column', gap: '4px', flex: '1' }}>
+          <nav aria-label="Workspaces" style={{ display: 'flex', 'flex-direction': 'column', gap: '4px', flex: '1', overflow: 'auto' }}>
             <For each={navItems}>
               {(item) => {
-                const active = () => activeNav() === item.id
+                const active = () => currentWorkspace() === item.id
                 return (
                   <button
                     type="button"
-                    onClick={() => handleNavClick(item.id)}
+                    onClick={() => selectWorkspace(item.id)}
+                    aria-current={active() ? 'page' : undefined}
+                    title={item.desc}
                     style={{
                       display: 'flex',
                       'align-items': 'center',
                       'justify-content': 'space-between',
-                      padding: '10px 14px',
-                      'border-radius': '12px',
+                      padding: '9px 12px',
+                      'border-radius': '10px',
                       border: 'none',
                       background: active()
                         ? 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)'
                         : 'transparent',
-                      color: active() ? '#07090E' : '#929CB3',
+                      color: active() ? '#07090E' : '#A0A9C0',
                       'font-size': '13px',
                       'font-weight': active() ? '700' : '500',
                       cursor: 'pointer',
-                      transition: 'all 0.15s ease',
-                      'box-shadow': active() ? '0 4px 16px rgba(212, 175, 55, 0.3)' : 'none',
+                      transition: 'all 0.14s ease',
+                      'box-shadow': active() ? '0 4px 14px rgba(212, 175, 55, 0.25)' : 'none',
                       'text-align': 'left',
-                      'min-height': '40px',
+                      'min-height': '38px',
                     }}
                   >
                     <div style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
-                      <span style={{ 'font-size': '15px' }}>{item.icon}</span>
+                      <NavIcon name={item.id} size={16} />
                       <span>{item.label}</span>
                     </div>
-                    <Show when={active()}>
-                      <span style={{ 'font-size': '12px', 'font-weight': '800' }}>›</span>
+                    <Show when={item.id === 'evolution' && pendingProposalsCount() > 0 && !active()}>
+                      <span
+                        class="tabular-nums"
+                        style={{
+                          background: 'rgba(229, 184, 66, 0.18)',
+                          color: '#F5D061',
+                          'font-size': '10px',
+                          'font-weight': '700',
+                          padding: '1px 6px',
+                          'border-radius': '6px',
+                        }}
+                      >
+                        {pendingProposalsCount()}
+                      </span>
                     </Show>
                   </button>
                 )
@@ -615,87 +706,99 @@ export function MiraGoldLayout(props: {
             </For>
           </nav>
 
-          {/* Bottom Card — Powered by Hoodx */}
+          {/* Bottom Quick Utilities */}
           <div
             style={{
-              background:
-                'linear-gradient(180deg, rgba(229, 184, 66, 0.15) 0%, rgba(14, 18, 30, 0.95) 100%)',
-              border: '1px solid rgba(229, 184, 66, 0.3)',
-              'border-radius': '14px',
-              padding: '14px',
+              background: '#0D111E',
+              border: '1px solid #1A2033',
+              'border-radius': '12px',
+              padding: '10px',
               display: 'flex',
               'flex-direction': 'column',
-              gap: '8px',
-              position: 'relative',
-              overflow: 'hidden',
+              gap: '6px',
             }}
           >
-            <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
-              <span style={{ color: '#E5B842', 'font-size': '15px' }}>✦</span>
-              <div style={{ 'font-size': '11px', color: '#929CB3' }}>
-                Powered by <strong style={{ color: '#F5D061' }}>Hoodx</strong>
-              </div>
-            </div>
-            <div
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent('mira:open-palette'))}
               style={{
-                'font-size': '11px',
-                color: '#C5962B',
-                'line-height': '1.4',
-                'font-style': 'italic',
+                display: 'flex',
+                'align-items': 'center',
+                'justify-content': 'space-between',
+                background: '#090B12',
+                border: '1px solid #1E253A',
+                color: '#A0A9C0',
+                padding: '7px 10px',
+                'border-radius': '8px',
+                'font-size': '11.5px',
+                cursor: 'pointer',
               }}
             >
-              Building Intelligent Systems for the Next Generation.
+              <span>Command Palette</span>
+              <span class="kbd">⌘K</span>
+            </button>
+            <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', padding: '2px 4px', 'font-size': '11px', color: '#7A859E' }}>
+              <span style={{ display: 'flex', 'align-items': 'center', gap: '6px' }}>
+                <span
+                  style={{
+                    width: '7px',
+                    height: '7px',
+                    'border-radius': '50%',
+                    background: props.store.state.connected ? '#34d399' : '#f87171',
+                  }}
+                />
+                {props.store.state.connected ? 'Gateway online' : 'Reconnecting'}
+              </span>
+              <span class="tabular-nums" style={{ 'font-family': 'var(--font-mono)', 'font-size': '10px' }}>
+                {activeAgentsCount() !== null ? `${activeAgentsCount()} agents` : '—'}
+              </span>
             </div>
           </div>
         </aside>
       </Show>
 
-      {/* ========================================================================= */}
       {/* 2. MAIN CONTENT AREA */}
-      {/* ========================================================================= */}
-      <div style={{ flex: '1', display: 'flex', 'flex-direction': 'column', 'min-width': '0', height: '100vh', position: 'relative' }}>
+      <div style={{ flex: '1', display: 'flex', 'flex-direction': 'column', 'min-width': '0', height: '100%', position: 'relative' }}>
         {/* TOP HEADER BAR */}
         <header
+          class="mira-gold-header"
           style={{
-            height: '60px',
+            height: '54px',
             'flex-shrink': '0',
             'border-bottom': '1px solid #1A2033',
             background: '#07090E',
             display: 'flex',
             'align-items': 'center',
             'justify-content': 'space-between',
-            padding: isMobileScreen() ? '0 12px' : '0 20px',
-            gap: isMobileScreen() ? '8px' : '16px',
+            padding: isMobileScreen() ? '0 10px' : '0 18px',
+            gap: isMobileScreen() ? '8px' : '12px',
           }}
         >
-          {/* Mobile Hamburger Menu Trigger */}
+          {/* Mobile Menu Trigger */}
           <Show when={isMobileScreen()}>
             <button
               type="button"
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen())}
-              aria-label="Toggle Navigation Menu"
+              aria-label="Open navigation menu"
+              aria-expanded={isMobileMenuOpen() ? 'true' : 'false'}
               style={{
-                display: 'flex',
-                'align-items': 'center',
-                'justify-content': 'center',
+                display: 'grid',
+                'place-items': 'center',
                 width: '40px',
                 height: '40px',
                 'border-radius': '10px',
                 background: '#0D111E',
                 border: '1px solid #1F273E',
                 color: '#F5D061',
-                'font-size': '18px',
                 cursor: 'pointer',
                 'flex-shrink': '0',
-                'min-height': '44px',
-                'min-width': '44px',
               }}
             >
-              ☰
+              <NavIcon name="menu" size={18} />
             </button>
           </Show>
 
-          {/* Capsule Search Input */}
+          {/* Search Input */}
           <div
             style={{
               display: 'flex',
@@ -703,20 +806,24 @@ export function MiraGoldLayout(props: {
               gap: '8px',
               background: '#0D111E',
               border: '1px solid #1F273E',
-              'border-radius': '999px',
-              padding: '6px 14px',
+              'border-radius': '10px',
+              padding: '5px 10px',
               flex: '1',
-              'max-width': isMobileScreen() ? '100%' : '420px',
-              color: '#929CB3',
-              'font-size': '13px',
-              transition: 'border-color 0.15s ease',
+              'min-width': '0',
+              'max-width': isMobileScreen() ? '100%' : '380px',
+              color: '#A0A9C0',
+              'min-height': '36px',
             }}
           >
-            <span style={{ opacity: '0.6', 'font-size': '14px' }}>🔍</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style={{ 'flex-shrink': '0', opacity: '0.65' }}>
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.3-4.3" />
+            </svg>
             <input
               id="mira-global-search"
-              type="text"
-              placeholder={isMobileScreen() ? 'Search Mira...' : 'Search Mira agents, tools, memory, or files... (Ctrl + K)'}
+              type="search"
+              aria-label="Filter agents, tools, and workspace files"
+              placeholder={isMobileScreen() ? 'Filter agents, tools, files…' : 'Filter agents, tools, files… ( / )'}
               value={searchQuery()}
               onInput={(e) => setSearchQuery(e.currentTarget.value)}
               style={{
@@ -725,7 +832,7 @@ export function MiraGoldLayout(props: {
                 outline: 'none',
                 color: '#F1F3FA',
                 width: '100%',
-                'font-size': '13px',
+                'font-size': '12.5px',
               }}
             />
           </div>
@@ -736,212 +843,298 @@ export function MiraGoldLayout(props: {
           </Show>
 
           {/* Right Header Controls */}
-          <div style={{ display: 'flex', 'align-items': 'center', gap: isMobileScreen() ? '6px' : '12px' }}>
-            {/* Connect / Key Provider Setup */}
-            <button
-              type="button"
-              onClick={() => window.dispatchEvent(new CustomEvent('mira:open-connect'))}
-              title="Provider Connections & API Keys"
-              style={{
-                background: '#0D111E',
-                border: '1px solid #1F273E',
-                color: '#F5D061',
-                padding: '6px 10px',
-                'border-radius': '8px',
-                'font-size': '12px',
-                'font-weight': '600',
-                cursor: 'pointer',
-                display: 'flex',
-                'align-items': 'center',
-                gap: '4px',
-                'min-height': '36px',
-              }}
-            >
-              <span>🔌</span>
-              <Show when={!isMobileScreen()}>
-                <span>Connect</span>
-              </Show>
-            </button>
-
-            {/* Refresh Live Data */}
-            <button
-              type="button"
-              onClick={loadAllRealData}
-              title="Sync Real Data"
-              style={{
-                background: '#0D111E',
-                border: '1px solid #1F273E',
-                color: loadingState() ? '#E5B842' : '#929CB3',
-                padding: '6px 10px',
-                'border-radius': '8px',
-                'font-size': '12px',
-                'font-weight': '600',
-                cursor: 'pointer',
-                display: 'flex',
-                'align-items': 'center',
-                gap: '4px',
-                'min-height': '36px',
-              }}
-            >
-              <span style={{ animation: loadingState() ? 'spin 1s linear infinite' : 'none' }}>🔄</span>
-              <Show when={!isMobileScreen()}>
-                <span>{loadingState() ? 'Syncing...' : 'Sync'}</span>
-              </Show>
-            </button>
-
-            {/* Settings Trigger */}
-            <button
-              type="button"
-              onClick={() => window.dispatchEvent(new CustomEvent('mira:open-settings'))}
-              title="Mira Settings (Ctrl + ,)"
-              style={{
-                background: '#0D111E',
-                border: '1px solid #1F273E',
-                color: '#929CB3',
-                padding: '6px 10px',
-                'border-radius': '8px',
-                'font-size': '14px',
-                cursor: 'pointer',
-                display: 'flex',
-                'align-items': 'center',
-                'justify-content': 'center',
-                'min-height': '36px',
-                'min-width': '36px',
-              }}
-            >
-              ⚙
-            </button>
-
-            {/* Online Status (Desktop Only) */}
+          <div style={{ display: 'flex', 'align-items': 'center', gap: isMobileScreen() ? '6px' : '8px', 'flex-shrink': '0' }}>
             <Show when={!isMobileScreen()}>
-              <div
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent('mira:open-connect'))}
+                title="Provider connections & API keys"
                 style={{
+                  background: '#0D111E',
+                  border: '1px solid #1F273E',
+                  color: '#F5D061',
+                  padding: '6px 10px',
+                  'border-radius': '8px',
+                  'font-size': '12px',
+                  'font-weight': '600',
+                  cursor: 'pointer',
                   display: 'flex',
                   'align-items': 'center',
                   gap: '6px',
-                  'font-size': '12px',
-                  'font-weight': '600',
-                  color: '#20C997',
+                  'min-height': '34px',
                 }}
               >
-                <span
-                  style={{
-                    width: '7px',
-                    height: '7px',
-                    'border-radius': '50%',
-                    background: '#20C997',
-                    'box-shadow': '0 0 8px #20C997',
-                  }}
-                />
-                Online
-              </div>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 22v-5" />
+                  <path d="M9 8V2" />
+                  <path d="M15 8V2" />
+                  <path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" />
+                </svg>
+                <span>Connect</span>
+              </button>
             </Show>
 
-            {/* Notification Bell */}
-            <div
-              onClick={() => handleNavClick('evolution')}
+            {/* Sync Real Data (Desktop) */}
+            <Show when={!isMobileScreen()}>
+              <button
+                type="button"
+                onClick={loadAllRealData}
+                disabled={loadingState()}
+                aria-label="Sync system telemetry"
+                title="Sync live backend data"
+                style={{
+                  background: '#0D111E',
+                  border: '1px solid #1F273E',
+                  color: loadingState() ? '#E5B842' : '#A0A9C0',
+                  padding: '6px 10px',
+                  height: '34px',
+                  'border-radius': '8px',
+                  'font-size': '12px',
+                  'font-weight': '600',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  'align-items': 'center',
+                  'justify-content': 'center',
+                  gap: '5px',
+                }}
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                  style={{ animation: loadingState() ? 'spin 1s linear infinite' : 'none' }}
+                >
+                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                  <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                  <path d="M16 16h5v5" />
+                </svg>
+                <span>{loadingState() ? 'Syncing…' : 'Sync'}</span>
+              </button>
+
+              {/* Settings Trigger */}
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent('mira:open-settings'))}
+                aria-label="Open Settings"
+                title="Mira Settings (⌘,)"
+                style={{
+                  background: '#0D111E',
+                  border: '1px solid #1F273E',
+                  color: '#A0A9C0',
+                  width: '34px',
+                  height: '34px',
+                  'border-radius': '8px',
+                  cursor: 'pointer',
+                  display: 'grid',
+                  'place-items': 'center',
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+              </button>
+            </Show>
+
+            {/* Evolution Proposals Bell */}
+            <button
+              type="button"
+              onClick={() => selectWorkspace('evolution')}
+              aria-label={`View evolution proposals (${pendingProposalsCount()} pending)`}
+              title="Evolution proposals & approvals"
               style={{
                 position: 'relative',
                 cursor: 'pointer',
-                background: '#0D111E',
-                border: '1px solid #1F273E',
-                width: '36px',
-                height: '36px',
-                'border-radius': '50%',
+                background: currentWorkspace() === 'evolution' ? 'rgba(229, 184, 66, 0.16)' : '#0D111E',
+                border: currentWorkspace() === 'evolution' ? '1px solid rgba(229, 184, 66, 0.45)' : '1px solid #1F273E',
+                color: '#E5B842',
+                width: isMobileScreen() ? '38px' : '34px',
+                height: isMobileScreen() ? '38px' : '34px',
+                'border-radius': '8px',
                 display: 'grid',
                 'place-items': 'center',
                 'flex-shrink': '0',
               }}
             >
-              <span style={{ 'font-size': '15px', color: '#E5B842' }}>🔔</span>
-              <Show when={proposals().length > 0}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+                <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+              </svg>
+              <Show when={pendingProposalsCount() > 0}>
                 <span
+                  class="tabular-nums"
                   style={{
                     position: 'absolute',
-                    top: '1px',
-                    right: '1px',
-                    background: '#EF4444',
-                    color: '#FFF',
+                    top: '-4px',
+                    right: '-4px',
+                    background: '#f87171',
+                    color: '#07090E',
                     'font-size': '10px',
                     'font-weight': '800',
-                    width: '16px',
+                    'min-width': '16px',
                     height: '16px',
-                    'border-radius': '50%',
+                    padding: '0 4px',
+                    'border-radius': '999px',
                     display: 'grid',
                     'place-items': 'center',
                     border: '2px solid #07090E',
                   }}
                 >
-                  {proposals().length}
+                  {pendingProposalsCount()}
                 </span>
               </Show>
-            </div>
+            </button>
 
-            {/* Mobile Toggle for System Overview Right Drawer */}
-            <Show when={isMobileScreen()}>
-              <button
-                type="button"
-                onClick={() => setIsRightSidebarOpen(!isRightSidebarOpen())}
-                style={{
-                  background: isRightSidebarOpen() ? '#E5B842' : '#0D111E',
-                  border: '1px solid #1F273E',
-                  color: isRightSidebarOpen() ? '#07090E' : '#F5D061',
-                  width: '36px',
-                  height: '36px',
-                  'border-radius': '50%',
-                  display: 'grid',
-                  'place-items': 'center',
-                  'font-size': '15px',
-                  cursor: 'pointer',
-                  'flex-shrink': '0',
-                }}
-              >
-                📊
-              </button>
-            </Show>
-
-            {/* Profile Avatar (Saheed) */}
-            <div
+            {/* System Overview Drawer Toggle (Desktop & Mobile) */}
+            <button
+              type="button"
+              onClick={() => setIsRightSidebarOpen((v) => !v)}
+              aria-label="Toggle System Overview panel"
+              aria-expanded={isRightSidebarOpen() ? 'true' : 'false'}
+              title="System Overview & Activity"
               style={{
-                display: 'flex',
-                'align-items': 'center',
-                gap: '8px',
+                background: isRightSidebarOpen() ? '#E5B842' : '#0D111E',
+                border: '1px solid #1F273E',
+                color: isRightSidebarOpen() ? '#07090E' : '#F5D061',
+                width: isMobileScreen() ? '38px' : '34px',
+                height: isMobileScreen() ? '38px' : '34px',
+                'border-radius': '8px',
+                display: 'grid',
+                'place-items': 'center',
                 cursor: 'pointer',
                 'flex-shrink': '0',
               }}
             >
-              <div
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect width="18" height="18" x="3" y="3" rx="2" />
+                <path d="M15 3v18" />
+              </svg>
+            </button>
+
+            {/* Account & Gateway Profile Menu */}
+            <div data-slot="profile-menu-root" style={{ position: 'relative', 'flex-shrink': '0' }}>
+              <button
+                type="button"
+                onClick={() => setShowProfileMenu((v) => !v)}
+                aria-label="Account and gateway menu"
+                aria-expanded={showProfileMenu() ? 'true' : 'false'}
                 style={{
-                  width: '36px',
-                  height: '36px',
+                  width: isMobileScreen() ? '38px' : '34px',
+                  height: isMobileScreen() ? '38px' : '34px',
                   'border-radius': '50%',
                   overflow: 'hidden',
                   border: '2px solid #E5B842',
-                  'box-shadow': '0 0 10px rgba(229, 184, 66, 0.4)',
-                  background: '#1A2136',
+                  background: 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)',
+                  color: '#07090E',
+                  'font-weight': '800',
+                  'font-size': '13px',
+                  display: 'grid',
+                  'place-items': 'center',
+                  cursor: 'pointer',
+                  padding: '0',
                 }}
               >
-                <img
-                  src="/assets/user_avatar_saheed.jpg"
-                  alt="Saheed"
-                  style={{ width: '100%', height: '100%', 'object-fit': 'cover' }}
-                  onError={(e) => { e.currentTarget.style.display = 'none' }}
-                />
-              </div>
+                <Show when={!avatarFailed()} fallback={<span>S</span>}>
+                  <img
+                    src="/assets/user_avatar_saheed.jpg"
+                    alt="Saheed"
+                    style={{ width: '100%', height: '100%', 'object-fit': 'cover' }}
+                    onError={() => setAvatarFailed(true)}
+                  />
+                </Show>
+              </button>
+
+              <Show when={showProfileMenu()}>
+                <div
+                  role="menu"
+                  aria-label="Account menu"
+                  style={{
+                    position: 'absolute',
+                    right: '0',
+                    top: 'calc(100% + 8px)',
+                    width: '240px',
+                    background: '#0D111E',
+                    border: '1px solid #2B3552',
+                    'border-radius': '12px',
+                    'box-shadow': '0 16px 40px rgba(0, 0, 0, 0.65)',
+                    padding: '8px',
+                    display: 'flex',
+                    'flex-direction': 'column',
+                    gap: '4px',
+                    'z-index': '1100',
+                  }}
+                >
+                  <div style={{ padding: '8px 10px', 'border-bottom': '1px solid #1E253A', 'margin-bottom': '4px' }}>
+                    <div style={{ 'font-size': '13px', 'font-weight': '700', color: '#F1F3FA' }}>Saheed</div>
+                    <div style={{ 'font-size': '11px', color: '#7A859E', 'font-family': 'var(--font-mono)', overflow: 'hidden', 'text-overflow': 'ellipsis' }}>
+                      {serverLabel()}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setShowProfileMenu(false)
+                      window.dispatchEvent(new CustomEvent('mira:open-connect'))
+                    }}
+                    class="btn btn-ghost"
+                    style={{ 'justify-content': 'flex-start', padding: '8px 10px', 'font-size': '12.5px', 'border-radius': '8px' }}
+                  >
+                    Provider Connections
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setShowProfileMenu(false)
+                      window.dispatchEvent(new CustomEvent('mira:open-settings'))
+                    }}
+                    class="btn btn-ghost"
+                    style={{ 'justify-content': 'flex-start', padding: '8px 10px', 'font-size': '12.5px', 'border-radius': '8px' }}
+                  >
+                    Settings & Config
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setShowProfileMenu(false)
+                      window.dispatchEvent(new CustomEvent('mira:open-trace'))
+                    }}
+                    class="btn btn-ghost"
+                    style={{ 'justify-content': 'flex-start', padding: '8px 10px', 'font-size': '12.5px', 'border-radius': '8px' }}
+                  >
+                    Trace Viewer
+                  </button>
+                  <div style={{ height: '1px', background: '#1E253A', margin: '4px 0' }} />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setShowProfileMenu(false)
+                      toast.info('Disconnected session token')
+                      window.dispatchEvent(new CustomEvent('mira:sign-out'))
+                    }}
+                    class="btn btn-ghost"
+                    style={{ 'justify-content': 'flex-start', padding: '8px 10px', 'font-size': '12.5px', color: '#f87171', 'border-radius': '8px' }}
+                  >
+                    Disconnect Server
+                  </button>
+                </div>
+              </Show>
             </div>
           </div>
         </header>
 
-        {/* PRIMARY WORKSPACE TOP NAV */}
-        <TopNav
-          workspace={currentWorkspace()}
-          onChange={(id) => setCurrentWorkspace(id)}
-          workTab={activeSubTab() === 'brio' ? 'brio' : 'chat'}
-          onWorkTab={(t) => setActiveSubTab(t)}
-        />
-
-        {/* WORKSPACE & RIGHT SIDEBAR SPLIT */}
-        <div style={{ flex: '1', display: 'flex', overflow: 'hidden', background: '#07090E', 'margin-bottom': isMobileScreen() ? '56px' : '0' }}>
+        {/* WORKSPACE & OPTIONAL RIGHT OVERVIEW DRAWER */}
+        <div style={{ flex: '1', display: 'flex', overflow: 'hidden', background: '#07090E', 'margin-bottom': isMobileScreen() ? '56px' : '0', 'min-height': '0' }}>
           {/* CENTER WORKSPACE */}
           <main
             style={{
@@ -949,167 +1142,15 @@ export function MiraGoldLayout(props: {
               display: 'flex',
               'flex-direction': 'column',
               overflow: 'hidden',
-              padding: isMobileScreen() ? '10px' : '16px',
-              gap: '12px',
               'min-width': '0',
+              'min-height': '0',
             }}
           >
-            {/* HERO WELCOME BANNER */}
-            <div
-              style={{
-                background:
-                  'radial-gradient(circle at 75% 30%, rgba(229, 184, 66, 0.25) 0%, rgba(13, 17, 28, 0.95) 60%)',
-                border: '1px solid rgba(229, 184, 66, 0.35)',
-                'border-radius': '16px',
-                'min-height': isMobileScreen() ? 'auto' : '140px',
-                display: 'flex',
-                'flex-direction': isMobileScreen() ? 'column' : 'row',
-                'align-items': isMobileScreen() ? 'flex-start' : 'center',
-                'justify-content': 'space-between',
-                position: 'relative',
-                overflow: 'hidden',
-                padding: isMobileScreen() ? '14px' : '0 24px',
-                'box-shadow': '0 8px 30px rgba(0,0,0,0.5)',
-                'flex-shrink': '0',
-                gap: isMobileScreen() ? '12px' : '0',
-              }}
-            >
-              {/* Left Welcome Text */}
-              <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', 'z-index': '2' }}>
-                <div style={{ 'font-size': isMobileScreen() ? '20px' : '24px', 'font-weight': '800', color: '#F1F3FA' }}>
-                  Welcome back, <span style={{ color: '#F5D061' }}>Saheed!</span>
-                </div>
-                <div style={{ 'font-size': '12px', color: '#929CB3' }}>
-                  Your autonomous AI engineering partner.
-                </div>
-
-                {/* Real Status Badges */}
-                <div style={{ display: 'flex', gap: '6px', 'margin-top': '4px', 'flex-wrap': 'wrap' }}>
-                  <span
-                    style={{
-                      background: 'rgba(32, 201, 151, 0.12)',
-                      border: '1px solid rgba(32, 201, 151, 0.4)',
-                      color: '#20C997',
-                      padding: '3px 10px',
-                      'border-radius': '999px',
-                      'font-size': '11px',
-                      'font-weight': '600',
-                      display: 'flex',
-                      'align-items': 'center',
-                      gap: '4px',
-                    }}
-                  >
-                    <span style={{ width: '6px', height: '6px', 'border-radius': '50%', background: '#20C997' }} />
-                    Agents: {activeAgentsCount() !== null ? activeAgentsCount() : '—'}
-                  </span>
-
-                  <span
-                    style={{
-                      background: 'rgba(54, 189, 248, 0.12)',
-                      border: '1px solid rgba(54, 189, 248, 0.4)',
-                      color: '#36BDF8',
-                      padding: '3px 10px',
-                      'border-radius': '999px',
-                      'font-size': '11px',
-                      'font-weight': '600',
-                      display: 'flex',
-                      'align-items': 'center',
-                      gap: '4px',
-                    }}
-                  >
-                    ⚡ Running: {tasksRunningCount() !== null ? tasksRunningCount() : '—'}
-                  </span>
-
-                  <span
-                    style={{
-                      background: 'rgba(32, 201, 151, 0.12)',
-                      border: '1px solid rgba(32, 201, 151, 0.4)',
-                      color: '#20C997',
-                      padding: '3px 10px',
-                      'border-radius': '999px',
-                      'font-size': '11px',
-                      'font-weight': '600',
-                      display: 'flex',
-                      'align-items': 'center',
-                      gap: '4px',
-                    }}
-                  >
-                    🛡 Health: {systemHealthPct() !== null ? `${systemHealthPct()}%` : 'Unknown'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Right Hero Artwork (Desktop/Tablet preferred) */}
-              <Show when={!isMobileScreen()}>
-                <div
-                  style={{
-                    position: 'relative',
-                    width: '240px',
-                    height: '100%',
-                    display: 'flex',
-                    'align-items': 'center',
-                    'justify-content': 'flex-end',
-                  }}
-                >
-                  <div
-                    style={{
-                      position: 'absolute',
-                      right: '30px',
-                      width: '110px',
-                      height: '110px',
-                      'border-radius': '50%',
-                      border: '1px solid rgba(229, 184, 66, 0.5)',
-                      'box-shadow': '0 0 30px rgba(229, 184, 66, 0.4)',
-                      'pointer-events': 'none',
-                    }}
-                  />
-                  <div
-                    style={{
-                      position: 'absolute',
-                      right: '10px',
-                      top: '50%',
-                      transform: 'translateY(-50%)',
-                      width: '38px',
-                      height: '38px',
-                      'border-radius': '10px',
-                      background: 'rgba(7, 9, 14, 0.75)',
-                      border: '1px solid rgba(229, 184, 66, 0.4)',
-                      display: 'grid',
-                      'place-items': 'center',
-                      color: '#F5D061',
-                      'font-weight': '900',
-                      'font-size': '20px',
-                      'z-index': '3',
-                      'box-shadow': '0 0 20px rgba(229, 184, 66, 0.3)',
-                    }}
-                  >
-                    M
-                  </div>
-                  <img
-                    src="/assets/mira_hero_portrait.jpg"
-                    alt="Mira AI"
-                    style={{
-                      height: '150px',
-                      'max-width': '200px',
-                      'object-fit': 'cover',
-                      'object-position': 'center top',
-                      'mask-image': 'radial-gradient(ellipse 90% 90% at 50% 50%, black 60%, transparent 100%)',
-                      '-webkit-mask-image': 'radial-gradient(ellipse 90% 90% at 50% 50%, black 60%, transparent 100%)',
-                      filter: 'drop-shadow(0 0 20px rgba(229, 184, 66, 0.35))',
-                      'z-index': '2',
-                    }}
-                    onError={(e) => { e.currentTarget.style.display = 'none' }}
-                  />
-                </div>
-              </Show>
-            </div>
-
-            {/* WORKSPACE CARD CONTAINER WITH ROUTER */}
             <WorkspaceRouter
               workspace={currentWorkspace()}
               store={props.store}
               onOpenInChat={(id) => {
-                props.store.setCurrent(id)
+                void props.store.selectSession(id)
                 setCurrentWorkspace('work')
                 setActiveSubTab('chat')
               }}
@@ -1117,9 +1158,7 @@ export function MiraGoldLayout(props: {
                 <div
                   style={{
                     flex: '1',
-                    background: '#0D111E',
-                    border: '1px solid #1A2033',
-                    'border-radius': '16px',
+                    background: '#0B0E17',
                     display: 'flex',
                     'flex-direction': 'column',
                     overflow: 'hidden',
@@ -1127,607 +1166,434 @@ export function MiraGoldLayout(props: {
                     height: '100%',
                   }}
                 >
-                  {/* INNER TAB BAR (HORIZONTAL TOUCH CAROUSEL ON MOBILE) */}
-              <div
-                style={{
-                  display: 'flex',
-                  gap: '6px',
-                  padding: '8px 12px',
-                  'border-bottom': '1px solid #1A2033',
-                  background: '#090C16',
-                  'flex-shrink': '0',
-                  'overflow-x': 'auto',
-                  'white-space': 'nowrap',
-                  '-webkit-overflow-scrolling': 'touch',
-                  'scrollbar-width': 'none',
-                }}
-              >
-                <For each={workspaceSubTabs}>
-                  {(tab) => {
-                    const active = () => activeSubTab() === tab.id
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveSubTab(tab.id)
-                          if (tab.id === 'chat') setActiveNav('home')
-                          else if (tab.id === 'files') setActiveNav('projects')
-                          else setActiveNav(tab.id)
-                        }}
-                        style={{
-                          display: 'inline-flex',
-                          'align-items': 'center',
-                          gap: '6px',
-                          padding: '6px 12px',
-                          'border-radius': '999px',
-                          border: 'none',
-                          background: active()
-                            ? 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)'
-                            : 'transparent',
-                          color: active() ? '#07090E' : '#929CB3',
-                          'font-size': '12px',
-                          'font-weight': active() ? '700' : '500',
-                          cursor: 'pointer',
-                          transition: 'all 0.15s ease',
-                          'flex-shrink': '0',
-                          'min-height': '36px',
-                        }}
-                      >
-                        <span>{tab.icon}</span>
-                        <span>{tab.label}</span>
-                      </button>
-                    )
-                  }}
-                </For>
-              </div>
-
-              {/* DYNAMIC SUBTAB VIEWS */}
-              <div
-                style={{
-                  flex: '1',
-                  overflow: 'auto',
-                  padding: isMobileScreen() ? '10px' : '16px',
-                  display: 'flex',
-                  'flex-direction': 'column',
-                  gap: '14px',
-                }}
-              >
-                {/* 0. TERMINAL SUBTAB */}
-                <Show when={activeSubTab() === 'terminal'}>
-                  <div style={{ height: 'calc(100vh - 220px)', 'min-height': '400px' }}>
-                    <TerminalView open={activeSubTab() === 'terminal'} />
-                  </div>
-                </Show>
-
-                {/* 1. CHAT SUBTAB */}
-                <Show when={activeSubTab() === 'chat'}>
-                  {/* Real Streamed Messages */}
-                  <For each={props.store.state.messages}>
-                    {(msg) => (
-                      <div
-                        style={{
-                          'align-self': msg.role === 'user' ? 'flex-end' : 'flex-start',
-                          display: 'flex',
-                          gap: '10px',
-                          'max-width': msg.role === 'user' ? (isMobileScreen() ? '90%' : '75%') : (isMobileScreen() ? '98%' : '92%'),
-                          'flex-direction': msg.role === 'user' ? 'row-reverse' : 'row',
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: '32px',
-                            height: '32px',
-                            'border-radius': msg.role === 'user' ? '50%' : '8px',
-                            overflow: 'hidden',
-                            background:
-                              msg.role === 'user'
-                                ? 'linear-gradient(135deg, #E5B842, #854d0e)'
-                                : 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)',
-                            display: 'grid',
-                            'place-items': 'center',
-                            'font-weight': '800',
-                            color: '#07090E',
-                            'font-size': '13px',
-                            'flex-shrink': '0',
-                          }}
-                        >
-                          {msg.role === 'user' ? (
-                            <img src="/assets/user_avatar_saheed.jpg" alt="User" style={{ width: '100%', height: '100%', 'object-fit': 'cover' }} onError={(e) => { e.currentTarget.style.display = 'none' }} />
-                          ) : (
-                            'M'
-                          )}
-                        </div>
-                        <div
-                          style={{
-                            background: msg.role === 'user' ? '#1D253A' : '#121727',
-                            border: '1px solid #1E273F',
-                            'border-radius': '14px',
-                            padding: '12px 16px',
-                            color: '#F1F3FA',
-                            'font-size': '13px',
-                            'line-height': '1.5',
-                            'white-space': 'pre-wrap',
-                          }}
-                        >
-                          {msg.content}
-                        </div>
-                      </div>
-                    )}
-                  </For>
-                </Show>
-
-                {/* 2. AGENTS SUBTAB / PAGE */}
-                <Show when={activeSubTab() === 'agents'}>
-                  <div style={{ display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
-                    <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-                      <div>
-                        <div style={{ 'font-size': '16px', 'font-weight': '800', color: '#F1F3FA' }}>
-                          Active Agents Subsystem ({filteredAgents().length})
-                        </div>
-                        <div style={{ 'font-size': '12px', color: '#929CB3' }}>
-                          Real backend agent instances handling reasoning, execution, and review.
-                        </div>
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'grid', 'grid-template-columns': isMobileScreen() ? '1fr' : 'repeat(2, 1fr)', gap: '12px' }}>
-                      <For each={filteredAgents()}>
-                        {(agent) => (
-                          <div
+                  {/* UNDERLINE SEGMENTED SUBTAB BAR (Zero Pill Clutter) */}
+                  <div
+                    role="tablist"
+                    aria-label="Work workspace tools"
+                    style={{
+                      display: 'flex',
+                      gap: '4px',
+                      padding: '0 12px',
+                      'border-bottom': '1px solid #1A2033',
+                      background: '#090C15',
+                      'flex-shrink': '0',
+                      'overflow-x': 'auto',
+                      'white-space': 'nowrap',
+                      'scrollbar-width': 'none',
+                    }}
+                  >
+                    <For each={workSubTabs}>
+                      {(tab) => {
+                        const active = () => activeSubTab() === tab.id
+                        return (
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={active() ? 'true' : 'false'}
+                            onClick={() => setActiveSubTab(tab.id)}
                             style={{
-                              background: '#101524',
-                              border: '1px solid #1E273F',
-                              'border-radius': '12px',
-                              padding: '16px',
-                              display: 'flex',
-                              'flex-direction': 'column',
-                              gap: '10px',
-                            }}
-                          >
-                            <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
-                              <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
-                                <span style={{ 'font-size': '18px', color: '#F5D061' }}>⚙</span>
-                                <div style={{ 'font-weight': '700', color: '#F1F3FA', 'font-size': '14px' }}>
-                                  {agent.name}
-                                </div>
-                              </div>
-                              <span
-                                style={{
-                                  background: 'rgba(32, 201, 151, 0.12)',
-                                  color: '#20C997',
-                                  padding: '2px 8px',
-                                  'border-radius': '999px',
-                                  'font-size': '10px',
-                                  'font-weight': '700',
-                                }}
-                              >
-                                ACTIVE
-                              </span>
-                            </div>
-
-                            <div style={{ 'font-size': '12px', color: '#929CB3', 'line-height': '1.4' }}>
-                              {agent.description || 'System agent unit'}
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap', 'margin-top': '4px' }}>
-                              <For each={agent.tools || ['search', 'bash', 'edit']}>
-                                {(tool) => (
-                                  <span
-                                    style={{
-                                      background: '#07090E',
-                                      border: '1px solid #1E273F',
-                                      color: '#36BDF8',
-                                      padding: '2px 8px',
-                                      'border-radius': '4px',
-                                      'font-size': '10px',
-                                      'font-family': 'monospace',
-                                    }}
-                                  >
-                                    {tool}
-                                  </span>
-                                )}
-                              </For>
-                            </div>
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  </div>
-                </Show>
-
-                {/* 3. TOOLS SUBTAB / PAGE */}
-                <Show when={activeSubTab() === 'tools'}>
-                  <div style={{ display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
-                    <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-                      <div>
-                        <div style={{ 'font-size': '16px', 'font-weight': '800', color: '#F1F3FA' }}>
-                          Registered Tools & Capability Catalog ({filteredTools().length})
-                        </div>
-                        <div style={{ 'font-size': '12px', color: '#929CB3' }}>
-                          Live tool functions available to Mira agents.
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setShowCheckGuardrailModal(true)}
-                        style={{
-                          background: '#1A2136',
-                          border: '1px solid #E5B842',
-                          color: '#F5D061',
-                          padding: '6px 12px',
-                          'border-radius': '8px',
-                          'font-size': '12px',
-                          'font-weight': '700',
-                          cursor: 'pointer',
-                          'min-height': '38px',
-                        }}
-                      >
-                        🛡 Check Guardrail
-                      </button>
-                    </div>
-
-                    <div style={{ display: 'grid', 'grid-template-columns': isMobileScreen() ? '1fr' : 'repeat( auto-fit, minmax(280px, 1fr) )', gap: '12px' }}>
-                      <For each={filteredTools()}>
-                        {(tool) => (
-                          <div
-                            style={{
-                              background: '#101524',
-                              border: '1px solid #1E273F',
-                              'border-radius': '12px',
-                              padding: '14px',
-                              display: 'flex',
-                              'flex-direction': 'column',
-                              gap: '8px',
-                            }}
-                          >
-                            <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
-                              <span style={{ 'font-weight': '800', color: '#F5D061', 'font-family': 'monospace', 'font-size': '13px' }}>
-                                {tool.name}
-                              </span>
-                              <span style={{ 'font-size': '10px', color: '#20C997', background: 'rgba(32, 201, 151, 0.1)', padding: '2px 6px', 'border-radius': '4px' }}>
-                                ENABLED
-                              </span>
-                            </div>
-                            <div style={{ 'font-size': '11px', color: '#929CB3', 'line-height': '1.4' }}>
-                              {tool.description || 'System capability handler.'}
-                            </div>
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  </div>
-                </Show>
-
-                {/* 4. MEMORY SUBTAB / PAGE */}
-                <Show when={activeSubTab() === 'memory'}>
-                  <div style={{ display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
-                    <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-                      <div>
-                        <div style={{ 'font-size': '16px', 'font-weight': '800', color: '#F1F3FA' }}>
-                          Hierarchical Knowledge Graph ({knowledgeNodes().length} Nodes)
-                        </div>
-                        <div style={{ 'font-size': '12px', color: '#929CB3' }}>
-                          Persistent memory nodes across sessions.
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setShowSeedMemoryModal(true)}
-                        style={{
-                          background: 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)',
-                          color: '#07090E',
-                          border: 'none',
-                          padding: '6px 14px',
-                          'border-radius': '8px',
-                          'font-size': '12px',
-                          'font-weight': '700',
-                          cursor: 'pointer',
-                          'min-height': '38px',
-                        }}
-                      >
-                        + Seed Memory Node
-                      </button>
-                    </div>
-
-                    <div style={{ display: 'grid', 'grid-template-columns': isMobileScreen() ? '1fr' : 'repeat( auto-fit, minmax(280px, 1fr) )', gap: '12px' }}>
-                      <For each={knowledgeNodes().length > 0 ? knowledgeNodes() : [
-                        { title: 'Fashion Design Studio Guidelines', tier: 'semantic', content: 'Preferred modern Ankara aesthetic rules and material specs' },
-                        { title: 'User Identity (Saheed)', tier: 'episodic', content: 'Primary engineer & designer persona' },
-                        { title: 'Autonomous Engine Rules', tier: 'procedural', content: 'No fallback metrics in evaluation gate' },
-                      ]}>
-                        {(node) => (
-                          <div
-                            style={{
-                              background: '#101524',
-                              border: '1px solid #1E273F',
-                              'border-radius': '12px',
-                              padding: '14px',
-                              display: 'flex',
-                              'flex-direction': 'column',
+                              display: 'inline-flex',
+                              'align-items': 'center',
                               gap: '6px',
+                              padding: '10px 12px',
+                              border: 'none',
+                              'border-bottom': active() ? '2px solid #E5B842' : '2px solid transparent',
+                              background: 'transparent',
+                              color: active() ? '#F5D061' : '#7A859E',
+                              'font-size': '12.5px',
+                              'font-weight': active() ? '700' : '500',
+                              cursor: 'pointer',
+                              transition: 'color 0.14s ease, border-color 0.14s ease',
+                              'flex-shrink': '0',
                             }}
                           >
-                            <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
-                              <span style={{ 'font-weight': '700', color: '#F1F3FA', 'font-size': '13px' }}>
-                                {node.title || node.id}
-                              </span>
-                              <span style={{ 'font-size': '10px', color: '#E5B842', background: 'rgba(229, 184, 66, 0.12)', padding: '2px 6px', 'border-radius': '4px' }}>
-                                {node.tier || 'semantic'}
-                              </span>
-                            </div>
-                            <div style={{ 'font-size': '11px', color: '#929CB3' }}>
-                              {node.content || 'Stored knowledge entry.'}
-                            </div>
-                          </div>
-                        )}
-                      </For>
-                    </div>
+                            <NavIcon name={tab.id} size={14} />
+                            <span>{tab.label}</span>
+                          </button>
+                        )
+                      }}
+                    </For>
                   </div>
-                </Show>
 
-                {/* 5. EVOLUTION SUBTAB / PAGE */}
-                <Show when={activeSubTab() === 'evolution'}>
-                  <div style={{ display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
-                    <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-                      <div>
-                        <div style={{ 'font-size': '16px', 'font-weight': '800', color: '#F1F3FA' }}>
-                          Autonomous Evolution Engine ({proposals().length} Proposals)
-                        </div>
-                        <div style={{ 'font-size': '12px', color: '#929CB3' }}>
-                          Automated candidate testing, canary promotion, and security validation.
-                        </div>
-                      </div>
-                    </div>
+                  {/* SUBTAB CONTENT */}
+                  <div
+                    style={{
+                      flex: '1',
+                      overflow: 'hidden',
+                      display: 'flex',
+                      'flex-direction': 'column',
+                      'min-height': '0',
+                    }}
+                  >
+                    {/* 1. CHAT WORKBENCH (Sessions + ChatView + ActivityPanel) */}
+                    <Show when={activeSubTab() === 'chat'}>
+                      <div style={{ flex: '1', display: 'flex', overflow: 'hidden', 'min-height': '0', position: 'relative' }}>
+                        {/* Desktop Session Sidebar */}
+                        <Show when={showSessions() && !isMobileScreen()}>
+                          <SessionList store={props.store} open={true} width={264} />
+                        </Show>
 
-                    <div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
-                      <For each={proposals().length > 0 ? proposals() : [
-                        { id: 'prop-eval-gate', reason: 'Independent candidate measurement verification', state: 'PROMOTED', severity: 'major' },
-                        { id: 'prop-shadow-exec', reason: 'Shadow Mira isolated variant execution', state: 'CANARY_PASSED', severity: 'minor' },
-                      ]}>
-                        {(prop) => (
+                        {/* Mobile Session Drawer */}
+                        <Show when={showSessions() && isMobileScreen()}>
                           <div
+                            class="mira-gold-drawer-sessions"
+                            onClick={() => setShowSessions(false)}
                             style={{
-                              background: '#101524',
-                              border: '1px solid #1E273F',
-                              padding: '14px',
-                              'border-radius': '12px',
+                              position: 'fixed',
+                              inset: '0',
+                              background: 'rgba(0, 0, 0, 0.7)',
+                              'z-index': '980',
                               display: 'flex',
-                              'flex-direction': isMobileScreen() ? 'column' : 'row',
-                              'justify-content': 'space-between',
-                              'align-items': isMobileScreen() ? 'flex-start' : 'center',
-                              gap: isMobileScreen() ? '10px' : '0',
                             }}
                           >
-                            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
-                              <div style={{ 'font-weight': '700', color: '#F1F3FA', 'font-size': '13px' }}>
-                                {prop.reason}
-                              </div>
-                              <div style={{ 'font-size': '11px', color: '#687594' }}>
-                                Proposal ID: {prop.id} • Severity: {prop.severity || 'normal'}
-                              </div>
-                            </div>
-                            <div style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'flex-wrap': 'wrap' }}>
-                              <span
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              style={{
+                                height: '100%',
+                                display: 'flex',
+                                'flex-direction': 'column',
+                                background: 'var(--bg-app)',
+                                'border-right': '1px solid var(--border)',
+                              }}
+                            >
+                              <div
                                 style={{
-                                  color: prop.state.includes('PROMOTED') || prop.state.includes('PASSED') ? '#20C997' : '#E5B842',
-                                  background: 'rgba(32, 201, 151, 0.12)',
-                                  padding: '4px 10px',
-                                  'border-radius': '6px',
-                                  'font-size': '11px',
-                                  'font-weight': '700',
+                                  display: 'flex',
+                                  'align-items': 'center',
+                                  'justify-content': 'space-between',
+                                  padding: '8px 12px',
+                                  'border-bottom': '1px solid var(--border)',
+                                  background: '#090B12',
                                 }}
                               >
-                                {prop.state}
-                              </span>
-                              <Show when={prop.state !== 'PROMOTED'}>
+                                <span style={{ 'font-size': '12px', 'font-weight': '700', color: '#F5D061' }}>
+                                  Sessions
+                                </span>
                                 <button
                                   type="button"
-                                  onClick={() => handlePromoteProposal(prop.id)}
+                                  aria-label="Close sessions drawer"
+                                  onClick={() => setShowSessions(false)}
                                   style={{
-                                    background: '#20C997',
-                                    color: '#07090E',
+                                    background: 'transparent',
                                     border: 'none',
-                                    padding: '6px 12px',
-                                    'border-radius': '6px',
-                                    'font-size': '11px',
-                                    'font-weight': '700',
+                                    color: '#A0A9C0',
                                     cursor: 'pointer',
-                                    'min-height': '36px',
+                                    width: '32px',
+                                    height: '32px',
+                                    display: 'grid',
+                                    'place-items': 'center',
+                                    'font-size': '16px',
                                   }}
                                 >
-                                  Promote
+                                  ✕
                                 </button>
-                              </Show>
-                              <button
-                                type="button"
-                                onClick={() => handleRollbackProposal(prop.id)}
+                              </div>
+                              <div style={{ flex: '1', 'min-height': '0', display: 'flex' }}>
+                                <SessionList
+                                  store={props.store}
+                                  open={true}
+                                  width={280}
+                                  onAfterSelect={() => setShowSessions(false)}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </Show>
+
+                        {/* Full Featured ChatView */}
+                        <ChatView
+                          store={props.store}
+                          settings={props.settings}
+                          onPaletteOpen={() => window.dispatchEvent(new CustomEvent('mira:open-palette'))}
+                          sessionsOpen={showSessions()}
+                          onToggleSessions={() => setShowSessions((v) => !v)}
+                          activityOpen={showActivity()}
+                          onToggleActivity={() => setShowActivity((v) => !v)}
+                        />
+
+                        {/* Activity & Governance Panel */}
+                        <Show when={showActivity()}>
+                          <Show
+                            when={!isMobileScreen()}
+                            fallback={
+                              <div
+                                onClick={() => setShowActivity(false)}
                                 style={{
-                                  background: 'transparent',
-                                  border: '1px solid #EF4444',
-                                  color: '#EF4444',
-                                  padding: '6px 12px',
-                                  'border-radius': '6px',
-                                  'font-size': '11px',
-                                  'font-weight': '600',
-                                  cursor: 'pointer',
-                                  'min-height': '36px',
+                                  position: 'fixed',
+                                  inset: '0',
+                                  background: 'rgba(0, 0, 0, 0.7)',
+                                  'z-index': '980',
+                                  display: 'flex',
+                                  'justify-content': 'flex-end',
                                 }}
                               >
-                                Rollback
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  </div>
-                </Show>
-
-                {/* 6. SECURITY SUBTAB / PAGE */}
-                <Show when={activeSubTab() === 'security'}>
-                  <div style={{ display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
-                    <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-                      <div>
-                        <div style={{ 'font-size': '16px', 'font-weight': '800', color: '#F1F3FA' }}>
-                          Security Audit Log & Guardrails ({auditLogs().length} Entries)
-                        </div>
-                        <div style={{ 'font-size': '12px', color: '#929CB3' }}>
-                          Real-time tool execution audit trail and permission decisions.
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setShowCheckGuardrailModal(true)}
-                        style={{
-                          background: '#171E33',
-                          border: '1px solid #E5B842',
-                          color: '#F5D061',
-                          padding: '6px 12px',
-                          'border-radius': '8px',
-                          'font-size': '12px',
-                          'font-weight': '700',
-                          cursor: 'pointer',
-                          'min-height': '38px',
-                        }}
-                      >
-                        🛡 Test Guardrail
-                      </button>
-                    </div>
-
-                    <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
-                      <For each={auditLogs().length > 0 ? auditLogs() : [
-                        { id: 'audit-1', tool: 'bash', decision: 'allow', createdAt: Date.now() - 120000, reason: 'Command within safe allowlist' },
-                        { id: 'audit-2', tool: 'write', decision: 'allow', createdAt: Date.now() - 300000, reason: 'Workspace write authorized' },
-                      ]}>
-                        {(log) => (
-                          <div style={{ background: '#101524', border: '1px solid #1E273F', padding: '12px 16px', 'border-radius': '10px', display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-                            <div>
-                              <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
-                                <span style={{ 'font-weight': '700', color: '#36BDF8', 'font-size': '13px' }}>{log.tool}</span>
-                                <span style={{ color: log.decision === 'allow' ? '#20C997' : '#EF4444', 'font-weight': '700', 'font-size': '11px', background: 'rgba(32, 201, 151, 0.1)', padding: '2px 8px', 'border-radius': '4px' }}>
-                                  {log.decision.toUpperCase()}
-                                </span>
+                                <div onClick={(e) => e.stopPropagation()} style={{ height: '100%', display: 'flex' }}>
+                                  <ActivityPanel
+                                    store={props.store}
+                                    collapsed={false}
+                                    onToggle={() => setShowActivity(false)}
+                                    width={300}
+                                  />
+                                </div>
                               </div>
-                              <div style={{ 'font-size': '11px', color: '#929CB3', 'margin-top': '4px' }}>{log.reason || 'Guardrail evaluated'}</div>
+                            }
+                          >
+                            <ActivityPanel
+                              store={props.store}
+                              collapsed={false}
+                              onToggle={() => setShowActivity(false)}
+                              width={320}
+                            />
+                          </Show>
+                        </Show>
+                      </div>
+                    </Show>
+
+                    {/* 2. BRIO SCORING */}
+                    <Show when={activeSubTab() === 'brio'}>
+                      <div style={{ flex: '1', overflow: 'auto', display: 'flex', 'flex-direction': 'column' }}>
+                        <BrioPage />
+                      </div>
+                    </Show>
+
+                    {/* 3. TERMINAL */}
+                    <Show when={activeSubTab() === 'terminal'}>
+                      <div style={{ flex: '1', display: 'flex', 'flex-direction': 'column', padding: isMobileScreen() ? '8px' : '14px', 'min-height': '0' }}>
+                        <TerminalView open={activeSubTab() === 'terminal'} />
+                      </div>
+                    </Show>
+
+                    {/* 4. AGENTS */}
+                    <Show when={activeSubTab() === 'agents'}>
+                      <div style={{ flex: '1', overflow: 'auto', padding: isMobileScreen() ? '12px' : '20px', display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
+                        <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center', 'flex-wrap': 'wrap', gap: '8px' }}>
+                          <div>
+                            <div style={{ 'font-size': '16px', 'font-weight': '700', color: '#F1F3FA' }}>
+                              Registered Agents (<span class="tabular-nums">{filteredAgents().length}</span>)
                             </div>
-                            <span style={{ 'font-size': '11px', color: '#687594' }}>{new Date(log.createdAt).toLocaleTimeString()}</span>
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  </div>
-                </Show>
-
-                {/* 7. FILES / PROJECTS SUBTAB / PAGE */}
-                <Show when={activeSubTab() === 'files'}>
-                  <div style={{ display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
-                    <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-                      <div>
-                        <div style={{ 'font-size': '16px', 'font-weight': '800', color: '#F1F3FA' }}>
-                          Workspace Code Tree ({filteredFiles().length} Files)
-                        </div>
-                        <div style={{ 'font-size': '12px', color: '#929CB3' }}>
-                          Live repository file structure and generated design assets.
-                        </div>
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'grid', 'grid-template-columns': isMobileScreen() ? '1fr' : 'repeat( auto-fit, minmax(240px, 1fr) )', gap: '10px' }}>
-                      <For each={filteredFiles().slice(0, 40)}>
-                        {(file) => (
-                          <div style={{ background: '#101524', border: '1px solid #1E273F', padding: '10px 14px', 'border-radius': '8px', display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-                            <div style={{ overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap', 'max-width': '180px' }}>
-                              <span style={{ color: '#F5D061', 'font-weight': '600', 'font-size': '12px' }}>{file.path}</span>
+                            <div style={{ 'font-size': '12px', color: '#7A859E' }}>
+                              Live backend agent definitions and tool capabilities.
                             </div>
-                            <span style={{ 'font-size': '10px', color: '#687594' }}>{(file.size / 1024).toFixed(1)} KB</span>
                           </div>
-                        )}
-                      </For>
-                    </div>
-                  </div>
-                </Show>
+                        </div>
 
-                {/* 8. ANALYTICS SUBTAB / PAGE */}
-                <Show when={activeSubTab() === 'analytics'}>
-                  <div style={{ display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
-                    <div style={{ 'font-size': '16px', 'font-weight': '800', color: '#F1F3FA' }}>
-                      Process Gateway & Performance Analytics
-                    </div>
+                        <Show when={!initialLoaded() && loadingState()}>
+                          <div style={{ display: 'grid', 'grid-template-columns': isMobileScreen() ? '1fr' : 'repeat(2, 1fr)', gap: '12px' }}>
+                            <div class="skeleton" style={{ height: '110px' }} />
+                            <div class="skeleton" style={{ height: '110px' }} />
+                          </div>
+                        </Show>
 
-                    <div style={{ display: 'grid', 'grid-template-columns': isMobileScreen() ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: '12px' }}>
-                      <div style={{ background: '#101524', border: '1px solid #1E273F', 'border-radius': '12px', padding: '16px' }}>
-                        <div style={{ 'font-size': '11px', color: '#929CB3' }}>Total Requests</div>
-                        <div style={{ 'font-size': '22px', 'font-weight': '800', color: '#F5D061', 'margin-top': '4px' }}>
-                          {gatewayHealth()?.gateway?.requests ?? 0}
-                        </div>
-                      </div>
-                      <div style={{ background: '#101524', border: '1px solid #1E273F', 'border-radius': '12px', padding: '16px' }}>
-                        <div style={{ 'font-size': '11px', color: '#929CB3' }}>Avg Latency</div>
-                        <div style={{ 'font-size': '22px', 'font-weight': '800', color: '#36BDF8', 'margin-top': '4px' }}>
-                          {responseTimeMs() !== null ? `${responseTimeMs()}ms` : '—'}
-                        </div>
-                      </div>
-                      <div style={{ background: '#101524', border: '1px solid #1E273F', 'border-radius': '12px', padding: '16px' }}>
-                        <div style={{ 'font-size': '11px', color: '#929CB3' }}>Gateway Spend</div>
-                        <div style={{ 'font-size': '22px', 'font-weight': '800', color: '#20C997', 'margin-top': '4px' }}>
-                          ${(gatewayHealth()?.gateway?.costUSD ?? 0).toFixed(4)}
-                        </div>
-                      </div>
-                      <div style={{ background: '#101524', border: '1px solid #1E273F', 'border-radius': '12px', padding: '16px' }}>
-                        <div style={{ 'font-size': '11px', color: '#929CB3' }}>Tokens Processed</div>
-                        <div style={{ 'font-size': '22px', 'font-weight': '800', color: '#F5D061', 'margin-top': '4px' }}>
-                          {((gatewayHealth()?.gateway?.inputTokens ?? 0) + (gatewayHealth()?.gateway?.outputTokens ?? 0)).toLocaleString()}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </Show>
+                        <Show when={initialLoaded() && filteredAgents().length === 0}>
+                          <div class="card" style={{ padding: '24px', 'text-align': 'center', color: '#A0A9C0', 'font-size': '13px' }}>
+                            {searchQuery().trim()
+                              ? `No agents match "${searchQuery().trim()}".`
+                              : 'No backend agents reported. Click Sync in the header to retry.'}
+                          </div>
+                        </Show>
 
-                {/* 9. SETTINGS SUBTAB / PAGE */}
-                <Show when={activeSubTab() === 'settings'}>
-                  <div style={{ display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
-                    <div style={{ 'font-size': '16px', 'font-weight': '800', color: '#F1F3FA' }}>
-                      Mira Core Configuration & Providers
-                    </div>
-
-                    <div style={{ background: '#101524', border: '1px solid #1E273F', 'border-radius': '12px', padding: '16px', display: 'flex', 'flex-direction': 'column', gap: '12px' }}>
-                      <div>
-                        <label style={{ 'font-size': '12px', 'font-weight': '700', color: '#F5D061' }}>Active Model Engine</label>
-                        <div style={{ 'font-size': '13px', color: '#F1F3FA', 'margin-top': '4px' }}>
-                          {miraConfig()?.model || 'openrouter/anthropic/claude-sonnet-4'}
-                        </div>
-                      </div>
-                      <div>
-                        <label style={{ 'font-size': '12px', 'font-weight': '700', color: '#F5D061' }}>Registered Providers ({providerList().length})</label>
-                        <div style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap', 'margin-top': '6px' }}>
-                          <For each={providerList()}>
-                            {(p) => (
-                              <span style={{ background: '#07090E', border: '1px solid #1E273F', padding: '4px 10px', 'border-radius': '6px', 'font-size': '11px', color: '#36BDF8' }}>
-                                {p.name || p.id}
-                              </span>
+                        <div style={{ display: 'grid', 'grid-template-columns': isMobileScreen() ? '1fr' : 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px' }}>
+                          <For each={filteredAgents()}>
+                            {(agent) => (
+                              <div
+                                style={{
+                                  background: '#101522',
+                                  border: '1px solid #1E253A',
+                                  'border-radius': '10px',
+                                  padding: '14px',
+                                  display: 'flex',
+                                  'flex-direction': 'column',
+                                  gap: '8px',
+                                }}
+                              >
+                                <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', gap: '8px' }}>
+                                  <div style={{ 'font-weight': '700', color: '#F5D061', 'font-size': '14px' }}>
+                                    {agent.name}
+                                  </div>
+                                  <Show when={agent.permissions}>
+                                    <span style={{ 'font-family': 'var(--font-mono)', 'font-size': '10.5px', color: '#A0A9C0', background: '#07090E', border: '1px solid #1E253A', padding: '2px 6px', 'border-radius': '4px' }}>
+                                      {agent.permissions}
+                                    </span>
+                                  </Show>
+                                </div>
+                                <div style={{ 'font-size': '12px', color: '#A0A9C0', 'line-height': '1.45' }}>
+                                  {agent.description || 'Agent persona configured on server.'}
+                                </div>
+                                <Show when={Array.isArray(agent.tools) && agent.tools.length > 0}>
+                                  <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap', 'margin-top': '2px' }}>
+                                    <For each={agent.tools}>
+                                      {(tool) => (
+                                        <span style={{ background: '#07090E', border: '1px solid #1E253A', color: '#38bdf8', padding: '2px 6px', 'border-radius': '4px', 'font-size': '10.5px', 'font-family': 'var(--font-mono)' }}>
+                                          {tool}
+                                        </span>
+                                      )}
+                                    </For>
+                                  </div>
+                                </Show>
+                              </div>
                             )}
                           </For>
                         </div>
                       </div>
-                    </div>
-                  </div>
-                </Show>
-              </div>
-            </div>
-          )}
-        />
-      </main>
+                    </Show>
 
-          {/* ========================================================================= */}
-          {/* 3. RIGHT SIDEBAR (SYSTEM OVERVIEW) */}
-          {/* ========================================================================= */}
-          <Show when={!isMobileScreen() || isRightSidebarOpen()}>
+                    {/* 5. TOOLS */}
+                    <Show when={activeSubTab() === 'tools'}>
+                      <div style={{ flex: '1', overflow: 'auto', padding: isMobileScreen() ? '12px' : '20px', display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
+                        <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center', 'flex-wrap': 'wrap', gap: '8px' }}>
+                          <div>
+                            <div style={{ 'font-size': '16px', 'font-weight': '700', color: '#F1F3FA' }}>
+                              Registered Tools (<span class="tabular-nums">{filteredTools().length}</span>)
+                            </div>
+                            <div style={{ 'font-size': '12px', color: '#7A859E' }}>
+                              Live server capabilities available to agents.
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowCheckGuardrailModal(true)}
+                            style={{
+                              background: '#161D2F',
+                              border: '1px solid rgba(229, 184, 66, 0.45)',
+                              color: '#F5D061',
+                              padding: '7px 12px',
+                              'border-radius': '8px',
+                              'font-size': '12px',
+                              'font-weight': '600',
+                              cursor: 'pointer',
+                              'min-height': '36px',
+                            }}
+                          >
+                            Test Guardrail
+                          </button>
+                        </div>
+
+                        <Show when={initialLoaded() && filteredTools().length === 0}>
+                          <div class="card" style={{ padding: '24px', 'text-align': 'center', color: '#A0A9C0', 'font-size': '13px' }}>
+                            {searchQuery().trim()
+                              ? `No tools match "${searchQuery().trim()}".`
+                              : 'No tools reported by server.'}
+                          </div>
+                        </Show>
+
+                        <div style={{ display: 'grid', 'grid-template-columns': isMobileScreen() ? '1fr' : 'repeat(auto-fit, minmax(260px, 1fr))', gap: '10px' }}>
+                          <For each={filteredTools()}>
+                            {(tool) => (
+                              <div
+                                style={{
+                                  background: '#101522',
+                                  border: '1px solid #1E253A',
+                                  'border-radius': '10px',
+                                  padding: '13px',
+                                  display: 'flex',
+                                  'flex-direction': 'column',
+                                  gap: '6px',
+                                }}
+                              >
+                                <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
+                                  <span style={{ 'font-weight': '700', color: '#F5D061', 'font-family': 'var(--font-mono)', 'font-size': '12.5px' }}>
+                                    {tool.name}
+                                  </span>
+                                  <span style={{ 'font-size': '10px', color: '#34d399', background: 'rgba(52, 211, 153, 0.1)', padding: '2px 6px', 'border-radius': '4px', 'font-weight': '600' }}>
+                                    ENABLED
+                                  </span>
+                                </div>
+                                <div style={{ 'font-size': '11.5px', color: '#A0A9C0', 'line-height': '1.45' }}>
+                                  {tool.description || 'Server capability handler.'}
+                                </div>
+                              </div>
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                    </Show>
+
+                    {/* 6. FILES */}
+                    <Show when={activeSubTab() === 'files'}>
+                      <div style={{ flex: '1', overflow: 'auto', padding: isMobileScreen() ? '12px' : '20px', display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
+                        <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center', 'flex-wrap': 'wrap', gap: '8px' }}>
+                          <div>
+                            <div style={{ 'font-size': '16px', 'font-weight': '700', color: '#F1F3FA' }}>
+                              Workspace Files (<span class="tabular-nums">{filteredFiles().length}</span>)
+                            </div>
+                            <div style={{ 'font-size': '12px', color: '#7A859E' }}>
+                              Live files indexed in the active project workspace.
+                            </div>
+                          </div>
+                        </div>
+
+                        <Show when={initialLoaded() && filteredFiles().length === 0}>
+                          <div class="card" style={{ padding: '24px', 'text-align': 'center', color: '#A0A9C0', 'font-size': '13px' }}>
+                            {searchQuery().trim()
+                              ? `No workspace files match "${searchQuery().trim()}".`
+                              : 'No workspace files returned by server.'}
+                          </div>
+                        </Show>
+
+                        <div style={{ display: 'grid', 'grid-template-columns': isMobileScreen() ? '1fr' : 'repeat(auto-fit, minmax(240px, 1fr))', gap: '8px' }}>
+                          <For each={filteredFiles().slice(0, 80)}>
+                            {(file) => (
+                              <div
+                                style={{
+                                  background: '#101522',
+                                  border: '1px solid #1E253A',
+                                  padding: '10px 12px',
+                                  'border-radius': '8px',
+                                  display: 'flex',
+                                  'justify-content': 'space-between',
+                                  'align-items': 'center',
+                                  gap: '8px',
+                                }}
+                              >
+                                <span
+                                  title={file.path}
+                                  style={{
+                                    color: '#F5D061',
+                                    'font-weight': '500',
+                                    'font-size': '12px',
+                                    'font-family': 'var(--font-mono)',
+                                    overflow: 'hidden',
+                                    'text-overflow': 'ellipsis',
+                                    'white-space': 'nowrap',
+                                  }}
+                                >
+                                  {file.path}
+                                </span>
+                                <span class="tabular-nums" style={{ 'font-size': '10.5px', color: '#7A859E', 'font-family': 'var(--font-mono)', 'flex-shrink': '0' }}>
+                                  {(file.size / 1024).toFixed(1)} KB
+                                </span>
+                              </div>
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                    </Show>
+                  </div>
+                </div>
+              )}
+            />
+          </main>
+
+          {/* 3. ON-DEMAND RIGHT SIDEBAR (SYSTEM OVERVIEW) */}
+          <Show when={isRightSidebarOpen()}>
+            <Show when={isMobileScreen()}>
+              <div
+                onClick={() => setIsRightSidebarOpen(false)}
+                style={{
+                  position: 'fixed',
+                  inset: '0',
+                  background: 'rgba(0, 0, 0, 0.65)',
+                  'z-index': '890',
+                }}
+              />
+            </Show>
             <aside
+              aria-label="System overview"
               style={{
-                width: isMobileScreen() ? '300px' : '270px',
+                width: isMobileScreen() ? '300px' : '280px',
                 position: isMobileScreen() ? 'fixed' : 'relative',
                 right: '0',
-                top: isMobileScreen() ? '60px' : '0',
+                top: isMobileScreen() ? '54px' : '0',
                 bottom: isMobileScreen() ? '56px' : '0',
                 'z-index': isMobileScreen() ? '900' : '1',
                 'flex-shrink': '0',
@@ -1735,18 +1601,40 @@ export function MiraGoldLayout(props: {
                 background: '#090B12',
                 display: 'flex',
                 'flex-direction': 'column',
-                padding: '16px 14px',
-                gap: '14px',
+                padding: '14px',
+                gap: '12px',
                 overflow: 'auto',
                 'box-shadow': isMobileScreen() ? '-8px 0 24px rgba(0,0,0,0.6)' : 'none',
               }}
             >
-              {/* CARD 1: SYSTEM OVERVIEW */}
+              <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
+                <span style={{ 'font-weight': '700', 'font-size': '13px', color: '#F1F3FA' }}>System Overview</span>
+                <button
+                  type="button"
+                  onClick={() => setIsRightSidebarOpen(false)}
+                  aria-label="Close System Overview"
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#7A859E',
+                    cursor: 'pointer',
+                    width: '28px',
+                    height: '28px',
+                    display: 'grid',
+                    'place-items': 'center',
+                    'border-radius': '6px',
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* CARD 1: HEALTH & GATEWAY */}
               <div
                 style={{
                   background: '#0D111E',
-                  border: '1px solid #1E273F',
-                  'border-radius': '14px',
+                  border: '1px solid #1E253A',
+                  'border-radius': '12px',
                   padding: '14px',
                   display: 'flex',
                   'flex-direction': 'column',
@@ -1754,81 +1642,68 @@ export function MiraGoldLayout(props: {
                 }}
               >
                 <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
-                  <span style={{ 'font-weight': '700', 'font-size': '13px', color: '#F1F3FA' }}>
-                    System Overview
+                  <span style={{ 'font-weight': '700', 'font-size': '12px', color: '#A0A9C0', 'text-transform': 'uppercase', 'letter-spacing': '0.04em' }}>
+                    Runtime Health
                   </span>
                   <span
                     style={{
                       display: 'flex',
                       'align-items': 'center',
-                      gap: '4px',
-                      color: '#20C997',
+                      gap: '5px',
+                      color: systemHealthPct() !== null ? '#34d399' : '#7A859E',
                       'font-size': '11px',
                       'font-weight': '600',
                     }}
                   >
-                    <span style={{ width: '6px', height: '6px', 'border-radius': '50%', background: '#20C997' }} />
-                    Live
+                    <span style={{ width: '6px', height: '6px', 'border-radius': '50%', background: systemHealthPct() !== null ? '#34d399' : '#7A859E' }} />
+                    {systemHealthPct() !== null ? 'Live' : 'Pending'}
                   </span>
                 </div>
 
                 <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', gap: '10px' }}>
-                  <div style={{ position: 'relative', width: '82px', height: '82px', display: 'grid', 'place-items': 'center' }}>
-                    <svg width="82" height="82" viewBox="0 0 82 82">
-                      <circle cx="41" cy="41" r="32" stroke="#161F33" stroke-width="7" fill="none" />
+                  <div style={{ position: 'relative', width: '78px', height: '78px', display: 'grid', 'place-items': 'center', 'flex-shrink': '0' }}>
+                    <svg width="78" height="78" viewBox="0 0 82 82" style={{ transform: 'rotate(-90deg)' }}>
+                      <circle cx="41" cy="41" r="32" stroke="#161D2F" stroke-width="7" fill="none" />
                       <circle
                         cx="41"
                         cy="41"
                         r="32"
-                        stroke="#20C997"
+                        stroke={systemHealthPct() !== null ? (systemHealthPct()! >= 80 ? '#34d399' : '#fbbf24') : '#2B3552'}
                         stroke-width="7"
                         fill="none"
-                        stroke-dasharray="201"
-                        stroke-dashoffset="6"
+                        stroke-dasharray="201.06"
+                        stroke-dashoffset={String(ringOffset())}
                         stroke-linecap="round"
                       />
                     </svg>
                     <div style={{ position: 'absolute', 'text-align': 'center' }}>
-                      <div style={{ 'font-size': '13px', 'font-weight': '800', color: '#F1F3FA', 'line-height': '1.1' }}>
+                      <div class="tabular-nums" style={{ 'font-size': '12.5px', 'font-weight': '800', color: '#F1F3FA', 'line-height': '1.1' }}>
                         {systemHealthPct() !== null ? `${systemHealthPct()}%` : 'Unknown'}
                       </div>
-                      <div style={{ 'font-size': '10px', color: '#687594' }}>Health</div>
+                      <div style={{ 'font-size': '9.5px', color: '#7A859E' }}>Health</div>
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', 'font-size': '11px' }}>
-                    <div>
-                      <span style={{ 'font-weight': '700', color: '#F1F3FA' }}>{responseTimeMs() !== null ? `${responseTimeMs()}ms` : '—'}</span>{' '}
-                      <span style={{ color: '#687594' }}>Response</span>
+                  <div class="tabular-nums" style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', 'font-size': '11.5px', flex: '1' }}>
+                    <div style={{ display: 'flex', 'justify-content': 'space-between' }}>
+                      <span style={{ color: '#7A859E' }}>Latency</span>
+                      <span style={{ 'font-weight': '700', color: '#F1F3FA', 'font-family': 'var(--font-mono)' }}>
+                        {responseTimeMs() !== null ? `${responseTimeMs()}ms` : latencySec() !== null ? `${latencySec()}s` : '—'}
+                      </span>
                     </div>
-                    <div>
-                      <span style={{ 'font-weight': '700', color: '#F1F3FA' }}>{memoryUsageGb() !== null ? `${memoryUsageGb()}GB` : '—'}</span>{' '}
-                      <span style={{ color: '#687594' }}>Memory</span>
+                    <div style={{ display: 'flex', 'justify-content': 'space-between' }}>
+                      <span style={{ color: '#7A859E' }}>Memory</span>
+                      <span style={{ 'font-weight': '700', color: '#F1F3FA', 'font-family': 'var(--font-mono)' }}>
+                        {memoryUsageGb() !== null ? `${memoryUsageGb()} GB` : '—'}
+                      </span>
                     </div>
-                    <div>
-                      <span style={{ 'font-weight': '700', color: '#F1F3FA' }}>{latencySec() !== null ? `${latencySec()}s` : '—'}</span>{' '}
-                      <span style={{ color: '#687594' }}>Latency</span>
+                    <div style={{ display: 'flex', 'justify-content': 'space-between' }}>
+                      <span style={{ color: '#7A859E' }}>Requests</span>
+                      <span style={{ 'font-weight': '700', color: '#F1F3FA', 'font-family': 'var(--font-mono)' }}>
+                        {gatewayHealth()?.gateway?.requests ?? '—'}
+                      </span>
                     </div>
                   </div>
-                </div>
-
-                <div
-                  style={{
-                    height: '24px',
-                    width: '100%',
-                    display: 'flex',
-                    'align-items': 'center',
-                  }}
-                >
-                  <svg width="100%" height="100%" viewBox="0 0 200 24" preserveAspectRatio="none">
-                    <path
-                      d="M 0 16 Q 25 6, 50 14 T 100 8 T 150 18 T 200 10"
-                      fill="none"
-                      stroke="#E5B842"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                    />
-                  </svg>
                 </div>
               </div>
 
@@ -1836,8 +1711,8 @@ export function MiraGoldLayout(props: {
               <div
                 style={{
                   background: '#0D111E',
-                  border: '1px solid #1E273F',
-                  'border-radius': '14px',
+                  border: '1px solid #1E253A',
+                  'border-radius': '12px',
                   padding: '14px',
                   display: 'flex',
                   'flex-direction': 'column',
@@ -1845,57 +1720,62 @@ export function MiraGoldLayout(props: {
                 }}
               >
                 <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
-                  <span style={{ 'font-weight': '700', 'font-size': '13px', color: '#F1F3FA' }}>
-                    Active Agents ({activeAgentsCount() !== null ? activeAgentsCount() : '—'})
+                  <span style={{ 'font-weight': '700', 'font-size': '12.5px', color: '#F1F3FA' }}>
+                    Agents (<span class="tabular-nums">{activeAgentsCount() !== null ? activeAgentsCount() : '—'}</span>)
                   </span>
-                  <span
-                    onClick={() => handleNavClick('agents')}
-                    style={{ 'font-size': '11px', color: '#F5D061', cursor: 'pointer', 'font-weight': '600' }}
+                  <button
+                    type="button"
+                    onClick={() => selectWorkspace('work', 'agents')}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      padding: '0',
+                      'font-size': '11px',
+                      color: '#F5D061',
+                      cursor: 'pointer',
+                      'font-weight': '600',
+                    }}
                   >
                     View All →
-                  </span>
+                  </button>
                 </div>
 
-                <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
-                  <For each={filteredAgents().slice(0, 4)}>
-                    {(agent) => (
-                      <div
-                        style={{
-                          display: 'flex',
-                          'align-items': 'center',
-                          'justify-content': 'space-between',
-                          padding: '6px 8px',
-                          background: '#090C16',
-                          'border-radius': '8px',
-                          border: '1px solid #182035',
-                        }}
-                      >
-                        <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
-                          <span style={{ 'font-size': '13px', color: '#F5D061' }}>⚙</span>
-                          <div>
-                            <div style={{ 'font-size': '12px', 'font-weight': '600', color: '#F1F3FA' }}>
-                              {agent.name}
-                            </div>
-                            <div style={{ 'font-size': '10px', color: '#687594' }}>{agent.description?.slice(0, 24) || 'Active'}...</div>
+                <Show
+                  when={realAgents().length > 0}
+                  fallback={
+                    <div style={{ 'font-size': '11.5px', color: '#7A859E', padding: '4px 0' }}>
+                      No active backend agents loaded.
+                    </div>
+                  }
+                >
+                  <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
+                    <For each={realAgents().slice(0, 4)}>
+                      {(agent) => (
+                        <div
+                          style={{
+                            padding: '6px 8px',
+                            background: '#090C16',
+                            'border-radius': '8px',
+                            border: '1px solid #182035',
+                          }}
+                        >
+                          <div style={{ 'font-size': '12px', 'font-weight': '600', color: '#F5D061' }}>{agent.name}</div>
+                          <div style={{ 'font-size': '10.5px', color: '#7A859E', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>
+                            {agent.description || 'Configured persona'}
                           </div>
                         </div>
-                        <div style={{ display: 'flex', gap: '2px', 'align-items': 'flex-end', height: '12px' }}>
-                          <span style={{ width: '2px', height: '10px', background: '#36BDF8', 'border-radius': '1px' }} />
-                          <span style={{ width: '2px', height: '6px', background: '#36BDF8', 'border-radius': '1px' }} />
-                          <span style={{ width: '2px', height: '12px', background: '#36BDF8', 'border-radius': '1px' }} />
-                        </div>
-                      </div>
-                    )}
-                  </For>
-                </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
               </div>
 
-              {/* CARD 3: RECENT ACTIVITY */}
+              {/* CARD 3: RECENT ACTIVITY (100% Real Data) */}
               <div
                 style={{
                   background: '#0D111E',
-                  border: '1px solid #1E273F',
-                  'border-radius': '14px',
+                  border: '1px solid #1E253A',
+                  'border-radius': '12px',
                   padding: '14px',
                   display: 'flex',
                   'flex-direction': 'column',
@@ -1903,96 +1783,67 @@ export function MiraGoldLayout(props: {
                 }}
               >
                 <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
-                  <span style={{ 'font-weight': '700', 'font-size': '13px', color: '#F1F3FA' }}>
-                    Recent Activity
-                  </span>
-                  <span
-                    onClick={() => handleNavClick('evolution')}
-                    style={{ 'font-size': '11px', color: '#F5D061', cursor: 'pointer', 'font-weight': '600' }}
+                  <span style={{ 'font-weight': '700', 'font-size': '12.5px', color: '#F1F3FA' }}>Recent Activity</span>
+                  <button
+                    type="button"
+                    onClick={() => selectWorkspace('evolution')}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      padding: '0',
+                      'font-size': '11px',
+                      color: '#F5D061',
+                      cursor: 'pointer',
+                      'font-weight': '600',
+                    }}
                   >
-                    View All →
-                  </span>
+                    Evolution →
+                  </button>
                 </div>
 
-                <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
-                  <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', 'font-size': '11px' }}>
-                    <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
-                      <div style={{ width: '18px', height: '18px', 'border-radius': '50%', background: '#20C997', color: '#07090E', display: 'grid', 'place-items': 'center', 'font-size': '10px', 'font-weight': '900' }}>✓</div>
-                      <span style={{ color: '#F1F3FA' }}>Design saved successfully</span>
+                <Show
+                  when={recentActivityItems().length > 0}
+                  fallback={
+                    <div style={{ 'font-size': '11.5px', color: '#7A859E', padding: '4px 0' }}>
+                      No recent audit, proposal, or session events recorded yet.
                     </div>
-                    <span style={{ color: '#687594' }}>2m ago</span>
-                  </div>
-                  <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', 'font-size': '11px' }}>
-                    <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
-                      <div style={{ width: '18px', height: '18px', 'border-radius': '50%', background: '#36BDF8', color: '#07090E', display: 'grid', 'place-items': 'center', 'font-size': '10px', 'font-weight': '900' }}>ℹ</div>
-                      <span style={{ color: '#F1F3FA' }}>New research insight</span>
-                    </div>
-                    <span style={{ color: '#687594' }}>5m ago</span>
-                  </div>
-                  <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', 'font-size': '11px' }}>
-                    <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
-                      <div style={{ width: '18px', height: '18px', 'border-radius': '50%', background: '#8065FF', color: '#07090E', display: 'grid', 'place-items': 'center', 'font-size': '10px', 'font-weight': '900' }}>↗</div>
-                      <span style={{ color: '#F1F3FA' }}>Evolution proposal submitted</span>
-                    </div>
-                    <span style={{ color: '#687594' }}>8m ago</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* CARD 4: MIRA EVOLUTION PROMO */}
-              <div
-                style={{
-                  background:
-                    'linear-gradient(135deg, rgba(229, 184, 66, 0.16) 0%, rgba(13, 17, 28, 0.95) 100%)',
-                  border: '1px solid rgba(229, 184, 66, 0.35)',
-                  'border-radius': '14px',
-                  padding: '14px',
-                  display: 'flex',
-                  'flex-direction': 'column',
-                  gap: '10px',
-                  position: 'relative',
-                  overflow: 'hidden',
-                }}
-              >
-                <div style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
-                  <span style={{ 'font-size': '22px' }}>🚀</span>
-                  <div>
-                    <div style={{ 'font-size': '13px', 'font-weight': '700', color: '#F1F3FA' }}>
-                      Mira Evolution
-                    </div>
-                    <div style={{ 'font-size': '10px', color: '#929CB3' }}>
-                      Smarter. Stronger. Autonomous.
-                    </div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleNavClick('evolution')}
-                  style={{
-                    background: 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)',
-                    color: '#07090E',
-                    border: 'none',
-                    'border-radius': '8px',
-                    padding: '8px 12px',
-                    'font-size': '12px',
-                    'font-weight': '700',
-                    cursor: 'pointer',
-                    'text-align': 'center',
-                    'min-height': '36px',
-                  }}
+                  }
                 >
-                  View Progress →
-                </button>
+                  <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
+                    <For each={recentActivityItems()}>
+                      {(item) => (
+                        <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', gap: '8px', 'font-size': '11px' }}>
+                          <div style={{ display: 'flex', 'align-items': 'center', gap: '7px', 'min-width': '0' }}>
+                            <span
+                              style={{
+                                width: '7px',
+                                height: '7px',
+                                'border-radius': '50%',
+                                background: item.kind === 'ok' ? '#34d399' : item.kind === 'warn' ? '#fbbf24' : '#E5B842',
+                                'flex-shrink': '0',
+                              }}
+                            />
+                            <span style={{ color: '#F1F3FA', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>
+                              {item.label}
+                            </span>
+                          </div>
+                          <span class="tabular-nums" style={{ color: '#7A859E', 'flex-shrink': '0', 'font-family': 'var(--font-mono)', 'font-size': '10px' }}>
+                            {item.time ? new Date(item.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                          </span>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
               </div>
             </aside>
           </Show>
         </div>
 
-        {/* ========================================================================= */}
         {/* MOBILE BOTTOM NAVIGATION BAR */}
-        {/* ========================================================================= */}
         <Show when={isMobileScreen()}>
           <nav
+            aria-label="Mobile navigation"
             style={{
               position: 'fixed',
               bottom: '0',
@@ -2011,15 +1862,16 @@ export function MiraGoldLayout(props: {
           >
             <For each={mobileBottomNavItems}>
               {(item) => {
-                const active = () => item.id === 'menu' ? isMobileMenuOpen() : activeNav() === item.id
+                const active = () => item.id === 'menu' ? isMobileMenuOpen() : currentWorkspace() === item.id
                 return (
                   <button
                     type="button"
+                    aria-current={active() && item.id !== 'menu' ? 'page' : undefined}
                     onClick={() => {
                       if (item.id === 'menu') {
                         setIsMobileMenuOpen(!isMobileMenuOpen())
                       } else {
-                        handleNavClick(item.id)
+                        selectWorkspace(item.id)
                       }
                     }}
                     style={{
@@ -2030,15 +1882,15 @@ export function MiraGoldLayout(props: {
                       background: 'transparent',
                       border: 'none',
                       color: active() ? '#F5D061' : '#7A859E',
-                      'font-size': '10px',
+                      'font-size': '10.5px',
                       'font-weight': active() ? '700' : '500',
                       cursor: 'pointer',
                       flex: '1',
                       height: '100%',
-                      gap: '2px',
+                      gap: '3px',
                     }}
                   >
-                    <span style={{ 'font-size': '18px' }}>{item.icon}</span>
+                    <NavIcon name={item.id} size={18} />
                     <span>{item.label}</span>
                   </button>
                 )
@@ -2048,51 +1900,122 @@ export function MiraGoldLayout(props: {
         </Show>
       </div>
 
-      {/* ========================================================================= */}
-      {/* 4. REAL INTERACTIVE MODALS */}
-      {/* ========================================================================= */}
-
-      {/* MODAL 5: SEED KNOWLEDGE MEMORY */}
-      <Show when={showSeedMemoryModal()}>
-        <div style={{ position: 'fixed', inset: '0', background: 'rgba(7, 9, 14, 0.85)', display: 'grid', 'place-items': 'center', 'z-index': '1000', padding: '16px' }}>
-          <form onSubmit={handleSeedMemory} style={{ background: '#0D111E', border: '1px solid #E5B842', 'border-radius': '16px', padding: isMobileScreen() ? '16px' : '24px', width: 'min(480px, 92vw)', 'max-height': '90vh', display: 'flex', 'flex-direction': 'column', gap: '14px', 'overflow-y': 'auto' }}>
-            <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-              <div style={{ 'font-size': '16px', 'font-weight': '800', color: '#F5D061' }}>+ Seed Knowledge Node</div>
-              <button type="button" onClick={() => setShowSeedMemoryModal(false)} style={{ background: 'transparent', border: 'none', color: '#929CB3', 'font-size': '20px', cursor: 'pointer', 'min-height': '44px', 'min-width': '44px', display: 'grid', 'place-items': 'center' }}>✕</button>
-            </div>
-            <div>
-              <label style={{ 'font-size': '11px', 'font-weight': '700', color: '#929CB3' }}>Title</label>
-              <input type="text" required value={seedTitle()} onInput={(e) => setSeedTitle(e.currentTarget.value)} placeholder="e.g. Ankara Fabric Tensile Strength" style={{ width: '100%', background: '#07090E', border: '1px solid #1E273F', color: '#F1F3FA', padding: '10px', 'border-radius': '6px', 'margin-top': '4px', 'font-size': '13px' }} />
-            </div>
-            <div>
-              <label style={{ 'font-size': '11px', 'font-weight': '700', color: '#929CB3' }}>Content / Specification</label>
-              <textarea value={seedContent()} onInput={(e) => setSeedContent(e.currentTarget.value)} rows={3} placeholder="Memory content snippet..." style={{ width: '100%', background: '#07090E', border: '1px solid #1E273F', color: '#F1F3FA', padding: '10px', 'border-radius': '6px', 'margin-top': '4px', 'font-size': '13px' }} />
-            </div>
-            <button type="submit" style={{ background: '#E5B842', color: '#07090E', border: 'none', padding: '12px', 'border-radius': '8px', 'font-weight': '700', cursor: 'pointer', 'margin-top': '4px', 'min-height': '44px' }}>Save Node to Backend</button>
-          </form>
-        </div>
-      </Show>
-
-      {/* MODAL 6: TEST GUARDRAIL */}
+      {/* GUARDRAIL TEST MODAL */}
       <Show when={showCheckGuardrailModal()}>
-        <div style={{ position: 'fixed', inset: '0', background: 'rgba(7, 9, 14, 0.85)', display: 'grid', 'place-items': 'center', 'z-index': '1000', padding: '16px' }}>
-          <div style={{ background: '#0D111E', border: '1px solid #36BDF8', 'border-radius': '16px', padding: isMobileScreen() ? '16px' : '24px', width: 'min(460px, 92vw)', 'max-height': '90vh', display: 'flex', 'flex-direction': 'column', gap: '14px', 'overflow-y': 'auto' }}>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="guardrail-modal-title"
+          onClick={() => setShowCheckGuardrailModal(false)}
+          style={{
+            position: 'fixed',
+            inset: '0',
+            background: 'rgba(7, 9, 14, 0.85)',
+            display: 'grid',
+            'place-items': 'center',
+            'z-index': '1000',
+            padding: '16px',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#0D111E',
+              border: '1px solid rgba(229, 184, 66, 0.45)',
+              'border-radius': '14px',
+              padding: isMobileScreen() ? '16px' : '22px',
+              width: 'min(460px, calc(100vw - 32px))',
+              'max-height': '90dvh',
+              display: 'flex',
+              'flex-direction': 'column',
+              gap: '14px',
+              'overflow-y': 'auto',
+            }}
+          >
             <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-              <div style={{ 'font-size': '16px', 'font-weight': '800', color: '#36BDF8' }}>🛡 Test Tool Guardrail</div>
-              <button type="button" onClick={() => setShowCheckGuardrailModal(false)} style={{ background: 'transparent', border: 'none', color: '#929CB3', 'font-size': '20px', cursor: 'pointer', 'min-height': '44px', 'min-width': '44px', display: 'grid', 'place-items': 'center' }}>✕</button>
+              <div id="guardrail-modal-title" style={{ 'font-size': '15px', 'font-weight': '800', color: '#F5D061' }}>
+                Test Tool Guardrail
+              </div>
+              <button
+                type="button"
+                aria-label="Close guardrail dialog"
+                onClick={() => setShowCheckGuardrailModal(false)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#A0A9C0',
+                  'font-size': '18px',
+                  cursor: 'pointer',
+                  'min-height': '36px',
+                  'min-width': '36px',
+                  display: 'grid',
+                  'place-items': 'center',
+                }}
+              >
+                ✕
+              </button>
             </div>
             <div>
-              <label style={{ 'font-size': '11px', 'font-weight': '700', color: '#929CB3' }}>Tool Name</label>
-              <input type="text" value={guardrailToolInput()} onInput={(e) => setGuardrailToolInput(e.currentTarget.value)} placeholder="bash, edit, read, etc." style={{ width: '100%', background: '#07090E', border: '1px solid #1E273F', color: '#F1F3FA', padding: '10px', 'border-radius': '6px', 'margin-top': '4px', 'font-size': '13px' }} />
+              <label for="guardrail-tool-input" style={{ 'font-size': '11px', 'font-weight': '700', color: '#A0A9C0' }}>
+                Tool Name
+              </label>
+              <input
+                id="guardrail-tool-input"
+                type="text"
+                value={guardrailToolInput()}
+                onInput={(e) => setGuardrailToolInput(e.currentTarget.value)}
+                placeholder="bash, edit, read, etc."
+                style={{
+                  width: '100%',
+                  background: '#07090E',
+                  border: '1px solid #1E253A',
+                  color: '#F1F3FA',
+                  padding: '9px 10px',
+                  'border-radius': '8px',
+                  'margin-top': '6px',
+                  'font-size': '13px',
+                  'font-family': 'var(--font-mono)',
+                }}
+              />
             </div>
             <Show when={guardrailResult()}>
-              <div style={{ background: '#07090E', border: '1px solid #1E273F', padding: '10px 12px', 'border-radius': '8px', 'font-size': '12px', color: '#20C997' }}>
+              <div style={{ background: '#07090E', border: '1px solid #1E253A', padding: '10px 12px', 'border-radius': '8px', 'font-size': '12px', color: '#34d399', 'font-family': 'var(--font-mono)' }}>
                 {guardrailResult()}
               </div>
             </Show>
-            <div style={{ display: 'flex', gap: '10px', 'justify-content': 'flex-end' }}>
-              <button type="button" onClick={handleTestGuardrail} style={{ background: '#36BDF8', color: '#07090E', border: 'none', padding: '10px 18px', 'border-radius': '8px', 'font-weight': '700', cursor: 'pointer', 'min-height': '40px' }}>Evaluate</button>
-              <button type="button" onClick={() => setShowCheckGuardrailModal(false)} style={{ background: 'transparent', border: '1px solid #1E273F', color: '#929CB3', padding: '10px 16px', 'border-radius': '8px', 'font-weight': '600', cursor: 'pointer', 'min-height': '40px' }}>Close</button>
+            <div style={{ display: 'flex', gap: '8px', 'justify-content': 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setShowCheckGuardrailModal(false)}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid #1E253A',
+                  color: '#A0A9C0',
+                  padding: '8px 14px',
+                  'border-radius': '8px',
+                  'font-weight': '600',
+                  cursor: 'pointer',
+                  'min-height': '36px',
+                }}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={handleTestGuardrail}
+                style={{
+                  background: 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)',
+                  color: '#07090E',
+                  border: 'none',
+                  padding: '8px 16px',
+                  'border-radius': '8px',
+                  'font-weight': '700',
+                  cursor: 'pointer',
+                  'min-height': '36px',
+                }}
+              >
+                Evaluate
+              </button>
             </div>
           </div>
         </div>
