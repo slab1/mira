@@ -1249,17 +1249,10 @@ export const api = {
       latencyMs?: number
       error?: string
     }>('/providers/test-credentials', { method: 'POST', body: JSON.stringify(body) }),
-  listProviderModels: (id: string) =>
-    req<{ ok: boolean; models?: { id: string; name?: string }[]; error?: string }>(
-      `/providers/${encodeURIComponent(id)}/models`,
-    req<{ ok: boolean; providerId?: string; modelCount?: number; latencyMs?: number; error?: string }>(
-      '/providers/test-credentials',
-      { method: 'POST', body: JSON.stringify(body) },
-    ),
-  listProviderModels: (id: string, refresh = false) =>
-    req<{ ok: boolean; models?: { id: string; name?: string }[]; warning?: string; error?: string }>(
-      `/providers/${encodeURIComponent(id)}/models${refresh ? '?refresh=1' : ''}`,
-    ),
+   listProviderModels: (id: string, refresh = false) =>
+     req<{ ok: boolean; models?: { id: string; name?: string }[]; warning?: string; error?: string }>(
+       `/providers/${encodeURIComponent(id)}/models${refresh ? '?refresh=1' : ''}`
+     ),
   removeProvider: (id: string) =>
     req<{ ok: boolean }>(`/providers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 

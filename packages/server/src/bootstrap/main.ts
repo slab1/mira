@@ -43,6 +43,7 @@ import { PermissionManager } from '../permission/index.js'
 import { SessionPrompt } from '../session/prompt.js'
 import { MCPManager } from '../mcp/index.js'
 import { loadConfig, getConfig } from '../config/index.js'
+import type { JsonValue } from '../types/index.js'
 import { createLearningSystem, mountLearningRoutes } from '../learning/index.js'
 import { createRepoGraph } from '../repo/graph.js'
 import { createSemanticGraph } from '../repo/semantic.js'
@@ -1811,6 +1812,8 @@ async function main() {
                 try {
                   w.close(WS_CLOSE_UNAUTHORIZED, 'sandboxed interactive terminal is disabled')
                 } catch {}
+                return
+              }
               if (event?.type === 'terminal.resize') {
                 w.__armIdle?.()
                 const cols = Number(event.cols)
