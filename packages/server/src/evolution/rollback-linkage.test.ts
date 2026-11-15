@@ -22,16 +22,16 @@ beforeEach(async () => {
   // marker session (the applier creates this via INSERT OR IGNORE)
   db.sqlite
     .prepare(
-      'INSERT OR IGNORE INTO sessions (id, title, model, provider, created_at, updated_at) VALUES (?,?,?,?,?,?)',
+      'INSERT OR IGNORE INTO sessions (id, title, model, provider, created_at, updated_at, cwd) VALUES (?,?,?,?,?,?,?)',
     )
-    .run(EVOLUTION_SNAPSHOT_SESSION, 'evolution', 'm', 'p', Date.now(), Date.now())
+    .run(EVOLUTION_SNAPSHOT_SESSION, 'evolution', 'm', 'p', Date.now(), Date.now(), dir)
   // an unrelated user session with its own snapshots — the old LIKE heuristic
   // would sweep these into every rollback point
   db.sqlite
     .prepare(
-      'INSERT OR IGNORE INTO sessions (id, title, model, provider, created_at, updated_at) VALUES (?,?,?,?,?,?)',
+      'INSERT OR IGNORE INTO sessions (id, title, model, provider, created_at, updated_at, cwd) VALUES (?,?,?,?,?,?,?)',
     )
-    .run('user-session-1', 'u', 'm', 'p', Date.now(), Date.now())
+    .run('user-session-1', 'u', 'm', 'p', Date.now(), Date.now(), dir)
 })
 
 afterEach(() => {

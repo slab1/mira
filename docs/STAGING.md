@@ -12,12 +12,13 @@ Staging mirrors production with reduced safety nets and staging-specific CORS / 
 ### Local with Docker Compose
 
 ```bash
-cp .env.staging .env
+cp .env.example .env.staging
+# Edit .env.staging and set the staging credentials before starting.
 docker compose -f docker-compose.staging.yml up --build
 ```
 
-Server: http://localhost:4096
-Web: http://localhost:3000
+Server, API, and web app: http://localhost:4096
+The root URL serves the web app; API routes remain on the same origin.
 
 ### CI/CD
 

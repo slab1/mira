@@ -1,4 +1,6 @@
 import * as vscode from 'vscode'
+import { randomBytes } from 'node:crypto'
+import { parseChatSseFrame } from './chatSse'
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
 
@@ -13,15 +15,41 @@ type Session = {
 
 function getApiUrl(): string {
   const cfg = vscode.workspace.getConfiguration('mira')
-  const url = cfg.get<string>('mira.apiUrl') ?? cfg.get<string>('apiUrl') ?? 'http://127.0.0.1:4096'
-  return String(url).replace(/\/$/, '')
+  // API destinations are security-sensitive: never let a checked-out workspace
+  // redirect the user's stored token. Honor only user/global configuration.
+  const configured =
+    cfg.inspect<string>('apiUrl')?.globalValue ??
+    cfg.inspect<string>('mira.apiUrl')?.globalValue ??
+    cfg.inspect<string>('apiUrl')?.defaultValue ??
+    'http://127.0.0.1:4096'
+  let url: URL
+  try {
+    url = new URL(String(configured))
+  } catch {
+    throw new Error('Mira API URL must be a valid absolute HTTP(S) URL in user settings')
+  }
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error('Mira API URL must be an HTTP(S) URL without credentials, query, or fragment')
+  }
+  return url.href.replace(/\/$/, '')
 }
 
 async function getToken(context: vscode.ExtensionContext): Promise<string> {
   const stored = await context.secrets.get('mira.token')
   if (stored) return stored
   const cfg = vscode.workspace.getConfiguration('mira')
-  const cfgToken = cfg.get<string>('mira.token') ?? cfg.get<string>('token') ?? ''
+  // Legacy token settings remain supported only when supplied by the user;
+  // workspace settings are not a safe credential source.
+  const cfgToken =
+    cfg.inspect<string>('mira.token')?.globalValue ??
+    cfg.inspect<string>('token')?.globalValue ??
+    ''
   return String(cfgToken ?? '')
 }
 
@@ -36,8 +64,13 @@ async function miraFetch(
 ): Promise<Response> {
   const base = getApiUrl()
   const token = await getToken(context)
-  const res = await fetch(`${base}${path}`, {
+  const endpoint = new URL(path.replace(/^\/+/, ''), `${base}/`)
+  if (endpoint.origin !== new URL(base).origin)
+    throw new Error('Mira API path escaped configured origin')
+  const res = await fetch(endpoint, {
     ...init,
+    redirect: 'error',
+    credentials: 'omit',
     headers: {
       'Content-Type': 'application/json',
       ...authHeaders(token),
@@ -77,13 +110,29 @@ async function createChatWebview(
   const panel = vscode.window.createWebviewPanel('miraChat', panelTitle, vscode.ViewColumn.Beside, {
     enableScripts: true,
     retainContextWhenHidden: true,
+    localResourceRoots: [],
   })
-  const apiUrl = getApiUrl()
-  const token = await getToken(context)
-  const tokenJson = JSON.stringify(token)
-  const sessionIdJson = JSON.stringify(opts.sessionID ?? null)
+  const nonce = randomBytes(16).toString('hex')
+  // JSON embedded in a script must also escape HTML-significant characters so
+  // values such as a session ID can never terminate the script element.
+  const sessionIdJson = JSON.stringify(opts.sessionID ?? null).replace(
+    /[<>&\u2028\u2029]/g,
+    (c) => {
+      const escapes: Record<string, string> = {
+        '<': '\\u003c',
+        '>': '\\u003e',
+        '&': '\\u0026',
+        '\u2028': '\\u2028',
+        '\u2029': '\\u2029',
+      }
+      return escapes[c]!
+    },
+  )
+  let sessionID = opts.sessionID
+  const post = (message: Record<string, unknown>) => panel.webview.postMessage(message)
   panel.webview.html = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <style>
   body{font-family:var(--vscode-font-family);background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);margin:0;padding:12px}
   #log{white-space:pre-wrap;font-family:var(--vscode-editor-font-family);font-size:13px;border:1px solid var(--vscode-panel-border);border-radius:6px;padding:10px;min-height:300px;overflow:auto}
@@ -92,62 +141,90 @@ async function createChatWebview(
   .hint{opacity:0.7;font-size:11px;margin-top:6px}
 </style></head>
 <body>
-  <div style="font-weight:700;margin-bottom:6px">Mira — ${apiUrl}</div>
-  <div id="log">Connecting to ${apiUrl}/session …</div>
+  <div style="font-weight:700;margin-bottom:6px">Mira</div>
+  <div id="log">Connecting to Mira …</div>
   <textarea id="input" rows="3" placeholder="Ask Mira… (Enter to send, Shift+Enter for newline)"></textarea><br>
   <button id="send">Send</button>
   <div class="hint">Uses <code>mira.apiUrl</code> + secret <code>mira.token</code>. Streaming via SSE <code>POST /session/:id/prompt</code>.</div>
-<script>
+<script nonce="${nonce}">
   const vscodeApi = acquireVsCodeApi();
   const log = document.getElementById('log');
   const input = document.getElementById('input');
   const sendBtn = document.getElementById('send');
   let sessionId = ${sessionIdJson};
-  const token = ${tokenJson};
-  const authHeaders = token ? {Authorization: 'Bearer ' + token} : {};
-  if (sessionId) log.textContent += '\\n● resuming session ' + sessionId;
-  async function ensureSession(){
-    if(sessionId) return sessionId;
-    const res = await fetch('${apiUrl}/session', {method:'POST', headers:{'Content-Type':'application/json', ...authHeaders}, body: JSON.stringify({title:'VS Code Chat'})});
-    const s = await res.json();
-    sessionId = s.id;
-    log.textContent += '\\n● session ' + s.id + ' (' + s.model + ')';
-    return sessionId;
-  }
-  async function send(){
+  function send(){
     const text = input.value.trim();
     if(!text) return;
     input.value = '';
     log.textContent += '\\n\\n▶ ' + text + '\\n';
-    const id = await ensureSession();
-    const res = await fetch('${apiUrl}/session/' + id + '/prompt', {method:'POST', headers:{'Content-Type':'application/json', Accept:'text/event-stream', ...authHeaders}, body: JSON.stringify({prompt: text})});
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-    while(true){
-      const {done, value} = await reader.read();
-      if(done) break;
-      buf += decoder.decode(value, {stream:true});
-      const frames = buf.split('\\n\\n');
-      buf = frames.pop() || '';
-      for(const f of frames){
-        const m = f.match(/data:\\s*(.*)/);
-        if(!m) continue;
-        try{
-          const j = JSON.parse(m[1]);
-          const d = j.textDelta || j.text || j.content || '';
-          if(d) log.textContent += d;
-        }catch{ log.textContent += m[1]; }
-      }
-      log.scrollTop = log.scrollHeight;
-    }
+    vscodeApi.postMessage({type:'send', text});
   }
+  window.addEventListener('message', (event)=>{
+    const m = event.data || {};
+    if(m.type==='status') log.textContent += '\\n' + String(m.text || '');
+    else if(m.type==='session') { sessionId = String(m.id || ''); log.textContent += '\\n● session ' + sessionId; }
+    else if(m.type==='delta') log.textContent += String(m.text || '');
+    else if(m.type==='error') log.textContent += '\\n✗ ' + String(m.text || 'Request failed');
+    log.scrollTop = log.scrollHeight;
+  });
   sendBtn.onclick = send;
   input.onkeydown = (e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); send(); } };
-  // initial
-  fetch('${apiUrl}/health', {headers: authHeaders}).then(r=>r.json()).then(h=> log.textContent += '\\n✓ ' + h.version + ' · ' + h.tools + ' tools').catch(()=> log.textContent += '\\n✗ cannot reach ' + '${apiUrl}');
+  if(sessionId) log.textContent += '\\n● resuming session ' + sessionId;
+  vscodeApi.postMessage({type:'ready'});
 </script>
 </body></html>`
+  panel.webview.onDidReceiveMessage(async (message: unknown) => {
+    if (!message || typeof message !== 'object') return
+    const data = message as Record<string, unknown>
+    if (data.type === 'ready') {
+      try {
+        const res = await miraFetch(context, '/health')
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+        const health = (await res.json()) as { version?: string; tools?: number }
+        post({
+          type: 'status',
+          text: `✓ ${String(health.version ?? '')} · ${String(health.tools ?? 0)} tools`,
+        })
+      } catch {
+        post({ type: 'status', text: '✗ cannot reach Mira' })
+      }
+      return
+    }
+    if (data.type !== 'send' || typeof data.text !== 'string') return
+    const prompt = data.text.trim()
+    if (!prompt) return
+    try {
+      if (!sessionID) {
+        const session = await createSession(context, 'VS Code Chat')
+        sessionID = session.id
+        post({ type: 'session', id: session.id })
+      }
+      const res = await miraFetch(context, `/session/${encodeURIComponent(sessionID)}/prompt`, {
+        method: 'POST',
+        headers: { Accept: 'text/event-stream' },
+        body: JSON.stringify({ prompt }),
+      })
+      if (!res.ok || !res.body) throw new Error(`${res.status} ${res.statusText}`)
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      const consume = (frame: string) => {
+        const event = parseChatSseFrame(frame)
+        if (event) post({ type: event.type, text: event.text })
+      }
+      while (true) {
+        const { done, value } = await reader.read()
+        buffer += decoder.decode(value, { stream: !done })
+        const frames = buffer.split(/\r?\n\r?\n/)
+        buffer = frames.pop() ?? ''
+        for (const frame of frames) consume(frame)
+        if (done) break
+      }
+      if (buffer.trim()) consume(buffer)
+    } catch (error) {
+      post({ type: 'error', text: String(error) })
+    }
+  })
   return panel
 }
 

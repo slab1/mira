@@ -16,8 +16,8 @@ import { join } from 'node:path'
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import type { MiraDB } from '../storage/db.js'
 import type { JsonValue } from '../types/index.js'
-import { eq } from 'drizzle-orm'
 import { log, warn } from '../util/logger.js'
+import { remapImportedSnapshotPath } from '../storage/snapshot-paths.js'
 
 /** Export directory — MIRA_EXPORT_DIR env or ~/.mira/exports/ */
 export function getExportDir(): string {
@@ -241,7 +241,8 @@ export async function autoImportSessions(db: MiraDB, exportDir?: string): Promis
         tokensIn: envelope.session.tokensIn,
         tokensOut: envelope.session.tokensOut,
         costUsd: envelope.session.costUsd,
-        cwd: envelope.session.cwd,
+        // Source cwd is untrusted; imported paths are rebased into this workspace.
+        cwd: process.cwd(),
         projectId: envelope.session.projectId,
       })
 
@@ -302,12 +303,14 @@ export async function autoImportSessions(db: MiraDB, exportDir?: string): Promis
       // Insert snapshots with ORIGINAL ids
       let copiedSnapshots = 0
       for (const s of envelope.snapshots ?? []) {
+        const safePath = remapImportedSnapshotPath(s.path, envelope.session.cwd, process.cwd())
+        if (!safePath) continue
         try {
           await db.insert(db.schema.fileSnapshots).values({
             id: s.id,
             sessionID,
             messageID: s.messageID,
-            path: s.path,
+            path: safePath,
             content: s.content,
             createdAt: s.createdAt,
           })

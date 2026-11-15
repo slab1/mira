@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs'
 import type { JsonValue } from '../types/index.js'
 import { dirname } from 'node:path'
+import { safeWorkspacePath } from './snapshot-paths.js'
 
 export interface Snapshot extends Record<string, JsonValue> {
   id: string
@@ -39,6 +40,8 @@ export function snapshotFile(
 ): Snapshot | null {
   const sqlite = db.sqlite
   if (!sqlite || !opts.path) return null
+  const safePath = safeWorkspacePath(opts.path, sessionWorkspace(db, opts.sessionID))
+  if (!safePath) return null
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS file_snapshots (
       id TEXT PRIMARY KEY,
@@ -50,11 +53,11 @@ export function snapshotFile(
     );
     CREATE INDEX IF NOT EXISTS file_snapshots_session_idx ON file_snapshots(session_id);
   `)
-  const existed = existsSync(opts.path)
+  const existed = existsSync(safePath)
   let content: string | null = null
   if (existed) {
     try {
-      content = readFileSync(opts.path, 'utf-8')
+      content = readFileSync(safePath, 'utf-8')
     } catch {
       return null
     }
@@ -63,7 +66,7 @@ export function snapshotFile(
     id: `snap_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
     sessionID: opts.sessionID,
     messageID: opts.messageID ?? null,
-    path: opts.path,
+    path: safePath,
     existedBefore: existed,
     createdAt: Date.now(),
   }
@@ -118,7 +121,7 @@ export function revertLast(db: MiraDB, sessionID: string): RevertOutcome {
     .get(sessionID) as SnapshotRow | undefined
   if (!row) return { reverted: [], messagesDeleted: 0 }
 
-  restoreRow(row)
+  restoreRow(row, sessionWorkspace(db, sessionID))
 
   // Scope deletion to the snapshot's message and everything after it in
   // conversation order — NOT a raw created_at cutoff (which would delete
@@ -166,7 +169,7 @@ export function revertToMessage(db: MiraDB, sessionID: string, messageID: string
         )
         .all(sessionID, mid) as SnapshotRow[]
       for (const row of rows) {
-        restoreRow(row)
+        restoreRow(row, sessionWorkspace(db, sessionID))
         sqlite.prepare(`DELETE FROM file_snapshots WHERE id = ?`).run(row.id)
         restored.push(rowToSnapshot(row))
       }
@@ -224,6 +227,8 @@ export function getSnapshotContent(
           .get(snapshotID)
   ) as { path: string; content: string | null; had_content: number } | undefined
   if (!row) return null
+  const workspace = sessionID ? sessionWorkspace(db, sessionID) : process.cwd()
+  if (!safeWorkspacePath(row.path, workspace)) return null
   return { path: row.path, content: row.content, existedBefore: !!row.had_content }
 }
 
@@ -266,7 +271,7 @@ export function revertSnapshot(
 
   if (!row) return { reverted: null, reason: 'no matching snapshot in this session' }
 
-  restoreRow(row)
+  restoreRow(row, sessionWorkspace(db, sessionID))
   sqlite.prepare(`DELETE FROM file_snapshots WHERE id = ?`).run(row.id)
   return { reverted: rowToSnapshot(row) }
 }
@@ -286,8 +291,15 @@ export function listRecentSnapshots(db: MiraDB, sessionID: string, limit = 20): 
 
 // ── Internals ──────────────────────────────────────────────────────
 
-function restoreRow(row: SnapshotRow): void {
-  const path: string = row.path ?? ''
+function sessionWorkspace(db: MiraDB, sessionID: string): string {
+  const row = db.sqlite.prepare('SELECT cwd FROM sessions WHERE id = ?').get(sessionID) as
+    { cwd?: string | null } | undefined
+  return row?.cwd || process.cwd()
+}
+
+function restoreRow(row: SnapshotRow, workspace: string): void {
+  const path = safeWorkspacePath(row.path ?? '', workspace)
+  if (!path) throw new Error('snapshot path is outside the canonical session workspace')
   const content: string | null = row.content ?? null
   if (row.content === null) {
     // File was created by the agent — remove it

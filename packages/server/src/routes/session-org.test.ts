@@ -170,6 +170,39 @@ describe('org-scoped session visibility (P3.3)', () => {
     const res = await fetch(`${BASE}/session/${aliceSessionID}`, { headers: auth('tok-bob') })
     expect(res.status).toBe(200)
   })
+  test('every queue read and mutation is hidden from unauthorized callers', async () => {
+    prompt.queueMessage(aliceSessionID, 'keep me')
+    const requests: Array<[string, RequestInit?]> = [
+      [`/session/${aliceSessionID}/queue`],
+      [`/session/${aliceSessionID}/queue/items`],
+      [`/session/${aliceSessionID}/queue`, { method: 'DELETE' }],
+      [`/session/${aliceSessionID}/queue/missing`, { method: 'DELETE' }],
+      [
+        `/session/${aliceSessionID}/queue/item`,
+        {
+          method: 'DELETE',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: 'keep me' }),
+        },
+      ],
+      [
+        `/session/${aliceSessionID}/queue/reorder`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ texts: ['changed'] }),
+        },
+      ],
+    ]
+    for (const [path, init] of requests) {
+      const res = await fetch(`${BASE}${path}`, {
+        ...init,
+        headers: { ...auth('tok-carol'), ...(init?.headers ?? {}) },
+      })
+      expect(res.status).toBe(404)
+    }
+    expect(prompt.getQueue(aliceSessionID)).toEqual(['keep me'])
+  })
 
   test('orgless owner gets 404 (no existence leak)', async () => {
     const res = await fetch(`${BASE}/session/${aliceSessionID}`, { headers: auth('tok-carol') })

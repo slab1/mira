@@ -133,6 +133,13 @@ export function createSessionStore() {
   // ── Debounced loadMessages + incremental patch (P1-8) ────────────
   let loadMessagesTimer: ReturnType<typeof setTimeout> | null = null
   let pendingLoadId: string | null = null
+  // Each selection starts a new generation, including A → B → A. A response
+  // from an earlier visit to the same session must not overwrite current data.
+  let selectionGeneration = 0
+
+  function isCurrentSelection(id: string, generation: number): boolean {
+    return state.currentId === id && selectionGeneration === generation
+  }
 
   function scheduleLoadMessages(id: string, immediate = false) {
     if (immediate) {
@@ -340,6 +347,7 @@ export function createSessionStore() {
   }
 
   async function selectSession(id: string) {
+    const generation = ++selectionGeneration
     // cancel any pending debounced load for previous session
     if (loadMessagesTimer) {
       clearTimeout(loadMessagesTimer)
@@ -356,7 +364,7 @@ export function createSessionStore() {
       error: null,
       doomLoop: null,
     })
-    await Promise.all([loadMessages(id), loadTodos(id)])
+    await Promise.all([loadMessages(id, generation), loadTodos(id, generation)])
   }
 
   async function deleteSession(id: string) {
@@ -369,16 +377,19 @@ export function createSessionStore() {
     }
   }
 
-  async function loadMessages(id: string) {
+  async function loadMessages(id: string, generation = selectionGeneration) {
     try {
       const msgs = await rpc.getMessages(id)
+      if (!isCurrentSelection(id, generation)) return
       setState('messages', msgs)
       // Reconcile queue with server truth
       try {
-        setState('queued', await rpc.getQueue(id))
+        const queue = await rpc.getQueue(id)
+        if (isCurrentSelection(id, generation)) setState('queued', queue)
       } catch {}
     } catch (e) {
-      if (!String((e as Error).message).includes('404')) setState('error', (e as Error).message)
+      if (isCurrentSelection(id, generation) && !String((e as Error).message).includes('404'))
+        setState('error', (e as Error).message)
     }
   }
 
@@ -394,10 +405,10 @@ export function createSessionStore() {
     }
   }
 
-  async function loadTodos(id: string) {
+  async function loadTodos(id: string, generation = selectionGeneration) {
     try {
       const todos = await rpc.getTodos(id)
-      setState('todos', todos)
+      if (isCurrentSelection(id, generation)) setState('todos', todos)
     } catch {
       // todos optional
     }
@@ -411,7 +422,8 @@ export function createSessionStore() {
     } catch {}
     try {
       const cfg = await rpc.getConfig()
-      const cap = (cfg as unknown as { costCap?: { perSession?: number; perTask?: number } }).costCap
+      const cap = (cfg as unknown as { costCap?: { perSession?: number; perTask?: number } })
+        .costCap
       if (cap) setState('costCap', cap)
     } catch {}
     if (state.currentId) {
@@ -421,7 +433,12 @@ export function createSessionStore() {
           setState('sessions', (prev) =>
             prev.map((s) =>
               s.id === sess.id
-                ? { ...s, costUsd: sess.costUsd, tokensIn: sess.tokensIn, tokensOut: sess.tokensOut }
+                ? {
+                    ...s,
+                    costUsd: sess.costUsd,
+                    tokensIn: sess.tokensIn,
+                    tokensOut: sess.tokensOut,
+                  }
                 : s,
             ),
           )

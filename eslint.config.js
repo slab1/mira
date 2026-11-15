@@ -27,7 +27,13 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: {
-          allowDefaultProject: ['*.ts', '*.js', '*.tsx'],
+          allowDefaultProject: [
+            '*.ts',
+            '*.js',
+            '*.tsx',
+            'packages/tui/test/*.ts',
+            'packages/vscode-mira/test/*.ts',
+          ],
         },
       },
     },
@@ -36,7 +42,10 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'off',
       'prefer-const': 'warn',
       '@typescript-eslint/no-unused-expressions': 'warn',
-      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
     },
   },
 )

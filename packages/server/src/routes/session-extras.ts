@@ -323,9 +323,10 @@ export function mountSessionExtrasRoutes(
     if (!(await deps.authorizedSession(id, c))) return c.json({ error: 'session not found' }, 404)
     return c.json(prompt.queueMessage(id, String(text).trim()))
   })
-  app.get('/session/:id/queue', (c: Context) => {
+  app.get('/session/:id/queue', async (c: Context) => {
     const id = requireId(c)
     if (!id) return c.json({ error: 'not found' }, 404)
+    if (!(await deps.authorizedSession(id, c))) return c.json({ error: 'not found' }, 404)
     return c.json(prompt.getQueue(id))
   })
 
@@ -333,6 +334,7 @@ export function mountSessionExtrasRoutes(
   app.get('/session/:id/queue/items', async (c: Context) => {
     const id = requireId(c)
     if (!id) return c.json({ error: 'not found' }, 404)
+    if (!(await deps.authorizedSession(id, c))) return c.json({ error: 'not found' }, 404)
     try {
       const items = db.sqlite
         .prepare(
@@ -345,17 +347,19 @@ export function mountSessionExtrasRoutes(
     }
   })
 
-  app.delete('/session/:id/queue', (c: Context) => {
+  app.delete('/session/:id/queue', async (c: Context) => {
     const id = requireId(c)
     if (!id) return c.json({ error: 'not found' }, 404)
+    if (!(await deps.authorizedSession(id, c))) return c.json({ error: 'not found' }, 404)
     return c.json({ cleared: prompt.clearQueue(id) })
   })
 
   // H3-E: DELETE /session/:id/queue/:itemId — remove a queued item by ID
-  app.delete('/session/:id/queue/:itemId', (c: Context) => {
+  app.delete('/session/:id/queue/:itemId', async (c: Context) => {
     const id = requireId(c)
     const itemId = c.req.param('itemId')
     if (!id || !itemId) return c.json({ error: 'not found' }, 404)
+    if (!(await deps.authorizedSession(id, c))) return c.json({ error: 'not found' }, 404)
     try {
       const result = db.sqlite
         .prepare('DELETE FROM message_queue WHERE session_id = ? AND id = ?')
@@ -370,6 +374,7 @@ export function mountSessionExtrasRoutes(
   app.delete('/session/:id/queue/item', async (c: Context) => {
     const id = requireId(c)
     if (!id) return c.json({ error: 'not found' }, 404)
+    if (!(await deps.authorizedSession(id, c))) return c.json({ error: 'not found' }, 404)
     const body = await c.req.json().catch(() => null)
     const text = body?.text
     if (!text) return c.json({ error: 'text required' }, 400)
@@ -385,6 +390,7 @@ export function mountSessionExtrasRoutes(
   app.post('/session/:id/queue/reorder', async (c: Context) => {
     const id = requireId(c)
     if (!id) return c.json({ error: 'not found' }, 404)
+    if (!(await deps.authorizedSession(id, c))) return c.json({ error: 'not found' }, 404)
     const body = await c.req.json().catch(() => null)
     if (!body || !Array.isArray(body.texts)) return c.json({ error: 'texts array required' }, 400)
     const texts = body.texts as string[]

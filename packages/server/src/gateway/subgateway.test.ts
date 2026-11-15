@@ -1,7 +1,6 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test'
 import { Subgateway, SubgatewayError, getSessionCost, getAllSessionCosts } from './subgateway.js'
 import type { MiraConfig } from '../types/index.js'
-import type { StreamOptions, GatewayChunk } from './types.js'
 import { GlobalBus } from '../bus/index.js'
 
 function makeConfig(overrides: Record<string, unknown> = {}): MiraConfig {
@@ -229,6 +228,57 @@ describe('Subgateway', () => {
     } finally {
       // try/finally: a throwing expect must not leak the stub to other files
       globalThis.fetch = origFetch
+    }
+  })
+
+  test('complete rejects a loopback provider URL without making a request', async () => {
+    const config = makeConfig()
+    config.provider!.openrouter!.options!.baseURL = 'http://127.0.0.1:8000/v1'
+    const gw = new Subgateway({
+      lane: 'default',
+      config: {
+        provider: 'openrouter',
+        model: 'openrouter/anthropic/claude-sonnet-4',
+        rateLimit: { rps: 100, burst: 200 },
+      },
+      globalConfig: config,
+    })
+    const originalFetch = globalThis.fetch
+    const fetchMock = mock(() => Promise.resolve(new Response('{}')))
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    try {
+      await expect(
+        gw.complete({ model: 'openrouter/anthropic/claude-sonnet-4', prompt: 'hello' }),
+      ).rejects.toMatchObject({ status: 403 })
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test('complete cancels a stalled response body when the provider timeout expires', async () => {
+    const gw = makeSubgateway({ timeout: 15 })
+    const originalFetch = globalThis.fetch
+    let canceled = false
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start() {},
+            cancel() {
+              canceled = true
+            },
+          }),
+        ),
+      ),
+    ) as unknown as typeof fetch
+    try {
+      await expect(
+        gw.complete({ model: 'openrouter/anthropic/claude-sonnet-4', prompt: 'hello' }),
+      ).rejects.toThrow('timed out after 15ms')
+      expect(canceled).toBe(true)
+    } finally {
+      globalThis.fetch = originalFetch
     }
   })
 })

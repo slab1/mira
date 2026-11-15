@@ -23,8 +23,16 @@ import { Hono, type Context } from 'hono'
 import { timingSafeEqual, randomBytes, createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync, appendFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+  chmodSync,
+  readFileSync,
+  appendFileSync,
+} from 'node:fs'
 import { parseKeyPair, roleForOwner, isRole, type Role } from '../auth/roles.js'
+import { terminalExecutionAllowed, terminalRoleAllowed } from '../terminal-security.js'
 import { ENV_OVERRIDES_FILE_WARNING, resolveTokenPrecedence } from '../token-provisioning.js'
 import { Bus } from '../bus/index.js'
 import { createDatabase, migrate } from '../storage/db.js'
@@ -51,7 +59,7 @@ import {
   isProductionEnvironment,
   warnIfEnforcementOffInProduction,
 } from '../guardrails/index.js'
-import type { BusEvent, MiraConfig, JsonValue } from '../types/index.js'
+import type { BusEvent, MiraConfig } from '../types/index.js'
 import { mountHealthRoutes } from '../routes/health.js'
 import { mountSessionRoutes } from '../routes/session.js'
 import { mountConfigRoutes } from '../routes/config.js'
@@ -135,7 +143,9 @@ const PORT_RAW =
   Bun.argv.find((a) => a.startsWith('--port='))?.split('=')[1] ??
   process.env.MIRA_PORT ??
   process.env.MIRA_SERVER_PORT ??
-  (process.env.PORT && process.env.PORT !== '8080' && process.env.PORT !== '3000' ? process.env.PORT : '4096')
+  (process.env.PORT && process.env.PORT !== '8080' && process.env.PORT !== '3000'
+    ? process.env.PORT
+    : '4096')
 const PORT = (() => {
   const n = Number(PORT_RAW)
   if (!Number.isFinite(n) || n <= 0 || n > 65535) {
@@ -487,7 +497,8 @@ function terminalToolConfig(): TerminalToolConfig | undefined {
 }
 function terminalEnabled(): boolean {
   if (process.env.MIRA_TERMINAL_ENABLED === '0') return false
-  if (terminalToolConfig()?.enabled === false) return false
+  if (terminalToolConfig()?.enabled === false || !terminalExecutionAllowed(terminalSandboxed()))
+    return false
   return true
 }
 function terminalSandboxed(): boolean {
@@ -1466,6 +1477,12 @@ async function main() {
 
   function activateTerminalSocket(ws: MiraWS, owner?: string, token?: string) {
     if (ws.__active) return
+    if (terminalSandboxed()) {
+      try {
+        ws.close(1008, 'sandboxed interactive terminal is disabled')
+      } catch {}
+      return
+    }
     ws.__active = true
     ws.__owner = owner ?? null
     ws.__token = token
@@ -1678,6 +1695,15 @@ async function main() {
             const authHeader = req.headers.get('authorization') ?? undefined
             const { authenticated, owner } = authenticateUpgrade(wsAuthCtx(), authHeader)
             const token = authenticated ? bearerOf(authHeader) : undefined
+            if (isTerminal && authenticated && token && !terminalRoleAllowed(resolveRole(token))) {
+              return new Response(
+                JSON.stringify({ error: 'terminal requires operator or admin role' }),
+                {
+                  status: 403,
+                  headers: { 'content-type': 'application/json' },
+                },
+              )
+            }
             let upgraded = false
             try {
               upgraded = srv.upgrade(req, { data: { authenticated, owner, isTerminal, token } })
@@ -1744,6 +1770,12 @@ async function main() {
               if (owner !== undefined) {
                 const isTerminal = (w.data as MiraWSData | undefined)?.isTerminal === true
                 const token = (event as { token?: string } | null)?.token
+                if (isTerminal && token && !terminalRoleAllowed(resolveRole(token))) {
+                  try {
+                    w.close(WS_CLOSE_UNAUTHORIZED, 'terminal requires operator or admin role')
+                  } catch {}
+                  return
+                }
                 if (isTerminal) activateTerminalSocket(w, owner, token)
                 else activateSocket(w, owner, token)
               }
@@ -1751,7 +1783,12 @@ async function main() {
             }
             // Revocation revalidation: an activated socket whose credential has
             // since been revoked or expired must be closed, not left streaming.
-            if (!credentialStillValid(wsAuthCtx(), w.__token, w.__owner)) {
+            if (
+              !credentialStillValid(wsAuthCtx(), w.__token, w.__owner) ||
+              ((w.data as MiraWSData | undefined)?.isTerminal === true &&
+                w.__token !== undefined &&
+                !terminalRoleAllowed(resolveRole(w.__token)))
+            ) {
               try {
                 w.__unsub?.()
               } catch {}
@@ -1767,6 +1804,13 @@ async function main() {
               return
             }
             if ((w.data as MiraWSData | undefined)?.isTerminal) {
+              if (terminalSandboxed()) {
+                try {
+                  w.__proc?.kill()
+                } catch {}
+                try {
+                  w.close(WS_CLOSE_UNAUTHORIZED, 'sandboxed interactive terminal is disabled')
+                } catch {}
               if (event?.type === 'terminal.resize') {
                 w.__armIdle?.()
                 const cols = Number(event.cols)
@@ -1781,6 +1825,15 @@ async function main() {
               }
               if (event?.type === 'terminal.input' && typeof event.data === 'string') {
                 w.__armIdle?.()
+                try {
+                  const stdin = w.__proc?.stdin
+                  if (
+                    stdin &&
+                    typeof stdin !== 'number' &&
+                    typeof (stdin as Bun.FileSink).write === 'function'
+                  )
+                    (stdin as Bun.FileSink).write(event.data)
+                } catch {}
                 const isControlOnly = /^[\x00-\x1f\x7f]+$/.test(event.data)
                 if (terminalSandboxed() && !isControlOnly) {
                   const raw = event.data.trim()

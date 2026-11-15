@@ -6,7 +6,7 @@
  * Server is source of truth; store mirrors it and drives optimistic UI.
  */
 
-import { createSignal, createEffect, onCleanup } from 'solid-js'
+import { createSignal, createEffect } from 'solid-js'
 import { createStore } from 'solid-js/store'
 import {
   api,
@@ -20,15 +20,7 @@ import {
   type BusEvent,
   type PendingPermission,
 } from '../api/client'
-import {
-  createEvent,
-  deduplicate,
-  detectGaps,
-  isStale,
-  reconcile,
-  type ReconciledEvent,
-  type StateSource,
-} from '../state/reconciliation'
+import { isStale } from '../state/reconciliation'
 import { toast } from '../components/Toast'
 
 type AppState = {
@@ -88,7 +80,10 @@ function uid() {
   return Math.random().toString(36).slice(2, 9)
 }
 
-export function createAppStore() {
+export function createAppStore(
+  api: typeof defaultApi = defaultApi,
+  socketFactory: typeof createSocket = createSocket,
+) {
   const [state, setState] = createStore<AppState>({
     sessions: [],
     currentId: null,
@@ -146,6 +141,15 @@ export function createAppStore() {
     }
   }
 
+  type ActiveStream = {
+    controller: AbortController
+    text: string
+    events: AppState['liveStreamEvents']
+    assistantId: string
+  }
+  const streams = new Map<string, ActiveStream>()
+  let selectionGeneration = 0
+
   // ── WebSocket: GlobalBus subscription ────────────────────────────
   let reconnectAttempts = 0
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -163,7 +167,7 @@ export function createAppStore() {
     }, delay)
   }
 
-  const socket = createSocket({
+  const socket = socketFactory({
     open: () => {
       setState('connected', true)
       reconnectAttempts = 0
@@ -214,9 +218,7 @@ export function createAppStore() {
     // Reconciliation guard — flag stale events that may have been
     // out-of-sync across REST/WebSocket/polling sources.
     if (isStale(e.timestamp)) {
-      console.warn(
-        `[realtime] stale event '${e.type}' detected at timestamp ${e.timestamp}`,
-      )
+      console.warn(`[realtime] stale event '${e.type}' detected at timestamp ${e.timestamp}`)
     }
     switch (e.type) {
       case 'question.ask': {
@@ -485,6 +487,7 @@ export function createAppStore() {
       liveStreamEvents: [],
       pendingPermissions: [],
     })
+    await Promise.all([loadMessages(id, generation), loadTodos(id, generation)])
     await Promise.all([
       loadMessages(id, seq),
       loadTodos(id, seq),
@@ -535,7 +538,12 @@ export function createAppStore() {
     } catch (e) {
       if (state.currentId !== id || (expectedSeq !== undefined && expectedSeq !== selectSeq)) return
       // 404 = new session, ignore
-      if (!String((e as Error).message).includes('404')) setState('error', (e as Error).message)
+      if (
+        state.currentId === id &&
+        selectionGeneration === generation &&
+        !String((e as Error).message).includes('404')
+      )
+        setState('error', (e as Error).message)
     }
   }
 
@@ -603,8 +611,6 @@ export function createAppStore() {
     }
   })
 
-  let abort: AbortController | null = null
-
   /** Send a prompt — `model` is a per-message override for this send only. */
   async function sendPrompt(text?: string, model?: string) {
     const prompt = (text ?? input()).trim()
@@ -623,9 +629,23 @@ export function createAppStore() {
     setInput('')
 
     // Agent busy → queue the message instead of dropping it (Mira-parity UX)
-    if (state.streaming) {
+    if (streams.has(sessionId)) {
       try {
         const result = await api.queuePrompt(sessionId, prompt)
+        if (state.currentId === sessionId && selectionGeneration === generation) {
+          setState('queued', (q) => [...q, prompt])
+          setState('messages', (m) => [
+            ...m,
+            {
+              id: `tmp-${uid()}`,
+              sessionId,
+              role: 'user',
+              content: `${prompt}`,
+              createdAt: new Date().toISOString(),
+              queued: true,
+            },
+          ])
+        }
         if (state.currentId !== sessionId) return
         setState('queued', (q) => [...q, prompt])
         setState('messages', (m) => [
@@ -643,7 +663,7 @@ export function createAppStore() {
         // Reconcile queue with server in case server-side ordering differs
         try {
           const serverQueue = await api.getQueue(sessionId)
-          if (state.currentId !== sessionId) return
+          if (state.currentId !== sessionId || selectionGeneration !== generation) return
           setState('queued', serverQueue)
           // If our prompt didn't make it to the queue, surface the failure
           if (!serverQueue.includes(prompt)) {
@@ -670,11 +690,12 @@ export function createAppStore() {
     }
     setState('messages', (m) => [...m, userMsg])
     setState({ streaming: true, streamText: '', error: null, liveStreamEvents: [] })
-    abort?.abort()
-    abort = new AbortController()
+    const controller = new AbortController()
 
     // placeholder assistant message that we append to live
     const asstId = `asst-${uid()}`
+    const stream: ActiveStream = { controller, text: '', events: [], assistantId: asstId }
+    streams.set(sessionId, stream)
     setState('messages', (m) => [
       ...m,
       {
@@ -689,11 +710,12 @@ export function createAppStore() {
     try {
       await api.streamPrompt(sessionId, prompt, {
         model,
-        signal: abort.signal,
+        signal: controller.signal,
         onChunk: (chunk) => {
           if (state.currentId !== sessionId) return
           setState('streamText', (t) => t + chunk)
           // O(1) in-place update of the streaming assistant message (always last)
+          if (state.currentId !== sessionId) return
           const msgs = state.messages
           const idx = msgs.length - 1
           const last = msgs[idx]
@@ -704,14 +726,14 @@ export function createAppStore() {
         onEvent: (event) => {
           if (state.currentId !== sessionId) return
           // Push live streaming events for the activity panel
-          setState('liveStreamEvents', (prev) => [
-            ...prev,
-            {
-              type: event.type,
-              payload: event.payload as Record<string, unknown>,
-              timestamp: Date.now(),
-            },
-          ])
+          const streamEvent = {
+            type: event.type,
+            payload: event.payload as Record<string, unknown>,
+            timestamp: Date.now(),
+          }
+          stream.events = [...stream.events, streamEvent]
+          if (state.currentId === sessionId) setState('liveStreamEvents', stream.events)
+          else return
           if (event.type === 'error') {
             const raw = event.payload as unknown
             let msg: string
@@ -790,15 +812,20 @@ export function createAppStore() {
         },
       })
     } catch (e) {
-      if ((e as Error).name !== 'AbortError' && state.currentId === sessionId) {
+      if (
+        streams.get(sessionId) === stream &&
+        state.currentId === sessionId &&
+        (e as Error).name !== 'AbortError'
+      )
         setState('error', (e as Error).message)
-      }
     } finally {
-      if (state.currentId === sessionId) {
-        setState({ streaming: false, streamText: '', liveStreamEvents: [] })
-        // final sync from server to get tool parts / persisted state + fresh spend
-        await loadMessages(sessionId)
+      if (streams.get(sessionId) === stream) {
+        streams.delete(sessionId)
+        if (state.currentId === sessionId)
+          setState({ streaming: false, streamText: '', liveStreamEvents: [] })
       }
+      // final sync from server to get tool parts / persisted state + fresh spend
+      if (!streams.has(sessionId)) await loadMessages(sessionId)
       void loadCost()
     }
   }
@@ -806,8 +833,10 @@ export function createAppStore() {
   function stopStream() {
     const id = state.currentId
     if (id) void api.abortPrompt(id).catch(() => {})
-    abort?.abort()
-    setState('streaming', false)
+    const stream = id ? streams.get(id) : undefined
+    stream?.controller.abort()
+    if (id && stream) streams.delete(id)
+    setState({ streaming: false, streamText: '', liveStreamEvents: [] })
   }
 
   /** Answer a pending HITL question (question.ask → question.reply over WS) */
