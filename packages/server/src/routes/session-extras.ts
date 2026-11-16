@@ -122,13 +122,14 @@ export function mountSessionExtrasRoutes(
     })
   })
 
-  // Abort streaming prompt — client fire-and-forget (actual abort via SSE signal)
+  // Abort streaming prompt — actively stops running loops + notifies subscribers
   app.post('/session/:id/abort', async (c: Context) => {
     const id = requireId(c)
     if (!id) return c.json({ error: 'not found' }, 404)
     if (!(await deps.authorizedSession(id, c))) return c.json({ error: 'not found' }, 404)
-    bus.publish({ type: 'session.abort', sessionID: id, payload: {}, timestamp: Date.now() })
-    return c.json({ ok: true })
+    const aborted = prompt.abortSession(id)
+    bus.publish({ type: 'session.abort', sessionID: id, payload: { aborted }, timestamp: Date.now() })
+    return c.json({ ok: true, aborted })
   })
 
   // Messages & parts
@@ -217,6 +218,7 @@ export function mountSessionExtrasRoutes(
       agent,
       ownerID: owner,
       orgID: owner ? (deps.orgOfOwner(owner) ?? null) : null,
+      emitEvent: false,
     })
     const msgs = body.messages ?? []
     let copiedMessages = 0

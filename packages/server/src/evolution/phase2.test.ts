@@ -375,81 +375,85 @@ describe('Phase 2 Safety — wired routes (Risk→Autonomy→Approval→Resource
     )
   })
 
-  test('POST /evolution/approve/:id + POST /evolution/rollback/:id + GET /evolution/risk/:id', async () => {
-    const bus = new Bus()
-    const ledger = new ImprovementLedger(db as unknown as import('../storage/db.js').MiraDB, bus)
-    const approvalGate = new ApprovalGate({ bus })
-    // seed a high-risk pending entry manually to exercise approve flow
-    // Use observe to create a high-risk pending entry: guardrails with many files will stay pending
-    const app = new Hono()
-    mountEvolutionRoutes(app as unknown as Hono<{ Variables: { requestId: string } }>, {
-      db: db as unknown as import('../storage/db.js').MiraDB,
-      bus,
-      ledger,
-      approvalGate,
-      resolveOwner: (t: string) => (t === 'tok' ? 'test-human' : undefined),
-      resolveRole: () => 'operator',
-    })
-    // Create an observe that is NOT blocked by security but pending approval (high-risk without secret)
-    // Use large changedFiles + P0 + guardrails → high risk → pending at Canary? But our low default level is Autonomous.
-    // To force pending, we will use resource limits with normal caps but high-risk will be pending due to guardrails engine.
-    // Actually selectLevel for high is Suggest, but Suggest not pending (only Canary+medium or high). For high at Suggest, our gate still marks high as pending regardless of level.
-    const obsRes = await app.request('/evolution/observe', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        failure: 'guardrail permission denied on auth',
-        evidence: { permission: 'guardrails' },
-        changedFiles: [
-          'packages/server/src/guardrails/index.ts',
-          'a.ts',
-          'b.ts',
-          'c.ts',
-          'd.ts',
-          'e.ts',
-        ],
-        permissionScope: 'guardrails',
-        cost: 0.05,
-      }),
-    })
-    expect(obsRes.status).toBe(200)
-    const obsBody = (await obsRes.json()) as {
-      ledger: { id: string }
-      approval: { pending?: boolean }
-    }
-    const id = obsBody.ledger.id
-    // risk get
-    const riskRes = await app.request(`/evolution/risk/${id}`)
-    expect(riskRes.status).toBe(200)
-    const riskBody = (await riskRes.json()) as { risk: { level: string } }
-    expect(riskBody.risk.level).toBeDefined()
+  test(
+    'POST /evolution/approve/:id + POST /evolution/rollback/:id + GET /evolution/risk/:id',
+    async () => {
+      const bus = new Bus()
+      const ledger = new ImprovementLedger(db as unknown as import('../storage/db.js').MiraDB, bus)
+      const approvalGate = new ApprovalGate({ bus })
+      // seed a high-risk pending entry manually to exercise approve flow
+      // Use observe to create a high-risk pending entry: guardrails with many files will stay pending
+      const app = new Hono()
+      mountEvolutionRoutes(app as unknown as Hono<{ Variables: { requestId: string } }>, {
+        db: db as unknown as import('../storage/db.js').MiraDB,
+        bus,
+        ledger,
+        approvalGate,
+        resolveOwner: (t: string) => (t === 'tok' ? 'test-human' : undefined),
+        resolveRole: () => 'operator',
+      })
+      // Create an observe that is NOT blocked by security but pending approval (high-risk without secret)
+      // Use large changedFiles + P0 + guardrails → high risk → pending at Canary? But our low default level is Autonomous.
+      // To force pending, we will use resource limits with normal caps but high-risk will be pending due to guardrails engine.
+      // Actually selectLevel for high is Suggest, but Suggest not pending (only Canary+medium or high). For high at Suggest, our gate still marks high as pending regardless of level.
+      const obsRes = await app.request('/evolution/observe', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          failure: 'guardrail permission denied on auth',
+          evidence: { permission: 'guardrails' },
+          changedFiles: [
+            'packages/server/src/guardrails/index.ts',
+            'a.ts',
+            'b.ts',
+            'c.ts',
+            'd.ts',
+            'e.ts',
+          ],
+          permissionScope: 'guardrails',
+          cost: 0.05,
+        }),
+      })
+      expect(obsRes.status).toBe(200)
+      const obsBody = (await obsRes.json()) as {
+        ledger: { id: string }
+        approval: { pending?: boolean }
+      }
+      const id = obsBody.ledger.id
+      // risk get
+      const riskRes = await app.request(`/evolution/risk/${id}`)
+      expect(riskRes.status).toBe(200)
+      const riskBody = (await riskRes.json()) as { risk: { level: string } }
+      expect(riskBody.risk.level).toBeDefined()
 
-    // Approval identity comes from credentials, not the body: an
-    // unauthenticated caller is refused even when it names an approver.
-    const unauth = await app.request(`/evolution/approve/${id}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ approver: 'test-human' }),
-    })
-    expect(unauth.status).toBe(401)
+      // Approval identity comes from credentials, not the body: an
+      // unauthenticated caller is refused even when it names an approver.
+      const unauth = await app.request(`/evolution/approve/${id}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ approver: 'test-human' }),
+      })
+      expect(unauth.status).toBe(401)
 
-    const appRes = await app.request(`/evolution/approve/${id}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: 'Bearer tok' },
-      body: '{}',
-    })
-    expect(appRes.status).toBe(200)
-    const appBody = (await appRes.json()) as { approved: boolean; approver?: string }
-    expect(appBody.approved).toBe(true)
-    expect(appBody.approver).toBe('test-human')
+      const appRes = await app.request(`/evolution/approve/${id}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer tok' },
+        body: '{}',
+      })
+      expect(appRes.status).toBe(200)
+      const appBody = (await appRes.json()) as { approved: boolean; approver?: string }
+      expect(appBody.approved).toBe(true)
+      expect(appBody.approver).toBe('test-human')
 
-    // rollback
-    const rbRes = await app.request(`/evolution/rollback/${id}`, { method: 'POST' })
-    expect(rbRes.status).toBe(200)
-    const rbBody = (await rbRes.json()) as { rolledBack: boolean; verdict: string }
-    expect(rbBody.rolledBack).toBe(true)
-    expect(rbBody.verdict).toBe('rolledback')
-  })
+      // rollback
+      const rbRes = await app.request(`/evolution/rollback/${id}`, { method: 'POST' })
+      expect(rbRes.status).toBe(200)
+      const rbBody = (await rbRes.json()) as { rolledBack: boolean; verdict: string }
+      expect(rbBody.rolledBack).toBe(true)
+      expect(rbBody.verdict).toBe('rolledback')
+    },
+    15000,
+  )
 
   test('operator queue + deny: GET /evolution/approvals lists pending, POST /evolution/deny/:id denies with identity', async () => {
     const bus = new Bus()

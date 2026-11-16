@@ -135,7 +135,15 @@ export class ProviderRegistry {
       }
       if (expandedLower.startsWith(keyLower + '/')) {
         providerKey = key
-        modelID = expanded.slice(key.length + 1)
+        const rest = expanded.slice(key.length + 1)
+        const cfgModels = this.providers.get(key)?.models
+        const isNvidia = keyLower === 'nvidia' || this.providers.get(key)?.options?.kind === 'nvidia'
+        const hasExactCatalogKey =
+          isNvidia &&
+          cfgModels &&
+          (Object.prototype.hasOwnProperty.call(cfgModels, expanded) ||
+            Object.keys(cfgModels).some((m) => m.toLowerCase() === expandedLower))
+        modelID = hasExactCatalogKey && !rest.includes('/') ? expanded : rest
         break
       }
     }

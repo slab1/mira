@@ -81,7 +81,7 @@ function uid() {
 }
 
 export function createAppStore(
-  api: typeof defaultApi = defaultApi,
+  apiClient: typeof api = api,
   socketFactory: typeof createSocket = createSocket,
 ) {
   const [state, setState] = createStore<AppState>({
@@ -148,7 +148,7 @@ export function createAppStore(
     assistantId: string
   }
   const streams = new Map<string, ActiveStream>()
-  let selectionGeneration = 0
+  void apiClient
 
   // ── WebSocket: GlobalBus subscription ────────────────────────────
   let reconnectAttempts = 0
@@ -441,7 +441,7 @@ export function createAppStore(
 
   async function createSession(
     title?: string,
-    opts: { agent?: string; cwd?: string; projectId?: string } = {},
+    opts: { agent?: string; cwd?: string; projectId?: string; parentID?: string } = {},
   ) {
     if (creating) return null
     creating = true
@@ -452,6 +452,7 @@ export function createAppStore(
       if (opts.agent) body.agent = opts.agent
       if (opts.cwd) body.cwd = opts.cwd
       if (opts.projectId) body.projectId = opts.projectId
+      if (opts.parentID) body.parentID = opts.parentID
       const s = await api.createSession(body)
       setState('sessions', (prev) => [s, ...prev.filter((x) => x.id !== s.id)])
       await selectSession(s.id)
@@ -461,6 +462,26 @@ export function createAppStore(
       throw e
     } finally {
       creating = false
+    }
+  }
+
+  async function forkSession(messageID?: string, title?: string) {
+    const id = state.currentId
+    if (!id) return null
+    try {
+      const res = await api.forkSession(id, { messageID, title })
+      const forked = res.session
+      if (forked?.id) {
+        setState('sessions', (prev) => [forked, ...prev.filter((x) => x.id !== forked.id)])
+        await selectSession(forked.id)
+        return forked
+      }
+      await loadSessions()
+      if (res.id) await selectSession(res.id)
+      return null
+    } catch (e) {
+      setState('error', (e as Error).message)
+      throw e
     }
   }
 
@@ -487,7 +508,6 @@ export function createAppStore(
       liveStreamEvents: [],
       pendingPermissions: [],
     })
-    await Promise.all([loadMessages(id, generation), loadTodos(id, generation)])
     await Promise.all([
       loadMessages(id, seq),
       loadTodos(id, seq),
@@ -538,12 +558,9 @@ export function createAppStore(
     } catch (e) {
       if (state.currentId !== id || (expectedSeq !== undefined && expectedSeq !== selectSeq)) return
       // 404 = new session, ignore
-      if (
-        state.currentId === id &&
-        selectionGeneration === generation &&
-        !String((e as Error).message).includes('404')
-      )
+      if (!String((e as Error).message).includes('404')) {
         setState('error', (e as Error).message)
+      }
     }
   }
 
@@ -630,23 +647,10 @@ export function createAppStore(
 
     // Agent busy → queue the message instead of dropping it (Mira-parity UX)
     if (streams.has(sessionId)) {
+      const startSeq = selectSeq
       try {
         const result = await api.queuePrompt(sessionId, prompt)
-        if (state.currentId === sessionId && selectionGeneration === generation) {
-          setState('queued', (q) => [...q, prompt])
-          setState('messages', (m) => [
-            ...m,
-            {
-              id: `tmp-${uid()}`,
-              sessionId,
-              role: 'user',
-              content: `${prompt}`,
-              createdAt: new Date().toISOString(),
-              queued: true,
-            },
-          ])
-        }
-        if (state.currentId !== sessionId) return
+        if (state.currentId !== sessionId || selectSeq !== startSeq) return
         setState('queued', (q) => [...q, prompt])
         setState('messages', (m) => [
           ...m,
@@ -663,7 +667,7 @@ export function createAppStore(
         // Reconcile queue with server in case server-side ordering differs
         try {
           const serverQueue = await api.getQueue(sessionId)
-          if (state.currentId !== sessionId || selectionGeneration !== generation) return
+          if (state.currentId !== sessionId || selectSeq !== startSeq) return
           setState('queued', serverQueue)
           // If our prompt didn't make it to the queue, surface the failure
           if (!serverQueue.includes(prompt)) {
@@ -946,6 +950,7 @@ export function createAppStore(
     // actions
     loadSessions,
     createSession,
+    forkSession,
     selectSession,
     updateSession,
     deleteSession,

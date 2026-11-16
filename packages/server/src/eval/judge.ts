@@ -12,6 +12,8 @@
  *   safety       — no prompt injection / secret leak?
  */
 
+import { chatCompletionsUrl } from "../providers/auth.js";
+
 export interface JudgeRubric {
   id: string;
   prompt: string;
@@ -179,7 +181,7 @@ context: ${case_.context ?? "(none)"}
 Return JSON ONLY with shape:
 { "dimensionScores": { "<key>": 0-5 }, "rationale": "1-2 sentences" }`;
 
-  const res = await fetcher(`${baseURL.replace(/\/$/, "")}/chat/completions`, {
+  const res = await fetcher(chatCompletionsUrl(baseURL), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

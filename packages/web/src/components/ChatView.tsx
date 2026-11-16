@@ -12,7 +12,7 @@ import {
 import type { AppStore } from '../stores/app'
 import type { SettingsStore } from '../stores/settings'
 import type { Message, Part, Job, JsonValue } from '../api/client'
-import { api } from '../api/client'
+import { api, sessionParentId } from '../api/client'
 import { SlashAutocomplete, filterCommands } from './CommandPalette'
 import { toast } from './Toast'
 import { TurnList } from './SessionTurn'
@@ -375,6 +375,18 @@ export function ChatView(props: {
 }) {
   const s = () => props.store.state
   const activeSession = () => s().sessions.find((sess) => sess.id === s().currentId)
+  const parentSession = createMemo(() => {
+    const cur = activeSession()
+    if (!cur) return null
+    const pid = sessionParentId(cur)
+    if (!pid) return null
+    return s().sessions.find((sess) => sess.id === pid) ?? { id: pid, title: undefined }
+  })
+  const childSessions = createMemo(() => {
+    const id = s().currentId
+    if (!id) return []
+    return s().sessions.filter((sess) => sessionParentId(sess) === id)
+  })
   let scrollRef: HTMLDivElement | undefined
   let inputRef: HTMLTextAreaElement | undefined
 
@@ -658,10 +670,18 @@ export function ChatView(props: {
 
   const timeOf = (m: Message) => new Date(m.createdAt).toLocaleTimeString()
 
-  // Branch: create new session from a message
+  // Branch: fork session from a message boundary (with parentID link)
   const branchFrom = (m: Message) => {
     const text = contentOf(m).slice(0, 200)
-    void props.store.createSession(`Branch: ${text.slice(0, 40)}…`).catch(() => {})
+    const title = `Branch: ${text.slice(0, 40)}${text.length > 40 ? '…' : ''}`
+    if (typeof props.store.forkSession === 'function') {
+      void props.store
+        .forkSession(m.id, title)
+        .then(() => toast.success('Branched into child session'))
+        .catch(() => {})
+      return
+    }
+    void props.store.createSession(title, { parentID: s().currentId ?? undefined }).catch(() => {})
   }
 
   return (
@@ -778,6 +798,75 @@ export function ChatView(props: {
           </Show>
         </div>
       </div>
+
+      {/* Parent / child session lineage strip */}
+      <Show when={parentSession() || childSessions().length > 0}>
+        <div
+          aria-label="Session hierarchy"
+          style={{
+            display: 'flex',
+            'align-items': 'center',
+            gap: '8px',
+            'flex-wrap': 'wrap',
+            padding: '6px 14px',
+            'border-bottom': '1px solid var(--border)',
+            background: 'var(--bg-app)',
+            'font-size': 'var(--fs-2xs)',
+          }}
+        >
+          <Show when={parentSession()}>
+            {(p) => (
+              <button
+                type="button"
+                class="btn btn-ghost"
+                onClick={() => void props.store.selectSession(p().id)}
+                title={`Return to parent session (${p().id})`}
+                style={{
+                  padding: '2px 8px',
+                  'min-height': '24px',
+                  'font-size': 'var(--fs-2xs)',
+                  border: '1px solid var(--accent-border)',
+                  background: 'var(--accent-soft)',
+                  color: 'var(--accent)',
+                  'border-radius': 'var(--r-sm)',
+                }}
+              >
+                ← Parent: {p().title || `Session ${p().id.slice(0, 8)}`}
+              </button>
+            )}
+          </Show>
+          <Show when={childSessions().length > 0}>
+            <span style={{ color: 'var(--fg-faint)', 'font-family': 'var(--font-mono)' }}>
+              Children ({childSessions().length}):
+            </span>
+            <For each={childSessions()}>
+              {(child) => (
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  onClick={() => void props.store.selectSession(child.id)}
+                  title={`Open child session: ${child.title || child.id}`}
+                  style={{
+                    padding: '2px 8px',
+                    'min-height': '24px',
+                    'font-size': 'var(--fs-2xs)',
+                    border: '1px solid var(--border)',
+                    background: 'var(--bg-surface)',
+                    color: 'var(--fg-muted)',
+                    'border-radius': 'var(--r-sm)',
+                    'max-width': '220px',
+                    overflow: 'hidden',
+                    'text-overflow': 'ellipsis',
+                    'white-space': 'nowrap',
+                  }}
+                >
+                  ↳ {child.title || `Session ${child.id.slice(0, 6)}`}
+                </button>
+              )}
+            </For>
+          </Show>
+        </div>
+      </Show>
 
       {/* messages */}
       <div style={{ flex: '1', position: 'relative', 'min-height': '0' }}>

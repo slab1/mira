@@ -111,6 +111,46 @@ export async function cancelJob(db: MaybeDB, jobID: string): Promise<Job | undef
 }
 
 /**
+ * Cancel all running task jobs owned by a parent session (used on session
+ * delete/abort so orphaned background subagents do not keep running).
+ */
+export async function cancelJobsForParent(
+  db: MaybeDB,
+  parentSessionID: string,
+  bus?: Bus,
+): Promise<number> {
+  if (!db) return 0
+  const rows = await db
+    .select()
+    .from(jobs)
+    .where(and(eq(jobs.parentSessionID, parentSessionID), eq(jobs.status, 'running')))
+  let count = 0
+  for (const row of rows) {
+    jobAborts.get(row.id)?.abort()
+    jobAborts.delete(row.id)
+    count++
+  }
+  if (rows.length > 0) {
+    await db
+      .update(jobs)
+      .set({ status: 'cancelled' as JobStatus, updatedAt: Date.now() })
+      .where(and(eq(jobs.parentSessionID, parentSessionID), eq(jobs.status, 'running')))
+    if (bus) {
+      const ts = Date.now()
+      for (const row of rows) {
+        bus.publish({
+          type: 'job.cancelled',
+          sessionID: parentSessionID,
+          payload: { jobID: row.id },
+          timestamp: ts,
+        })
+      }
+    }
+  }
+  return count
+}
+
+/**
  * Terminal transition — only applies while the job is still 'running'.
  *
  * Verification settle (docs/VERIFICATION_STATES_DESIGN.md §5 chokepoint 1):
@@ -239,6 +279,41 @@ export const taskTool = {
         updatedAt: now,
       })
     }
+    bus?.publish({
+      type: 'job.created',
+      sessionID: ctx.sessionID,
+      payload: {
+        jobID,
+        taskID,
+        agent: agent ?? null,
+        title: description,
+      },
+      timestamp: now,
+    })
+
+    let createdChildSessionID: string | undefined
+    const onSessionCreated = async (childID: string) => {
+      createdChildSessionID = childID
+      if (db) {
+        try {
+          await db
+            .update(jobs)
+            .set({ childSessionID: childID, updatedAt: Date.now() })
+            .where(and(eq(jobs.id, jobID), eq(jobs.status, 'running')))
+        } catch {}
+      }
+      bus?.publish({
+        type: 'job.updated',
+        sessionID: ctx.sessionID,
+        payload: {
+          jobID,
+          taskID,
+          status: 'running',
+          childSessionID: childID,
+        },
+        timestamp: Date.now(),
+      })
+    }
 
     if (background) {
       // Fire-and-forget: run real subagent, persist + publish completion with full result.
@@ -250,7 +325,10 @@ export const taskTool = {
           prompt: `[${description}] ${prompt}`,
           parentID: ctx.sessionID,
           agent,
+          title: description,
+          cwd: ctx.cwd,
           signal: ac.signal,
+          onSessionCreated,
         })
           .then(({ sessionID, text }) => {
             const wasCancelled = ac.signal.aborted
@@ -270,6 +348,18 @@ export const taskTool = {
                 goalId,
                 status: wasCancelled ? 'cancelled' : 'completed',
                 verificationState: row?.verificationState,
+              })
+              bus?.publish({
+                type: 'job.updated',
+                sessionID: ctx.sessionID,
+                payload: {
+                  jobID,
+                  taskID,
+                  status: wasCancelled ? 'cancelled' : 'completed',
+                  childSessionID: sessionID,
+                  preview: text.slice(0, 600),
+                },
+                timestamp: Date.now(),
               })
               bus?.publish({
                 type: 'message.updated',
@@ -294,8 +384,16 @@ export const taskTool = {
               db,
               jobID,
               wasCancelled
-                ? { status: 'cancelled', error: 'Subagent cancelled' }
-                : { status: 'failed', error: String(err) },
+                ? {
+                    status: 'cancelled',
+                    error: 'Subagent cancelled',
+                    ...(createdChildSessionID ? { childSessionID: createdChildSessionID } : {}),
+                  }
+                : {
+                    status: 'failed',
+                    error: String(err),
+                    ...(createdChildSessionID ? { childSessionID: createdChildSessionID } : {}),
+                  },
               { bus, sessionID: ctx.sessionID, taskID },
             ).then((row) => {
               recordTaskOutcome({
@@ -304,6 +402,18 @@ export const taskTool = {
                 goalId,
                 status: wasCancelled ? 'cancelled' : 'failed',
                 verificationState: row?.verificationState,
+              })
+              bus?.publish({
+                type: wasCancelled ? 'job.cancelled' : 'job.updated',
+                sessionID: ctx.sessionID,
+                payload: {
+                  jobID,
+                  taskID,
+                  status: wasCancelled ? 'cancelled' : 'failed',
+                  ...(createdChildSessionID ? { childSessionID: createdChildSessionID } : {}),
+                  preview: String(err).slice(0, 600),
+                },
+                timestamp: Date.now(),
               })
               bus?.publish({
                 type: 'message.updated',
@@ -337,6 +447,10 @@ export const taskTool = {
         prompt: `[${description}] ${prompt}`,
         parentID: ctx.sessionID,
         agent,
+        title: description,
+        cwd: ctx.cwd,
+        signal: ctx.signal,
+        onSessionCreated,
       })
       const row = await finishJob(
         db,
@@ -351,6 +465,18 @@ export const taskTool = {
         status: 'completed',
         verificationState: row?.verificationState,
       })
+      bus?.publish({
+        type: 'job.updated',
+        sessionID: ctx.sessionID,
+        payload: {
+          jobID,
+          taskID,
+          status: 'completed',
+          childSessionID,
+          preview: text.slice(0, 600),
+        },
+        timestamp: Date.now(),
+      })
       return {
         taskID,
         jobID,
@@ -362,8 +488,34 @@ export const taskTool = {
         verification: verificationView(row),
       }
     } catch (err) {
-      await finishJob(db, jobID, { status: 'failed', error: String(err) })
-      recordTaskOutcome({ taskID, agent, goalId, status: 'failed' })
+      await finishJob(
+        db,
+        jobID,
+        {
+          status: ctx.signal?.aborted ? 'cancelled' : 'failed',
+          error: String(err),
+          ...(createdChildSessionID ? { childSessionID: createdChildSessionID } : {}),
+        },
+        { bus, sessionID: ctx.sessionID, taskID },
+      )
+      bus?.publish({
+        type: ctx.signal?.aborted ? 'job.cancelled' : 'job.updated',
+        sessionID: ctx.sessionID,
+        payload: {
+          jobID,
+          taskID,
+          status: ctx.signal?.aborted ? 'cancelled' : 'failed',
+          ...(createdChildSessionID ? { childSessionID: createdChildSessionID } : {}),
+          preview: String(err).slice(0, 600),
+        },
+        timestamp: Date.now(),
+      })
+      recordTaskOutcome({
+        taskID,
+        agent,
+        goalId,
+        status: ctx.signal?.aborted ? 'cancelled' : 'failed',
+      })
       throw err
     }
   },

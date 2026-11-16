@@ -7,6 +7,7 @@
 import type { GatewayMessage } from './types.js'
 import { ProviderError } from './errors.js'
 import { isBlockedFetchUrl } from '../guardrails/index.js'
+import { chatCompletionsUrl } from '../providers/auth.js'
 
 export interface SummarizeDeps {
   baseURL: string
@@ -50,7 +51,7 @@ export async function summarizeWithFallback(
     .join('\n\n')
 
   const keysToTry = allKeys.length ? allKeys : [deps.apiKey]
-  const fetchUrl = `${deps.baseURL.replace(/\/$/, '')}/chat/completions`
+  const fetchUrl = chatCompletionsUrl(deps.baseURL)
   const ssrfBlock = isBlockedFetchUrl(fetchUrl)
   if (ssrfBlock) {
     throw new ProviderError({

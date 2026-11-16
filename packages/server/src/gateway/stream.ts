@@ -13,6 +13,7 @@ import type { GatewayChunk, StreamOptions } from './types.js'
 import { createSSEParser } from './sse.js'
 import { ProviderError } from './errors.js'
 import { isBlockedFetchUrl } from '../guardrails/index.js'
+import { chatCompletionsUrl } from '../providers/auth.js'
 
 interface ChatRequestMessage {
   role: string
@@ -173,7 +174,7 @@ export async function liveOpenAIStream(ctx: {
     messages: wireMessages,
     stream: true,
     stream_options: { include_usage: true },
-    ...(opts.tools
+    ...(opts.tools && Object.keys(opts.tools).length > 0
       ? {
           tools: Object.entries(opts.tools).map(([name, def]) => ({
             type: 'function' as const,
@@ -190,7 +191,7 @@ export async function liveOpenAIStream(ctx: {
   const combinedSignal = opts.signal ? AbortSignal.any([timeoutSignal, opts.signal]) : timeoutSignal
 
   // SSRF protection: validate the full URL against private ranges before fetch
-  const fetchUrl = `${baseURL.replace(/\/$/, '')}/chat/completions`
+  const fetchUrl = chatCompletionsUrl(baseURL)
   const ssrfBlock = isBlockedFetchUrl(fetchUrl)
   if (ssrfBlock) {
     throw new ProviderError({
@@ -284,6 +285,9 @@ export async function liveOpenAIStream(ctx: {
 
     // SSE parser
     let sseDone = false
+    let finishEmitted = false
+    let hasEmittedText = false
+    let accumulatedReasoning = ''
     const pendingChunks: GatewayChunk[] = []
     let sseError: Error | null = null
 
@@ -296,7 +300,17 @@ export async function liveOpenAIStream(ctx: {
           return
         }
         try {
-          const json = JSON.parse(data) as ChatCompletionResponse
+          const json = JSON.parse(data) as ChatCompletionResponse & {
+            error?: string | { message?: string }
+          }
+          if (json.error) {
+            const errMsg =
+              typeof json.error === 'string'
+                ? json.error
+                : (json.error.message ?? JSON.stringify(json.error))
+            pendingChunks.push({ type: 'error', error: errMsg })
+            return
+          }
           if (json.usage) {
             lastUsage = {
               inputTokens: json.usage.prompt_tokens ?? 0,
@@ -307,6 +321,9 @@ export async function liveOpenAIStream(ctx: {
             | {
                 delta?: {
                   content?: string
+                  reasoning_content?: string
+                  reasoning?: string
+                  thought?: string
                   tool_calls?: Array<{
                     index?: number
                     id?: string
@@ -317,7 +334,16 @@ export async function liveOpenAIStream(ctx: {
               }
             | undefined
           if (!choice) return
+          const reasoningDelta =
+            choice.delta?.reasoning_content ??
+            choice.delta?.reasoning ??
+            choice.delta?.thought
+          if (reasoningDelta) {
+            accumulatedReasoning += reasoningDelta
+            pendingChunks.push({ type: 'reasoning-delta', text: reasoningDelta })
+          }
           if (choice.delta?.content) {
+            hasEmittedText = true
             pendingChunks.push({ type: 'text-delta', text: choice.delta.content })
           }
           if (choice.delta?.tool_calls) {
@@ -356,11 +382,17 @@ export async function liveOpenAIStream(ctx: {
             }
             toolCallAccum.clear()
             indexToId.clear()
+            // If the model produced purely reasoning and no content at all, promote reasoning to text
+            if (!hasEmittedText && accumulatedReasoning.trim().length > 0 && pendingChunks.filter(c => c.type === 'tool-call').length === 0) {
+              hasEmittedText = true
+              pendingChunks.push({ type: 'text-delta', text: accumulatedReasoning })
+            }
             pendingChunks.push({
               type: 'finish',
               finishReason: choice.finish_reason === 'tool_calls' ? 'tool-calls' : 'stop',
               ...(lastUsage ? { usage: lastUsage } : {}),
             })
+            finishEmitted = true
             sseDone = true
           }
         } catch (e) {
@@ -460,8 +492,15 @@ export async function liveOpenAIStream(ctx: {
         toolCallAccum.clear()
       }
 
+      // If no text was ever emitted, but reasoning was accumulated and no tool calls, promote reasoning to text
+      if (!hasEmittedText && accumulatedReasoning.trim().length > 0) {
+        hasEmittedText = true
+        yield { type: 'text-delta', text: accumulatedReasoning }
+      }
+
       // Ensure finish is always emitted
-      if (!sseDone) {
+      if (!finishEmitted) {
+        finishEmitted = true
         yield {
           type: 'finish',
           finishReason: 'stop' as const,

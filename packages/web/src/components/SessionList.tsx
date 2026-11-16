@@ -1,7 +1,7 @@
 // @ts-nocheck
-import { For, Show, createSignal, createMemo, onMount } from 'solid-js'
+import { For, Show, createSignal, createMemo, onMount, type JSX } from 'solid-js'
 import type { AppStore } from '../stores/app'
-import { api, getApiUrl, type WorkspaceEntry } from '../api/client'
+import { api, getApiUrl, sessionParentId, type Session, type WorkspaceEntry } from '../api/client'
 import { ConfirmDialog } from './ConfirmDialog'
 import { toast } from './Toast'
 
@@ -371,6 +371,50 @@ export function SessionList(props: {
     }
     return [...map.entries()].sort(([a], [b]) => a.localeCompare(b))
   })
+
+  const [expandedParents, setExpandedParents] = createSignal<Record<string, boolean>>({})
+  const toggleExpandParent = (id: string) => {
+    setExpandedParents((prev) => ({ ...prev, [id]: prev[id] === undefined ? false : !prev[id] }))
+  }
+
+  const treeData = createMemo(() => {
+    const list = filtered()
+    const isFlatFilter = Boolean(search().trim()) || statusFilter() !== 'all' || projectFilter() !== 'all'
+    if (isFlatFilter) {
+      return { roots: list, children: new Map<string, Session[]>() }
+    }
+    const ids = new Set(list.map((sess) => sess.id))
+    const children = new Map<string, Session[]>()
+    const roots: Session[] = []
+    for (const sess of list) {
+      const pid = sessionParentId(sess)
+      if (pid && pid !== sess.id && ids.has(pid)) {
+        const arr = children.get(pid) ?? []
+        arr.push(sess)
+        children.set(pid, arr)
+      } else {
+        roots.push(sess)
+      }
+    }
+    return { roots, children }
+  })
+
+  const hasDescendant = (rootId: string, targetId: string | null, seen = new Set<string>()): boolean => {
+    if (!targetId || seen.has(rootId)) return false
+    seen.add(rootId)
+    const kids = treeData().children.get(rootId) ?? []
+    for (const k of kids) {
+      if (k.id === targetId || hasDescendant(k.id, targetId, seen)) return true
+    }
+    return false
+  }
+
+  const isParentExpanded = (parentId: string) => {
+    const explicit = expandedParents()[parentId]
+    if (explicit !== undefined) return explicit
+    // Auto-expand when active session is inside this subtree
+    return s().currentId === parentId || hasDescendant(parentId, s().currentId)
+  }
 
   const costLabel = (sess: {
     costUsd?: number | null
@@ -838,201 +882,284 @@ export function SessionList(props: {
                   role="list"
                   style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}
                 >
-                  <For each={filtered()}>
-                    {(sess) => {
+                  {(() => {
+                    const renderNode = (
+                      sess: Session,
+                      depth: number,
+                      visited: Set<string>,
+                    ): JSX.Element => {
+                      const nextVisited = new Set(visited)
+                      nextVisited.add(sess.id)
                       const active = () => s().currentId === sess.id
                       const isPinned = () => pinned().has(sess.id)
                       const st = () => sessionStatus(sess, props.store)
                       const cost = () => costLabel(sess)
                       const proj = () =>
                         projectLabel(sess as { projectId?: string | null; cwd?: string | null })
+                      const kids = () =>
+                        depth < 6
+                          ? (treeData().children.get(sess.id) ?? []).filter(
+                              (c) => !nextVisited.has(c.id),
+                            )
+                          : []
+                      const expanded = () => isParentExpanded(sess.id)
+                      const pid = sessionParentId(sess)
                       return (
-                        <div class={`session-row ${active() ? 'active' : ''}`} role="listitem">
-                          <button
-                            type="button"
-                            class="session-main"
-                            aria-current={active() ? 'true' : undefined}
-                            onClick={() => handleSelectSession(sess.id)}
-                          >
-                            {/* Status + pin row */}
-                            <div
-                              style={{
-                                display: 'flex',
-                                'align-items': 'center',
-                                gap: '6px',
-                                'margin-bottom': '4px',
-                                'flex-wrap': 'wrap',
-                              }}
+                        <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+                          <div class={`session-row ${active() ? 'active' : ''}`} role="listitem">
+                            <button
+                              type="button"
+                              class="session-main"
+                              aria-current={active() ? 'true' : undefined}
+                              onClick={() => handleSelectSession(sess.id)}
                             >
-                              <span
-                                class="pill"
+                              {/* Status + pin row */}
+                              <div
                                 style={{
-                                  'font-size': 'var(--fs-2xs)',
-                                  padding: '1px 6px',
-                                  background: st().bg,
-                                  color: st().color,
-                                  border: `1px solid ${st().border}`,
-                                  gap: '4px',
+                                  display: 'flex',
+                                  'align-items': 'center',
+                                  gap: '6px',
+                                  'margin-bottom': '4px',
+                                  'flex-wrap': 'wrap',
                                 }}
                               >
-                                <span
-                                  class={`dot ${st().label === 'streaming' ? 'dot-pulse' : ''}`}
-                                  style={{ background: st().color, width: '6px', height: '6px' }}
-                                />
-                                {st().label}
-                              </span>
-                              <span
-                                class="pill"
-                                title={(sess as { cwd?: string | null }).cwd ?? proj()}
-                                style={{
-                                  'font-size': 'var(--fs-2xs)',
-                                  padding: '1px 6px',
-                                  'font-family': 'var(--font-mono)',
-                                  background: 'var(--bg-surface)',
-                                  border: '1px solid var(--border)',
-                                }}
-                              >
-                                {proj()}
-                              </span>
-                              <Show when={sess.agent}>
                                 <span
                                   class="pill"
                                   style={{
                                     'font-size': 'var(--fs-2xs)',
                                     padding: '1px 6px',
-                                    'font-family': 'var(--font-mono)',
+                                    background: st().bg,
+                                    color: st().color,
+                                    border: `1px solid ${st().border}`,
+                                    gap: '4px',
                                   }}
                                 >
-                                  {sess.agent}
-                                </span>
-                              </Show>
-                              <Show when={isPinned()}>
-                                <span
-                                  style={{ 'font-size': '10px', color: 'var(--accent)' }}
-                                  title="Pinned"
-                                >
-                                  📌
-                                </span>
-                              </Show>
-                            </div>
-                            <span
-                              style={{
-                                display: 'block',
-                                'font-size': 'var(--fs-sm)',
-                                'font-weight': active() ? '600' : '500',
-                                color: active() ? 'var(--fg)' : 'var(--fg-muted)',
-                                overflow: 'hidden',
-                                'text-overflow': 'ellipsis',
-                                'white-space': 'nowrap',
-                              }}
-                            >
-                              {sess.title || `Session ${sess.id.slice(0, 6)}`}
-                            </span>
-                            <span
-                              style={{
-                                display: 'block',
-                                'margin-top': '3px',
-                                'font-size': 'var(--fs-2xs)',
-                                color: 'var(--fg-subtle)',
-                              }}
-                            >
-                              {sess.model || 'default'} ·{' '}
-                              {new Date(toEpochMs(sess.updatedAt || sess.createdAt)).toLocaleString()}
-                            </span>
-                            <span
-                              style={{
-                                display: 'block',
-                                'margin-top': '2px',
-                                'font-family': 'var(--font-mono)',
-                                'font-size': 'var(--fs-2xs)',
-                                color: 'var(--fg-faint)',
-                                overflow: 'hidden',
-                                'text-overflow': 'ellipsis',
-                                'white-space': 'nowrap',
-                              }}
-                            >
-                              {sess.id}
-                            </span>
-                            <Show when={cost()}>
-                              {(() => {
-                                const cap = props.store.state.costCap?.perSession
-                                const over = cap != null && (sess.costUsd ?? 0) >= cap
-                                return (
                                   <span
-                                    title={
-                                      over
-                                        ? `Budget cap $${cap} exceeded`
-                                        : cap
-                                          ? `Cap $${cap}`
-                                          : undefined
-                                    }
+                                    class={`dot ${st().label === 'streaming' ? 'dot-pulse' : ''}`}
+                                    style={{ background: st().color, width: '6px', height: '6px' }}
+                                  />
+                                  {st().label}
+                                </span>
+                                <span
+                                  class="pill"
+                                  title={(sess as { cwd?: string | null }).cwd ?? proj()}
+                                  style={{
+                                    'font-size': 'var(--fs-2xs)',
+                                    padding: '1px 6px',
+                                    'font-family': 'var(--font-mono)',
+                                    background: 'var(--bg-surface)',
+                                    border: '1px solid var(--border)',
+                                  }}
+                                >
+                                  {proj()}
+                                </span>
+                                <Show when={sess.agent}>
+                                  <span
+                                    class="pill"
                                     style={{
-                                      display: 'inline-flex',
-                                      'align-items': 'center',
-                                      gap: '4px',
-                                      'margin-top': '4px',
-                                      'font-family': 'var(--font-mono)',
                                       'font-size': 'var(--fs-2xs)',
-                                      color: over ? 'var(--danger)' : 'var(--fg-subtle)',
-                                      background: over
-                                        ? 'color-mix(in srgb, var(--danger) 10%, var(--bg-surface))'
-                                        : 'var(--bg-surface)',
-                                      border: `1px solid ${over ? 'var(--danger-border)' : 'var(--border)'}`,
-                                      'border-radius': 'var(--r-full)',
                                       padding: '1px 6px',
+                                      'font-family': 'var(--font-mono)',
                                     }}
                                   >
-                                    {cost()}
-                                    {over ? ' ⚠' : ''}
+                                    {sess.agent}
                                   </span>
-                                )
-                              })()}
-                            </Show>
-                          </button>
-                          <SessionExportMenu
-                            sessionId={sess.id}
-                            title={sess.title || sess.id.slice(0, 6)}
-                          />
-                          {/* Pin button */}
-                          <button
-                            type="button"
-                            class={`session-pin-btn ${isPinned() ? 'pinned' : ''}`}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              togglePin(sess.id)
-                            }}
-                            title={isPinned() ? 'Unpin session' : 'Pin session'}
-                            aria-label={isPinned() ? 'Unpin session' : 'Pin session'}
-                            aria-pressed={isPinned() ? 'true' : 'false'}
-                            style={{ position: 'absolute', top: '8px', right: '32px' }}
-                          >
-                            📌
-                          </button>
-                          <button
-                            type="button"
-                            class="session-del btn btn-ghost"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setConfirmDelete({
-                                id: sess.id,
-                                title: sess.title || sess.id.slice(0, 6),
-                              })
-                            }}
-                            title="Delete session"
-                            aria-label={`Delete session ${sess.title || sess.id.slice(0, 6)}`}
-                            style={{
-                              width: '28px',
-                              height: '28px',
-                              'min-height': '28px',
-                              'min-width': '28px',
-                            }}
-                          >
-                            ×
-                          </button>
+                                </Show>
+                                <Show when={pid && depth === 0}>
+                                  <span
+                                    class="pill"
+                                    title={`Child of ${pid}`}
+                                    style={{
+                                      'font-size': 'var(--fs-2xs)',
+                                      padding: '1px 6px',
+                                      'font-family': 'var(--font-mono)',
+                                      color: 'var(--fg-faint)',
+                                    }}
+                                  >
+                                    ↳ child
+                                  </span>
+                                </Show>
+                                <Show when={kids().length > 0}>
+                                  <span
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      toggleExpandParent(sess.id)
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault()
+                                        e.stopPropagation()
+                                        toggleExpandParent(sess.id)
+                                      }
+                                    }}
+                                    title={expanded() ? 'Collapse child sessions' : 'Expand child sessions'}
+                                    style={{
+                                      'font-size': 'var(--fs-2xs)',
+                                      padding: '1px 6px',
+                                      'font-family': 'var(--font-mono)',
+                                      'border-radius': 'var(--r-sm)',
+                                      border: '1px solid var(--accent-border)',
+                                      background: 'var(--accent-soft)',
+                                      color: 'var(--accent)',
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    {expanded() ? '▾' : '▸'} {kids().length} sub
+                                  </span>
+                                </Show>
+                                <Show when={isPinned()}>
+                                  <span
+                                    style={{ 'font-size': '10px', color: 'var(--accent)' }}
+                                    title="Pinned"
+                                  >
+                                    📌
+                                  </span>
+                                </Show>
+                              </div>
+                              <span
+                                style={{
+                                  display: 'block',
+                                  'font-size': 'var(--fs-sm)',
+                                  'font-weight': active() ? '600' : '500',
+                                  color: active() ? 'var(--fg)' : 'var(--fg-muted)',
+                                  overflow: 'hidden',
+                                  'text-overflow': 'ellipsis',
+                                  'white-space': 'nowrap',
+                                }}
+                              >
+                                {sess.title || `Session ${sess.id.slice(0, 6)}`}
+                              </span>
+                              <span
+                                style={{
+                                  display: 'block',
+                                  'margin-top': '3px',
+                                  'font-size': 'var(--fs-2xs)',
+                                  color: 'var(--fg-subtle)',
+                                }}
+                              >
+                                {sess.model || 'default'} ·{' '}
+                                {new Date(toEpochMs(sess.updatedAt || sess.createdAt)).toLocaleString()}
+                              </span>
+                              <span
+                                style={{
+                                  display: 'block',
+                                  'margin-top': '2px',
+                                  'font-family': 'var(--font-mono)',
+                                  'font-size': 'var(--fs-2xs)',
+                                  color: 'var(--fg-faint)',
+                                  overflow: 'hidden',
+                                  'text-overflow': 'ellipsis',
+                                  'white-space': 'nowrap',
+                                }}
+                              >
+                                {sess.id}
+                              </span>
+                              <Show when={cost()}>
+                                {(() => {
+                                  const cap = props.store.state.costCap?.perSession
+                                  const over = cap != null && (sess.costUsd ?? 0) >= cap
+                                  return (
+                                    <span
+                                      title={
+                                        over
+                                          ? `Budget cap $${cap} exceeded`
+                                          : cap
+                                            ? `Cap $${cap}`
+                                            : undefined
+                                      }
+                                      style={{
+                                        display: 'inline-flex',
+                                        'align-items': 'center',
+                                        gap: '4px',
+                                        'margin-top': '4px',
+                                        'font-family': 'var(--font-mono)',
+                                        'font-size': 'var(--fs-2xs)',
+                                        color: over ? 'var(--danger)' : 'var(--fg-subtle)',
+                                        background: over
+                                          ? 'color-mix(in srgb, var(--danger) 10%, var(--bg-surface))'
+                                          : 'var(--bg-surface)',
+                                        border: `1px solid ${over ? 'var(--danger-border)' : 'var(--border)'}`,
+                                        'border-radius': 'var(--r-full)',
+                                        padding: '1px 6px',
+                                      }}
+                                    >
+                                      {cost()}
+                                      {over ? ' ⚠' : ''}
+                                    </span>
+                                  )
+                                })()}
+                              </Show>
+                            </button>
+                            <SessionExportMenu
+                              sessionId={sess.id}
+                              title={sess.title || sess.id.slice(0, 6)}
+                            />
+                            {/* Pin button */}
+                            <button
+                              type="button"
+                              class={`session-pin-btn ${isPinned() ? 'pinned' : ''}`}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                togglePin(sess.id)
+                              }}
+                              title={isPinned() ? 'Unpin session' : 'Pin session'}
+                              aria-label={isPinned() ? 'Unpin session' : 'Pin session'}
+                              aria-pressed={isPinned() ? 'true' : 'false'}
+                              style={{ position: 'absolute', top: '8px', right: '32px' }}
+                            >
+                              📌
+                            </button>
+                            <button
+                              type="button"
+                              class="session-del btn btn-ghost"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setConfirmDelete({
+                                  id: sess.id,
+                                  title: sess.title || sess.id.slice(0, 6),
+                                })
+                              }}
+                              title="Delete session"
+                              aria-label={`Delete session ${sess.title || sess.id.slice(0, 6)}`}
+                              style={{
+                                width: '28px',
+                                height: '28px',
+                                'min-height': '28px',
+                                'min-width': '28px',
+                              }}
+                            >
+                              ×
+                            </button>
+                          </div>
+                          <Show when={kids().length > 0 && expanded()}>
+                            <div
+                              role="list"
+                              aria-label={`Sub-sessions of ${sess.title || sess.id.slice(0, 6)}`}
+                              style={{
+                                'margin-left': '14px',
+                                'padding-left': '8px',
+                                'border-left': '1px solid var(--border)',
+                                display: 'flex',
+                                'flex-direction': 'column',
+                                gap: '4px',
+                              }}
+                            >
+                              <For each={kids()}>
+                                {(child) => renderNode(child, depth + 1, nextVisited)}
+                              </For>
+                            </div>
+                          </Show>
                         </div>
                       )
-                    }}
-                  </For>
+                    }
+                    return (
+                      <For each={treeData().roots}>
+                        {(sess) => renderNode(sess, 0, new Set<string>())}
+                      </For>
+                    )
+                  })()}
                 </div>
               }
             >

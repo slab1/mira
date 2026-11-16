@@ -259,6 +259,20 @@ export function resolveEffectiveModel(input: {
           continue
         }
       }
+      if (!keyedFallback) {
+        for (const provKey of reg.keys()) {
+          if (!reg.hasKey(provKey) || !reg.isHealthy(provKey)) continue
+          const prov = reg.getProvider(provKey)
+          for (const modelKey of Object.keys(prov?.models ?? {})) {
+            const fullId = modelKey.startsWith(`${provKey}/`) ? modelKey : `${provKey}/${modelKey}`
+            if (!isRetired(fullId)) {
+              keyedFallback = fullId
+              break
+            }
+          }
+          if (keyedFallback) break
+        }
+      }
     } catch {}
     candidate = keyedFallback ?? firstResolvable ?? candidates[0] ?? cfg.model
   }

@@ -193,4 +193,70 @@ describe('listModels', () => {
     expect(secondFetch).toHaveBeenCalledTimes(1)
     expect(models[0].id).toBe('openrouter/model2')
   })
+
+  test('filters out non-chat/404 NVIDIA models and puts preferred chat model first', async () => {
+    mockFetchJson({
+      data: [
+        { id: 'bigcode/starcoder2-15b' },
+        { id: 'nvidia/embed-qa-4' },
+        { id: 'nvidia/nvclip' },
+        { id: 'google/gemma-3-12b-it' },
+        { id: 'nvidia/nemotron-3.5-bolt-e4b' },
+        { id: 'nvidia/nemotron-3.5-lightning-30b-a3b' },
+      ],
+    })
+    const models = await listModels({
+      baseURL: 'https://integrate.api.nvidia.com/v1',
+      apiKey: 'nvapi-test',
+      headers: {},
+      providerKey: 'nvidia',
+    })
+    expect(models.map((m) => m.id)).toEqual([
+      'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b',
+      'nvidia/nvidia/nemotron-3.5-bolt-e4b',
+    ])
+  })
+
+  test('filters out non-chat Google Gemini models and puts gemini-2.5-flash first', async () => {
+    mockFetchJson({
+      models: [
+        {
+          name: 'models/gemini-embedding-001',
+          displayName: 'Gemini Embedding 001',
+          supportedGenerationMethods: ['embedContent'],
+        },
+        {
+          name: 'models/gemini-2.5-flash-preview-tts',
+          displayName: 'Gemini 2.5 Flash Preview TTS',
+          supportedGenerationMethods: ['generateContent'],
+        },
+        {
+          name: 'models/gemini-2.5-flash-image',
+          displayName: 'Nano Banana',
+          supportedGenerationMethods: ['generateContent'],
+        },
+        {
+          name: 'models/gemini-2.5-pro',
+          displayName: 'Gemini 2.5 Pro',
+          supportedGenerationMethods: ['generateContent'],
+        },
+        {
+          name: 'models/gemini-2.5-flash',
+          displayName: 'Gemini 2.5 Flash',
+          supportedGenerationMethods: ['generateContent'],
+        },
+      ],
+    })
+    const models = await listModels({
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
+      apiKey: 'gk-test',
+      headers: {},
+      providerKey: 'google',
+    })
+    expect(models.map((m) => m.id)).toEqual([
+      'google/gemini-2.5-flash',
+      'google/gemini-2.5-pro',
+    ])
+  })
 })
+

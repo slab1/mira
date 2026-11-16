@@ -159,9 +159,32 @@ export class SessionPrompt {
       .catch(() => {})
   }
 
+  /** Active runLoop AbortControllers keyed by sessionID (for POST /session/:id/abort & deleteSession). */
+  private activeLoops = new Map<string, Set<AbortController>>()
+
   /** Queues persist in SQLite (message_queue) — survive restarts */
 
-  constructor(private deps: SessionPromptDeps) {}
+  constructor(private deps: SessionPromptDeps) {
+    if (typeof this.deps.bus?.subscribe === 'function') {
+      this.deps.bus.subscribe('session.abort', (ev) => {
+        if (ev.sessionID) this.abortSession(ev.sessionID)
+      })
+    }
+  }
+
+  /** Abort all active prompt loops running in a session. Returns count aborted. */
+  abortSession(sessionID: string): number {
+    const controllers = this.activeLoops.get(sessionID)
+    if (!controllers || controllers.size === 0) return 0
+    let count = 0
+    for (const ac of [...controllers]) {
+      if (!ac.signal.aborted) {
+        ac.abort()
+        count++
+      }
+    }
+    return count
+  }
 
   // ── Message queueing (Mira-parity UX) ─────────────────────────
 
@@ -227,24 +250,29 @@ export class SessionPrompt {
     orgID?: string | null
     cwd?: string
     projectId?: string
+    /** Publish session.created on the Bus (default true; routes/forkSession set false when they enrich the payload). */
+    emitEvent?: boolean
   }) {
     const id = crypto.randomUUID()
     const now = Date.now()
-    // Subagent/fork children inherit the parent session's owner (multi-tenant)
-    let ownerID = input.ownerID ?? null
-    let orgID = input.orgID ?? null
-    if ((!ownerID || !orgID) && input.parentID) {
+    // Subagent/fork children inherit owner, org, cwd, projectId, and default model from parent
+    let parent: Awaited<ReturnType<SessionPrompt['getSession']>> | undefined
+    if (input.parentID) {
       try {
-        const parent = await this.getSession(input.parentID)
-        if (!ownerID) ownerID = parent?.ownerID ?? null
-        // …and the parent's org tenancy (P3.3)
-        if (!orgID) orgID = (parent as { orgID?: string | null } | undefined)?.orgID ?? null
+        parent = await this.getSession(input.parentID)
       } catch {}
     }
-    // Kilo K1+K8: explicit > agent.model > config default
+    const ownerID = input.ownerID ?? parent?.ownerID ?? null
+    const orgID =
+      input.orgID ?? (parent as { orgID?: string | null } | undefined)?.orgID ?? null
+    const cwd = input.cwd ?? parent?.cwd ?? null
+    const projectId = input.projectId ?? parent?.projectId ?? null
+
+    // Kilo K1+K8: explicit > agent.model > parent/session model > config default
     const effectiveModel = resolveEffectiveModel({
       explicitModel: input.model,
       agent: input.agent ?? null,
+      sessionModel: parent?.model ?? undefined,
     })
     // Emit model.retired event if explicit model was retired and fallback occurred
     if (input.model && isRetired(input.model) && input.model !== effectiveModel) {
@@ -260,7 +288,10 @@ export class SessionPrompt {
       })
     }
     // Derive the provider from the resolved model prefix ("google/gemini-2.0-flash" → "google")
-    const provider = effectiveModel.includes('/') ? effectiveModel.split('/')[0] : 'anthropic'
+    const provider = effectiveModel.includes('/')
+      ? effectiveModel.split('/')[0]
+      : ((getConfig().routing as { defaultProvider?: string } | undefined)?.defaultProvider ??
+        'openrouter')
     const session = {
       id,
       title: input.title ?? (input.agent ? `${input.agent} session` : 'New Session'),
@@ -268,17 +299,24 @@ export class SessionPrompt {
       provider,
       createdAt: now,
       updatedAt: now,
-      parentID: input.parentID,
+      parentID: input.parentID ?? null,
       agent: (input.agent && isKnownAgent(input.agent) ? input.agent : null) as string | null,
       ownerID: ownerID as string | null,
       orgID: orgID as string | null,
       tokensIn: null as number | null,
       tokensOut: null as number | null,
       costUsd: null as number | null,
-      cwd: input.cwd ?? (null as string | null),
-      projectId: input.projectId ?? (null as string | null),
+      cwd: cwd as string | null,
+      projectId: projectId as string | null,
     }
     await this.deps.db.insert(this.deps.db.schema.sessions).values(session as never)
+    if (input.emitEvent !== false) {
+      this.deps.bus.publish({
+        type: 'session.created',
+        payload: JSON.parse(JSON.stringify(session)) as JsonValue,
+        timestamp: now,
+      })
+    }
     return session
   }
 
@@ -287,6 +325,58 @@ export class SessionPrompt {
   }
 
   async deleteSession(id: string) {
+    await this.deleteSessionInternal(id, new Set<string>(), false)
+  }
+
+  private async deleteSessionInternal(
+    id: string,
+    visited: Set<string>,
+    emitDeletedEvent: boolean,
+  ): Promise<void> {
+    if (visited.has(id)) return
+    visited.add(id)
+
+    // Abort active prompt loops & background subagent/orchestrate jobs first
+    this.abortSession(id)
+    try {
+      const { cancelJobsForParent } = await import('../tools/task.js')
+      await cancelJobsForParent(this.deps.db, id, this.deps.bus)
+    } catch {}
+    try {
+      const { cancelOrchestrateJobsForParent } = await import('../tools/orchestrate.js')
+      await cancelOrchestrateJobsForParent(this.deps.db, id, this.deps.bus)
+    } catch {}
+
+    // Handle child sessions cleanly: cascade-delete ephemeral subagent children,
+    // and detach user forks (parentID = null) so no dangling parentID remains.
+    try {
+      const children = await this.deps.db.query.sessions.findMany({
+        where: (s, { eq }) => eq(s.parentID, id),
+      })
+      if (children.length > 0) {
+        const parentJobs = await this.deps.db.query.jobs.findMany({
+          where: (j, { eq }) => eq(j.parentSessionID, id),
+        })
+        const jobChildIds = new Set(
+          parentJobs.map((j) => j.childSessionID).filter((cid): cid is string => Boolean(cid)),
+        )
+        for (const child of children) {
+          const isSubagentChild =
+            jobChildIds.has(child.id) || (child.title ?? '').startsWith('↳ ')
+          if (isSubagentChild) {
+            await this.deleteSessionInternal(child.id, visited, true)
+          } else {
+            await this.deps.db
+              .update(this.deps.db.schema.sessions)
+              .set({ parentID: null, updatedAt: Date.now() })
+              .where(eq(this.deps.db.schema.sessions.id, child.id))
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[session] child cleanup on delete failed:', String(e))
+    }
+
     // P3.5: audit evidence deliberately SURVIVES session deletion (deleting a
     // session must not erase the compliance trail). Stamp its attribution onto
     // the rows first so they stay owner/org-scopable once the session is gone.
@@ -318,6 +408,9 @@ export class SessionPrompt {
       .delete(this.deps.db.schema.jobs)
       .where(eq(this.deps.db.schema.jobs.parentSessionID, id))
     await this.deps.db
+      .delete(this.deps.db.schema.jobs)
+      .where(eq(this.deps.db.schema.jobs.childSessionID, id))
+    await this.deps.db
       .delete(this.deps.db.schema.findings)
       .where(eq(this.deps.db.schema.findings.sessionID, id))
     await this.deps.db
@@ -327,6 +420,13 @@ export class SessionPrompt {
     await this.deps.db
       .delete(this.deps.db.schema.sessions)
       .where(eq(this.deps.db.schema.sessions.id, id))
+    if (emitDeletedEvent) {
+      this.deps.bus.publish({
+        type: 'session.deleted',
+        payload: { id },
+        timestamp: Date.now(),
+      })
+    }
   }
 
   async getMessages(sessionID: string) {
@@ -389,8 +489,11 @@ export class SessionPrompt {
       model: source.model,
       parentID: source.id,
       agent: source.agent ?? undefined,
+      ownerID: source.ownerID ?? null,
+      orgID: (source as { orgID?: string | null }).orgID ?? null,
       cwd: source.cwd ?? undefined,
       projectId: source.projectId ?? undefined,
+      emitEvent: false,
     })
 
     const now = Date.now()
@@ -438,7 +541,10 @@ export class SessionPrompt {
     agent?: string
     model?: string
     title?: string
+    cwd?: string
     signal?: AbortSignal
+    onSessionCreated?: (childSessionID: string) => void | Promise<void>
+    maxDepth?: number
   }): Promise<{ sessionID: string; text: string }> {
     // Validate agent name
     const agent = opts.agent
@@ -447,12 +553,39 @@ export class SessionPrompt {
       ;(err as { code?: string }).code = 'UNKNOWN_AGENT'
       throw err
     }
-    // Per-agent model routing: explicit > agent.model > autoModel tier > default (Kilo K1+K8)
+
+    // Recursion depth guard — walk parentID chain (with cycle detection) before creating child session
+    const cfgDepth = (
+      getConfig() as MiraConfig & { orchestration?: { maxDepth?: number } }
+    ).orchestration?.maxDepth
+    const maxDepth = opts.maxDepth ?? cfgDepth ?? 4
+    let depth = 0
+    let cursor: string | null | undefined = opts.parentID
+    const seen = new Set<string>()
+    let directParent: Awaited<ReturnType<SessionPrompt['getSession']>> | undefined
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor)
+      let p: Awaited<ReturnType<SessionPrompt['getSession']>> | undefined
+      try {
+        p = await this.getSession(cursor)
+      } catch {}
+      if (!p) break
+      if (depth === 0) directParent = p
+      depth++
+      if (depth >= maxDepth) {
+        const err = new Error(`Subagent recursion depth limit (${maxDepth}) exceeded`)
+        ;(err as { code?: string }).code = 'MAX_DEPTH_EXCEEDED'
+        throw err
+      }
+      cursor = p.parentID
+    }
+
+    // Per-agent model routing: explicit > agent.model > parent.model > default (Kilo K1+K8)
     const effectiveModel =
       resolveEffectiveModel({
         explicitModel: opts.model,
         agent: agent ?? null,
-        sessionModel: undefined,
+        sessionModel: directParent?.model ?? undefined,
         task: 'stream',
       }) || undefined
     // Emit model.retired if explicit model was retired
@@ -469,22 +602,20 @@ export class SessionPrompt {
         timestamp: Date.now(),
       })
     }
-    // Inherit cwd/projectId from parent for workspace-aware subagents
-    let parentCwd: string | undefined
-    let parentProjectId: string | undefined
-    try {
-      const parent = await this.getSession(opts.parentID)
-      parentCwd = parent?.cwd ?? undefined
-      parentProjectId = parent?.projectId ?? undefined
-    } catch {}
+    const parentCwd = directParent?.cwd ?? undefined
+    const parentProjectId = directParent?.projectId ?? undefined
+    const resolvedCwd = opts.cwd ?? parentCwd
     const s = await this.createSession({
       title: opts.title ?? `↳ ${opts.prompt.slice(0, 48)}`,
       parentID: opts.parentID,
       agent: agent,
       model: effectiveModel,
-      cwd: parentCwd,
+      cwd: resolvedCwd,
       projectId: parentProjectId,
     })
+    if (opts.onSessionCreated) {
+      await opts.onSessionCreated(s.id)
+    }
     let text = ''
     // No-op sink: collect only the final text (no SSE transport needed)
     const send = (_event: string, data: JsonValue) => {
@@ -505,13 +636,40 @@ export class SessionPrompt {
       // Agent persona for subagent loop
       const persona = agent ? getAgentTemplates()[agent]?.system : undefined
       const basePrompt = await buildSystemPrompt(
-        s.cwd ?? parentCwd ?? process.cwd(),
+        s.cwd ?? resolvedCwd ?? process.cwd(),
         await getUserNameForOwner(this.deps.db, s.ownerID),
       )
       const systemPrompt = persona ? `${persona}\n\n${basePrompt}` : basePrompt
+
+      // Persist initial user prompt & assistant message placeholder so parts.* FK
+      // constraints succeed and inspecting the child session shows the full transcript.
+      const msgNow = Date.now()
+      const userMessageID = crypto.randomUUID()
+      const assistantMessageID = crypto.randomUUID()
+      await this.deps.db.insert(this.deps.db.schema.messages).values({
+        id: userMessageID,
+        sessionID: s.id,
+        role: 'user',
+        createdAt: msgNow,
+      })
+      await this.deps.db.insert(this.deps.db.schema.parts).values({
+        id: crypto.randomUUID(),
+        messageID: userMessageID,
+        sessionID: s.id,
+        type: 'text',
+        text: opts.prompt,
+        createdAt: msgNow,
+      })
+      await this.deps.db.insert(this.deps.db.schema.messages).values({
+        id: assistantMessageID,
+        sessionID: s.id,
+        role: 'assistant',
+        createdAt: msgNow + 1,
+      })
+
       await this.runLoop({
         sessionID: s.id,
-        assistantMessageID: crypto.randomUUID(),
+        assistantMessageID,
         userText: opts.prompt,
         model: runModel,
         systemPrompt,
@@ -524,6 +682,14 @@ export class SessionPrompt {
       // Prefer a signal-abort over a generic error message so an explicitly
       // cancelled job reports "cancelled" rather than a misleading stack trace.
       text = opts.signal?.aborted ? '[subagent cancelled]' : `[subagent error] ${String(err)}`
+    } finally {
+      try {
+        const now = Date.now()
+        await this.deps.db
+          .update(this.deps.db.schema.sessions)
+          .set({ updatedAt: now })
+          .where(eq(this.deps.db.schema.sessions.id, s.id))
+      } catch {}
     }
     return { sessionID: s.id, text }
   }
@@ -716,8 +882,23 @@ export class SessionPrompt {
     })
     const limits = getLoopLimits()
     const MAX_STEPS = opts.maxSteps ?? limits.maxSteps
+    const loopAC = new AbortController()
+    const onOuterAbort = () => loopAC.abort()
+    if (opts.signal) {
+      if (opts.signal.aborted) loopAC.abort()
+      else opts.signal.addEventListener('abort', onOuterAbort, { once: true })
+    }
+    let loopSet = this.activeLoops.get(sessionID)
+    if (!loopSet) {
+      loopSet = new Set()
+      this.activeLoops.set(sessionID, loopSet)
+    }
+    loopSet.add(loopAC)
+    const loopSignal = loopAC.signal
+
     let step = 0
     let accumulatedText = ''
+    let accumulatedReasoning = ''
     let turnHadError = false
     this.getDoomDetector(sessionID).reset()
     const lf = initLangfuse()
@@ -731,6 +912,7 @@ export class SessionPrompt {
     let totalTokensIn = 0,
       totalTokensOut = 0
 
+    try {
     // Load conversation history
     let messages = await this.loadContext(sessionID, systemPrompt)
     // Resolve session cwd for tool execution (P0-1: thread cwd through prompt/tools)
@@ -755,9 +937,9 @@ export class SessionPrompt {
       step++
       let stepDoomed = false
 
-      // Honour an explicit cancellation (e.g. cancelJob) between steps —
+      // Honour an explicit cancellation (e.g. cancelJob / /session/:id/abort) between steps —
       // abort the run promptly rather than waiting for the next stream call.
-      if (opts.signal?.aborted) {
+      if (loopSignal.aborted) {
         send('aborted', { step, reason: 'cancelled' })
         break loop
       }
@@ -878,12 +1060,13 @@ export class SessionPrompt {
       let streamMessages = pruneReasoning(messages)
       streamMessages = summarizeToolTraces(streamMessages, step)
       let stepText = ''
+      let stepReasoning = ''
       const toolCalls: Array<{ id: string; name: string; args: Record<string, JsonValue> }> = []
       let lastFlush = Date.now()
       let lastPersistedLen = accumulatedText.length
 
       const isTransientStreamErr = (err: unknown): boolean => {
-        if (!err || opts.signal?.aborted) return false
+        if (!err || loopSignal.aborted) return false
         const e = err as { name?: string; code?: string; status?: number; statusCode?: number; message?: string }
         if (e.name === 'AbortError') return false
         if (e.code === 'NO_API_KEY' || e.code === 'UNAUTHORIZED') return false
@@ -916,12 +1099,16 @@ export class SessionPrompt {
             messages: streamMessages,
             tools: this.filterToolsForAgent(opts.agent), // lane-contract enforcement (agent allowlist)
             system: systemPrompt,
-            signal: opts?.signal,
+            signal: loopSignal,
             sessionID,
           })
 
           for await (const chunk of stream) {
-            if (chunk.type === 'text-delta' && chunk.text) {
+            if (chunk.type === 'reasoning-delta' && chunk.text) {
+              stepReasoning += chunk.text
+              accumulatedReasoning += chunk.text
+              send('reasoning_delta', { delta: chunk.text, step })
+            } else if (chunk.type === 'text-delta' && chunk.text) {
               stepText += chunk.text
               accumulatedText += chunk.text
               send('text_delta', { delta: chunk.text, step })
@@ -950,6 +1137,10 @@ export class SessionPrompt {
                 totalTokensOut += Number(u.completionTokens ?? u.outputTokens ?? 0) || 0
               }
               if (chunk.finishReason === 'stop' && toolCalls.length === 0) {
+                if (!accumulatedText.trim() && accumulatedReasoning.trim()) {
+                  accumulatedText = accumulatedReasoning.trim()
+                  send('text_delta', { delta: accumulatedText, step })
+                }
                 // Flush any remaining batched text before exiting
                 if (accumulatedText.length !== lastPersistedLen) {
                   await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
@@ -1025,6 +1216,11 @@ export class SessionPrompt {
         }
       }
 
+      // If accumulatedText is still empty but we have reasoning and no tool calls, promote it
+      if (!accumulatedText.trim() && accumulatedReasoning.trim() && toolCalls.length === 0) {
+        accumulatedText = accumulatedReasoning.trim()
+        send('text_delta', { delta: accumulatedText, step })
+      }
       // Ensure any remaining batched text is persisted before tool execution / loop exit
       if (accumulatedText.length !== lastPersistedLen) {
         await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
@@ -1043,15 +1239,15 @@ export class SessionPrompt {
       }> = []
       for (const tc of toolCalls) {
         // Doom-loop detection — per-session
-        const loopSignal = this.getDoomDetector(sessionID).check({ name: tc.name, args: tc.args })
-        if (loopSignal.detected) {
-          const msg = `Doom-loop detected: ${loopSignal.reason ?? 'repeating tool call'} — tool "${tc.name}". Breaking loop and asking user.`
+        const doomSignal = this.getDoomDetector(sessionID).check({ name: tc.name, args: tc.args })
+        if (doomSignal.detected) {
+          const msg = `Doom-loop detected: ${doomSignal.reason ?? 'repeating tool call'} — tool "${tc.name}". Breaking loop and asking user.`
           send('doom_loop', {
             tool: tc.name,
             args: tc.args,
             step,
-            reason: loopSignal.reason,
-            pattern: loopSignal.pattern,
+            reason: doomSignal.reason,
+            pattern: doomSignal.pattern,
           })
           this.deps.bus.publish({
             type: 'server.error',
@@ -1060,7 +1256,7 @@ export class SessionPrompt {
               error: msg,
               source: 'doom-loop',
               tool: tc.name,
-              pattern: loopSignal.pattern,
+              pattern: doomSignal.pattern,
             } as JsonValue,
             timestamp: Date.now(),
           })
@@ -1070,8 +1266,8 @@ export class SessionPrompt {
           this.persistDoomPattern({
             sessionID,
             tool: tc.name,
-            reason: loopSignal.reason ?? 'repeating tool call',
-            pattern: loopSignal.pattern,
+            reason: doomSignal.reason ?? 'repeating tool call',
+            pattern: doomSignal.pattern,
             args: tc.args,
             step,
           })
@@ -1170,7 +1366,7 @@ export class SessionPrompt {
           const onAbortDuringPerm = () => {
             this.deps.bus.cancelPermissionWait?.(tc.id, 'deny')
           }
-          opts.signal?.addEventListener('abort', onAbortDuringPerm, { once: true })
+          loopSignal.addEventListener('abort', onAbortDuringPerm, { once: true })
 
           let decision: 'allow' | 'deny' = 'deny'
           let timedOut = false
@@ -1194,10 +1390,10 @@ export class SessionPrompt {
             timedOut = true
             timeoutErrMsg = permErr instanceof Error ? permErr.message : String(permErr)
           } finally {
-            opts.signal?.removeEventListener('abort', onAbortDuringPerm)
+            loopSignal.removeEventListener('abort', onAbortDuringPerm)
           }
 
-          if (opts.signal?.aborted) {
+          if (loopSignal.aborted) {
             const err = `Aborted while waiting permission for ${tc.name}`
             send('tool_result', { toolCallID: tc.id, name: tc.name, error: err, isError: true })
             await this.persistToolResult(assistantMessageID, sessionID, tc, { error: err }, true)
@@ -1258,7 +1454,7 @@ export class SessionPrompt {
           result = await this.deps.tools.execute(tc.name, tc.args, {
             sessionID,
             messageID: assistantMessageID,
-            signal: opts.signal,
+            signal: loopSignal,
             cwd: sessionCwd ?? process.cwd(),
             agent: opts.agent ?? null,
           })
@@ -1427,12 +1623,21 @@ export class SessionPrompt {
       await this.upsertTextPart(assistantMessageID, sessionID, accumulatedText)
     }
 
-    if (step >= MAX_STEPS && !turnHadError && !opts.signal?.aborted) {
+    if (step >= MAX_STEPS && !turnHadError && !loopSignal.aborted) {
       const limitNote = `\n\n[Reached maximum step limit (${MAX_STEPS}). Send "continue" to resume from here.]`
       if (!accumulatedText.includes('Reached maximum step limit')) {
         accumulatedText = accumulatedText ? `${accumulatedText}${limitNote}` : limitNote.trim()
         send('text_delta', { delta: limitNote, step })
       }
+    }
+
+    if (!turnHadError && !loopSignal.aborted && accumulatedText.trim().length === 0 && toolCallCount === 0) {
+      if (accumulatedReasoning.trim().length > 0) {
+        accumulatedText = accumulatedReasoning.trim()
+      } else {
+        accumulatedText = '(No response received from model)'
+      }
+      send('text_delta', { delta: accumulatedText, step })
     }
 
     // Finalize
@@ -1506,28 +1711,36 @@ export class SessionPrompt {
     opts.onStreamClosed?.()
 
     // ── Drain queued messages: chain next turn automatically ──
-    if (!turnHadError) {
+    if (!turnHadError && !loopSignal.aborted) {
       const next = this.dequeueFirst(sessionID)
       if (next) {
-      this.deps.bus.publish({
-        type: 'session.updated',
-        sessionID,
-        payload: { dequeued: true, remaining: this.getQueue(sessionID).length },
-        timestamp: Date.now(),
-      })
-      // Detached chained turn — surface errors via bus so clients see hung turn
-      void this.streamResponse(sessionID, next).catch((err) => {
-        console.error(`[mira] queued turn failed (session ${sessionID}):`, err?.stack ?? err)
         this.deps.bus.publish({
-          type: 'server.error',
+          type: 'session.updated',
           sessionID,
-          payload: { error: String(err), source: 'queue_drain' } as JsonValue,
+          payload: { dequeued: true, remaining: this.getQueue(sessionID).length },
           timestamp: Date.now(),
         })
-      })
+        // Detached chained turn — surface errors via bus so clients see hung turn
+        void this.streamResponse(sessionID, next).catch((err) => {
+          console.error(`[mira] queued turn failed (session ${sessionID}):`, err?.stack ?? err)
+          this.deps.bus.publish({
+            type: 'server.error',
+            sessionID,
+            payload: { error: String(err), source: 'queue_drain' } as JsonValue,
+            timestamp: Date.now(),
+          })
+        })
+      }
     }
+    } finally {
+      if (opts.signal) opts.signal.removeEventListener('abort', onOuterAbort)
+      const set = this.activeLoops.get(sessionID)
+      if (set) {
+        set.delete(loopAC)
+        if (set.size === 0) this.activeLoops.delete(sessionID)
+      }
+      span.end()
     }
-    span.end()
   }
 
   // ── Helpers ──────────────────────────────────────────────────────
@@ -1690,7 +1903,7 @@ export class SessionPrompt {
           content: text,
           toolCalls: pairedCalls,
         })
-      } else if (text) {
+      } else if (text && text.trim().length > 0) {
         context.push({ role: m.role, content: text })
       }
 

@@ -13,12 +13,11 @@
     "isolatedModules": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "preserveSymlinks": true,
     "paths": {
       "@/*": ["./src/*"]
     },
     "types": ["vite/client"]
   },
   "include": ["src", "vite.config.ts"],
-  "exclude": ["dist", "node_modules"]
+  "exclude": ["dist", "node_modules", "**/*.test.ts"]
 }

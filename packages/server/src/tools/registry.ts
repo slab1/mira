@@ -80,7 +80,9 @@ export interface ToolContext {
     agent?: string
     model?: string
     title?: string
+    cwd?: string
     signal?: AbortSignal
+    onSessionCreated?: (childSessionID: string) => void | Promise<void>
   }) => Promise<{ sessionID: string; text: string }>
   /** injected by ToolRegistry — forks a session at a message boundary */
   forkRunner?: (opts: {

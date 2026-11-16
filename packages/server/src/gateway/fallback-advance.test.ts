@@ -174,6 +174,45 @@ describe('client errors stay terminal (no pointless retry)', () => {
     await expect(drain(sub())).rejects.toThrow()
     expect(hosts).toEqual(['a.test'])
   })
+
+  test('Gateway 404 "404 page not found" falls through to fallback', async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      const host = url.includes('b.test') ? 'b.test' : 'a.test'
+      hosts.push(host)
+      if (host === 'a.test') {
+        return new Response('404 page not found', { status: 404 })
+      }
+      return new Response('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })
+    }) as typeof fetch
+    const out = await drain(sub())
+    expect(out).toContain('ok')
+    expect(hosts).toEqual(['a.test', 'b.test'])
+  })
+
+  test('Gateway 404 "Not found for account" falls through to fallback', async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      const host = url.includes('b.test') ? 'b.test' : 'a.test'
+      hosts.push(host)
+      if (host === 'a.test') {
+        return new Response(
+          JSON.stringify({ status: 404, title: "Function 'x': Not found for account" }),
+          { status: 404, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      return new Response('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })
+    }) as typeof fetch
+    const out = await drain(sub())
+    expect(out).toContain('ok')
+    expect(hosts).toEqual(['a.test', 'b.test'])
+  })
 })
 
 // P0-3: lane outcomes were recorded only on the lane-local breaker, while

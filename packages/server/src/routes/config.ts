@@ -312,7 +312,7 @@ export function mountConfigRoutes(
           const apiKey = expandApiKeyFirst(rawApiKey, id)
           const rawBase = (prov as { options?: { baseURL?: string } }).options?.baseURL ?? ''
           const masked = apiKey ? maskApiKey(apiKey) : ''
-          const modelEntries = Object.entries(
+          let modelEntries = Object.entries(
             ((prov as { models?: Record<string, JsonValue> }).models ?? {}) as Record<
               string,
               JsonValue
@@ -338,6 +338,68 @@ export function mountConfigRoutes(
               limit: ctx !== null || out !== null ? { context: ctx, output: out } : null,
             }
           })
+          if (modelEntries.length === 0) {
+            const fallbackMap: Record<string, Array<{ id: string; name: string; context?: number }>> = {
+              google: [
+                { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash', context: 1000000 },
+                { id: 'google/gemini-2.5-pro', name: 'Gemini 2.5 Pro', context: 1000000 },
+                { id: 'google/gemini-2.0-flash', name: 'Gemini 2.0 Flash', context: 1000000 },
+              ],
+              anthropic: [
+                { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4', context: 200000 },
+                { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', context: 200000 },
+                { id: 'anthropic/claude-3.5-haiku', name: 'Claude 3.5 Haiku', context: 200000 },
+                { id: 'anthropic/claude-opus-4', name: 'Claude Opus 4', context: 200000 },
+              ],
+              openai: [
+                { id: 'openai/gpt-4o', name: 'GPT-4o', context: 128000 },
+                { id: 'openai/gpt-4o-mini', name: 'GPT-4o mini', context: 128000 },
+                { id: 'openai/o1', name: 'O1', context: 200000 },
+                { id: 'openai/o3-mini', name: 'O3 Mini', context: 200000 },
+              ],
+              deepseek: [
+                { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', context: 64000 },
+                { id: 'deepseek/deepseek-reasoner', name: 'DeepSeek Reasoner', context: 64000 },
+              ],
+              nvidia: [
+                { id: 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b', name: 'Nemotron 3.5 Lightning 30B', context: 128000 },
+                { id: 'nvidia/nvidia/nemotron-3.5-bolt-e4b', name: 'Nemotron 3.5 Bolt E4B', context: 128000 },
+                { id: 'nvidia/nvidia/nemotron-3-ultra-550b-a55b', name: 'Nemotron 3 Ultra 550B', context: 128000 },
+                { id: 'nvidia/nvidia/nemotron-3.5-super-vl-120b-a12b', name: 'Nemotron 3.5 Super VL 120B', context: 128000 },
+              ],
+              colibri: [
+                { id: 'colibri/qwen3.6', name: 'Qwen3.6 35B-A3B', context: 32768 },
+                { id: 'colibri/olmoe', name: 'OLMoE 7B', context: 4096 },
+                { id: 'colibri/glm-5.2', name: 'GLM-5.2 744B MoE', context: 131072 },
+              ],
+              groq: [
+                { id: 'groq/llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', context: 128000 },
+                { id: 'groq/llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', context: 128000 },
+              ],
+              mistral: [
+                { id: 'mistral/mistral-large-latest', name: 'Mistral Large', context: 128000 },
+                { id: 'mistral/mistral-small-latest', name: 'Mistral Small', context: 128000 },
+              ],
+              together: [
+                { id: 'together/meta-llama/Llama-3.3-70B-Instruct-Turbo', name: 'Llama 3.3 70B Turbo', context: 131072 },
+                { id: 'together/deepseek-ai/DeepSeek-R1', name: 'DeepSeek R1', context: 164000 },
+              ],
+              openrouter: [
+                { id: 'openrouter/anthropic/claude-sonnet-4', name: 'Claude Sonnet 4 (OpenRouter)', context: 200000 },
+                { id: 'openrouter/openai/gpt-4o', name: 'GPT-4o (OpenRouter)', context: 128000 },
+                { id: 'openrouter/google/gemini-2.5-flash', name: 'Gemini 2.5 Flash (OpenRouter)', context: 1000000 },
+              ],
+            }
+            const fallback = fallbackMap[id.toLowerCase()]
+            if (fallback) {
+              // @ts-ignore
+              modelEntries = fallback.map(m => ({
+                id: m.id,
+                name: m.name,
+                limit: { context: m.context ?? 128000, output: 8192 }
+              }))
+            }
+          }
           const health =
             (provHealth as Record<string, unknown>)[id.toLowerCase()] ??
             (provHealth as Record<string, unknown>)[id]

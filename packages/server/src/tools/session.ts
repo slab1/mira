@@ -6,17 +6,33 @@ import type { ToolDef } from "./registry.js"
 
 const sessionListSchema = z.object({
   limit: z.number().optional().describe("Max sessions (default 10)"),
+  parentID: z.string().optional().describe("Filter to child sessions of this parent session ID"),
+  childrenOfCurrent: z
+    .boolean()
+    .optional()
+    .describe("Filter to child sessions spawned from the current session"),
+  rootsOnly: z
+    .boolean()
+    .optional()
+    .describe("Filter to root sessions (sessions with no parentID)"),
 })
 
 export const sessionListTool = {
   name: "session_list",
-  description: "List recent sessions with titles and last activity.",
+  description:
+    "List recent sessions with titles and last activity. Optionally filter by parentID, childrenOfCurrent, or rootsOnly.",
   category: "session",
   schema: sessionListSchema,
-  async execute({ limit = 10 }, ctx) {
+  async execute({ limit = 10, parentID, childrenOfCurrent, rootsOnly }, ctx) {
     const db = ctx.db
     if (!db) return { sessions: [], note: "No DB in tool context" }
+    const targetParent = childrenOfCurrent ? ctx.sessionID : parentID
     const sessions = await db.query.sessions.findMany({
+      where: targetParent
+        ? (s, { eq }) => eq(s.parentID, targetParent)
+        : rootsOnly
+          ? (s, { isNull }) => isNull(s.parentID)
+          : undefined,
       orderBy: (s, { desc }) => [desc(s.updatedAt)],
       limit,
     })

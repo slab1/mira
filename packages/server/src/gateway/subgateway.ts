@@ -10,7 +10,7 @@ import type { MiraConfig } from '../types/index.js'
 import type { Gateway, GatewayChunk, GatewayMessage, StreamOptions, GatewayStats } from './types.js'
 import { ProviderError } from './errors.js'
 import { ProviderRegistry } from '../providers/registry.js'
-import { KeyRing, classifyError } from '../providers/auth.js'
+import { KeyRing, classifyError, chatCompletionsUrl } from '../providers/auth.js'
 import { liveOpenAIStream } from './stream.js'
 import { backoffWithJitter, parseRetryAfter } from './retry.js'
 import { summarizeWithFallback, extractiveFallback } from './summarize.js'
@@ -955,7 +955,7 @@ export class Subgateway implements Gateway {
       const timeout = this.subConfig.timeout ?? resolved.timeout
       for (const key of keysToTry) {
         try {
-          const fetchUrl = `${resolved.baseURL.replace(/\/$/, '')}/chat/completions`
+          const fetchUrl = chatCompletionsUrl(resolved.baseURL)
           const ssrfBlock = isBlockedFetchUrl(fetchUrl)
           if (ssrfBlock) {
             throw new SubgatewayError({

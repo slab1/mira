@@ -29,6 +29,7 @@ import {
   onCleanup,
   onMount,
   Show,
+  type JSX,
 } from 'solid-js'
 import {
   api,
@@ -767,6 +768,23 @@ export default function MissionsPage(props: {
           }
           break
         }
+        case 'session.deleted': {
+          const payload = (e.payload ?? {}) as { id?: string }
+          const delId = payload.id ?? e.sessionID
+          if (delId) {
+            setSessions((prev) => prev.filter((x) => x.id !== delId))
+            setJobsBySession((prev) => {
+              if (!prev[delId]) return prev
+              const next = { ...prev }
+              delete next[delId]
+              return next
+            })
+            if (selectedId() === delId) {
+              setSelectedId(null)
+            }
+          }
+          break
+        }
         case 'session.updated':
         case 'session.abort': {
           refreshSoon()
@@ -1178,52 +1196,60 @@ export default function MissionsPage(props: {
                       aria-label="Missions"
                       style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}
                     >
-                      <For each={tree().roots}>
-                        {(s) => (
-                          <div role="listitem">
-                            <MissionRow
-                              session={s}
-                              selected={selectedId() === s.id}
-                              state={stateOf(s)}
-                              jobCount={jobsFor(s.id).length}
-                              runningJobs={jobsFor(s.id).filter((j) => j.status === 'running').length}
-                              childCount={tree().children.get(s.id)?.length ?? 0}
-                              updatedLabel={relTime(ts(s.updatedAt || s.createdAt), clock())}
-                              onSelect={() => selectMission(s.id)}
-                            />
-                            <Show when={(tree().children.get(s.id)?.length ?? 0) > 0}>
-                              <div
-                                role="list"
-                                aria-label={`Sub-agents of ${titleOf(s)}`}
-                                style={{
-                                  'margin-left': '14px',
-                                  'padding-left': '8px',
-                                  'border-left': '1px solid var(--border)',
-                                  'margin-top': '4px',
-                                  display: 'flex',
-                                  'flex-direction': 'column',
-                                  gap: '4px',
-                                }}
-                              >
-                                <For each={tree().children.get(s.id)}>
-                                  {(c) => (
-                                    <MissionRow
-                                      session={c}
-                                      selected={selectedId() === c.id}
-                                      state={stateOf(c)}
-                                      jobCount={jobsFor(c.id).length}
-                                      runningJobs={jobsFor(c.id).filter((j) => j.status === 'running').length}
-                                      childCount={0}
-                                      updatedLabel={relTime(ts(c.updatedAt || c.createdAt), clock())}
-                                      onSelect={() => selectMission(c.id)}
-                                    />
-                                  )}
-                                </For>
-                              </div>
-                            </Show>
-                          </div>
-                        )}
-                      </For>
+                      {(() => {
+                        const renderBranch = (
+                          s: Session,
+                          depth: number,
+                          visited: Set<string>,
+                        ): JSX.Element => {
+                          const nextVisited = new Set(visited)
+                          nextVisited.add(s.id)
+                          const kids = () =>
+                            depth < 8
+                              ? (tree().children.get(s.id) ?? []).filter(
+                                  (c) => !nextVisited.has(c.id),
+                                )
+                              : []
+                          return (
+                            <div role="listitem">
+                              <MissionRow
+                                session={s}
+                                selected={selectedId() === s.id}
+                                state={stateOf(s)}
+                                jobCount={jobsFor(s.id).length}
+                                runningJobs={jobsFor(s.id).filter((j) => j.status === 'running').length}
+                                childCount={kids().length}
+                                updatedLabel={relTime(ts(s.updatedAt || s.createdAt), clock())}
+                                onSelect={() => selectMission(s.id)}
+                              />
+                              <Show when={kids().length > 0}>
+                                <div
+                                  role="list"
+                                  aria-label={`Sub-agents of ${titleOf(s)}`}
+                                  style={{
+                                    'margin-left': '14px',
+                                    'padding-left': '8px',
+                                    'border-left': '1px solid var(--border)',
+                                    'margin-top': '4px',
+                                    display: 'flex',
+                                    'flex-direction': 'column',
+                                    gap: '4px',
+                                  }}
+                                >
+                                  <For each={kids()}>
+                                    {(c) => renderBranch(c, depth + 1, nextVisited)}
+                                  </For>
+                                </div>
+                              </Show>
+                            </div>
+                          )
+                        }
+                        return (
+                          <For each={tree().roots}>
+                            {(s) => renderBranch(s, 0, new Set<string>())}
+                          </For>
+                        )
+                      })()}
                     </div>
                   </Show>
                 }
@@ -1619,30 +1645,51 @@ export default function MissionsPage(props: {
                                         {(op().job?.prompt?.length ?? 0) > 220 ? '…' : ''}
                                       </div>
                                     </div>
-                                    <button
-                                      type="button"
-                                      class="btn btn-danger-ghost"
-                                      disabled={busy() !== null}
-                                      onClick={() =>
-                                        op().job &&
-                                        setConfirm({
-                                          kind: 'cancel',
-                                          jobId: op().job!.id,
-                                          sessionId: s().id,
-                                          label: op().job!.prompt?.slice(0, 80) || 'this job',
-                                        })
-                                      }
-                                      title="POST /job/:id/cancel"
-                                      style={{
-                                        padding: '5px 11px',
-                                        'font-size': 'var(--fs-xs)',
-                                        'min-height': '32px',
-                                        border: '1px solid var(--danger-border)',
-                                        flex: 'none',
-                                      }}
-                                    >
-                                      ✕ Cancel job
-                                    </button>
+                                    <div style={{ display: 'flex', gap: '6px', 'align-items': 'center', flex: 'none' }}>
+                                      <Show when={op().job?.childSessionID}>
+                                        <button
+                                          type="button"
+                                          class="btn btn-ghost"
+                                          onClick={() =>
+                                            op().job?.childSessionID &&
+                                            selectMission(op().job!.childSessionID!)
+                                          }
+                                          title="Open running sub-agent session"
+                                          style={{
+                                            padding: '5px 10px',
+                                            'font-size': 'var(--fs-xs)',
+                                            'min-height': '32px',
+                                            border: '1px solid var(--accent-border)',
+                                            color: 'var(--accent)',
+                                          }}
+                                        >
+                                          Inspect child →
+                                        </button>
+                                      </Show>
+                                      <button
+                                        type="button"
+                                        class="btn btn-danger-ghost"
+                                        disabled={busy() !== null}
+                                        onClick={() =>
+                                          op().job &&
+                                          setConfirm({
+                                            kind: 'cancel',
+                                            jobId: op().job!.id,
+                                            sessionId: s().id,
+                                            label: op().job!.prompt?.slice(0, 80) || 'this job',
+                                          })
+                                        }
+                                        title="POST /job/:id/cancel"
+                                        style={{
+                                          padding: '5px 11px',
+                                          'font-size': 'var(--fs-xs)',
+                                          'min-height': '32px',
+                                          border: '1px solid var(--danger-border)',
+                                        }}
+                                      >
+                                        ✕ Cancel job
+                                      </button>
+                                    </div>
                                   </div>
                                 ) : (
                                   <div

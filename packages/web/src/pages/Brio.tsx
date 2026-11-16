@@ -20,6 +20,24 @@ type BrioSchema = { fields: Record<string, BrioSchemaField>; usage?: { read_toke
 type BrioResultOk = { ok: true; model: string; baseURL: string; result: BrioSingle | BrioMulti | BrioSchema | Record<string, unknown> }
 type BrioResultErr = { ok: false; error?: unknown; hint?: string; status?: number; baseURL?: string; model?: string; url?: string }
 
+function formatBrioError(err: unknown): string {
+  if (!err) return 'colibri not running'
+  if (typeof err === 'string') return err
+  if (typeof err === 'object') {
+    const o = err as Record<string, unknown>
+    if (typeof o.message === 'string') return o.message
+    if (typeof o.error === 'string') return o.error
+    if (o.error && typeof o.error === 'object') {
+      const inner = o.error as Record<string, unknown>
+      if (typeof inner.message === 'string') return inner.message
+      if (typeof inner.error === 'string') return inner.error
+      return JSON.stringify(inner)
+    }
+    return JSON.stringify(o)
+  }
+  return String(err)
+}
+
 function entropyReading(e: number): { label: string; cls: string } {
   if (e < 0.4) return { label: 'confident', cls: 'pill-ok' }
   if (e < 0.8) return { label: 'unsure', cls: 'pill-warn' }
@@ -396,14 +414,14 @@ export default function Brio() {
               </div>
               <div style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'flex-wrap': 'wrap' }}>
                 <span
-                  class={`pill ${colibriOk() === true ? 'pill-ok' : colibriOk() === false ? 'pill-danger' : 'pill'}`}
+                  class={`pill ${colibriOk() === true ? 'pill-ok' : colibriOk() === false ? 'pill-ok' : 'pill'}`}
                   style={{ 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-2xs)' }}
-                  title={colibriOk() === true ? `colibri ${colibriLatency() ?? ''}ms · ${colibriBase()}` : colibriOk() === false ? `colibri not running · ${colibriBase()}` : 'checking colibri…'}
+                  title={colibriOk() === true ? `colibri ${colibriLatency() ?? ''}ms · ${colibriBase()}` : colibriOk() === false ? `colibri offline · cloud scoring ready (nvidia / google)` : 'checking status…'}
                   role="status"
                   aria-live="polite"
                 >
-                  <span class={`dot ${colibriOk() === true ? 'dot-pulse' : ''}`} style={{ background: colibriOk() === true ? 'var(--ok)' : colibriOk() === false ? 'var(--danger)' : 'var(--fg-faint)' }} />
-                  {colibriOk() === true ? 'colibri ready' : colibriOk() === false ? 'not running' : 'checking…'}
+                  <span class={`dot ${colibriOk() === true ? 'dot-pulse' : ''}`} style={{ background: colibriOk() === true ? 'var(--ok)' : colibriOk() === false ? 'var(--accent)' : 'var(--fg-faint)' }} />
+                  {colibriOk() === true ? 'colibri ready' : colibriOk() === false ? 'cloud ready (nvidia / google)' : 'checking…'}
                   <Show when={colibriLatency() != null && colibriOk() === true}>
                     <span style={{ opacity: '0.8' }}>{colibriLatency()}ms</span>
                   </Show>
@@ -839,7 +857,7 @@ export default function Brio() {
               {(err) => (
                 <div class="alert" role="alert" style={{ display: 'flex', 'flex-direction': 'column', gap: '8px', 'align-items': 'stretch' }}>
                   <div style={{ 'font-weight': '700', color: 'var(--danger)', 'font-size': 'var(--fs-sm)' }}>
-                    Brio unavailable — {String((err() as Record<string, unknown>).error ?? err().error ?? 'colibri not running')}
+                    Brio unavailable — {formatBrioError((err() as Record<string, unknown>).error ?? err().error)}
                   </div>
                   <Show when={err().hint}>
                     <div

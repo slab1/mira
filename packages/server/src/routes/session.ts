@@ -36,8 +36,14 @@ const createSessionSchema = z.object({
   model: z.string().min(1).optional(),
   title: z.string().max(200).optional(),
   agent: z.string().min(1).max(100).optional(),
+  parentID: z.string().min(1).optional(),
   cwd: z.string().optional(),
   projectId: z.string().optional(),
+})
+
+const forkSessionSchema = z.object({
+  messageID: z.string().min(1).optional(),
+  title: z.string().max(200).optional(),
 })
 
 /** Zod schemas for the versioned session export/import envelope (P2-2). */
@@ -162,6 +168,10 @@ export function mountSessionRoutes(
       )
     }
     const body = parsed.data
+    if (body.parentID) {
+      const parent = await deps.authorizedSession(body.parentID, c)
+      if (!parent) return c.json({ error: 'parent session not found' }, 404)
+    }
     const owner = isOwnershipEnabled()
       ? (deps.resolveOwner(deps.bearerOf(c.req.header('Authorization'))) ?? 'default')
       : null
@@ -171,6 +181,7 @@ export function mountSessionRoutes(
       // Stamp the org the creating owner belongs to (P3.3); null when orgless
       // or when ownership is off (sessions are global then — no org needed).
       orgID: owner ? (deps.orgOfOwner(owner) ?? null) : null,
+      emitEvent: false,
     })
     // Proper type bridge: prompt.createSession returns Session-like object, narrow to SessionRow via runtime check
     const session: SessionRow = {
@@ -208,6 +219,63 @@ export function mountSessionRoutes(
     const session = await deps.authorizedSession(id, c)
     if (!session) return c.json({ error: 'not found' }, 404)
     return c.json(session)
+  })
+  app.get('/session/:id/children', async (c: Context) => {
+    const id = requireId(c)
+    if (!id) return c.json({ error: 'not found' }, 404)
+    const parent = await deps.authorizedSession(id, c)
+    if (!parent) return c.json({ error: 'not found' }, 404)
+    const owner = isOwnershipEnabled()
+      ? deps.resolveOwner(deps.bearerOf(c.req.header('Authorization')))
+      : undefined
+    const children = (await db.query.sessions.findMany({
+      where: (s, { eq }) => eq(s.parentID, id),
+      orderBy: desc(sessions.createdAt),
+    })) as SessionRow[]
+    if (!owner) return c.json(children)
+    return c.json(children.filter((s) => sessionVisibleTo(s, owner)))
+  })
+  app.post('/session/:id/fork', async (c: Context) => {
+    const id = requireId(c)
+    if (!id) return c.json({ error: 'not found' }, 404)
+    const source = await deps.authorizedSession(id, c)
+    if (!source) return c.json({ error: 'not found' }, 404)
+    const raw = await c.req.json().catch(() => ({}))
+    const parsed = forkSessionSchema.safeParse(raw ?? {})
+    if (!parsed.success) {
+      return c.json(
+        {
+          error: 'invalid fork options',
+          issues: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+        },
+        400,
+      )
+    }
+    try {
+      const forked = await prompt.forkSession({
+        sourceSessionID: id,
+        messageID: parsed.data.messageID,
+        title: parsed.data.title,
+      })
+      const created = (await prompt.getSession(forked.sessionID)) as SessionRow | undefined
+      if (created) {
+        deps.sessionOwnerCache.set(created.id, {
+          owner: created.ownerID ?? null,
+          org: created.orgID ?? null,
+          ts: Date.now(),
+        })
+      }
+      return c.json(
+        {
+          id: forked.sessionID,
+          session: created ?? null,
+          copiedMessages: forked.copiedMessages,
+        },
+        201,
+      )
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 400)
+    }
   })
   app.patch('/session/:id', async (c: Context) => {
     const id = requireId(c)
@@ -375,6 +443,7 @@ export function mountSessionRoutes(
       // Imported cwd is untrusted; snapshots are rebased into this server workspace.
       cwd: process.cwd(),
       projectId: srcSession.projectId ?? undefined,
+      emitEvent: false,
     })
     let copiedMessages = 0
     let copiedParts = 0

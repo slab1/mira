@@ -597,16 +597,25 @@ export function createSettingsStore() {
     }
     const providers = { ...((state.config?.provider ?? {}) as Record<string, ProviderConfig>) }
     const existing = providers[id]
-    const merged: Record<string, { name: string; limit: { context: number; output: number } }> = {
-      ...(existing?.models ?? {}),
-    }
-    for (const m of r.models) {
-      const mid = m?.id
-      if (!mid) continue
-      const fullId = formatFullModelId(id, mid)
-      merged[fullId] = {
-        name: m.name || mid,
-        limit: merged[fullId]?.limit ?? merged[mid]?.limit ?? { context: 128000, output: 4096 },
+    const NON_CHAT_MODEL_RE =
+      /starcoder|embed|retriever|rerank|nvclip|nemoguard|safety[-_]?guard|content[-_]?safety|video[-_]?detector|ising-calibration|cosmos-reason2|whisper|\btts\b|-tts$|transcribe|robotics|computer-use|-image$|nano-banana|lyria|antigravity|deep-research|sdxl|flux|bria|gemma-3-(?:4b|12b)-it/i
+    const merged: Record<string, { name: string; limit: { context: number; output: number } }> = {}
+    if (r.models.length === 0) {
+      for (const [k, v] of Object.entries(existing?.models ?? {})) {
+        if (!NON_CHAT_MODEL_RE.test(k)) merged[k] = v
+      }
+    } else {
+      for (const m of r.models) {
+        const mid = m?.id
+        if (!mid || NON_CHAT_MODEL_RE.test(mid)) continue
+        const fullId = formatFullModelId(id, mid)
+        merged[fullId] = {
+          name: m.name || mid,
+          limit:
+            existing?.models?.[fullId]?.limit ??
+            existing?.models?.[mid]?.limit ??
+            { context: 128000, output: 4096 },
+        }
       }
     }
     const defaults = resolveProviderDefaults(id)
@@ -628,7 +637,7 @@ export function createSettingsStore() {
       const hasConfiguredCurProvider = state.providers.some(
         (p) => p.id === curProvider && p.status === 'ok',
       )
-      if (!curModel || !hasConfiguredCurProvider) {
+      if (!curModel || NON_CHAT_MODEL_RE.test(curModel) || !hasConfiguredCurProvider) {
         patch.model = formatFullModelId(id, r.models[0].id)
       }
     }

@@ -616,10 +616,12 @@ async function main() {
         id: string
         model: string
       }[]
-      const fallbackModel =
-        (typeof cfg.model === 'string' && cfg.model && !retired.has(cfg.model.toLowerCase()))
-          ? cfg.model
-          : 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b'
+      const cfgModel = typeof cfg.model === 'string' ? cfg.model : ''
+      const cfgModelRetired =
+        !cfgModel || [...retired].some((r) => cfgModel.toLowerCase().includes(r))
+      const fallbackModel = !cfgModelRetired
+        ? cfgModel
+        : 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b'
       let migrated = 0
       for (const r of rows) {
         const m = (r.model ?? '').toLowerCase()
@@ -854,7 +856,10 @@ async function main() {
       parentID: opts.parentID,
       agent: opts.agent,
       model: opts.model,
+      title: opts.title,
+      cwd: opts.cwd,
       signal: opts.signal,
+      onSessionCreated: opts.onSessionCreated,
     }),
   )
   tools.setDefaultCtx({ db, bus, forkRunner: (opts) => prompt.forkSession(opts) })

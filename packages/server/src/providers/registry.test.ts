@@ -117,6 +117,26 @@ describe('resolve', () => {
     expect(reg.resolve('nvidia-rl/meta/llama').providerKey).toBe('nvidia-rl')
   })
 
+  test('preserves nvidia/ org prefix for cataloged nvidia models', () => {
+    const nvidiaCfg: ProviderConfig = {
+      ...prov('https://integrate.api.nvidia.com/v1', 'k'),
+      models: {
+        'nvidia/nemotron-3.5-lightning-30b-a3b': {
+          name: 'Nemotron 3.5 Lightning 30B',
+          limit: { context: 128000, output: 8192 },
+        },
+      },
+    }
+    const reg = new ProviderRegistry({ nvidia: nvidiaCfg })
+    const single = reg.resolve('nvidia/nemotron-3.5-lightning-30b-a3b')
+    expect(single.providerKey).toBe('nvidia')
+    expect(single.modelID).toBe('nvidia/nemotron-3.5-lightning-30b-a3b')
+
+    const double = reg.resolve('nvidia/nvidia/nemotron-3.5-lightning-30b-a3b')
+    expect(double.providerKey).toBe('nvidia')
+    expect(double.modelID).toBe('nvidia/nemotron-3.5-lightning-30b-a3b')
+  })
+
   test('an open circuit fails fast with CIRCUIT_OPEN', () => {
     const reg = new ProviderRegistry({ a: prov('https://a.test') }, { defaultProvider: 'a' })
     for (let i = 0; i < 5; i++) reg.recordFailure('a')

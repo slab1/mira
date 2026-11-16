@@ -163,6 +163,20 @@ describe('request shape', () => {
     expect(tools[0]!.type).toBe('function')
     expect(tools[0]!.function.name).toBe('read_file')
   })
+
+  test('empty tools object omitted from request body so providers do not reject empty array', async () => {
+    const { captured, restore } = stubFetch('data: [DONE]\n\n')
+    await drain(
+      await liveOpenAIStream({
+        baseURL: BASE,
+        apiKey: 'k',
+        modelID: 'm',
+        opts: makeOpts({ tools: {} }),
+      }),
+    )
+    restore()
+    expect(captured[0].body.tools).toBeUndefined()
+  })
 })
 
 describe('SSE parsing', () => {
@@ -222,6 +236,38 @@ describe('SSE parsing', () => {
     restore()
     const text = textOf(chunks)
     expect(text).toBe('before')
+  })
+
+  test('promotes reasoning_content to text when content is empty', async () => {
+    const sse =
+      event({ choices: [{ delta: { reasoning_content: 'Thought process here' } }] }) +
+      event({ choices: [{ delta: {}, finish_reason: 'stop' }] })
+    const { restore } = stubFetch(sse)
+    const chunks = await drain(
+      await liveOpenAIStream({ baseURL: BASE, apiKey: 'k', modelID: 'm', opts: makeOpts() }),
+    )
+    restore()
+    const reasoningChunk = chunks.find((c) => c.type === 'reasoning-delta')
+    expect(reasoningChunk).toBeDefined()
+    expect((reasoningChunk as { text?: string }).text).toBe('Thought process here')
+    const text = textOf(chunks)
+    expect(text).toBe('Thought process here')
+    expect(chunks.some((c) => c.type === 'finish')).toBe(true)
+  })
+
+  test('guarantees finish chunk is emitted when stream ends on [DONE] without finish_reason', async () => {
+    const sse =
+      event({ choices: [{ delta: { content: 'hello' } }] }) +
+      'data: [DONE]\n\n'
+    const { restore } = stubFetch(sse)
+    const chunks = await drain(
+      await liveOpenAIStream({ baseURL: BASE, apiKey: 'k', modelID: 'm', opts: makeOpts() }),
+    )
+    restore()
+    const text = textOf(chunks)
+    expect(text).toBe('hello')
+    const finish = chunks.find((c) => c.type === 'finish')
+    expect(finish).toBeDefined()
   })
 })
 
@@ -430,4 +476,48 @@ describe('tool message wire serialization', () => {
     expect(msgs[1]?.content).toContain('orphaned output')
   })
 })
+
+describe('chatCompletionsUrl', () => {
+  test('rewrites Google Gemini /v1beta baseURL to /v1beta/openai/chat/completions', async () => {
+    const { chatCompletionsUrl } = await import('../providers/auth.js')
+    expect(chatCompletionsUrl('https://generativelanguage.googleapis.com/v1beta')).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    )
+    expect(chatCompletionsUrl('https://generativelanguage.googleapis.com/v1beta/openai')).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    )
+    expect(chatCompletionsUrl('https://integrate.api.nvidia.com/v1')).toBe(
+      'https://integrate.api.nvidia.com/v1/chat/completions',
+    )
+  })
+
+  test('liveOpenAIStream posts to /v1beta/openai/chat/completions for Google Gemini', async () => {
+    const urls: string[] = []
+    const orig = globalThis.fetch
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      urls.push(url)
+      return new Response('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })
+    }) as typeof fetch
+    try {
+      await drain(
+        await liveOpenAIStream({
+          baseURL: 'https://generativelanguage.googleapis.com/v1beta',
+          apiKey: 'gk-1',
+          modelID: 'gemini-2.5-flash',
+          opts: makeOpts(),
+        }),
+      )
+    } finally {
+      globalThis.fetch = orig
+    }
+    expect(urls).toEqual([
+      'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    ])
+  })
+})
+
 

@@ -20,6 +20,41 @@ interface CacheEntry {
 const TTL_MS = 5 * 60 * 1000
 const cache = new Map<string, CacheEntry>()
 
+const NON_CHAT_MODEL_RE =
+  /starcoder|embed|retriever|rerank|nvclip|nemoguard|safety[-_]?guard|content[-_]?safety|video[-_]?detector|ising-calibration|cosmos-reason2|whisper|\btts\b|-tts$|transcribe|robotics|computer-use|-image$|nano-banana|lyria|antigravity|deep-research|sdxl|flux|bria|gemma-3-(?:4b|12b)-it/i
+
+const NVIDIA_PREFERRED_ORDER = [
+  'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b',
+  'nvidia/nvidia/nemotron-3.5-bolt-e4b',
+  'nvidia/nvidia/nemotron-3-ultra-550b-a55b',
+  'nvidia/nvidia/nemotron-3.5-super-vl-120b-a12b',
+  'nvidia/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+  'nvidia/deepseek-ai/deepseek-v4.1-flash',
+  'nvidia/mistralai/mistral-large-4-1t-a52b',
+  'nvidia/meta/muse-glimmer-30b',
+]
+
+const GOOGLE_PREFERRED_ORDER = [
+  'google/gemini-2.5-flash',
+  'google/gemini-2.5-pro',
+  'google/gemini-2.0-flash',
+  'google/gemini-flash-latest',
+  'google/gemini-pro-latest',
+  'google/gemini-2.5-flash-lite',
+]
+
+function sortByPreference(models: ModelInfo[], preferred: string[]): ModelInfo[] {
+  const rank = new Map(preferred.map((id, i) => [id.toLowerCase(), i]))
+  return [...models].sort((a, b) => {
+    const ai = rank.get(a.id.toLowerCase())
+    const bi = rank.get(b.id.toLowerCase())
+    if (ai !== undefined && bi !== undefined) return ai - bi
+    if (ai !== undefined) return -1
+    if (bi !== undefined) return 1
+    return 0
+  })
+}
+
 export function clearModelsCache(providerKey?: string) {
   if (!providerKey) {
     cache.clear()
@@ -91,12 +126,30 @@ export async function listModels(opts: {
   // 2. Google Gemini: test or return models via v1beta/models?key=
   if (key === 'google' || base.includes('googleapis.com')) {
     try {
-      const url = `${base.includes('v1beta') ? base : `${base}/v1beta`}/models?key=${opts.apiKey}`
+      const modelsBase = base.replace(/\/openai$/i, '')
+      const url = `${modelsBase.includes('v1beta') ? modelsBase : `${modelsBase}/v1beta`}/models?key=${opts.apiKey}`
       const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
       if (res.ok) {
-        const data = (await res.json()) as { models?: Array<{ name?: string; displayName?: string; inputTokenLimit?: number }> }
-        const models = (data.models ?? [])
-          .filter((m) => m.name?.includes('gemini'))
+        const data = (await res.json()) as {
+          models?: Array<{
+            name?: string
+            displayName?: string
+            inputTokenLimit?: number
+            supportedGenerationMethods?: string[]
+          }>
+        }
+        const rawModels = (data.models ?? [])
+          .filter((m) => {
+            if (!m.name?.includes('gemini')) return false
+            if (
+              Array.isArray(m.supportedGenerationMethods) &&
+              !m.supportedGenerationMethods.includes('generateContent')
+            ) {
+              return false
+            }
+            const rawId = m.name.replace(/^models\//, '')
+            return !NON_CHAT_MODEL_RE.test(rawId)
+          })
           .map((m) => {
             const rawId = m.name?.replace(/^models\//, '') ?? ''
             return {
@@ -105,7 +158,8 @@ export async function listModels(opts: {
               context: m.inputTokenLimit ?? 1_000_000,
             }
           })
-        if (models.length) {
+        if (rawModels.length) {
+          const models = sortByPreference(rawModels, GOOGLE_PREFERRED_ORDER)
           cache.set(cacheKey, { models, expiresAt: Date.now() + TTL_MS })
           return models
         }
@@ -141,22 +195,28 @@ export async function listModels(opts: {
           data?: Array<{ id?: string; name?: string; context_length?: number; contextLength?: number }>
         }
         const rawList = data.data ?? (Array.isArray(data) ? data : [])
-        const models = (rawList as Array<{ id?: string; name?: string; context_length?: number; contextLength?: number }>)
-          .slice(0, 100)
+        const isNvidia = key === 'nvidia' || base.includes('nvidia.com')
+        const mapped = (rawList as Array<{ id?: string; name?: string; context_length?: number; contextLength?: number }>)
           .map((m) => {
             const rawId = m.id ?? ''
             const id = !rawId
               ? ''
               : key === 'openrouter'
                 ? (rawId.startsWith('openrouter/') ? rawId : `openrouter/${rawId}`)
-                : (rawId.startsWith(`${opts.providerKey}/`) ? rawId : `${opts.providerKey}/${rawId}`)
+                : isNvidia
+                  ? (rawId.startsWith(`${opts.providerKey}/${opts.providerKey}/`)
+                      ? rawId
+                      : `${opts.providerKey}/${rawId}`)
+                  : (rawId.startsWith(`${opts.providerKey}/`) ? rawId : `${opts.providerKey}/${rawId}`)
             return {
               id,
               name: m.name ?? rawId,
               context: (m.context_length ?? m.contextLength ?? 128_000) as number,
             }
           })
-          .filter((m) => m.id && m.id !== `${opts.providerKey}/`)
+          .filter((m) => m.id && m.id !== `${opts.providerKey}/` && !NON_CHAT_MODEL_RE.test(m.id))
+        const sorted = isNvidia ? sortByPreference(mapped, NVIDIA_PREFERRED_ORDER) : mapped
+        const models = sorted.slice(0, 100)
         if (models.length) {
           cache.set(cacheKey, { models, expiresAt: Date.now() + TTL_MS })
           return models

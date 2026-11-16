@@ -29,7 +29,12 @@ export async function migrateRetiredModels(db: MiraDB): Promise<number> {
     const sessionsTable = db.sqlite.prepare('SELECT id, model, created_at FROM sessions WHERE model IS NOT NULL')
       .all() as Array<{ id: string; model: string; created_at: number }>
 
-    const targetModel = cfg.model || 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b'
+    const cfgModel = typeof cfg.model === 'string' ? cfg.model : ''
+    const cfgModelRetired =
+      !cfgModel || [...retired].some((r) => cfgModel.toLowerCase().includes(r))
+    const targetModel = !cfgModelRetired
+      ? cfgModel
+      : 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b'
     let migrated = 0
     for (const session of sessionsTable) {
       const modelLower = session.model.toLowerCase()

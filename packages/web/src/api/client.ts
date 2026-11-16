@@ -935,6 +935,15 @@ export const api = {
   createSession: (body: Partial<Session> = {}) =>
     req<Session>('/session', { method: 'POST', body: JSON.stringify(body) }),
   getSession: (id: string) => req<Session>(`/session/${id}`),
+  listChildren: (id: string) =>
+    req<Session[] | { sessions: Session[] }>(`/session/${id}/children`).then((r) =>
+      Array.isArray(r) ? r : ((r as any)?.sessions ?? []),
+    ),
+  forkSession: (id: string, body: { messageID?: string; title?: string } = {}) =>
+    req<{ id: string; session: Session | null; copiedMessages: number }>(
+      `/session/${id}/fork`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
   updateSession: (id: string, patch: Partial<{ title: string; model: string; agent: string }>) =>
     req<Session>(`/session/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteSession: (id: string) => req<{ ok: boolean }>(`/session/${id}`, { method: 'DELETE' }),

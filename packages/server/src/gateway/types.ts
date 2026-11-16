@@ -22,6 +22,7 @@ export type GatewayToolCall = {
 
 export type GatewayChunk =
   | { type: 'text-delta'; text?: string }
+  | { type: 'reasoning-delta'; text?: string }
   | { type: 'tool-call'; toolCall: GatewayToolCall }
   | { type: 'tool-result'; toolCallID?: string; result?: JsonValue; isError?: boolean }
   | {

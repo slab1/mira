@@ -230,8 +230,8 @@ export type ToolsConfig = z.infer<typeof toolsConfigSchema>
 
 // ── MiraConfig (layer payload) ─────────────────────────────────────
 export const miraConfigSchema = z.object({
-  /** Primary model ref: "provider/model-id" or "openrouter/anthropic/claude-sonnet-4" */
-  model: z.string().min(1).default('openrouter/anthropic/claude-sonnet-4'),
+  /** Primary model ref: "provider/model-id" or "openrouter/google/gemini-2.5-flash" */
+  model: z.string().min(1).default('openrouter/google/gemini-2.5-flash'),
   /** Cheap/fast model for subtasks */
   smallModel: z.string().optional(),
   /** Agentic loop limits */
@@ -393,8 +393,8 @@ export function applyLayers(layers: PartialMiraConfig[]): MiraConfig {
 
 // ── Default config (layer 1) ───────────────────────────────────────
 export const DEFAULT_CONFIG: MiraConfig = miraConfigSchema.parse({
-  model: 'openrouter/anthropic/claude-sonnet-4',
-  smallModel: 'openrouter/deepseek/deepseek-v3.2-exp',
+  model: 'openrouter/google/gemini-2.5-flash',
+  smallModel: 'openrouter/google/gemini-2.0-flash',
   permission: {
     bash: 'ask',
     read: 'allow',
@@ -413,7 +413,7 @@ export const DEFAULT_CONFIG: MiraConfig = miraConfigSchema.parse({
       name: 'OpenRouter',
       options: {
         baseURL: 'https://openrouter.ai/api/v1',
-        apiKey: '',
+        apiKey: '{env:OPENROUTER_API_KEY}',
         headers: {},
         timeout: 120_000,
         kind: 'openrouter',
@@ -423,14 +423,14 @@ export const DEFAULT_CONFIG: MiraConfig = miraConfigSchema.parse({
   },
   routing: {
     aliases: {},
-    fallbacks: [],
+    fallbacks: ['openrouter/google/gemini-2.5-pro'],
     defaultProvider: 'openrouter',
   },
   subgateways: {
     default: {
       provider: 'openrouter',
-      model: 'openrouter/anthropic/claude-sonnet-4',
-      fallback: [],
+      model: 'openrouter/google/gemini-2.5-flash',
+      fallback: ['openrouter/google/gemini-2.5-pro'],
       rateLimit: { rps: 10, burst: 20 },
       retry: { maxAttempts: 3, baseMs: 500, maxMs: 10_000 },
       timeout: 120_000,

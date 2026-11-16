@@ -157,6 +157,48 @@ export async function cancelOrchestrateJob(
   return cancelled
 }
 
+/**
+ * Cancel all running orchestrate jobs owned by a parent session (used on
+ * session deletion/abort so background DAG waves do not outlive their parent).
+ */
+export async function cancelOrchestrateJobsForParent(
+  db: MaybeDB,
+  parentSessionID: string,
+  bus?: Bus,
+): Promise<number> {
+  if (!db) return 0
+  const rows = await db
+    .select()
+    .from(jobs)
+    .where(and(eq(jobs.parentSessionID, parentSessionID), eq(jobs.status, 'running')))
+  let count = 0
+  for (const row of rows) {
+    if (orchestrateJobAborts.has(row.id)) {
+      orchestrateJobAborts.get(row.id)?.abort()
+      orchestrateJobAborts.delete(row.id)
+      count++
+    }
+  }
+  if (count > 0) {
+    await db
+      .update(jobs)
+      .set({ status: 'cancelled', updatedAt: Date.now() })
+      .where(and(eq(jobs.parentSessionID, parentSessionID), eq(jobs.status, 'running')))
+    if (bus) {
+      const ts = Date.now()
+      for (const row of rows) {
+        bus.publish({
+          type: 'job.cancelled',
+          sessionID: parentSessionID,
+          payload: { jobID: row.id, taskID: row.id, status: 'cancelled' } as JsonValue,
+          timestamp: ts,
+        })
+      }
+    }
+  }
+  return count
+}
+
 export function topologicalWaves(tasks: OrchestrateTask[]): {
   waves: OrchestrateTask[][]
   error?: string
@@ -672,6 +714,36 @@ export const orchestrateTool = {
                 : `[${goal} :: ${t.id}] ${t.prompt}`
               const ac = new AbortController()
               if (jobID) orchestrateJobAborts.set(jobID, ac)
+              const onParentAbort = () => ac.abort()
+              if (!background && ctx.signal) {
+                if (ctx.signal.aborted) ac.abort()
+                else ctx.signal.addEventListener('abort', onParentAbort, { once: true })
+              }
+              let createdChildSessionID: string | undefined
+              const onSessionCreated = async (childID: string) => {
+                createdChildSessionID = childID
+                if (db && jobID) {
+                  try {
+                    await db
+                      .update(jobs)
+                      .set({ childSessionID: childID, updatedAt: Date.now() })
+                      .where(and(eq(jobs.id, jobID), eq(jobs.status, 'running')))
+                  } catch {}
+                }
+                if (jobID) {
+                  bus?.publish({
+                    type: 'job.updated',
+                    sessionID,
+                    payload: {
+                      jobID,
+                      taskID: t.id,
+                      status: 'running',
+                      childSessionID: childID,
+                    } as JsonValue,
+                    timestamp: Date.now(),
+                  })
+                }
+              }
               const attempt = async (): Promise<NodeResult> => {
                 try {
                   const { sessionID: childID, text } = await runner({
@@ -679,30 +751,46 @@ export const orchestrateTool = {
                     parentID: sessionID,
                     agent,
                     title,
+                    cwd: ctx.cwd,
                     signal: ac.signal,
+                    onSessionCreated,
                   })
                   return { id: t.id, agent, jobID, status: 'completed', sessionID: childID, text }
                 } catch (e) {
-                  return { id: t.id, agent, jobID, status: 'failed', error: String(e) }
-                }
-              }
-              let res = await attempt()
-              if (res.status === 'failed' && !ac.signal.aborted) {
-                // Retry once (doom-loop guard: exactly one retry, no replanning here)
-                // Charge retry against mission budget
-                const retryAdmission = mission.admitRetries(1)
-                if (!retryAdmission.allowed) {
                   return {
                     id: t.id,
                     agent,
                     jobID,
                     status: 'failed',
-                    error: `retry denied: ${retryAdmission.detail}`,
+                    ...(createdChildSessionID ? { sessionID: createdChildSessionID } : {}),
+                    error: String(e),
                   }
                 }
-                res = await attempt()
               }
-              if (jobID) orchestrateJobAborts.delete(jobID)
+              let res: NodeResult
+              try {
+                res = await attempt()
+                if (res.status === 'failed' && !ac.signal.aborted) {
+                  // Retry once (doom-loop guard: exactly one retry, no replanning here)
+                  // Charge retry against mission budget
+                  const retryAdmission = mission.admitRetries(1)
+                  if (!retryAdmission.allowed) {
+                    return {
+                      id: t.id,
+                      agent,
+                      jobID,
+                      status: 'failed',
+                      error: `retry denied: ${retryAdmission.detail}`,
+                    }
+                  }
+                  res = await attempt()
+                }
+              } finally {
+                if (!background && ctx.signal) {
+                  ctx.signal.removeEventListener('abort', onParentAbort)
+                }
+                if (jobID) orchestrateJobAborts.delete(jobID)
+              }
               // Stash full text in the job row; parent sees only the 600-char preview.
               // Verification settle (design §5 chokepoint 2 — inline terminal write,
               // NOT via finishJob): completed branch has res.sessionID → compute the
@@ -726,12 +814,13 @@ export const orchestrateTool = {
                       ? { state: patch.verificationState, at: patch.verificationUpdatedAt }
                       : undefined
                   } else if (res.status === 'failed') {
-                    // no child link (failure paths drop it) → stays UNVERIFIED (§3.1)
+                    // Failure/cancel stays UNVERIFIED (§3.1 / §5.3)
                     await db
                       .update(jobs)
                       .set({
                         status: ac.signal.aborted ? 'cancelled' : 'failed',
                         error: res.error,
+                        ...(createdChildSessionID ? { childSessionID: createdChildSessionID } : {}),
                         updatedAt: Date.now(),
                       })
                       .where(and(eq(jobs.id, jobID), eq(jobs.status, 'running')))

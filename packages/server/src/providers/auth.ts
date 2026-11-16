@@ -218,7 +218,7 @@ export function classifyError(status: number, message: string): 'retryable' | 'f
   if (status === 410) return 'fallback'
   if (
     status === 404 &&
-    /end of life|no longer available|model.*not found|does not exist|deprecated|retired|gone/i.test(
+    /end of life|no longer available|model.*not found|does not exist|deprecated|retired|gone|404 page not found|page not found|not found for account|function ['"][^'"]+['"]: not found/i.test(
       message,
     )
   ) {
@@ -234,6 +234,23 @@ export function classifyError(status: number, message: string): 'retryable' | 'f
   // Timeout / network errors — retry same model
   if (/timeout|ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/i.test(message)) return 'retryable'
   return 'none'
+}
+
+/**
+ * Resolve the OpenAI-compatible `/chat/completions` URL for a provider baseURL.
+ * Google Generative AI configures `https://generativelanguage.googleapis.com/v1beta`
+ * for model discovery, whereas its OpenAI-compatible chat completions endpoint lives
+ * under `/v1beta/openai/chat/completions`.
+ */
+export function chatCompletionsUrl(baseURL: string): string {
+  const trimmed = baseURL.replace(/\/+$/, '')
+  if (
+    trimmed.includes('generativelanguage.googleapis.com') &&
+    !/\/openai$/i.test(trimmed)
+  ) {
+    return `${trimmed}/openai/chat/completions`
+  }
+  return `${trimmed}/chat/completions`
 }
 
 /** Expand a provider's raw options into resolved values */

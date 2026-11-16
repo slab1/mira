@@ -81,12 +81,69 @@ describe('brio tool (colibri)', () => {
   })
 
   test('offline hint when colibri not running', async () => {
-    // No mock on 8000 — should return ok:false with hint
-    const r = (await brioTool.execute(
-      { state: 'Ticket', question: 'Q?', options: ['yes', 'no'] },
-      { sessionID: 's', messageID: 'm' },
-    )) as Record<string, unknown>
-    expect(r.ok).toBe(false)
-    expect(String((r as Record<string, unknown>).hint ?? '').toLowerCase()).toContain('colibri')
+    // With cloud fallback disabled and no colibri, should return ok:false with hint
+    process.env.BRIO_DISABLE_CLOUD_FALLBACK = '1'
+    try {
+      const r = (await brioTool.execute(
+        { state: 'Ticket', question: 'Q?', options: ['yes', 'no'] },
+        { sessionID: 's', messageID: 'm' },
+      )) as Record<string, unknown>
+      expect(r.ok).toBe(false)
+      expect(String((r as Record<string, unknown>).hint ?? '').toLowerCase()).toContain('colibri')
+    } finally {
+      delete process.env.BRIO_DISABLE_CLOUD_FALLBACK
+    }
+  })
+
+  test('cloud scoring fallback parses options and computes entropy', async () => {
+    const realFetch = globalThis.fetch
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/v1/brio')) {
+        return Promise.reject(new Error('Connection refused'))
+      }
+      if (url.includes('chat/completions')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      answer: 'merge',
+                      probabilities: { merge: 0.85, 'request changes': 0.15 },
+                    }),
+                  },
+                },
+              ],
+              usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        )
+      }
+      return realFetch(input as RequestInfo, init)
+    }) as typeof fetch
+
+    try {
+      const r = (await brioTool.execute(
+        {
+          state: 'PR 42 is tested and clean',
+          question: 'Decision?',
+          options: ['merge', 'request changes'],
+        },
+        { sessionID: 's', messageID: 'm' },
+      )) as Record<string, unknown>
+
+      expect(r.ok).toBe(true)
+      const res = r.result as Record<string, unknown>
+      expect(res.answer).toBe('merge')
+      expect(typeof res.entropy).toBe('number')
+      expect((res as Record<string, unknown>).entropy_reading).toBeDefined()
+      expect(Array.isArray(res.choices)).toBe(true)
+      expect((res.choices as Array<{ option: string }>)[0].option).toBe('merge')
+    } finally {
+      globalThis.fetch = realFetch
+    }
   })
 })
