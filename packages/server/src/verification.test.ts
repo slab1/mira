@@ -25,7 +25,8 @@ import { Bus } from './bus/index.js'
 import type { ToolContext } from './tools/registry.js'
 
 const NOW = 1_700_000_000_000
-const ENUM = ['UNVERIFIED', 'PARTIALLY_VERIFIED', 'VERIFIED', 'FAILED_VERIFICATION'] as const
+const FIXTURE_CANDIDATE = 'sha256:fixture-candidate'
+const FIXTURE_BASE = '0123456789abcdef0123456789abcdef01234567'
 
 // ── helpers ─────────────────────────────────────────────────────────
 
@@ -69,7 +70,9 @@ async function seedChild(
 ): Promise<string> {
   await addSession(db, childID)
   const messageID = `m-${childID}`
-  await db.insert(messages).values({ id: messageID, sessionID: childID, role: 'assistant', createdAt: NOW })
+  await db
+    .insert(messages)
+    .values({ id: messageID, sessionID: childID, role: 'assistant', createdAt: NOW })
   let i = 0
   for (const d of opts.diag ?? []) {
     await db.insert(parts).values({
@@ -79,7 +82,22 @@ async function seedChild(
       type: 'tool-result',
       tool: 'diagnose',
       toolCallID: `tc-${i}`,
-      result: { ok: d.ok, checks: [d.check], results: [{ check: d.check, ok: d.ok }] },
+      result: {
+        ok: d.ok,
+        checks: [d.check],
+        results: [
+          {
+            check: d.check,
+            ok: d.ok,
+            status: d.ok ? 'PASS' : 'FAIL',
+            candidateHash: FIXTURE_CANDIDATE,
+            baseHash: FIXTURE_BASE,
+            runtime: 'test:bun',
+            command: `diagnose ${d.check}`,
+            exitCode: d.ok ? 0 : 1,
+          },
+        ],
+      },
       isError: false,
       createdAt: NOW + (d.offset ?? i),
     })
@@ -95,10 +113,30 @@ async function seedChild(
       // crash results carry no `command` → sibling tool-call supplies it (§1);
       // exitCode is only present when the tool actually returned one
       result: b.isError
-        ? { error: 'spawn failed' }
+        ? {
+            error: 'spawn failed',
+            candidateHash: FIXTURE_CANDIDATE,
+            baseHash: FIXTURE_BASE,
+            runtime: 'test:bun',
+          }
         : b.exitCode === undefined
-          ? { stdout: 'All tests passed!', stderr: '', command: b.command }
-          : { stdout: '', stderr: b.exitCode === 0 ? '' : 'x', exitCode: b.exitCode, command: b.command },
+          ? {
+              stdout: 'All tests passed!',
+              stderr: '',
+              command: b.command,
+              candidateHash: FIXTURE_CANDIDATE,
+              baseHash: FIXTURE_BASE,
+              runtime: 'test:bun',
+            }
+          : {
+              stdout: '',
+              stderr: b.exitCode === 0 ? '' : 'x',
+              exitCode: b.exitCode,
+              command: b.command,
+              candidateHash: FIXTURE_CANDIDATE,
+              baseHash: FIXTURE_BASE,
+              runtime: 'test:bun',
+            },
       isError: b.isError ?? false,
       createdAt: NOW + (b.offset ?? i),
     })
@@ -129,7 +167,13 @@ async function seedChild(
   return childID
 }
 
-type RunOpts = { prompt: string; parentID: string; agent?: string; title?: string; signal?: AbortSignal }
+type RunOpts = {
+  prompt: string
+  parentID: string
+  agent?: string
+  title?: string
+  signal?: AbortSignal
+}
 
 function runnerSeed(
   db: MiraDB,
@@ -153,14 +197,34 @@ const t1 = NOW
 const t2 = NOW + 1000
 const t3 = NOW + 2000
 
-function diag(check: 'typecheck' | 'test' | 'build', ok: boolean, at: number): VerificationPartInput {
+function diag(
+  check: 'typecheck' | 'test' | 'build',
+  ok: boolean,
+  at: number,
+  candidateHash = FIXTURE_CANDIDATE,
+): VerificationPartInput {
   return {
     messageID: 'm1',
     toolCallID: `tc-${check}-${at}`,
     tool: 'diagnose',
     isError: false,
     createdAt: at,
-    result: { ok, checks: [check], results: [{ check, ok }] },
+    result: {
+      ok,
+      checks: [check],
+      results: [
+        {
+          check,
+          ok,
+          status: ok ? 'PASS' : 'FAIL',
+          candidateHash,
+          baseHash: FIXTURE_BASE,
+          runtime: 'test:bun',
+          command: `diagnose ${check}`,
+          exitCode: ok ? 0 : 1,
+        },
+      ],
+    },
   }
 }
 
@@ -174,8 +238,23 @@ function bashP(command: string, exitCode: number | undefined, at: number): Verif
     // command always present; exitCode only when the tool returned one
     result:
       exitCode === undefined
-        ? { stdout: 'All tests passed!', stderr: '', command }
-        : { stdout: '', stderr: exitCode === 0 ? '' : 'x', exitCode, command },
+        ? {
+            stdout: 'All tests passed!',
+            stderr: '',
+            command,
+            candidateHash: FIXTURE_CANDIDATE,
+            baseHash: FIXTURE_BASE,
+            runtime: 'test:bun',
+          }
+        : {
+            stdout: '',
+            stderr: exitCode === 0 ? '' : 'x',
+            exitCode,
+            command,
+            candidateHash: FIXTURE_CANDIDATE,
+            baseHash: FIXTURE_BASE,
+            runtime: 'test:bun',
+          },
   }
 }
 
@@ -187,140 +266,227 @@ function bashCrashP(command: string, at: number): VerificationPartInput {
     tool: 'bash',
     isError: true,
     createdAt: at,
-    result: { error: 'spawn failed' },
+    candidateHash: FIXTURE_CANDIDATE,
+    baseHash: FIXTURE_BASE,
+    runtime: 'test:bun',
+    result: {
+      error: 'spawn failed',
+      candidateHash: FIXTURE_CANDIDATE,
+      baseHash: FIXTURE_BASE,
+      runtime: 'test:bun',
+    },
     command,
   }
 }
 
-const scenarios: Array<{ name: string; parts: VerificationPartInput[]; state: VerificationState }> = [
-  { name: 'no entries → UNVERIFIED', parts: [], state: 'UNVERIFIED' },
-  { name: 'diagnose[typecheck] ok → PARTIALLY_VERIFIED', parts: [diag('typecheck', true, t1)], state: 'PARTIALLY_VERIFIED' },
-  { name: 'diagnose[test] ok → VERIFIED', parts: [diag('test', true, t1)], state: 'VERIFIED' },
-  { name: 'diagnose[build] ok → PARTIALLY_VERIFIED', parts: [diag('build', true, t1)], state: 'PARTIALLY_VERIFIED' },
-  {
-    name: 'test ok then typecheck fail → FAILED_VERIFICATION',
-    parts: [diag('test', true, t1), diag('typecheck', false, t2)],
-    state: 'FAILED_VERIFICATION',
-  },
-  {
-    name: 'typecheck fail then test ok (typecheck never re-run) → FAILED (fail-closed stickiness)',
-    parts: [diag('typecheck', false, t1), diag('test', true, t2)],
-    state: 'FAILED_VERIFICATION',
-  },
-  {
-    name: 'failed class re-runs passing → PARTIALLY_VERIFIED (§2.1 transition)',
-    parts: [diag('typecheck', false, t1), diag('typecheck', true, t2)],
-    state: 'PARTIALLY_VERIFIED',
-  },
-  {
-    name: 'failed class re-passes + test pass → VERIFIED (§2.1 transition)',
-    parts: [diag('typecheck', false, t1), diag('test', true, t2), diag('typecheck', true, t3)],
-    state: 'VERIFIED',
-  },
-  {
-    name: 'latest-per-class: older test fail superseded by newer pass → VERIFIED',
-    parts: [diag('test', false, t1), diag('test', true, t2)],
-    state: 'VERIFIED',
-  },
-  {
-    name: 'latest-per-class: older test pass superseded by newer fail → FAILED',
-    parts: [diag('test', true, t1), diag('test', false, t2)],
-    state: 'FAILED_VERIFICATION',
-  },
-  {
-    name: 'one diagnose run, mixed checks (typecheck ok + test fail) → FAILED',
-    parts: [
-      {
-        messageID: 'm1',
-        toolCallID: 'tc-mixed',
-        tool: 'diagnose',
-        isError: false,
-        createdAt: t1,
-        result: {
-          ok: false,
-          checks: ['typecheck', 'test'],
-          results: [
-            { check: 'typecheck', ok: true },
-            { check: 'test', ok: false },
-          ],
+const scenarios: Array<{ name: string; parts: VerificationPartInput[]; state: VerificationState }> =
+  [
+    { name: 'no entries → UNVERIFIED', parts: [], state: 'UNVERIFIED' },
+    {
+      name: 'diagnose[typecheck] ok → PARTIALLY_VERIFIED',
+      parts: [diag('typecheck', true, t1)],
+      state: 'PARTIALLY_VERIFIED',
+    },
+    { name: 'diagnose[test] ok → VERIFIED', parts: [diag('test', true, t1)], state: 'VERIFIED' },
+    {
+      name: 'diagnose[build] ok → PARTIALLY_VERIFIED',
+      parts: [diag('build', true, t1)],
+      state: 'PARTIALLY_VERIFIED',
+    },
+    {
+      name: 'test ok then typecheck fail → FAILED_VERIFICATION',
+      parts: [diag('test', true, t1), diag('typecheck', false, t2)],
+      state: 'FAILED_VERIFICATION',
+    },
+    {
+      name: 'typecheck fail then test ok (typecheck never re-run) → FAILED (fail-closed stickiness)',
+      parts: [diag('typecheck', false, t1), diag('test', true, t2)],
+      state: 'FAILED_VERIFICATION',
+    },
+    {
+      name: 'failed class re-runs passing → PARTIALLY_VERIFIED (§2.1 transition)',
+      parts: [diag('typecheck', false, t1), diag('typecheck', true, t2)],
+      state: 'PARTIALLY_VERIFIED',
+    },
+    {
+      name: 'failed class re-passes + test pass → VERIFIED (§2.1 transition)',
+      parts: [diag('typecheck', false, t1), diag('test', true, t2), diag('typecheck', true, t3)],
+      state: 'VERIFIED',
+    },
+    {
+      name: 'latest-per-class: older test fail superseded by newer pass → VERIFIED',
+      parts: [diag('test', false, t1), diag('test', true, t2)],
+      state: 'VERIFIED',
+    },
+    {
+      name: 'latest-per-class: older test pass superseded by newer fail → FAILED',
+      parts: [diag('test', true, t1), diag('test', false, t2)],
+      state: 'FAILED_VERIFICATION',
+    },
+    {
+      name: 'one diagnose run, mixed checks (typecheck ok + test fail) → FAILED',
+      parts: [
+        {
+          messageID: 'm1',
+          toolCallID: 'tc-mixed',
+          tool: 'diagnose',
+          isError: false,
+          createdAt: t1,
+          result: {
+            ok: false,
+            checks: ['typecheck', 'test'],
+            results: [
+              {
+                check: 'typecheck',
+                ok: true,
+                status: 'PASS',
+                candidateHash: FIXTURE_CANDIDATE,
+                baseHash: FIXTURE_BASE,
+                runtime: 'test:bun',
+                command: 'diagnose typecheck',
+                exitCode: 0,
+              },
+              {
+                check: 'test',
+                ok: false,
+                status: 'FAIL',
+                candidateHash: FIXTURE_CANDIDATE,
+                baseHash: FIXTURE_BASE,
+                runtime: 'test:bun',
+                command: 'diagnose test',
+                exitCode: 1,
+              },
+            ],
+          },
         },
-      },
-    ],
-    state: 'FAILED_VERIFICATION',
-  },
-  {
-    name: 'one diagnose run, all checks pass → VERIFIED',
-    parts: [
-      {
-        messageID: 'm1',
-        toolCallID: 'tc-all',
-        tool: 'diagnose',
-        isError: false,
-        createdAt: t1,
-        result: {
-          ok: true,
-          checks: ['typecheck', 'test'],
-          results: [
-            { check: 'typecheck', ok: true },
-            { check: 'test', ok: true },
-          ],
+      ],
+      state: 'FAILED_VERIFICATION',
+    },
+    {
+      name: 'one diagnose run, all checks pass → VERIFIED',
+      parts: [
+        {
+          messageID: 'm1',
+          toolCallID: 'tc-all',
+          tool: 'diagnose',
+          isError: false,
+          createdAt: t1,
+          result: {
+            ok: true,
+            checks: ['typecheck', 'test'],
+            results: [
+              {
+                check: 'typecheck',
+                ok: true,
+                status: 'PASS',
+                candidateHash: FIXTURE_CANDIDATE,
+                baseHash: FIXTURE_BASE,
+                runtime: 'test:bun',
+                command: 'diagnose typecheck',
+                exitCode: 0,
+              },
+              {
+                check: 'test',
+                ok: true,
+                status: 'PASS',
+                candidateHash: FIXTURE_CANDIDATE,
+                baseHash: FIXTURE_BASE,
+                runtime: 'test:bun',
+                command: 'diagnose test',
+                exitCode: 0,
+              },
+            ],
+          },
         },
-      },
-    ],
-    state: 'VERIFIED',
-  },
-  { name: 'bash `bun test` exit 0 → VERIFIED', parts: [bashP('bun test', 0, t1)], state: 'VERIFIED' },
-  { name: 'bash `bun test src/x` exit 1 → FAILED', parts: [bashP('bun test src/x', 1, t1)], state: 'FAILED_VERIFICATION' },
-  { name: 'bash `npm test` exit 0 → VERIFIED', parts: [bashP('npm test', 0, t1)], state: 'VERIFIED' },
-  { name: 'bash `pytest -q` exit 0 → VERIFIED', parts: [bashP('pytest -q', 0, t1)], state: 'VERIFIED' },
-  {
-    name: 'bash `tsc --noEmit` exit 0 → PARTIALLY_VERIFIED',
-    parts: [bashP('node node_modules/typescript/bin/tsc --noEmit', 0, t1)],
-    state: 'PARTIALLY_VERIFIED',
-  },
-  { name: 'bash `bun run build` exit 0 → PARTIALLY_VERIFIED', parts: [bashP('bun run build', 0, t1)], state: 'PARTIALLY_VERIFIED' },
-  { name: 'bash `ls` exit 0 → ignored (unrecognized) → UNVERIFIED', parts: [bashP('ls', 0, t1)], state: 'UNVERIFIED' },
-  { name: 'bash `git status` exit 0 → ignored → UNVERIFIED', parts: [bashP('git status', 0, t1)], state: 'UNVERIFIED' },
-  {
-    name: 'evidence WITHOUT exit code (prose stdout claim) → UNVERIFIED',
-    parts: [
-      {
-        messageID: 'm1',
-        toolCallID: 'tc-prose',
-        tool: 'bash',
-        isError: false,
-        createdAt: t1,
-        result: { stdout: 'All tests passed!', stderr: '', command: 'echo tests passed' },
-      },
-    ],
-    state: 'UNVERIFIED',
-  },
-  {
-    name: 'evidence WITHOUT exit code (diagnose crash, no results[]) → UNVERIFIED',
-    parts: [
-      {
-        messageID: 'm1',
-        toolCallID: 'tc-crash',
-        tool: 'diagnose',
-        isError: true,
-        createdAt: t1,
-        result: { error: 'spawn failed' },
-      },
-    ],
-    state: 'UNVERIFIED',
-  },
-  {
-    name: 'bash tool-crash ({error}, isError) on MATCHING command → FAILED',
-    parts: [bashCrashP('bun test', t1)],
-    state: 'FAILED_VERIFICATION',
-  },
-  {
-    name: 'matching command, missing exitCode, not isError → FAILED (fail-closed)',
-    parts: [bashP('bun test', undefined, t1)],
-    state: 'FAILED_VERIFICATION',
-  },
-  { name: 'non-tool parts (read/text) → UNVERIFIED', parts: [{ tool: 'read', messageID: 'm1', toolCallID: 'r1', createdAt: t1, result: { file: 'x' } }], state: 'UNVERIFIED' },
-]
+      ],
+      state: 'VERIFIED',
+    },
+    {
+      name: 'bash `bun test` exit 0 → VERIFIED',
+      parts: [bashP('bun test', 0, t1)],
+      state: 'VERIFIED',
+    },
+    {
+      name: 'bash `bun test src/x` exit 1 → FAILED',
+      parts: [bashP('bun test src/x', 1, t1)],
+      state: 'FAILED_VERIFICATION',
+    },
+    {
+      name: 'bash `npm test` exit 0 → VERIFIED',
+      parts: [bashP('npm test', 0, t1)],
+      state: 'VERIFIED',
+    },
+    {
+      name: 'bash `pytest -q` exit 0 → VERIFIED',
+      parts: [bashP('pytest -q', 0, t1)],
+      state: 'VERIFIED',
+    },
+    {
+      name: 'bash `tsc --noEmit` exit 0 → PARTIALLY_VERIFIED',
+      parts: [bashP('node node_modules/typescript/bin/tsc --noEmit', 0, t1)],
+      state: 'PARTIALLY_VERIFIED',
+    },
+    {
+      name: 'bash `bun run build` exit 0 → PARTIALLY_VERIFIED',
+      parts: [bashP('bun run build', 0, t1)],
+      state: 'PARTIALLY_VERIFIED',
+    },
+    {
+      name: 'bash `ls` exit 0 → ignored (unrecognized) → UNVERIFIED',
+      parts: [bashP('ls', 0, t1)],
+      state: 'UNVERIFIED',
+    },
+    {
+      name: 'bash `git status` exit 0 → ignored → UNVERIFIED',
+      parts: [bashP('git status', 0, t1)],
+      state: 'UNVERIFIED',
+    },
+    {
+      name: 'evidence WITHOUT exit code (prose stdout claim) → UNVERIFIED',
+      parts: [
+        {
+          messageID: 'm1',
+          toolCallID: 'tc-prose',
+          tool: 'bash',
+          isError: false,
+          createdAt: t1,
+          result: { stdout: 'All tests passed!', stderr: '', command: 'echo tests passed' },
+        },
+      ],
+      state: 'UNVERIFIED',
+    },
+    {
+      name: 'evidence WITHOUT exit code (diagnose crash, no results[]) → UNVERIFIED',
+      parts: [
+        {
+          messageID: 'm1',
+          toolCallID: 'tc-crash',
+          tool: 'diagnose',
+          isError: true,
+          createdAt: t1,
+          result: { error: 'spawn failed' },
+        },
+      ],
+      state: 'UNVERIFIED',
+    },
+    {
+      name: 'bash tool-crash ({error}, isError) on MATCHING command → FAILED',
+      parts: [bashCrashP('bun test', t1)],
+      state: 'FAILED_VERIFICATION',
+    },
+    {
+      name: 'matching command, missing exitCode → BLOCKED / UNVERIFIED',
+      parts: [bashP('bun test', undefined, t1)],
+      state: 'UNVERIFIED',
+    },
+    {
+      name: 'non-tool parts (read/text) → UNVERIFIED',
+      parts: [
+        { tool: 'read', messageID: 'm1', toolCallID: 'r1', createdAt: t1, result: { file: 'x' } },
+      ],
+      state: 'UNVERIFIED',
+    },
+  ]
 
 describe('computeVerification (§3 state machine, table-driven)', () => {
   for (const s of scenarios) {
@@ -328,6 +494,90 @@ describe('computeVerification (§3 state machine, table-driven)', () => {
       expect(computeVerification(s.parts).state).toBe(s.state)
     })
   }
+
+  test('conflicting outcomes at the same timestamp fail closed regardless of input order', () => {
+    const pass = diag('test', true, t1)
+    const fail = diag('test', false, t1)
+    expect(computeVerification([pass, fail]).state).toBe('FAILED_VERIFICATION')
+    expect(computeVerification([fail, pass]).state).toBe('FAILED_VERIFICATION')
+  })
+
+  test('a newer candidate hash cannot inherit an older candidate test pass', () => {
+    const out = computeVerification([
+      diag('test', true, t1, 'sha256:older-candidate'),
+      diag('typecheck', true, t2, 'sha256:new-candidate'),
+    ])
+    expect(out.state).toBe('PARTIALLY_VERIFIED')
+    expect(out.evidence[0]?.candidateHash).toBe('sha256:older-candidate')
+    expect(out.evidence[1]?.candidateHash).toBe('sha256:new-candidate')
+  })
+
+  test('a passing command without a candidate hash is BLOCKED and cannot verify', () => {
+    const out = computeVerification([
+      {
+        ...diag('test', true, t1),
+        result: {
+          ok: true,
+          checks: ['test'],
+          results: [
+            { check: 'test', ok: true, status: 'PASS', command: 'diagnose test', exitCode: 0 },
+          ],
+        },
+      },
+    ])
+    expect(out.state).toBe('UNVERIFIED')
+    expect(out.evidence[0]).toMatchObject({ status: 'BLOCKED', candidateHash: null, check: 'test' })
+  })
+
+  test('a skipped check on a newer candidate invalidates stale earlier PASS evidence', () => {
+    const skipped = diag('test', false, t2, 'sha256:new-candidate')
+    skipped.result = {
+      ok: false,
+      checks: ['test'],
+      results: [
+        {
+          check: 'test',
+          ok: false,
+          status: 'SKIPPED',
+          candidateHash: 'sha256:new-candidate',
+          baseHash: FIXTURE_BASE,
+          runtime: 'not-run',
+        },
+      ],
+    }
+    const out = computeVerification([diag('test', true, t1, 'sha256:older-candidate'), skipped])
+    expect(out.state).toBe('UNVERIFIED')
+    expect(out.evidence[1]?.status).toBe('SKIPPED')
+  })
+
+  test('a same-candidate NOT_RUN test disposition supersedes an earlier PASS', () => {
+    const notRun = diag('test', false, t2)
+    notRun.result = {
+      ok: false,
+      checks: ['test'],
+      results: [
+        {
+          check: 'test',
+          ok: false,
+          status: 'NOT_RUN',
+          candidateHash: FIXTURE_CANDIDATE,
+          baseHash: FIXTURE_BASE,
+          runtime: 'not-run',
+        },
+      ],
+    }
+    const out = computeVerification([diag('test', true, t1), notRun])
+    expect(out.state).toBe('UNVERIFIED')
+    expect(out.evidence[1]?.status).toBe('NOT_RUN')
+  })
+
+  test('a newer unbound test attempt prevents retaining an older VERIFIED state', () => {
+    const unbound = bashP('bun test', 0, t2)
+    unbound.result = { command: 'bun test', exitCode: 0 }
+    const out = computeVerification([diag('test', true, t1), unbound])
+    expect(out.state).toBe('UNVERIFIED')
+    expect(out.evidence[1]).toMatchObject({ status: 'BLOCKED', candidateHash: null })
+  })
 })
 
 describe('classifyBashCommand (§3.2)', () => {
@@ -337,7 +587,9 @@ describe('classifyBashCommand (§3.2)', () => {
     expect(classifyBashCommand('npm test')).toBe('test')
     expect(classifyBashCommand('pytest -q')).toBe('test')
     expect(classifyBashCommand('bunx tsc --noEmit')).toBe('typecheck')
-    expect(classifyBashCommand('node node_modules/typescript/bin/tsc --noEmit -p packages/server')).toBe('typecheck')
+    expect(
+      classifyBashCommand('node node_modules/typescript/bin/tsc --noEmit -p packages/server'),
+    ).toBe('typecheck')
     expect(classifyBashCommand('bun run build')).toBe('build')
   })
   test('unrecognized commands return null (fail-closed — ignored, never verified)', () => {
@@ -349,11 +601,37 @@ describe('classifyBashCommand (§3.2)', () => {
 })
 
 describe('evidence (§4 — EvidenceRef reused, capped at 8)', () => {
-  test('refs carry kind:message + {check, ok} extras + msg:<messageID>#<toolCallID>', () => {
+  test('evidence carries a candidate-bound outcome and retained artifact pointer', () => {
     const out = computeVerification([diag('test', true, t1)])
-    expect(out.evidence).toEqual([
-      { kind: 'message', ref: 'msg:m1#tc-test-1700000000000', at: t1, check: 'test', ok: true },
-    ])
+    expect(out.evidence).toHaveLength(1)
+    expect(out.evidence[0]).toMatchObject({
+      kind: 'message',
+      ref: 'msg:m1#tc-test-1700000000000',
+      at: t1,
+      check: 'test',
+      ok: true,
+      status: 'PASS',
+      candidateHash: FIXTURE_CANDIDATE,
+      baseHash: FIXTURE_BASE,
+      runtime: 'test:bun',
+      command: 'diagnose test',
+      exitCode: 0,
+      artifact: 'msg:m1#tc-test-1700000000000',
+    })
+  })
+  test('bash evidence records the exact command and exit code used for the verdict', () => {
+    const out = computeVerification([bashP('bun test packages/server', 0, t1)])
+    expect(out.state).toBe('VERIFIED')
+    expect(out.evidence[0]).toMatchObject({
+      check: 'test',
+      ok: true,
+      command: 'bun test packages/server',
+      exitCode: 0,
+      status: 'PASS',
+      candidateHash: FIXTURE_CANDIDATE,
+      baseHash: FIXTURE_BASE,
+      runtime: 'test:bun',
+    })
   })
   test('cap 8 — newest kept, oldest dropped', () => {
     const ten = Array.from({ length: 10 }, (_, i) => diag('typecheck', true, NOW + i))
@@ -398,7 +676,37 @@ describe('buildVerificationPatch (§5 input)', () => {
     await seedChild(db, 'child-crash', { bash: [{ command: 'bun test', isError: true }] })
     const patch = await buildVerificationPatch(db, 'child-crash')
     expect(patch?.verificationState).toBe('FAILED_VERIFICATION')
-    expect(patch?.verificationEvidence[0]).toMatchObject({ kind: 'message', check: 'test', ok: false })
+    expect(patch?.verificationEvidence[0]).toMatchObject({
+      kind: 'message',
+      check: 'test',
+      ok: false,
+    })
+  })
+  test('bash crash command lookup cannot borrow a reused call ID from another session', async () => {
+    const db = await testDB()
+    await seedChild(db, 'child-command-source', { bash: [{ command: 'bun test', isError: true }] })
+    await addSession(db, 'child-command-target')
+    await db.insert(messages).values({
+      id: 'm-child-command-target',
+      sessionID: 'child-command-target',
+      role: 'assistant',
+      createdAt: NOW,
+    })
+    await db.insert(parts).values({
+      id: 'p-child-command-target',
+      messageID: 'm-child-command-target',
+      sessionID: 'child-command-target',
+      type: 'tool-result',
+      tool: 'bash',
+      toolCallID: 'tc-1',
+      result: { stdout: '', stderr: '', exitCode: 0 },
+      isError: false,
+      createdAt: NOW + 1,
+    })
+
+    const patch = await buildVerificationPatch(db, 'child-command-target')
+    expect(patch?.verificationState).toBe('UNVERIFIED')
+    expect(patch?.verificationEvidence).toEqual([])
   })
 })
 
@@ -410,7 +718,11 @@ describe('e2e settles (§5 b — chokepoints)', () => {
     await addSession(db, 'sess-fg')
     const events: CapturedEvent[] = []
     const bus = makeBus(events)
-    const ctx = makeCtx({ sessionID: 'sess-fg', bus, subagentRunner: runnerSeed(db, { diag: [{ check: 'test', ok: true }] }) })
+    const ctx = makeCtx({
+      sessionID: 'sess-fg',
+      bus,
+      subagentRunner: runnerSeed(db, { diag: [{ check: 'test', ok: true }] }),
+    })
     ;(ctx as ToolContext & { db: MiraDB }).db = db
 
     const res = await taskTool.execute({ description: 'v', prompt: 'p' }, ctx)
@@ -481,9 +793,7 @@ describe('e2e settles (§5 b — chokepoints)', () => {
     expect(row?.status).toBe('completed')
     expect(row?.verificationState).toBe('VERIFIED')
     // additive message.updated payload carries the view (§6)
-    const msg = events.find(
-      (e) => e.type === 'message.updated' && !!payloadOf(e).verification,
-    )
+    const msg = events.find((e) => e.type === 'message.updated' && !!payloadOf(e).verification)
     expect(payloadOf(msg).verification).toMatchObject({ state: 'VERIFIED' })
   }, 10_000)
 
@@ -499,7 +809,11 @@ describe('e2e settles (§5 b — chokepoints)', () => {
     ;(ctx as ToolContext & { db: MiraDB }).db = db
 
     await orchestrateTool.execute(
-      { goal: 'verify me', tasks: [{ id: 'a', prompt: 'p', budgetSteps: 10 }], mergeStrategy: 'lead-synthesis' },
+      {
+        goal: 'verify me',
+        tasks: [{ id: 'a', prompt: 'p', budgetSteps: 10 }],
+        mergeStrategy: 'lead-synthesis',
+      },
       ctx,
     )
     const rows = await listJobs(db, 'sess-orch')
@@ -525,7 +839,11 @@ describe('e2e settles (§5 b — chokepoints)', () => {
     ;(ctx as ToolContext & { db: MiraDB }).db = db
 
     await orchestrateTool.execute(
-      { goal: 'fail', tasks: [{ id: 'a', prompt: 'p', budgetSteps: 10 }], mergeStrategy: 'lead-synthesis' },
+      {
+        goal: 'fail',
+        tasks: [{ id: 'a', prompt: 'p', budgetSteps: 10 }],
+        mergeStrategy: 'lead-synthesis',
+      },
       ctx,
     )
     const rows = await listJobs(db, 'sess-orch-f')
@@ -588,7 +906,9 @@ describe('settle edge cases (§5 c–e)', () => {
     })
     ;(ctx as ToolContext & { db: MiraDB }).db = db
 
-    await expect(taskTool.execute({ description: 'v', prompt: 'p' }, ctx)).rejects.toThrow('runner exploded')
+    await expect(taskTool.execute({ description: 'v', prompt: 'p' }, ctx)).rejects.toThrow(
+      'runner exploded',
+    )
     const rows = await listJobs(db, 'sess-throws')
     expect(rows[0]?.status).toBe('failed')
     expect(rows[0]?.verificationState).toBe('UNVERIFIED')
@@ -664,7 +984,11 @@ describe('enforcement sweep (§5 b, both writers)', () => {
     // 1. fg completed with evidence (chokepoint 1)
     const fg = await taskTool.execute(
       { description: 'a', prompt: 'p' },
-      makeCtx({ sessionID: 'sess-sweep', db, subagentRunner: runnerSeed(db, { diag: [{ check: 'test', ok: true }] }) }),
+      makeCtx({
+        sessionID: 'sess-sweep',
+        db,
+        subagentRunner: runnerSeed(db, { diag: [{ check: 'test', ok: true }] }),
+      }),
     )
     expect(fg.jobID).toBeTruthy()
 
@@ -685,7 +1009,11 @@ describe('enforcement sweep (§5 b, both writers)', () => {
     // 3. bg completed with evidence (chokepoint 1, :155)
     const bg = await taskTool.execute(
       { description: 'c', prompt: 'p', background: true },
-      makeCtx({ sessionID: 'sess-sweep', db, subagentRunner: runnerSeed(db, { diag: [{ check: 'test', ok: true }] }) }),
+      makeCtx({
+        sessionID: 'sess-sweep',
+        db,
+        subagentRunner: runnerSeed(db, { diag: [{ check: 'test', ok: true }] }),
+      }),
     )
     const deadline = Date.now() + 5000
     let bgRow = await getJob(db, bg.jobID as string)
@@ -697,8 +1025,16 @@ describe('enforcement sweep (§5 b, both writers)', () => {
 
     // 4. orchestrate completed with evidence (chokepoint 2)
     await orchestrateTool.execute(
-      { goal: 'sweep', tasks: [{ id: 'a', prompt: 'p', budgetSteps: 10 }], mergeStrategy: 'lead-synthesis' },
-      makeCtx({ sessionID: 'sess-sweep', db, subagentRunner: runnerSeed(db, { diag: [{ check: 'test', ok: true }] }) }),
+      {
+        goal: 'sweep',
+        tasks: [{ id: 'a', prompt: 'p', budgetSteps: 10 }],
+        mergeStrategy: 'lead-synthesis',
+      },
+      makeCtx({
+        sessionID: 'sess-sweep',
+        db,
+        subagentRunner: runnerSeed(db, { diag: [{ check: 'test', ok: true }] }),
+      }),
     )
 
     // 5. raw SQL bypass → DEFAULT backstop

@@ -6,6 +6,7 @@ import { createDatabase, migrate } from '../storage/db.js'
 import { taskTool } from './task.js'
 import type { ToolContext } from './registry.js'
 import { resetConfigCache, saveConfig } from '../config/index.js'
+import { fingerprintWorkspace } from '../workspace-fingerprint.js'
 
 // P3.6 groundwork — auto-rollback end to end through the real task pipeline:
 // a subagent run that edits a file, leaves failing verification evidence, and
@@ -18,6 +19,18 @@ let db: ReturnType<typeof createDatabase>
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'mira-ar-e2e-'))
   projectDir = mkdtempSync(join(tmpdir(), 'mira-ar-cfg-'))
+  const gitInit = Bun.spawn(['git', 'init', '-q'], { cwd: dir, stdout: 'ignore', stderr: 'ignore' })
+  if ((await gitInit.exited) !== 0) throw new Error('failed to initialize test Git workspace')
+  writeFileSync(join(dir, '.baseline'), 'baseline\n', 'utf-8')
+  for (const args of [
+    ['config', 'user.email', 'mira-test@example.invalid'],
+    ['config', 'user.name', 'Mira Test'],
+    ['add', '.baseline'],
+    ['commit', '-qm', 'baseline'],
+  ]) {
+    const proc = Bun.spawn(['git', ...args], { cwd: dir, stdout: 'ignore', stderr: 'ignore' })
+    if ((await proc.exited) !== 0) throw new Error(`failed to run git ${args.join(' ')}`)
+  }
   db = createDatabase(':memory:')
   await migrate(db)
   resetConfigCache()
@@ -60,6 +73,8 @@ function failingRunner(target: string) {
       )
       .run('sn-1', childID, 'child-msg', target, 'ORIGINAL', Date.now())
     writeFileSync(target, 'BROKEN BY SUBAGENT', 'utf-8')
+    const fingerprint = await fingerprintWorkspace(dir)
+    if (!fingerprint) throw new Error('test workspace did not produce a candidate fingerprint')
     // Failing verification evidence: a bash tool-result with a classifiable
     // command and a non-zero exit code (computeVerification: ok = exitCode===0).
     db.sqlite
@@ -73,7 +88,15 @@ function failingRunner(target: string) {
         'tool-result',
         'bash',
         'tc-1',
-        JSON.stringify({ command: 'bun test', exitCode: 1, stderr: '1 test failed' }),
+        JSON.stringify({
+          command: 'bun test',
+          exitCode: 1,
+          stderr: '1 test failed',
+          runtime: 'fixture:test',
+          durationMs: 1,
+          candidateHash: fingerprint.candidateHash,
+          baseHash: fingerprint.baseHash,
+        }),
         Date.now(),
       )
     return { sessionID: childID, text: 'done (badly)' }

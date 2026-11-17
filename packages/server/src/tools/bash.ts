@@ -9,6 +9,8 @@ import { z } from 'zod'
 import type { ToolDef } from './registry.js'
 import { sanitizeCommand } from '../guardrails/index.js'
 import { createSandbox, SandboxError, type ContainerSandbox } from '../sandbox/isolation.js'
+import { fingerprintWorkspace } from '../workspace-fingerprint.js'
+import { classifyBashCommand } from '../verification.js'
 
 const bashSchema = z.object({
   command: z.string().min(1).describe('Shell command to execute'),
@@ -42,13 +44,25 @@ export const bashTool = {
     // Sanitize command at the tool layer — defense in depth beyond guardrails
     const sanitized = sanitizeCommand(command)
     if (!sanitized.ok) {
-      return { stdout: '', stderr: `Command rejected: ${sanitized.reason}`, exitCode: 1, command }
+      return {
+        stdout: '',
+        stderr: `Command rejected: ${sanitized.reason}`,
+        exitCode: 1,
+        command,
+        status: 'BLOCKED',
+        runtime: 'not-started',
+        durationMs: 0,
+        candidateHash: null,
+        baseHash: null,
+      }
     }
     const cwd = workdir ?? ctx.cwd ?? process.cwd()
     // Clamp caller-provided timeout: never allow more than 2 minutes to prevent
     // indefinite runs from LLM-supplied values (e.g. timeout: 9999999).
     const BASH_TIMEOUT_MAX_MS = 120_000
     const effectiveTimeout = Math.min(timeout, BASH_TIMEOUT_MAX_MS)
+    const fingerprint = classifyBashCommand(command) ? await fingerprintWorkspace(cwd) : undefined
+    const commandStartedAt = Date.now()
 
     // Sandboxed path — MIRA_SANDBOX=1: run inside a container with the session
     // cwd mounted at /work. SandboxError (e.g. no container runtime) fails
@@ -62,14 +76,27 @@ export const bashTool = {
           exitCode: result.code,
           command,
           isolated: result.isolated,
-          ...(result.runtime ? { runtime: result.runtime } : {}),
+          runtime: result.runtime ?? 'sandbox',
+          durationMs: Date.now() - commandStartedAt,
+          candidateHash: fingerprint?.candidateHash ?? null,
+          baseHash: fingerprint?.baseHash ?? null,
         }
       } catch (e) {
         const msg =
           e instanceof SandboxError
             ? e.message
             : `Sandbox execution failed: ${e instanceof Error ? e.message : String(e)}`
-        return { stdout: '', stderr: msg, exitCode: 1, command }
+        return {
+          stdout: '',
+          stderr: msg,
+          exitCode: 1,
+          command,
+          status: 'BLOCKED',
+          runtime: 'sandbox',
+          durationMs: Date.now() - commandStartedAt,
+          candidateHash: fingerprint?.candidateHash ?? null,
+          baseHash: fingerprint?.baseHash ?? null,
+        }
       }
     }
 
@@ -108,7 +135,16 @@ export const bashTool = {
         ? stdout.slice(0, MAX) + `\n…truncated (${stdout.length - MAX} more chars)`
         : stdout
     const err = stderr.length > MAX ? stderr.slice(0, MAX) + `\n…truncated` : stderr
-    return { stdout: out, stderr: err, exitCode, command }
+    return {
+      stdout: out,
+      stderr: err,
+      exitCode,
+      command,
+      runtime: `host:bun-${Bun.version}+bash`,
+      durationMs: Date.now() - commandStartedAt,
+      candidateHash: fingerprint?.candidateHash ?? null,
+      baseHash: fingerprint?.baseHash ?? null,
+    }
   },
 } satisfies ToolDef<typeof bashSchema>
 

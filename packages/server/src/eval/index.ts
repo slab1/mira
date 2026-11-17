@@ -18,7 +18,7 @@
  *   const report = await runEval("pr")
  */
 
-import { getTier, type TierName, type TierReport } from './tiers.js'
+import { getTier, type CheckStatus, type TierName, type TierReport } from './tiers.js'
 import {
   createTrace,
   startSpan,
@@ -36,6 +36,7 @@ export interface EvalReport {
   sha?: string
   branch?: string
   tiers: TierReport[]
+  status: CheckStatus
   passed: boolean
   durationMs: number
   traces?: ExportedTraces
@@ -71,12 +72,12 @@ export class EvalRunner {
         reports.push(report)
         console.log(`[eval:${name}] ${report.summary}`)
         for (const c of report.checks) {
-          const icon = c.passed ? '✓' : '✗'
+          const outcome = c.status ?? (c.passed ? 'PASS' : 'FAIL')
           console.log(
-            `  ${icon} ${c.checkId} — ${c.message ?? ''} ${c.score !== undefined ? `(score ${c.score.toFixed(2)})` : ''} ${c.latencyMs}ms`,
+            `  ${outcome} ${c.checkId} — ${c.message ?? ''} ${c.score !== undefined ? `(score ${c.score.toFixed(2)})` : ''} ${c.latencyMs}ms`,
           )
         }
-        // If PR tier fails and it's blocking, short-circuit (still reports)
+        // If a blocking tier does not pass, short-circuit (still reports).
         if (!report.passed && cfg.blocking) {
           console.error(`[eval] blocking tier ${name} failed — stopping`)
           if (tier !== 'all') break
@@ -85,9 +86,18 @@ export class EvalRunner {
         endSpan(span, { error: String(e) }, true)
         const failed: TierReport = {
           tier: name,
+          status: 'BLOCKED',
           passed: false,
           durationMs: Date.now() - span.startMs,
-          checks: [{ checkId: 'tier-error', passed: false, latencyMs: 0, message: String(e) }],
+          checks: [
+            {
+              checkId: 'tier-error',
+              status: 'BLOCKED',
+              passed: false,
+              latencyMs: 0,
+              message: String(e),
+            },
+          ],
           summary: `${name} ERROR: ${String(e).slice(0, 200)}`,
         }
         reports.push(failed)
@@ -96,9 +106,17 @@ export class EvalRunner {
 
     await flush().catch(() => {})
     const durationMs = Date.now() - t0
-    const passed = reports.every((r) => r.passed)
+    const status: CheckStatus = reports.some((r) => r.status === 'FAIL')
+      ? 'FAIL'
+      : reports.some((r) => r.status === 'BLOCKED')
+        ? 'BLOCKED'
+        : reports.every((r) => r.passed)
+          ? 'PASS'
+          : 'FAIL'
+    const passed = status === 'PASS'
     const at = new Date().toISOString()
-    if (!passed) console.error(`[eval] ✗ ${tier} FAILED in ${durationMs}ms`)
+    if (status === 'BLOCKED') console.warn(`[eval] ! ${tier} BLOCKED in ${durationMs}ms`)
+    else if (!passed) console.error(`[eval] ✗ ${tier} FAILED in ${durationMs}ms`)
     else console.log(`[eval] ✓ ${tier} PASSED in ${durationMs}ms`)
 
     return {
@@ -107,6 +125,7 @@ export class EvalRunner {
       sha: opts.sha ?? process.env.GITHUB_SHA,
       branch: opts.branch,
       tiers: reports,
+      status,
       passed,
       durationMs,
       traces: exportTraces(),
@@ -260,27 +279,31 @@ export function parseLimit(argv: string[]): number | undefined {
 
 // ── CLI ───────────────────────────────────────────────────────────────
 
-function parseTier(argv: string[]): TierName | 'all' {
+export function parseTier(argv: string[]): TierName | 'all' {
   const idx = argv.findIndex((a) => a === '--tier' || a === '-t')
-  const raw = idx !== -1 ? argv[idx + 1] : argv.find((a) => a.startsWith('--tier='))?.split('=')[1]
-  const v = (raw ?? 'pr').toLowerCase()
+  const inline = argv.find((a) => a.startsWith('--tier='))
+  const raw = idx !== -1 ? argv[idx + 1] : inline?.slice('--tier='.length)
+  if (raw === undefined) {
+    if (idx === -1 && inline === undefined) return 'pr'
+    throw new Error('missing value for --tier; expected pr, nightly, prod, or all')
+  }
+  const v = raw.toLowerCase()
   if (v === 'all' || v === 'pr' || v === 'nightly' || v === 'prod') return v
-  console.warn(`[eval] unrecognized tier "${raw}", defaulting to pr`)
-  return 'pr'
+  throw new Error(`unrecognized tier "${raw}"; expected pr, nightly, prod, or all`)
 }
 
 export function printReport(report: EvalReport): void {
   console.log('\n' + '─'.repeat(60))
-  console.log(
-    `Mira Eval Report — ${report.requested} — ${report.passed ? 'PASS' : 'FAIL'} — ${report.durationMs}ms`,
-  )
+  console.log(`Mira Eval Report — ${report.requested} — ${report.status} — ${report.durationMs}ms`)
   console.log(
     `at: ${report.at}  sha: ${report.sha ?? 'local'}  branch: ${report.branch ?? 'local'}`,
   )
   for (const t of report.tiers) {
-    console.log(`\n[${t.tier}] ${t.summary}`)
+    console.log(`\n[${t.tier}] ${t.status}: ${t.summary}`)
     for (const c of t.checks)
-      console.log(`  ${c.passed ? '✓' : '✗'} ${c.checkId.padEnd(18)} ${c.message ?? ''}`)
+      console.log(
+        `  ${c.status ?? (c.passed ? 'PASS' : 'FAIL')} ${c.checkId.padEnd(18)} ${c.message ?? ''}`,
+      )
   }
   console.log('─'.repeat(60) + '\n')
 }
@@ -315,7 +338,13 @@ if (import.meta.main) {
     process.exit(report.passed ? 0 : 1)
   }
 
-  const tier = parseTier(Bun.argv)
+  let tier: TierName | 'all'
+  try {
+    tier = parseTier(Bun.argv)
+  } catch (error) {
+    console.error(`[eval] ${String(error)}`)
+    process.exit(2)
+  }
   const report = await runner.run(tier)
   printReport(report)
   // Emit JSON for CI artifacts if requested

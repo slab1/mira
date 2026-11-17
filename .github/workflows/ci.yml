@@ -309,7 +309,7 @@ jobs:
           key: turbo-main-${{ github.sha }}
           restore-keys: turbo-main-
       - name: Eval — fast tier (PR)
-        run: bunx turbo run eval --continue --cache-dir=.turbo -- --tier=fast
+        run: bunx turbo run eval --continue --cache-dir=.turbo -- --tier=pr
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

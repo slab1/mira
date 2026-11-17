@@ -133,7 +133,7 @@ export const jobs = sqliteTable(
     childSessionID: text('child_session_id'),
     agent: text('agent'),
     prompt: text('prompt').notNull(),
-    status: text('status', { enum: ['running', 'completed', 'failed', 'cancelled'] })
+    status: text('status', { enum: ['running', 'completed', 'failed', 'cancelled', 'skipped'] })
       .notNull()
       .default('running'),
     result: text('result'),

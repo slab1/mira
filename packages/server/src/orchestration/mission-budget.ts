@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
+
 /**
  * Orchestration — mission budget (§8).
  *
@@ -336,28 +338,16 @@ export class MissionBudget {
 }
 
 /**
- * Per-thread current mission, so a nested orchestrate call finds the budget its
- * parent is already charging rather than starting a new one. This is the other
- * half of the anti-evasion property: even if a caller forgets to pass the budget
- * explicitly, the ambient one is found.
+ * Async-local mission scope: nested orchestrate calls inherit the current tree's
+ * budget without leaking it into concurrently executing sessions.
  */
-let ambient: MissionBudget | undefined
-
-export function setAmbientMission(b: MissionBudget | undefined): void {
-  ambient = b
-}
+const ambient = new AsyncLocalStorage<MissionBudget>()
 
 export function getAmbientMission(): MissionBudget | undefined {
-  return ambient
+  return ambient.getStore()
 }
 
-/** Run `fn` with `b` as the ambient mission (restores the previous one). */
+/** Run `fn` with `b` in this async execution context only. */
 export async function withAmbientMission<T>(b: MissionBudget, fn: () => Promise<T>): Promise<T> {
-  const prev = ambient
-  ambient = b
-  try {
-    return await fn()
-  } finally {
-    ambient = prev
-  }
+  return ambient.run(b, fn)
 }

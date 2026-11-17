@@ -17,7 +17,6 @@ import {
   MissionBudgetExhausted,
   DEFAULT_MISSION_CAPS,
   getAmbientMission,
-  setAmbientMission,
   withAmbientMission,
 } from './mission-budget.js'
 
@@ -33,7 +32,6 @@ const caps = {
 let clock = 0
 beforeEach(() => {
   clock = 1_000_000
-  setAmbientMission(undefined)
 })
 
 const budget = () => new MissionBudget({ caps, now: () => clock })
@@ -229,8 +227,9 @@ describe('§8: cancellation propagates to the whole tree', () => {
 describe('§8: ambient mission is found rather than re-created', () => {
   test('a nested call finds the parent budget via the ambient handle', () => {
     const root = budget()
-    setAmbientMission(root)
-    expect(getAmbientMission()).toBe(root)
+    return withAmbientMission(root, async () => {
+      expect(getAmbientMission()).toBe(root)
+    })
   })
 
   test('withAmbientMission restores the previous handle afterwards', async () => {
@@ -253,6 +252,29 @@ describe('§8: ambient mission is found rather than re-created', () => {
         throw new Error('boom')
       }),
     ).rejects.toThrow('boom')
+    expect(getAmbientMission()).toBeUndefined()
+  })
+
+  test('overlapping async mission scopes remain isolated', async () => {
+    const first = budget()
+    const second = budget()
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+
+    const firstRun = withAmbientMission(first, async () => {
+      await firstGate
+      expect(getAmbientMission()).toBe(first)
+    })
+    const secondRun = withAmbientMission(second, async () => {
+      expect(getAmbientMission()).toBe(second)
+      releaseFirst()
+      await Promise.resolve()
+      expect(getAmbientMission()).toBe(second)
+    })
+
+    await Promise.all([firstRun, secondRun])
     expect(getAmbientMission()).toBeUndefined()
   })
 })

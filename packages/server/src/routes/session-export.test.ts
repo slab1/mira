@@ -32,11 +32,12 @@ let server!: { stop: (closeActiveConnections?: boolean) => void; port: number | 
 let BASE!: string
 let prompt!: SessionPrompt
 let db!: ReturnType<typeof createDatabase>
+let bus!: Bus
 
 beforeAll(async () => {
   db = createDatabase(':memory:')
   await migrate(db)
-  const bus = new Bus()
+  bus = new Bus()
   const permissions = new PermissionManager({})
   const tools = new ToolRegistry({ db, bus: new Bus(), permissions, gateway: stubGateway })
   prompt = new SessionPrompt({ db, bus, gateway: stubGateway, tools, permissions })
@@ -264,5 +265,31 @@ describe('session export/import roundtrip', () => {
   test('GET /session/:id/cost returns 404 for unknown session', async () => {
     const res = await fetch(`${BASE}/session/nonexistent-id/cost`)
     expect(res.status).toBe(404)
+  })
+
+  test('job and task cancel routes share an idempotent terminal transition', async () => {
+    const session = await prompt.createSession({ title: 'cancel-test' })
+    const jobID = crypto.randomUUID()
+    const now = Date.now()
+    await db.insert(db.schema.jobs).values({
+      id: jobID,
+      parentSessionID: session.id,
+      prompt: 'background work',
+      status: 'running',
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    const first = await fetch(`${BASE}/job/${jobID}/cancel`, { method: 'POST' })
+    expect(first.status).toBe(200)
+    expect(((await first.json()) as { status: string }).status).toBe('cancelled')
+    const second = await fetch(`${BASE}/task/${jobID}/cancel`, { method: 'POST' })
+    expect(second.status).toBe(200)
+    expect(((await second.json()) as { status: string }).status).toBe('cancelled')
+
+    const events = bus.recent(20, 'job.cancelled')
+    expect(events).toHaveLength(1)
+    expect(events[0]?.sessionID).toBe(session.id)
+    expect(events[0]?.payload).toMatchObject({ jobID, status: 'cancelled' })
   })
 })

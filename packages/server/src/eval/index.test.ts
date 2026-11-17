@@ -8,7 +8,9 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
 import {
   parseSuite,
   parseLimit,
+  parseTier,
   runSuite,
+  runTier,
   SUITE_NAMES,
   CURATED_BUDGET_DEFAULT,
   type SuiteName,
@@ -56,6 +58,119 @@ describe('parseLimit', () => {
     expect(parseLimit(['--limit', 'abc'])).toBeUndefined()
     expect(parseLimit(['--limit', '0'])).toBeUndefined()
     expect(parseLimit(['--limit', '-3'])).toBeUndefined()
+  })
+})
+
+describe('parseTier', () => {
+  test('defaults only when absent and accepts every declared tier', () => {
+    expect(parseTier([])).toBe('pr')
+    for (const name of ['pr', 'nightly', 'prod', 'all'] as const) {
+      expect(parseTier(['--tier', name])).toBe(name)
+      expect(parseTier([`--tier=${name}`])).toBe(name)
+    }
+  })
+
+  test('rejects missing and unsupported tier values rather than silently defaulting', () => {
+    expect(() => parseTier(['--tier'])).toThrow('missing value')
+    expect(() => parseTier(['--tier=fast'])).toThrow('unrecognized tier')
+    expect(() => parseTier(['-t', 'unknown'])).toThrow('unrecognized tier')
+  })
+})
+
+describe('runTier check outcomes', () => {
+  const ctx = { tier: 'pr' as const, env: {} }
+
+  test('a required skipped check blocks a passing tier', async () => {
+    const report = await runTier(
+      {
+        name: 'pr',
+        label: 'required skip',
+        trigger: 'test',
+        budgetMs: 1000,
+        blocking: true,
+        checks: [
+          {
+            id: 'required-check',
+            label: 'required check',
+            budgetMs: 100,
+            run: async () => ({
+              checkId: 'required-check',
+              status: 'SKIPPED',
+              passed: false,
+              latencyMs: 0,
+            }),
+          },
+        ],
+      },
+      ctx,
+    )
+    expect(report.status).toBe('BLOCKED')
+    expect(report.passed).toBe(false)
+    expect(report.checks[0]?.status).toBe('SKIPPED')
+  })
+
+  test('an optional skipped check stays visible without replacing required evidence', async () => {
+    const report = await runTier(
+      {
+        name: 'pr',
+        label: 'optional skip',
+        trigger: 'test',
+        budgetMs: 1000,
+        blocking: true,
+        checks: [
+          {
+            id: 'required-check',
+            label: 'required check',
+            budgetMs: 100,
+            run: async () => ({ checkId: 'required-check', passed: true, latencyMs: 0 }),
+          },
+          {
+            id: 'optional-check',
+            label: 'optional check',
+            required: false,
+            budgetMs: 100,
+            run: async () => ({
+              checkId: 'optional-check',
+              status: 'SKIPPED',
+              passed: false,
+              latencyMs: 0,
+            }),
+          },
+        ],
+      },
+      ctx,
+    )
+    expect(report.status).toBe('PASS')
+    expect(report.passed).toBe(true)
+    expect(report.checks[1]?.status).toBe('SKIPPED')
+  })
+
+  test('a result cannot evade the required gate by returning a different check ID', async () => {
+    const report = await runTier(
+      {
+        name: 'pr',
+        label: 'check id binding',
+        trigger: 'test',
+        budgetMs: 1000,
+        blocking: true,
+        checks: [
+          {
+            id: 'required-check',
+            label: 'required check',
+            budgetMs: 100,
+            run: async () => ({
+              checkId: 'unconfigured-check',
+              status: 'SKIPPED',
+              passed: false,
+              latencyMs: 0,
+            }),
+          },
+        ],
+      },
+      ctx,
+    )
+    expect(report.status).toBe('BLOCKED')
+    expect(report.checks[0]?.checkId).toBe('required-check')
   })
 })
 

@@ -2,15 +2,16 @@
  * Task Verification States (docs/VERIFICATION_STATES_DESIGN.md §2–§5)
  *
  * The state is a PURE FUNCTION of the child session's persisted tool-result
- * parts (exit-code evidence from `diagnose`/`bash`) — recomputed at each
+ * parts (candidate-bound exit-code evidence from `diagnose`/`bash`) — recomputed at each
  * terminal settle, never asserted by the agent (§5: there is no tool, route
  * or payload that writes these columns; only the two terminal writers fed by
  * persisted exit codes).
  *
  * Fail-closed (§3): unrecognized commands / unclassifiable results are
- * IGNORED (they prove nothing); a failed class stays failed until it is
- * re-run and passes. `EvidenceRef` is reused unchanged (§4) — kind `'message'`
- * + `{check, ok}` extras, capped at `EVIDENCE_CAP` newest.
+ * IGNORED (they prove nothing); missing candidate identity becomes BLOCKED; a
+ * failed class stays failed until it is re-run and passes on the same candidate.
+ * `EvidenceRef` is reused unchanged (§4) — kind `'message'` plus status,
+ * candidate/base hashes, command/runtime/exit, timestamp, and retained-part ref.
  */
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import type { MiraDB } from './storage/db.js'
@@ -19,13 +20,11 @@ import { EVIDENCE_CAP, type EvidenceRef } from './memory/provenance.js'
 import type { JsonValue } from './types/index.js'
 
 export type VerificationState =
-  | 'UNVERIFIED'
-  | 'PARTIALLY_VERIFIED'
-  | 'VERIFIED'
-  | 'FAILED_VERIFICATION'
+  'UNVERIFIED' | 'PARTIALLY_VERIFIED' | 'VERIFIED' | 'FAILED_VERIFICATION'
 
 /** Closed class set (§3.2) — matches diagnose's check enum. */
 export type VerificationClass = 'typecheck' | 'test' | 'build'
+export type VerificationEvidenceStatus = 'PASS' | 'FAIL' | 'BLOCKED' | 'SKIPPED' | 'NOT_RUN'
 
 /** The shape every terminal writer merges into its single UPDATE (§5). */
 export interface VerificationPatch {
@@ -45,6 +44,9 @@ export interface VerificationPartInput {
   createdAt?: number | null
   /** bash crash fallback: command resolved from the sibling tool-call args. */
   command?: string | null
+  candidateHash?: string | null
+  baseHash?: string | null
+  runtime?: string | null
 }
 
 export interface VerificationOutcome {
@@ -53,7 +55,9 @@ export interface VerificationOutcome {
 }
 
 function asRecord(v: JsonValue | null | undefined): Record<string, JsonValue> | undefined {
-  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, JsonValue>) : undefined
+  return v && typeof v === 'object' && !Array.isArray(v)
+    ? (v as Record<string, JsonValue>)
+    : undefined
 }
 
 /**
@@ -71,16 +75,61 @@ export function classifyBashCommand(command: string): VerificationClass | null {
 }
 
 /**
- * §3 state machine — pure, order-sensitive (chronological, oldest first).
+ * §3 state machine — pure, timestamp-ordered; conflicting ties fail closed.
  *
  *   no entries                         → UNVERIFIED
  *   any class's latest run failed      → FAILED_VERIFICATION
- *   latest 'test' run passed           → VERIFIED
- *   else any class latest passed       → PARTIALLY_VERIFIED
+ *   latest candidate has 'test' PASS   → VERIFIED (unless a class is BLOCKED)
+ *   else any current-candidate PASS    → PARTIALLY_VERIFIED
+ *   prior-candidate runs               → do not carry into current candidate
  */
 export function computeVerification(input: readonly VerificationPartInput[]): VerificationOutcome {
-  const runs: Array<{ cls: VerificationClass; ok: boolean }> = []
+  const runs: Array<{
+    cls: VerificationClass
+    status: VerificationEvidenceStatus
+    at: number
+    candidateHash: string
+  }> = []
   const evidence: EvidenceRef[] = []
+  const candidateObservations: Array<{ at: number; candidateHash: string }> = []
+
+  const record = (
+    p: VerificationPartInput,
+    check: VerificationClass,
+    rawStatus: VerificationEvidenceStatus,
+    details: {
+      candidateHash?: string
+      baseHash?: string
+      runtime?: string
+      command?: string
+      exitCode?: number | null
+    },
+    at: number,
+    ref: string,
+  ): void => {
+    const status =
+      (rawStatus === 'PASS' || rawStatus === 'FAIL') && !details.candidateHash
+        ? 'BLOCKED'
+        : rawStatus
+    evidence.push({
+      kind: 'message',
+      ref,
+      at,
+      check,
+      ok: status === 'PASS',
+      status,
+      candidateHash: details.candidateHash ?? null,
+      baseHash: details.baseHash ?? null,
+      runtime: details.runtime ?? null,
+      command: details.command ?? null,
+      exitCode: details.exitCode ?? null,
+      artifact: p.id ? `part:${p.id}` : ref,
+    })
+    if (details.candidateHash) {
+      candidateObservations.push({ at, candidateHash: details.candidateHash })
+    }
+    runs.push({ cls: check, status, at, candidateHash: details.candidateHash ?? '' })
+  }
 
   for (const p of input) {
     const at = typeof p.createdAt === 'number' ? p.createdAt : Date.now()
@@ -96,9 +145,33 @@ export function computeVerification(input: readonly VerificationPartInput[]): Ve
         const cls = r?.check
         // closed class set; anything else (unknown check) is ignored fail-closed
         if (cls !== 'typecheck' && cls !== 'test' && cls !== 'build') continue
-        const ok = r?.ok === true
-        runs.push({ cls, ok })
-        evidence.push({ kind: 'message', ref, at, check: cls, ok })
+        const candidateHash =
+          typeof r?.candidateHash === 'string' ? r.candidateHash : (p.candidateHash ?? undefined)
+        const baseHash = typeof r?.baseHash === 'string' ? r.baseHash : (p.baseHash ?? undefined)
+        const rawStatus =
+          r?.status === 'PASS' ||
+          r?.status === 'FAIL' ||
+          r?.status === 'BLOCKED' ||
+          r?.status === 'SKIPPED' ||
+          r?.status === 'NOT_RUN'
+            ? r.status
+            : r?.ok === true
+              ? 'PASS'
+              : 'FAIL'
+        record(
+          p,
+          cls,
+          rawStatus,
+          {
+            candidateHash,
+            baseHash,
+            runtime: typeof r?.runtime === 'string' ? r.runtime : (p.runtime ?? undefined),
+            command: typeof r?.command === 'string' ? r.command : undefined,
+            exitCode: typeof r?.exitCode === 'number' ? r.exitCode : null,
+          },
+          at,
+          ref,
+        )
       }
       // result without `results` (crash / prose) → nothing classifiable → ignored
     } else if (p.tool === 'bash') {
@@ -112,28 +185,81 @@ export function computeVerification(input: readonly VerificationPartInput[]): Ve
       if (!command) continue
       const cls = classifyBashCommand(command)
       if (!cls) continue // unrecognized command → proves nothing (fail-closed)
-      // tool-crash result ({error}, isError=true) on a matching command = FAIL;
-      // otherwise ok = exitCode === 0 (missing exitCode !== 0 → fail, fail-closed).
-      const ok = p.isError !== true && res?.exitCode === 0
-      runs.push({ cls, ok })
-      evidence.push({ kind: 'message', ref, at, check: cls, ok })
+      const candidateHash =
+        typeof res?.candidateHash === 'string' ? res.candidateHash : (p.candidateHash ?? undefined)
+      const baseHash = typeof res?.baseHash === 'string' ? res.baseHash : (p.baseHash ?? undefined)
+      const rawStatus =
+        res?.status === 'PASS' ||
+        res?.status === 'FAIL' ||
+        res?.status === 'BLOCKED' ||
+        res?.status === 'SKIPPED' ||
+        res?.status === 'NOT_RUN'
+          ? res.status
+          : p.isError === true || typeof res?.exitCode === 'number'
+            ? p.isError === true || res?.exitCode !== 0
+              ? 'FAIL'
+              : 'PASS'
+            : 'BLOCKED'
+      record(
+        p,
+        cls,
+        rawStatus,
+        {
+          candidateHash,
+          baseHash,
+          runtime: typeof res?.runtime === 'string' ? res.runtime : (p.runtime ?? undefined),
+          command,
+          exitCode: typeof res?.exitCode === 'number' ? res.exitCode : null,
+        },
+        at,
+        ref,
+      )
     }
     // other tools → not a verification signal → ignored
   }
 
-  if (!runs.length) return { state: 'UNVERIFIED', evidence: [] }
+  if (!candidateObservations.length)
+    return { state: 'UNVERIFIED', evidence: evidence.slice(-EVIDENCE_CAP) }
 
   // §4: cap = EVIDENCE_CAP (8), newest kept.
   const evidence_capped =
     evidence.length > EVIDENCE_CAP ? evidence.slice(evidence.length - EVIDENCE_CAP) : evidence
 
-  // latest-per-class wins (input is chronological → last write wins)
-  const latest = new Map<VerificationClass, boolean>()
-  for (const r of runs) latest.set(r.cls, r.ok)
+  // Latest timestamp wins. Conflicting outcomes at the same timestamp are
+  // ambiguous and fail closed rather than depending on database row order.
+  const observations = [...candidateObservations].sort((a, b) => b.at - a.at)
+  const currentCandidate = observations[0]?.candidateHash
+  const tiedCandidates = observations.filter((r) => r.at === observations[0]?.at)
+  if (tiedCandidates.some((r) => r.candidateHash !== currentCandidate)) {
+    return { state: 'UNVERIFIED', evidence: evidence_capped }
+  }
+  const candidateRuns = runs.filter((r) => !r.candidateHash || r.candidateHash === currentCandidate)
+  if (!candidateRuns.length) return { state: 'UNVERIFIED', evidence: evidence_capped }
+  const latest = new Map<
+    VerificationClass,
+    { at: number; status: VerificationEvidenceStatus; ambiguous: boolean }
+  >()
+  for (const r of candidateRuns) {
+    const prev = latest.get(r.cls)
+    if (!prev || r.at > prev.at) latest.set(r.cls, { at: r.at, status: r.status, ambiguous: false })
+    else if (r.at === prev.at && r.status !== prev.status) {
+      latest.set(r.cls, { at: r.at, status: 'FAIL', ambiguous: true })
+    }
+  }
 
-  for (const ok of latest.values()) if (!ok) return { state: 'FAILED_VERIFICATION', evidence: evidence_capped }
-  if (latest.get('test')) return { state: 'VERIFIED', evidence: evidence_capped }
-  return { state: 'PARTIALLY_VERIFIED', evidence: evidence_capped }
+  for (const result of latest.values()) {
+    if (result.status === 'FAIL' || result.ambiguous)
+      return { state: 'FAILED_VERIFICATION', evidence: evidence_capped }
+  }
+  if (
+    latest.get('test')?.status === 'PASS' &&
+    [...latest.values()].every((r) => r.status === 'PASS')
+  ) {
+    return { state: 'VERIFIED', evidence: evidence_capped }
+  }
+  if ([...latest.values()].some((r) => r.status === 'PASS'))
+    return { state: 'PARTIALLY_VERIFIED', evidence: evidence_capped }
+  return { state: 'UNVERIFIED', evidence: evidence_capped }
 }
 
 /**
@@ -170,30 +296,47 @@ export async function buildVerificationPatch(
         ),
       )
       // chronological (stable rowid tiebreak = insertion order for equal ms)
-      .orderBy(asc(parts.createdAt))
+      .orderBy(asc(parts.createdAt), asc(parts.id))
 
     // bash crash parts carry no `command` in `result` — resolve it from the
     // sibling tool-call part (tool-result parts don't store `args`, §1).
     const unresolved = rows.filter((r) => r.tool === 'bash' && !hasCommand(r.result))
-    let cmdByCall = new Map<string, string>()
-    const callIDs = [...new Set(unresolved.map((r) => r.toolCallID).filter((v): v is string => !!v))]
+    const cmdByCall = new Map<string, string>()
+    const callIDs = [
+      ...new Set(unresolved.map((r) => r.toolCallID).filter((v): v is string => !!v)),
+    ]
     if (callIDs.length) {
       const calls = await db
-        .select({ toolCallID: parts.toolCallID, args: parts.args })
+        .select({ toolCallID: parts.toolCallID, messageID: parts.messageID, args: parts.args })
         .from(parts)
-        .where(and(eq(parts.type, 'tool-call'), inArray(parts.toolCallID, callIDs)))
+        .where(
+          and(
+            eq(parts.sessionID, childSessionID),
+            eq(parts.type, 'tool-call'),
+            eq(parts.tool, 'bash'),
+            inArray(parts.toolCallID, callIDs),
+          ),
+        )
       for (const c of calls) {
         const a = asRecord(c.args)
-        if (c.toolCallID && typeof a?.command === 'string') cmdByCall.set(c.toolCallID, a.command)
+        if (c.toolCallID && typeof a?.command === 'string') {
+          cmdByCall.set(`${c.messageID ?? ''}\0${c.toolCallID}`, a.command)
+        }
       }
     }
 
     const input: VerificationPartInput[] = rows.map((r) => ({
       ...r,
-      command: r.toolCallID ? (cmdByCall.get(r.toolCallID) ?? null) : null,
+      command: r.toolCallID
+        ? (cmdByCall.get(`${r.messageID ?? ''}\0${r.toolCallID}`) ?? null)
+        : null,
     }))
     const { state, evidence } = computeVerification(input)
-    return { verificationState: state, verificationEvidence: evidence, verificationUpdatedAt: Date.now() }
+    return {
+      verificationState: state,
+      verificationEvidence: evidence,
+      verificationUpdatedAt: Date.now(),
+    }
   } catch (e) {
     console.warn('[verification] patch build failed:', String(e))
     return undefined // fail-closed: no patch → row keeps honest defaults

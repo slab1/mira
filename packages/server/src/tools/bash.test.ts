@@ -36,6 +36,10 @@ type BashResult = {
   exitCode?: number
   isolated?: boolean
   runtime?: string
+  durationMs?: number
+  candidateHash?: string | null
+  baseHash?: string | null
+  status?: string
 }
 
 function baseCtx(overrides: Partial<ToolContext> = {}): ToolContext {
@@ -85,6 +89,19 @@ describe('bash tool — ContainerSandbox wiring', () => {
     expect(mockRun).not.toHaveBeenCalled()
     expect(res.stdout).toContain('host-hello')
     expect(res.exitCode).toBe(0)
+  })
+
+  test('host result carries an exact candidate/base fingerprint and runtime', async () => {
+    sandboxEnabled = false
+    const res = (await bashTool.execute(
+      { command: 'bun test --help >/dev/null' },
+      baseCtx({ cwd: process.cwd() }),
+    )) as BashResult
+    expect(res.exitCode).toBe(0)
+    expect(res.candidateHash).toMatch(/^sha256:[0-9a-f]{64}$/)
+    expect(res.baseHash).toMatch(/^[0-9a-f]{40,64}$/)
+    expect(res.runtime).toContain('host:bun-')
+    expect(res.durationMs).toBeGreaterThanOrEqual(0)
   })
 
   test('SandboxError fails closed: error returned to agent, no host fallback', async () => {

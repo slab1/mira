@@ -167,7 +167,7 @@ export type Job = {
   childSessionID: string | null
   agent: string | null
   prompt: string
-  status: 'running' | 'completed' | 'failed' | 'cancelled'
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped'
   result: string | null
   error: string | null
   createdAt: number

@@ -489,8 +489,7 @@ export function mountSessionRoutes(
     const job = await getJob(db, id)
     if (!job || !(await deps.authorizedSession(job.parentSessionID, c)))
       return c.json({ error: 'not found' }, 404)
-    const cancelled = await cancelJob(db, id)
-    bus.publish({ type: 'job.cancelled', payload: { jobID: job.id }, timestamp: Date.now() })
+    const cancelled = await cancelJob(db, id, { bus, sessionID: job.parentSessionID })
     return c.json(cancelled)
   })
   app.get('/jobs', async (c: Context) => {
@@ -522,8 +521,7 @@ export function mountSessionRoutes(
     const job = await getJob(db, id)
     if (!job || !(await deps.authorizedSession(job.parentSessionID, c)))
       return c.json({ error: 'not found' }, 404)
-    const cancelled = await cancelJob(db, id)
-    bus.publish({ type: 'job.cancelled', payload: { jobID: job.id }, timestamp: Date.now() })
+    const cancelled = await cancelJob(db, id, { bus, sessionID: job.parentSessionID })
     return c.json(cancelled)
   })
   app.get('/jobs/:id', async (c: Context) => {

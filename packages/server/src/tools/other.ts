@@ -10,6 +10,7 @@ import type { ToolDef } from './registry.js'
 import type { JsonValue, MiraConfig } from '../types/index.js'
 import { getConfig, saveConfig } from '../config/index.js'
 import { loadSkills } from '../skills/loader.js'
+import { fingerprintWorkspace } from '../workspace-fingerprint.js'
 
 const planSchema = z.object({
   topic: z.string().describe('Planning topic'),
@@ -204,19 +205,25 @@ export const diagnoseTool = {
   async execute({ checks = ['typecheck'], cwd }, ctx) {
     const workdir = cwd ?? ctx.cwd ?? process.cwd()
     const bunBin = resolveBunBinary()
-    const bunxBin = process.platform === 'win32' ? bunBin.replace(/bun\.exe$/i, 'bunx.exe').replace(/bun$/i, 'bunx.exe') : bunBin.replace(/bun$/i, 'bunx')
+    const bunxBin =
+      process.platform === 'win32'
+        ? bunBin.replace(/bun\.exe$/i, 'bunx.exe').replace(/bun$/i, 'bunx.exe')
+        : bunBin.replace(/bun$/i, 'bunx')
     const commands: Record<string, string[]> = {
       typecheck: [bunxBin, 'tsc', '--noEmit'],
       test: [bunBin, 'test'],
       build: [bunBin, 'run', 'build'],
     }
-    const results: Array<{ check: string; ok: boolean; output?: string; error?: string }> = []
+    const results: Array<Record<string, JsonValue>> = []
     for (const check of checks) {
       const cmd = commands[check]
       if (!cmd) {
-        results.push({ check, ok: false, error: 'unknown check' })
+        results.push({ check, status: 'BLOCKED', ok: false, error: 'unknown check' })
         continue
       }
+      const fingerprint = await fingerprintWorkspace(workdir)
+      const command = cmd.join(' ')
+      const startedAt = Date.now()
       try {
         const proc = Bun.spawn(cmd, { cwd: workdir, stdout: 'pipe', stderr: 'pipe' })
         const exit = await proc.exited
@@ -225,16 +232,58 @@ export const diagnoseTool = {
           new Response(proc.stderr).text(),
         ])
         const combined = `${err}\n${out}`.trim()
+        const status = fingerprint ? (exit === 0 ? 'PASS' : 'FAIL') : 'BLOCKED'
         results.push({
           check,
-          ok: exit === 0,
+          status,
+          ok: status === 'PASS',
+          command,
+          runtime: `host:bun-${Bun.version}`,
+          durationMs: Date.now() - startedAt,
+          exitCode: exit,
+          candidateHash: fingerprint?.candidateHash ?? null,
+          baseHash: fingerprint?.baseHash ?? null,
           output: combined ? combined.slice(0, 4000) : '(no output)',
         })
       } catch (e) {
-        results.push({ check, ok: false, error: String(e) })
+        results.push({
+          check,
+          status: 'BLOCKED',
+          ok: false,
+          command,
+          runtime: `host:bun-${Bun.version}`,
+          durationMs: Date.now() - startedAt,
+          candidateHash: fingerprint?.candidateHash ?? null,
+          baseHash: fingerprint?.baseHash ?? null,
+          error: String(e),
+        })
       }
     }
-    return { ok: results.every((r) => r.ok), checks, results }
+    const currentFingerprint = await fingerprintWorkspace(workdir)
+    const selected = new Set(checks)
+    for (const check of ['typecheck', 'test', 'build'] as const) {
+      if (selected.has(check)) continue
+      results.push({
+        check,
+        status: 'NOT_RUN',
+        ok: false,
+        command: commands[check].join(' '),
+        runtime: 'not-run',
+        durationMs: 0,
+        candidateHash: currentFingerprint?.candidateHash ?? null,
+        baseHash: currentFingerprint?.baseHash ?? null,
+        output: 'not run in this diagnose invocation',
+      })
+    }
+    const executed = results.filter((result) => result.status !== 'NOT_RUN')
+    const status = executed.some((result) => result.status === 'FAIL')
+      ? 'FAIL'
+      : executed.some((result) => result.status === 'BLOCKED')
+        ? 'BLOCKED'
+        : executed.length === 0
+          ? 'NOT_RUN'
+          : 'PASS'
+    return { ok: status === 'PASS', status, checks, results }
   },
 } satisfies ToolDef<typeof diagnoseSchema>
 

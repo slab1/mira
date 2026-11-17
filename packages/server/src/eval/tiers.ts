@@ -13,10 +13,13 @@ import type { JudgeSuiteResult } from './judge.js'
 import type { BenchmarkResult } from './benchmarks.js'
 
 export type TierName = 'pr' | 'nightly' | 'prod'
+export type CheckStatus = 'PASS' | 'FAIL' | 'BLOCKED' | 'SKIPPED' | 'NOT_RUN'
 
 export interface TierCheck {
   id: string
   label: string
+  /** Optional checks may be skipped without passing a skipped required gate. */
+  required?: boolean
   /** budget in ms — PR checks must be fast */
   budgetMs: number
   /** run the check, throw on failure */
@@ -33,6 +36,7 @@ export interface TierContext {
 
 export interface CheckResult {
   checkId: string
+  status?: CheckStatus
   passed: boolean
   score?: number // 0..1
   latencyMs: number
@@ -43,6 +47,7 @@ export interface CheckResult {
 
 export interface TierReport {
   tier: TierName
+  status: CheckStatus
   passed: boolean
   durationMs: number
   checks: CheckResult[]
@@ -74,9 +79,19 @@ function timedCheck(check: TierCheck, ctx: TierContext): Promise<CheckResult> {
       ),
     ),
   ])
-    .then((r) => ({ ...r, latencyMs: Date.now() - t0 }))
+    .then((r) => {
+      const status = r.status ?? (r.passed ? 'PASS' : 'FAIL')
+      return {
+        ...r,
+        checkId: check.id,
+        status,
+        passed: status === 'PASS',
+        latencyMs: Date.now() - t0,
+      }
+    })
     .catch((e) => ({
       checkId: check.id,
+      status: 'BLOCKED' as const,
       passed: false,
       latencyMs: Date.now() - t0,
       message: (e as Error).message,
@@ -94,10 +109,22 @@ export async function runTier(config: TierConfig, ctx: TierContext): Promise<Tie
   } else {
     for (const c of config.checks) results.push(await timedCheck(c, ctx))
   }
-  const passed = results.every((r) => r.passed)
+  const requiredIDs = new Set(
+    config.checks.filter((check) => check.required !== false).map((c) => c.id),
+  )
+  const requiredResults = results.filter((r) => requiredIDs.has(r.checkId))
+  const hasFailure = requiredResults.some(
+    (r) => (r.status ?? (r.passed ? 'PASS' : 'FAIL')) === 'FAIL',
+  )
+  const hasBlocked = requiredResults.some((r) => {
+    const status = r.status ?? (r.passed ? 'PASS' : 'FAIL')
+    return status === 'BLOCKED' || status === 'SKIPPED' || status === 'NOT_RUN'
+  })
+  const status: CheckStatus = hasFailure ? 'FAIL' : hasBlocked ? 'BLOCKED' : 'PASS'
+  const passed = status === 'PASS'
   const durationMs = Date.now() - t0
-  const summary = `${config.label} ${passed ? 'PASS' : 'FAIL'} — ${results.filter((r) => r.passed).length}/${results.length} checks in ${durationMs}ms`
-  return { tier: config.name, passed, durationMs, checks: results, summary }
+  const summary = `${config.label} ${status} — ${requiredResults.filter((r) => r.status === 'PASS' || (r.status === undefined && r.passed)).length}/${requiredResults.length} required checks in ${durationMs}ms`
+  return { tier: config.name, status, passed, durationMs, checks: results, summary }
 }
 
 // ── Tier 1: PR Fast Checks ─────────────────────────────────────────
@@ -153,6 +180,7 @@ export const prChecks: TierCheck[] = [
   {
     id: 'latency-budget',
     label: 'latency < 2s p50',
+    required: false,
     budgetMs: 5_000,
     run: async () => {
       // Real measurement: ping the running Mira server's health endpoint (3 samples, honest skip if offline)
@@ -168,7 +196,8 @@ export const prChecks: TierCheck[] = [
       if (samples.length === 0) {
         return {
           checkId: 'latency-budget',
-          passed: true,
+          status: 'SKIPPED',
+          passed: false,
           latencyMs: 0,
           message: `skipped — server not reachable at ${base} (latency not measured)`,
         }
@@ -327,7 +356,8 @@ export const prodChecks: TierCheck[] = [
       if (!endpoint) {
         return {
           checkId: 'error-rate',
-          passed: true,
+          status: 'BLOCKED',
+          passed: false,
           latencyMs: 0,
           message: 'skipped — no metrics backend (set MIRA_OTEL_METRICS_URL)',
         }
@@ -351,7 +381,8 @@ export const prodChecks: TierCheck[] = [
       } catch {}
       return {
         checkId: 'error-rate',
-        passed: true,
+        status: 'BLOCKED',
+        passed: false,
         latencyMs: 0,
         message: `skipped — could not query ${endpoint}`,
       }

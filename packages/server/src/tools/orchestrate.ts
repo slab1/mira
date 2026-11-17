@@ -17,12 +17,11 @@
  *        event is published on the Bus.
  *
  * Guards: tasks ≤12, budgetSteps ≤25 (cost blowup); unknown agent/dep →
- * reject; cycle → reject once then fail-closed; dense graph (>50% edges) →
- * single wave (tightly-coupled → single agent); failed nodes retry once,
- * then downstream dependents are skipped (targeted recovery).
+ * reject; cycle → reject once then fail-closed; every graph executes in
+ * dependency-correct topological waves (including dense graphs); failed nodes
+ * retry once, then downstream dependents are skipped (targeted recovery).
  */
 import { z } from 'zod'
-import { and, eq } from 'drizzle-orm'
 import type { ToolDef } from './registry.js'
 import type { MiraDB } from '../storage/db.js'
 import type { Bus } from '../bus/index.js'
@@ -30,13 +29,11 @@ import { isKnownAgent } from '../agents/templates.js'
 import { jobs, findings } from '../storage/schema.js'
 import type { JsonValue } from '../types/index.js'
 import { mergeStrategySchema, type MergeStrategy } from './orchestrate-planner.js'
-import { getJob } from './task.js'
+import { cancelJob as cancelTaskJob, getJob as getTaskJob, jobAborts, settleJob } from './task.js'
 import type { Job } from './task.js'
-import { buildVerificationPatch } from '../verification.js'
 import {
   MissionBudget,
   getAmbientMission,
-  setAmbientMission,
   withAmbientMission,
 } from '../orchestration/mission-budget.js'
 
@@ -108,53 +105,22 @@ export type OrchestrateArgs = z.infer<typeof orchestrateSchema>
 /** Max parallel subagents per wave (doom-loop / cost guard; default wave runs Promise.all capped here). */
 export const ORCHESTRATE_CONCURRENCY_CAP = 8
 
-/** Live abort controllers for in-flight orchestrate nodes (per-wave cancel). */
-export const orchestrateJobAborts = new Map<string, AbortController>()
+/** Backwards-compatible alias; all job types share one cancellation registry. */
+export const orchestrateJobAborts = jobAborts
 
 type MaybeDB = MiraDB | null | undefined
 
 /**
- * H3-A: cancel an orchestrate-spawned job. Mirrors tools/task.ts cancelJob:
- * abort the live wave node's AbortController (so the in-flight subagent
- * actually terminates instead of running to completion) + flip the DB row
- * to 'cancelled' guarded on status='running' (cancel wins races; terminal
- * states are never overwritten) + publish a Bus job.cancelled event.
- * No-op for unknown jobs (returns undefined, still publishes the event
- * when a bus is provided so UI subscribers converge).
+ * Compatibility wrapper for callers of the former orchestrate-only API.
+ * The shared task cancellation function owns transition, abort, and event
+ * semantics for both task and orchestrate jobs.
  */
 export async function cancelOrchestrateJob(
   db: MaybeDB,
   jobID: string,
   opts?: { bus?: Bus; sessionID?: string },
 ): Promise<Job | undefined> {
-  // Abort the live wave node, if any (no-op for completed/unknown jobs).
-  orchestrateJobAborts.get(jobID)?.abort()
-  orchestrateJobAborts.delete(jobID)
-  if (!db) {
-    opts?.bus?.publish({
-      type: 'job.cancelled',
-      sessionID: opts.sessionID ?? '',
-      payload: { jobID, status: 'cancelled' } as JsonValue,
-      timestamp: Date.now(),
-    })
-    return undefined
-  }
-  await db
-    .update(jobs)
-    .set({ status: 'cancelled', updatedAt: Date.now() })
-    .where(and(eq(jobs.id, jobID), eq(jobs.status, 'running')))
-  const cancelled = await getJob(db, jobID)
-  opts?.bus?.publish({
-    type: 'job.cancelled',
-    sessionID: opts.sessionID ?? cancelled?.parentSessionID ?? '',
-    payload: {
-      jobID,
-      taskID: cancelled?.id,
-      status: cancelled?.status ?? 'cancelled',
-    } as JsonValue,
-    timestamp: Date.now(),
-  })
-  return cancelled
+  return cancelTaskJob(db, jobID, opts)
 }
 
 export function topologicalWaves(tasks: OrchestrateTask[]): {
@@ -241,7 +207,7 @@ type NodeResult = {
   id: string
   agent?: string
   jobID?: string
-  status: 'completed' | 'failed' | 'skipped'
+  status: 'completed' | 'failed' | 'skipped' | 'cancelled'
   sessionID?: string
   text?: string
   error?: string
@@ -465,7 +431,6 @@ export const orchestrateTool = {
           })
         },
       })
-      setAmbientMission(mission)
     }
 
     // Wrap entire execution in ambient mission so nested orchestrate calls inherit it
@@ -542,12 +507,8 @@ export const orchestrateTool = {
           hint: 'fix dependsOn or split into fewer interdependent tasks; running sequentially would be cleaner for tightly-coupled edits',
         } as JsonValue
       }
-      let waves: OrchestrateTask[][] = []
-      if (isDense) {
-        waves = [tasks]
-      } else {
-        waves = topo.waves
-      }
+      // Density is diagnostic only: flattening a dense DAG violates dependsOn.
+      const waves: OrchestrateTask[][] = topo.waves
 
       bus?.publish({
         type: 'message.created',
@@ -597,19 +558,51 @@ export const orchestrateTool = {
         const results: NodeResult[] = []
         const priorResults = new Map<string, string>() // id → full text (summaries forwarded, full kept in job rows)
         const failedIDs = new Set<string>()
+        const skipTask = async (t: OrchestrateTask, error: string): Promise<void> => {
+          const jobID = jobIDs.get(t.id)
+          const updated = jobID
+            ? await settleJob(
+                db,
+                jobID,
+                { status: 'skipped', error },
+                { bus, sessionID, taskID: t.id },
+              )
+            : undefined
+          const current = updated ?? (db && jobID ? await getTaskJob(db, jobID) : undefined)
+          const status: NodeResult['status'] =
+            current && current.status !== 'running' ? current.status : 'skipped'
+          const result: NodeResult = {
+            id: t.id,
+            agent: normalizeAgent(t.agent),
+            jobID,
+            status,
+            sessionID: current?.childSessionID ?? undefined,
+            text: current?.result ?? undefined,
+            error: current?.error ?? error,
+          }
+          results.push(result)
+          if (status !== 'completed') failedIDs.add(t.id)
+          // If another terminal transition (especially cancellation) won the
+          // race, its event is authoritative; do not publish a second outcome.
+          if (updated || !db) {
+            bus?.publish({
+              type: status === 'cancelled' ? 'job.cancelled' : 'job.updated',
+              sessionID,
+              payload: { jobID, taskID: t.id, status, error: result.error },
+              timestamp: Date.now(),
+            })
+          }
+        }
         for (let wi = 0; wi < waves.length; wi++) {
           const wave = waves[wi] as OrchestrateTask[]
           // Skip nodes whose dependencies failed (targeted recovery: don't run doomed work)
           const runnable = wave.filter((t) => !(t.dependsOn ?? []).some((d) => failedIDs.has(d)))
           const skipped = wave.filter((t) => (t.dependsOn ?? []).some((d) => failedIDs.has(d)))
           for (const t of skipped) {
-            results.push({
-              id: t.id,
-              agent: normalizeAgent(t.agent),
-              jobID: jobIDs.get(t.id),
-              status: 'skipped',
-              error: `skipped: upstream failed (${(t.dependsOn ?? []).filter((d) => failedIDs.has(d)).join(', ')})`,
-            })
+            await skipTask(
+              t,
+              `skipped: upstream failed (${(t.dependsOn ?? []).filter((d) => failedIDs.has(d)).join(', ')})`,
+            )
           }
           bus?.publish({
             type: 'message.updated',
@@ -624,20 +617,17 @@ export const orchestrateTool = {
             timestamp: Date.now(),
           })
 
+          if (runnable.length === 0) continue
+
           // Mission budget: admit agents for this wave
           const waveDepth = wi + 2 // root depth 1, first wave depth 2
           const admission = mission.admit(runnable.length, waveDepth)
           if (!admission.allowed) {
-            // Budget exhausted — skip remaining runnable nodes, record failures
-            for (const t of runnable) {
-              results.push({
-                id: t.id,
-                agent: normalizeAgent(t.agent),
-                jobID: jobIDs.get(t.id),
-                status: 'failed',
-                error: `mission budget exhausted: ${admission.detail}`,
-              })
-              failedIDs.add(t.id)
+            // Budget denied: settle this and every not-yet-visited node so none
+            // of the rows created up front remain stranded in `running`.
+            const error = `mission budget exhausted: ${admission.detail}`
+            for (const t of [...runnable, ...waves.slice(wi + 1).flat()]) {
+              await skipTask(t, error)
             }
             bus?.publish({
               type: 'cost.warning',
@@ -681,9 +671,22 @@ export const orchestrateTool = {
                     title,
                     signal: ac.signal,
                   })
-                  return { id: t.id, agent, jobID, status: 'completed', sessionID: childID, text }
+                  return {
+                    id: t.id,
+                    agent,
+                    jobID,
+                    status: ac.signal.aborted ? 'cancelled' : 'completed',
+                    sessionID: childID,
+                    text,
+                  }
                 } catch (e) {
-                  return { id: t.id, agent, jobID, status: 'failed', error: String(e) }
+                  return {
+                    id: t.id,
+                    agent,
+                    jobID,
+                    status: ac.signal.aborted ? 'cancelled' : 'failed',
+                    error: String(e),
+                  }
                 }
               }
               let res = await attempt()
@@ -704,37 +707,57 @@ export const orchestrateTool = {
               }
               if (jobID) orchestrateJobAborts.delete(jobID)
               // Stash full text in the job row; parent sees only the 600-char preview.
-              // Verification settle (design §5 chokepoint 2 — inline terminal write,
-              // NOT via finishJob): completed branch has res.sessionID → compute the
-              // evidence-based state and merge into the same single UPDATE.
+              // The shared terminal writer settles status and verification in one
+              // guarded update, so cancellation cannot be overwritten by late work.
               let verification: { state: string; at?: number } | undefined
+              let publishTerminal = true
               if (db && jobID) {
                 try {
                   if (res.status === 'completed') {
-                    const patch = await buildVerificationPatch(db, res.sessionID)
-                    await db
-                      .update(jobs)
-                      .set({
-                        status: 'completed',
-                        result: res.text,
-                        childSessionID: res.sessionID,
-                        ...patch,
-                        updatedAt: Date.now(),
-                      })
-                      .where(and(eq(jobs.id, jobID), eq(jobs.status, 'running')))
-                    verification = patch
-                      ? { state: patch.verificationState, at: patch.verificationUpdatedAt }
+                    const updated = await settleJob(
+                      db,
+                      jobID,
+                      { status: 'completed', result: res.text, childSessionID: res.sessionID },
+                      { bus, sessionID, taskID: t.id },
+                    )
+                    const current = updated ?? (await getTaskJob(db, jobID))
+                    verification = current
+                      ? {
+                          state: current.verificationState,
+                          at: current.verificationUpdatedAt ?? undefined,
+                        }
                       : undefined
-                  } else if (res.status === 'failed') {
-                    // no child link (failure paths drop it) → stays UNVERIFIED (§3.1)
-                    await db
-                      .update(jobs)
-                      .set({
-                        status: ac.signal.aborted ? 'cancelled' : 'failed',
-                        error: res.error,
-                        updatedAt: Date.now(),
-                      })
-                      .where(and(eq(jobs.id, jobID), eq(jobs.status, 'running')))
+                    if (current?.status === 'cancelled') {
+                      res = { ...res, status: 'cancelled', text: undefined, error: 'cancelled' }
+                    }
+                    if (!updated && current && current.status !== 'running') {
+                      publishTerminal = false
+                    }
+                  } else {
+                    const status = res.status === 'cancelled' ? 'cancelled' : 'failed'
+                    const updated = await settleJob(
+                      db,
+                      jobID,
+                      { status, error: res.error },
+                      { bus, sessionID, taskID: t.id },
+                    )
+                    if (!updated) {
+                      const current = await getTaskJob(db, jobID)
+                      if (current?.status === 'cancelled') {
+                        res = { ...res, status: 'cancelled', text: undefined }
+                      } else if (current?.status === 'completed') {
+                        res = {
+                          ...res,
+                          status: 'completed',
+                          text: current.result ?? undefined,
+                          error: undefined,
+                          sessionID: current.childSessionID ?? undefined,
+                        }
+                      }
+                      if (current && current.status !== 'running') {
+                        publishTerminal = false
+                      }
+                    }
                   }
                 } catch {}
               }
@@ -742,31 +765,28 @@ export const orchestrateTool = {
               if (res.status === 'completed') {
                 mission.chargeToolCalls(1)
               }
-              bus?.publish({
-                type:
-                  res.status === 'completed'
-                    ? 'job.updated'
-                    : ac.signal.aborted
-                      ? 'job.cancelled'
-                      : 'job.updated',
-                sessionID,
-                payload: {
-                  jobID,
-                  taskID: t.id,
-                  status: res.status,
-                  childSessionID: res.sessionID,
-                  preview: (res.text ?? res.error ?? '').slice(0, 600),
-                  verification,
-                } as JsonValue,
-                timestamp: Date.now(),
-              })
+              if (publishTerminal) {
+                bus?.publish({
+                  type: res.status === 'cancelled' ? 'job.cancelled' : 'job.updated',
+                  sessionID,
+                  payload: {
+                    jobID,
+                    taskID: t.id,
+                    status: res.status,
+                    childSessionID: res.sessionID,
+                    preview: (res.text ?? res.error ?? '').slice(0, 600),
+                    verification,
+                  } as JsonValue,
+                  timestamp: Date.now(),
+                })
+              }
               return res
             },
           )
           results.push(...waveResults)
           for (const r of waveResults) {
             if (r.status === 'completed') priorResults.set(r.id, r.text ?? '')
-            else if (r.status === 'failed') failedIDs.add(r.id)
+            else failedIDs.add(r.id)
           }
           // E3: skill-synthesis lane on wave failure (hook only, fail-closed)
           const waveFailed = waveResults.filter((r) => r.status === 'failed')
@@ -777,10 +797,32 @@ export const orchestrateTool = {
         return results
       }
 
+      const failUnsettledJobs = async (error: string): Promise<void> => {
+        for (const [taskID, jobID] of jobIDs) {
+          try {
+            const row = await settleJob(
+              db,
+              jobID,
+              { status: 'failed', error },
+              { bus, sessionID, taskID },
+            )
+            if (row) {
+              bus?.publish({
+                type: 'job.updated',
+                sessionID,
+                payload: { jobID, taskID, status: 'failed', error },
+                timestamp: Date.now(),
+              })
+            }
+          } catch {}
+        }
+      }
+
       const summarize = (results: NodeResult[]): JsonValue => {
         const ok = results.filter((r) => r.status === 'completed').length
         const failed = results.filter((r) => r.status === 'failed').length
         const skippedCount = results.filter((r) => r.status === 'skipped').length
+        const cancelled = results.filter((r) => r.status === 'cancelled').length
         const merged = mergeResults(goal, strategy, results)
         const budgetSnapshot = mission.snapshot()
         return {
@@ -790,7 +832,9 @@ export const orchestrateTool = {
           completed: ok,
           failed,
           skipped: skippedCount,
-          denseFallback: isDense,
+          cancelled,
+          denseFallback: false,
+          denseGraph: isDense,
           mergeStrategy: strategy,
           merged,
           jobIDs: [...jobIDs.entries()].map(([taskID, jobID]) => ({ taskID, jobID })),
@@ -820,6 +864,7 @@ export const orchestrateTool = {
                 completed?: number
                 failed?: number
                 skipped?: number
+                cancelled?: number
                 merged?: string
               }
               bus?.publish({
@@ -831,12 +876,14 @@ export const orchestrateTool = {
                   completed: final.completed,
                   failed: final.failed,
                   skipped: final.skipped,
+                  cancelled: final.cancelled,
                   merged: final.merged,
                 } as JsonValue,
                 timestamp: Date.now(),
               })
             })
-            .catch((e) => {
+            .catch(async (e) => {
+              await failUnsettledJobs(String(e).slice(0, 500))
               bus?.publish({
                 type: 'message.updated',
                 sessionID,
@@ -860,8 +907,13 @@ export const orchestrateTool = {
         } as JsonValue
       }
 
-      const results = await runWaves()
-      return summarize(results)
+      try {
+        const results = await runWaves()
+        return summarize(results)
+      } catch (e) {
+        await failUnsettledJobs(String(e).slice(0, 500))
+        throw e
+      }
     })
   },
 } satisfies ToolDef<typeof orchestrateSchema>

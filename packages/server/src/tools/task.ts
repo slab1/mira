@@ -75,7 +75,7 @@ const taskSchema = z.object({
  * promptly (signal is threaded to gateway.stream + checked between steps),
  * instead of only flipping the DB row while the agent keeps running.
  */
-const jobAborts = new Map<string, AbortController>()
+export const jobAborts = new Map<string, AbortController>()
 
 /** Fetch a single job by ID (undefined if not found). */
 export async function getJob(db: MaybeDB, jobID: string): Promise<Job | undefined> {
@@ -98,16 +98,36 @@ export async function listJobs(db: MaybeDB, parentSessionID?: string): Promise<J
  * running to completion). Terminal updates guard on status='running' and will
  * not overwrite 'cancelled' (cancelled-on-poll).
  */
-export async function cancelJob(db: MaybeDB, jobID: string): Promise<Job | undefined> {
-  // Abort the live subagent run, if any (no-op for completed/unknown jobs).
-  jobAborts.get(jobID)?.abort()
-  jobAborts.delete(jobID)
-  if (!db) return undefined
-  await db
+export async function cancelJob(
+  db: MaybeDB,
+  jobID: string,
+  opts?: { bus?: Bus; sessionID?: string },
+): Promise<Job | undefined> {
+  if (!db) {
+    // In-memory/embedded callers may not persist jobs, but can still stop work.
+    jobAborts.get(jobID)?.abort()
+    jobAborts.delete(jobID)
+    return undefined
+  }
+  const changed = await db
     .update(jobs)
     .set({ status: 'cancelled' as JobStatus, updatedAt: Date.now() })
     .where(and(eq(jobs.id, jobID), eq(jobs.status, 'running')))
-  return getJob(db, jobID)
+    .returning()
+  const row = changed[0] ?? (await getJob(db, jobID))
+  // Only abort and publish when this call actually won the running→cancelled
+  // transition. A completed/failed job must not receive a late abort signal.
+  if (changed[0]) {
+    jobAborts.get(jobID)?.abort()
+    jobAborts.delete(jobID)
+    opts?.bus?.publish({
+      type: 'job.cancelled',
+      sessionID: opts.sessionID ?? row?.parentSessionID ?? '',
+      payload: { jobID, taskID: jobID, status: 'cancelled' },
+      timestamp: Date.now(),
+    })
+  }
+  return row
 }
 
 /**
@@ -183,6 +203,8 @@ async function finishJob(
   }
   return row
 }
+
+export { finishJob as settleJob }
 
 // ── Tool ───────────────────────────────────────────────────────────
 
