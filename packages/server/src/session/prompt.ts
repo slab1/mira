@@ -40,7 +40,7 @@ import type { Todo, JsonValue, MiraConfig } from '../types/index.js'
 import type { MiraDB } from '../storage/db.js'
 import { getUserNameForOwner } from '../storage/users.js'
 import { maybeAutoTitle } from './title.js'
-import { loadSkills } from '../skills/loader.js'
+import { loadSkills, recommendSkills } from '../skills/loader.js'
 import { getAgentTemplates, isKnownAgent, isBashCommandAllowed } from '../agents/templates.js'
 import { buildRegistry, resolveModel, resolveWithFallbacks } from '../gateway/provider.js'
 import { initLangfuse } from '../telemetry/langfuse.js'
@@ -67,7 +67,6 @@ import {
   resolveEffectiveModel,
   resolveModelViaGateway,
 } from './helpers.js'
-
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -770,9 +769,11 @@ export class SessionPrompt {
         const globalCap = (
           getConfig() as MiraConfig & { costCap?: { perTask?: number; perSession?: number } }
         ).costCap
-        const effectiveCap: { perTask?: number; perSession?: number } | undefined = globalCap ?? (
-          Number.isFinite(laneCapNum) ? { perTask: laneCapNum, perSession: laneCapNum } : undefined
-        )
+        const effectiveCap: { perTask?: number; perSession?: number } | undefined =
+          globalCap ??
+          (Number.isFinite(laneCapNum)
+            ? { perTask: laneCapNum, perSession: laneCapNum }
+            : undefined)
         const curCost = estimateCostUSD(model, totalTokensIn, totalTokensOut)
         if (effectiveCap?.perTask !== undefined && curCost > effectiveCap.perTask) {
           const msg = `Cost cap exceeded: $${curCost.toFixed(4)} > $${effectiveCap.perTask.toFixed(4)} per-task limit (model ${model}, lane ${lane}, step ${step}). Aborting.`
@@ -1389,6 +1390,27 @@ export class SessionPrompt {
             .join('\n')}`,
         })
       }
+      const recentUserText = messages
+        .filter((message) => message.role === 'user')
+        .slice(-4)
+        .map(
+          (message) =>
+            message.parts
+              ?.filter((part) => part.type === 'text')
+              .map((part) => part.text)
+              .join('\n') ?? '',
+        )
+        .join('\n')
+      const reviewPersona = ['reviewer', 'review', 'mira-reviewer'].includes(session?.agent ?? '')
+      const reviewRequested =
+        reviewPersona ||
+        (await recommendSkills(recentUserText)).some((skill) => skill.name === 'code-review')
+      if (reviewRequested) {
+        context.push({
+          role: 'system',
+          content: `Mandatory review-completeness contract: inspect all required diff and graph coverage, use review_coverage to generate a durable manifest before reviewing, record every finding and disposition with evidence, and finalize the manifest. Do not report a complete review or approve while any required section or finding is unresolved. The reviewer is read-only and must not modify the workspace.\n\n${skills['code-review']?.instructions ?? ''}`,
+        })
+      }
     } catch {}
     // Todo continuity: inject open todos so a resumed session keeps its task state
     // Feature flag: injectTodosIntoLoadContext (default true)
@@ -1590,7 +1612,6 @@ export class SessionPrompt {
 }
 
 // Mira Patch (2026-09-23): Reduce token cost: summarize tool results >500 chars, compact at 60% window, batch reads. Evidence: nvidia/meta/muse-glimmer-30b avg 46163 tokens (budget 20k); overall avg 23082 tokens/session
-
 
 // Re-export types and helpers for backward compatibility
 export type { LoopMessage, SessionPromptDeps, LoopOptions } from './types.js'

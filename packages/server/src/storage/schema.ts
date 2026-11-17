@@ -183,11 +183,27 @@ export const findings = sqliteTable(
   (t) => [index('findings_status_idx').on(t.status), index('findings_session_idx').on(t.sessionID)],
 )
 
+// Durable review completeness manifests; access is scoped through the owning session.
+export const reviewCoverageManifests = sqliteTable(
+  'review_coverage_manifests',
+  {
+    id: text('id').primaryKey(),
+    sessionID: text('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    manifestJson: text('manifest_json').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('review_coverage_session_updated_idx').on(t.sessionID, t.updatedAt)],
+)
+
 // ── Relations (for db.query.*.findMany with: { parts: true }) ──────
 
 export const sessionsRelations = relations(sessions, ({ many }) => ({
   messages: many(messages),
   todos: many(todos),
+  reviewCoverageManifests: many(reviewCoverageManifests),
 }))
 
 export const messagesRelations = relations(messages, ({ one, many }) => ({
@@ -211,6 +227,13 @@ export const jobsRelations = relations(jobs, ({ one }) => ({
 
 export const findingsRelations = relations(findings, ({ one }) => ({
   session: one(sessions, { fields: [findings.sessionID], references: [sessions.id] }),
+}))
+
+export const reviewCoverageManifestsRelations = relations(reviewCoverageManifests, ({ one }) => ({
+  session: one(sessions, {
+    fields: [reviewCoverageManifests.sessionID],
+    references: [sessions.id],
+  }),
 }))
 
 export const knowledgeEntries = sqliteTable(

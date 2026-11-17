@@ -122,4 +122,23 @@ describe('plan agent bash allowlist (P0-1)', () => {
     expect(arch.tools).not.toContain('write')
     expect(arch.tools).not.toContain('edit')
   })
+
+  test('Mira reviewer/developer aliases share the review-completeness contract', () => {
+    const templates = getAgentTemplates()
+    for (const reviewerName of ['reviewer', 'review', 'mira-reviewer']) {
+      const reviewer = templates[reviewerName]!
+      expect(reviewer.permissions).toBe('readonly')
+      expect(reviewer.tools).toContain('review_coverage')
+      expect(reviewer.tools).toContain('findCallers')
+      expect(reviewer.tools).not.toContain('bash')
+      expect(reviewer.tools).not.toContain('write')
+      expect(reviewer.tools).not.toContain('edit')
+      expect(reviewer.tools).not.toContain('patch')
+      expect(reviewer.system).toContain('finalize the manifest')
+    }
+    for (const developerName of ['developer', 'mira-developer']) {
+      expect(templates[developerName]!.tools).toContain('review_coverage')
+      expect(templates[developerName]!.system).toContain('never silently omit')
+    }
+  })
 })

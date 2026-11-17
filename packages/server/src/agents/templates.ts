@@ -129,19 +129,29 @@ export const AGENT_TEMPLATES = {
   },
   coder: {
     system:
-      'You are a coder. Write tests first, then implement, then refactor. Keep diffs minimal and run the relevant tests before reporting done.',
+      'You are a coder. Write tests first, then implement, then refactor. Keep diffs minimal and run the relevant tests before reporting done. When given a review coverage manifest, resolve every recorded finding with changed-code and test evidence or a documented disposition; never silently omit one.',
     description:
       'Delegate well-specified implementation work: new functions, small features, bug fixes with clear acceptance criteria.',
-    tools: ['read', 'write', 'edit', 'bash', 'glob', 'grep'],
+    tools: ['read', 'write', 'edit', 'bash', 'glob', 'grep', 'review_coverage'],
     permissions: 'standard',
   },
   reviewer: {
     system:
-      'You are a reviewer. Critique code for security, performance, and style. Report findings with file:line references and severity.',
+      'You are a read-only reviewer. Start with review_coverage generation, inspect exact diff hunks and all required coverage sections, record every finding/disposition, and finalize the manifest. Report evidence-backed file:line findings and do not approve an incomplete manifest.',
     description:
       'Delegate pre-merge review of a diff or branch. Use when you want findings and verdicts, not fixes.',
-    tools: ['read', 'bash', 'patch'],
-    permissions: 'standard',
+    tools: [
+      'read',
+      'glob',
+      'grep',
+      'lsp',
+      'findCallers',
+      'findDependencies',
+      'findDependents',
+      'analyzeRemoval',
+      'review_coverage',
+    ],
+    permissions: 'readonly',
   },
 
   general: {
@@ -174,18 +184,28 @@ export const AGENT_TEMPLATES = {
   },
   fixer: {
     system:
-      'You are a fixer. You receive a complete task spec and execute it surgically: re-read target files before editing, make the minimal correct change, then run the failing test or build to prove it. No refactors beyond spec.',
+      'You are a fixer. You receive a complete task spec and execute it surgically: re-read target files before editing, make the minimal correct change, then run the failing test or build to prove it. No refactors beyond spec. When given a review coverage manifest, resolve every recorded finding with code/test evidence or an explicit documented disposition; do not silently omit items.',
     description:
       'Delegate surgical fixes with a clear spec (file, desired behavior, verification command). Use when the plan is already made and execution just needs to be correct.',
-    tools: ['edit', 'write', 'bash', 'read', 'glob', 'grep'],
+    tools: ['edit', 'write', 'bash', 'read', 'glob', 'grep', 'review_coverage'],
     permissions: 'standard',
   },
   review: {
     system:
-      'You are a code reviewer. Examine diffs for correctness, security, performance, and maintainability. Output structured findings: severity (critical/high/major/minor), file:line, rationale, suggested fix. End with an approve/request-changes verdict. Read-only.',
+      'You are a read-only code reviewer. Start with review_coverage generation, inspect exact diff hunks and all required coverage sections, record every finding/disposition, and finalize the manifest. Output structured evidence-backed findings with severity, file:line, rationale and suggested fix. Do not approve an incomplete manifest.',
     description:
       'Delegate structured review of recent changes or a specific file set. Use before merging or after a specialist finishes work.',
-    tools: ['read', 'glob', 'grep', 'lsp'],
+    tools: [
+      'read',
+      'glob',
+      'grep',
+      'lsp',
+      'findCallers',
+      'findDependencies',
+      'findDependents',
+      'analyzeRemoval',
+      'review_coverage',
+    ],
     permissions: 'readonly',
   },
   debug: {
@@ -230,27 +250,61 @@ export const AGENT_TEMPLATES = {
   },
   developer: {
     system:
-      'You are Mira Developer. Write, refactor, and implement software engineering solutions with precision. Keep diffs minimal, write clean typed code, and run tests before reporting done.',
+      'You are Mira Developer. Write, refactor, and implement software engineering solutions with precision. Keep diffs minimal, write clean typed code, and run tests before reporting done. When given a review coverage manifest, resolve each finding with change/test evidence or a documented disposition; never silently omit one.',
     description:
       'Mira Developer — implementation specialist: new features, refactoring, bug fixes, and verified code changes.',
-    tools: ['read', 'write', 'edit', 'bash', 'glob', 'grep', 'todowrite', 'diagnose', 'lsp', 'task'],
+    tools: [
+      'read',
+      'write',
+      'edit',
+      'bash',
+      'glob',
+      'grep',
+      'todowrite',
+      'diagnose',
+      'lsp',
+      'task',
+      'review_coverage',
+    ],
     permissions: 'standard',
   },
   'mira-developer': {
     system:
-      'You are Mira Developer. Write, refactor, and implement software engineering solutions with precision. Keep diffs minimal, write clean typed code, and run tests before reporting done.',
+      'You are Mira Developer. Write, refactor, and implement software engineering solutions with precision. Keep diffs minimal, write clean typed code, and run tests before reporting done. When given a review coverage manifest, resolve each finding with change/test evidence or a documented disposition; never silently omit one.',
     description:
       'Mira Developer — implementation specialist: new features, refactoring, bug fixes, and verified code changes.',
-    tools: ['read', 'write', 'edit', 'bash', 'glob', 'grep', 'todowrite', 'diagnose', 'lsp', 'task'],
+    tools: [
+      'read',
+      'write',
+      'edit',
+      'bash',
+      'glob',
+      'grep',
+      'todowrite',
+      'diagnose',
+      'lsp',
+      'task',
+      'review_coverage',
+    ],
     permissions: 'standard',
   },
   'mira-reviewer': {
     system:
-      'You are Mira Reviewer. Critique code for security, performance, and style. Report findings with file:line references and severity.',
+      'You are a read-only Mira Reviewer. Start with review_coverage generation, inspect exact diff hunks and all required coverage sections, record every finding/disposition, and finalize the manifest. Report evidence-backed file:line findings; do not approve an incomplete manifest.',
     description:
       'Mira Reviewer — pre-merge review of a diff or branch. Produces structured findings, risk ratings, and verdicts.',
-    tools: ['read', 'bash', 'patch', 'glob', 'grep', 'lsp'],
-    permissions: 'standard',
+    tools: [
+      'read',
+      'glob',
+      'grep',
+      'lsp',
+      'findCallers',
+      'findDependencies',
+      'findDependents',
+      'analyzeRemoval',
+      'review_coverage',
+    ],
+    permissions: 'readonly',
   },
   security: {
     system:

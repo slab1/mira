@@ -159,6 +159,16 @@ export async function migrate(db: MiraDB) {
     CREATE INDEX IF NOT EXISTS findings_status_idx ON findings(status);
     CREATE INDEX IF NOT EXISTS findings_session_idx ON findings(session_id);
 
+    CREATE TABLE IF NOT EXISTS review_coverage_manifests (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      manifest_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS review_coverage_session_updated_idx
+      ON review_coverage_manifests(session_id, updated_at);
+
     CREATE TABLE IF NOT EXISTS knowledge_entries (
       id TEXT PRIMARY KEY,
       session_id TEXT,

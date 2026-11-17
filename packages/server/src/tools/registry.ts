@@ -217,6 +217,7 @@ export class ToolRegistry {
       () => import('./session.js'),
       () => import('./brio.js'),
       () => import('./other.js'),
+      () => import('./review-coverage.js'),
     ]
     for (const load of modules) {
       const mod = (await load()) as Record<string, unknown>
