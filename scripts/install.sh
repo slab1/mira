@@ -51,10 +51,12 @@ fi
 # --- sanitize npm-style args for Bun ---
 SANITIZED_ARGS=()
 for arg in "$@"; do
-  if [ "$arg" = "--production=false" ]; then
+  if [[ "$arg" == --production=false* ]] || [[ "$arg" == --production=no* ]]; then
     continue
-  elif [ "$arg" = "--production=true" ]; then
+  elif [[ "$arg" == --production=true* ]] || [[ "$arg" == --production=yes* ]]; then
     SANITIZED_ARGS+=("--production")
+  elif [[ "$arg" == --production=* ]]; then
+    continue
   else
     SANITIZED_ARGS+=("$arg")
   fi
