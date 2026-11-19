@@ -1,242 +1,300 @@
-# Mira — AI Agent Platform Better Than All
+<div align="center">
 
-> **Openness + Claude's reasoning + Cursor's polish + Windsurf's autonomy + Cline's transparency, minus weaknesses, plus memory/eval/guardrails as first-class.**
+# Mira
 
-Mira is a next-gen AI agent platform: **hierarchical memory, eval-first observability, tool-layer guardrails, file snapshots with undo, real LSP + MCP integration, HITL questions, and a cost-tracking model gateway — plus a wrong-edit defense stack (ambiguity-gated edits, intent anchors, symbol binding, an edit critic, agent-callable revert, auto-rollback on failed verification), org multi-tenancy with RBAC, a compliance layer (redaction, retention, violation reports), an installable community registry with vertical agents, and session auto-titling — all verified by a 1,150+-test server suite (1,152 passing, verified 2026-10-11) plus web/shared suites, live-provider E2E gates and real-wire protocol tests.**
+**A self-hostable AI coding agent with hierarchical memory, eval-gated changes, and a wrong-edit defense stack.**
 
-## Why Mira?
+[![Tests](https://img.shields.io/badge/server%20tests-[1152]-passing-brightgreen)](#status)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Runtime: Bun](https://img.shields.io/badge/runtime-Bun%201.4.0-black)](https://bun.sh)
+[![Status: beta](https://img.shields.io/badge/status-beta-orange)](#status)
 
-| Feature                       | Legacy         | Claude Code    | Cursor     | Windsurf   | Cline      | **Mira**                                                                                                                                                              |
-| ----------------------------- | -------------- | -------------- | ---------- | ---------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Provider-agnostic             | ✅ 25+         | ❌ Claude-only | ⚠️ Limited | ⚠️ Limited | ✅ BYO-key | ✅ **Gateway: OpenRouter + NVIDIA NIM**                                                                                                                               |
-| Real LSP servers              | ✅             | ❌             | ❌         | ❌         | ❌         | ✅ **JSON-RPC 3.17 (gopls today) + 9-layer edit fallback**                                                                                                            |
-| Hierarchical Memory           | ❌             | ❌             | ❌         | ❌         | ❌         | ✅ **Episodic/Semantic/Procedural, auto-injected per turn**                                                                                                           |
-| Eval-first                    | ⚠️             | ⚠️             | ❌         | ❌         | ❌         | ✅ **3-tier eval gating CI**                                                                                                                                          |
-| Tool-layer Guardrails         | ❌             | ⚠️             | ❌         | ❌         | ❌         | ✅ **Enforced + audit log**                                                                                                                                           |
-| File snapshots + undo         | ✅             | ❌             | ❌         | ❌         | ❌         | ✅ **Auto-snapshot before every mutation, rewind to any message**                                                                                                     |
-| Message queue while streaming | ✅             | ❌             | ❌         | ❌         | ❌         | ✅ **Durable (SQLite), chained-turn drain**                                                                                                                           |
-| Inspectable subagents         | ❌ (ephemeral) | ❌             | ❌         | ❌         | ❌         | ✅ **Persistent child sessions with full transcripts**                                                                                                                |
-| Self-improvement              | ❌             | ❌             | ❌         | ❌         | ❌         | ✅ **Pain-point detection → verified patches → autopilot PRs**                                                                                                        |
-| Wrong-edit protection         | ⚠️             | ⚠️             | ⚠️         | ⚠️         | ❌         | ✅ **Ambiguity-gated edits, intent anchors, symbol binding, edit critic, agent `revert`, auto-rollback on failed verification**                                       |
-| Vertical agents               | ❌             | ❌             | ❌         | ❌         | ❌         | ✅ **Installable domain bundles (agent + skills + knowledge) from the community registry**                                                                            |
-| Cost Control                  | ✅ Free        | $20-200        | $20-200    | $15-35     | Free       | ✅ **Free + local, live spend display, prompt caching, cost-cap per-task/session**                                                                                    |
-| Kilo Parity (2026-08)         | —              | —              | —          | —          | —          | ✅ **Agents (code/ask/plan, per-agent LLM) · Memory Bank · Orchestrator DAG · MCP Marketplace · Inline Autocomplete · Browser · Sessions Sync · Slack (Socket Mode)** |
+[Quickstart](#quickstart) · [Why Mira](#why-mira) · [Architecture](#architecture) · [Contributing](CONTRIBUTING.md) · [Docs](docs/)
 
-## Architecture
+<!-- TODO before launch: replace with the auto-rollback demo GIF -->
+![Mira refusing an ambiguous edit and rolling back a failed change](docs/assets/demo.gif)
 
-```
-[Clients] TUI (SolidJS) | Web (SolidJS/Vite + PWA) | VS Code | Slack (Socket Mode) | CLI (`mira-cli-ts` via npx)
-         ↕ REST / SSE / WebSocket (+ optional MIRA_TOKEN auth)
-[Server :4096 — binds 127.0.0.1 by default]
-   SessionPrompt.loop
-     context = system + skills + memory-retrieval + history
-     LLM.stream → tool-call → permission → guardrail snapshot → execute
-     → doom-loop detect → compaction → usage learning → SSE events
-   ├─ Tool Registry (42 native tools incl. think/revert/findDependents + dynamic mcp__* — Zod validated)
-   ├─ Permission (5 layers + BashArity)
-   ├─ File Snapshots (undo/rewind) + Message Queue (durable)
-   ├─ GlobalBus → WS fan-out (no polling)
-   ├─ Storage: SQLite WAL (sessions/messages/parts/todos/snapshots/queue/knowledge)
-   ├─ Gateway: OpenRouter + NVIDIA NIM (+25 providers) — cost-tracked
-   ├─ LSP: gopls & friends (JSON-RPC stdio) with heuristic fallback
-   ├─ MCP: real stdio + remote HTTP (Streamable HTTP & legacy HTTP+SSE) clients
-   ├─ Observability: Prometheus /metrics (bounded-cardinality + real histograms),
-   │   OTel spans correlated with HTTP access logs via X-Request-Id
-   ├─ Learning: online learner + usage analysis + knowledge graph
-   ├─ Evolution: observe → diagnose → propose → verify → promote/rollback (eval-gated, fail-closed)
-   └─ Compliance: redacted audit trail (SQLite + export), retention sweeps, policy-violation reports
-```
+</div>
 
-## Stack
+---
 
-- **Runtime:** Bun (native SQLite, WAL)
-- **Monorepo:** Turborepo — `packages/{server,web,tui,shared,cli,slack}`, `vscode-mira`
-- **UI:** SolidJS (Web + TUI)
-- **LLM:** Model Gateway (OpenRouter, NVIDIA NIM) — OpenAI-compatible wire
-- **Protocols:** MCP stdio + Streamable HTTP + legacy HTTP+SSE, LSP 3.17
-- **Memory:** SQLite-backed KnowledgeBase with hybrid retrieval (cosine + tag boost + graph expansion)
-- **Instructions:** AGENTS.md + Skills injection
-- **Eval:** 3 tiers (PR → nightly → prod); PR tier blocks CI
-- **Testing:** Bun test — unit + protocol mocks + E2E (boots the real server; live-LLM/vision/gopls tests gated on keys/binaries)
+## Why Mira
 
-## Security Defaults
+Every coding agent I used had the same failure mode: it would occasionally
+mangle a file. It would take the "first match" of an ambiguous search string,
+or make a change that passed its own check but broke something downstream,
+and I'd find out an hour later.
 
-- Server binds **127.0.0.1** — set `HOST=0.0.0.0` explicitly for remote access
-- Bearer auth via `MIRA_TOKEN` in `~/.mira/mira.env` (0o600, respects `$MIRA_DIR`/`$XDG_CONFIG_HOME`) — canonical; do NOT set in `.env` (`.env` is HOST/PORT/CORS/PROVIDER keys only; `.env` MIRA_TOKEN triggers deprecation warn). **Precedence: an explicitly-set `MIRA_TOKEN` env var wins over the file**; the file is only a fallback for direct runs, and a conflict is warned about rather than silently resolved in the file's favour. Dev first boot with no token anywhere auto-creates `~/.mira/mira.env` with a generated 64-hex token; existing file adopted, never overwritten. `MIRA_NO_AUTOPROVISION=1` opts out. Prod must set `MIRA_TOKEN` via env/secret (fail-closed). `VITE_MIRA_TOKEN` is dev-only fallback (gated to `NODE_ENV !== 'production'`, never baked into prod bundle). Clients pass `Authorization: Bearer …` (query-param tokens rejected)
-- Rate limiting per real socket peer (Bun `requestIP`, unforgeable); proxy headers only honored under `MIRA_TRUST_PROXY=1`; per-route SSE bucket for streaming endpoints
-- Every mutating tool call is snapshotted; permission layer gates bash/edit/write/MCP
-- Guardrails: fail-open with warn in dev, **fail-closed by default in production** (`MIRA_GUARDRAILS_ENFORCE` / config override); every call audited to SQLite (queryable + CSV/JSON export)
-- Wrong-edit defense: ambiguous `oldString` refused (never "first match"), intent anchors (`near`), symbol/task-binding warnings, edit critic (opt-in second-model review), agent-callable `revert`, auto-rollback on `FAILED_VERIFICATION` (opt-in)
-- Compliance: stored args/results are redacted (secrets + PII) before persistence, retention sweeps bounded by config
+Mira is built around fixing that. Edits are **refused when the target is
+ambiguous**, a **snapshot is taken before every mutation**, and a **failed
+verification triggers automatic rollback** to the last good state. Every
+mutating tool call is logged so you can audit what the agent actually did.
 
-## Quick Start
+The secondary goals came from the same place — wanting a tool I could trust
+and inspect:
+
+- **Eval-first development.** A 3-tier eval pipeline (PR → nightly → prod).
+  The PR tier blocks CI. Behavior changes get validated before they ship.
+- **Hierarchical memory.** Episodic / semantic / procedural memory, retrieved
+  per turn, instead of stuffing the entire context window.
+- **Provider-agnostic.** A gateway over OpenRouter and NVIDIA NIM (25+
+  providers) with cost tracking. Bring your own key, or run fully local.
+- **Self-hostable.** Bun + SQLite, no cloud dependency, `docker run` or
+  `bun run dev`. MIT licensed.
+
+Mira is a solo-maintained project. See [Status](#status) before you depend on it.
+
+---
+
+## Status
+
+- **[1152]** server tests passing as of [DATE]
+- Actively developed — last commit [DATE]
+- **Solo-maintained.** Issues triaged weekly. PRs welcome, expect review latency
+  (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+- **Beta.** Not yet deployed in production by anyone but the author.
+  Treat it as such.
+
+If you hit something broken, please [open an issue](https://github.com/slab1/mira/issues) —
+that's how this gets better.
+
+---
+
+## Quickstart
+
+Requires **Bun 1.4.0** (pinned in `.tool-versions`).
 
 ```bash
+git clone https://github.com/slab1/mira
+cd mira
 bun install
-
-# Optional keys (.env in packages/server works — gitignored)
-export OPENROUTER_API_KEY=sk-or-...   # or NVIDIA_API_KEY=nvapi-...
-
-bun run dev            # server :4096 · web :3000 · tui :3001
-curl localhost:4096/health
-
-# CLI (thin, no extra deps) — npx parity with Kilo/OpenCode
-bun run --cwd packages/cli src/cli.ts -- --help
-bun run --cwd packages/cli src/cli.ts -- serve --port 4096
-mira session list                              # via $MIRA_API_URL
-mira agent list
-mira complete --prefix "function add(a,b) {" --file src/math.ts
+bun run dev
 ```
 
-Without keys the gateway serves a stub stream — the whole pipeline (tools, permissions, SSE, persistence) still runs.
+That starts:
 
-### Machine setup & sync (multi-machine workflow)
+| Service | URL |
+|---|---|
+| Server | http://127.0.0.1:4096 |
+| Web UI | http://127.0.0.1:3000 |
+| TUI | http://127.0.0.1:3001 |
+
+**No API key required to try it.** The gateway serves a stub stream, so the
+full pipeline — tools, permissions, snapshots, SSE, persistence — runs offline.
+Add a key when you want real inference:
 
 ```bash
-# 1. Pin the toolchain — ALL machines must use bun 1.4.0 (.tool-versions).
-#    CI enforces 1.4.0.
-bun --version  # expect 1.4.0
-
-# 2. Install ONLY via the guarded wrapper (never concurrent installs):
-scripts/install.sh
-#    - refuses when disk < 2G free, serializes via flock,
-#      then verifies integrity (scripts/verify-install.js)
-
-# 3. Sync between machines with plain git — node_modules is untracked
-#    (CI fails the build if it ever gets committed again):
-git pull origin main   # then scripts/install.sh if package.json/bun.lock changed
+export OPENROUTER_API_KEY=sk-or-...
+# or
+export NVIDIA_API_KEY=nvapi-...
 ```
 
-Rules learned the hard way (2026-09-20):
-
-- NEVER `git add -f node_modules` — committed symlinks dangle on the other
-  OS and in CI, and `bun install` will not overwrite them.
-- NEVER run two `bun install` at once, and never kill one mid-extraction —
-  both leave half-written packages that later installs skip as "done".
-- If you see `Cannot find package X` / `File not found .../node_modules/X`
-  right after install: free disk space, then re-run `scripts/install.sh`.
-- Keep 2G+ free: `npm cache clean --force`, `rm -rf ~/.cache/pip`,
-  stale `/tmp` artifacts, `.turbo`, inactive `node_modules` (regenerable).
-
-Slack bot (no tunnel, Socket Mode):
+### Docker
 
 ```bash
-# Mint an owner-scoped key for the Slack team, then run the bot
-curl -X POST http://127.0.0.1:4096/admin/api-keys -H "Authorization: Bearer $MIRA_TOKEN" -d '{"owner":"slack-team"}'
-MIRA_API_URL=http://127.0.0.1:4096 MIRA_API_KEY=<key> SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-... bun run --cwd packages/slack src/bot.ts
-# in Slack: /mira explain ./src/index.ts  or  @Mira refactor this
-```
+docker build -t mira .
 
-## Environment Reference
-
-| Variable                               | Purpose                                                                                                                        |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `OPENROUTER_API_KEY`                   | Primary provider                                                                                                               |
-| `NVIDIA_API_KEY`                       | NVIDIA NIM provider + enables vision model default                                                                             |
-| `FIRECRAWL_API_KEY` / `TAVILY_API_KEY` | websearch quality tiers (DuckDuckGo fallback needs none)                                                                       |
-| `MIRA_VISION_MODEL`                    | Vision model override (default `nvidia/meta/llama-3.2-90b-vision-instruct`)                                                    |
-| `MIRA_LSP_GO_CMD`                      | Custom Go LSP command (default `gopls`)                                                                                        |
-| `MIRA_AUTOPILOT=1`                     | Open PRs for verified self-patches                                                                                             |
-| `MIRA_APPROVAL_SIGNING_KEY`            | Comma-separated secret(s) for signing approval receipts. First key signs, all verify (rotation-safe). Unset = receipts unsigned and forgeable by anyone who can write the DB |
-| `MIRA_TOKEN`                           | Bearer auth in `~/.mira/mira.env` (0o600) — canonical; not `.env` (`.env` is HOST/PORT/CORS/PROVIDER only). An explicit env `MIRA_TOKEN` overrides the file          |
-| `MIRA_NO_AUTOPROVISION=1`              | Opt out of dev auto-provision (no `~/.mira/mira.env` created)                                                                  |
-| `VITE_MIRA_TOKEN`                      | Dev-only fallback for web (gated to `NODE_ENV !== 'production'`, never baked into prod bundle)                                 |
-| `HOST`                                 | Bind address (default `127.0.0.1`)                                                                                             |
-| `MIRA_AUTO_ROLLBACK=1`                 | Revert a run's file edits automatically when verification FAILS (default off)                                                  |
-| `MIRA_EDIT_CRITIC=1`                   | Second-model review of agent edits against the task text (default off)                                                         |
-| `MIRA_COMPLIANCE_RETENTION_DAYS`       | Audit evidence retention window (default 90; `compliance.retentionDays` in mira.json also works)                               |
-| `MIRA_EMBEDDING_MODEL`                 | Embedding model for edit-relevance checks, gateway-routed (default `openai/text-embedding-3-small`; any provider in mira.json) |
-| `MIRA_STRICT_EDIT_TARGET=1`            | Block the high-confidence wrong-file signal instead of warning                                                                 |
-| `MIRA_BLAST_RADIUS_BLOCK`              | Fan-in at which a blast-radius warning becomes a block under strict mode (default 10 dependents)                               |
-
-See [ARCHITECTURE.md](./ARCHITECTURE.md) and [packages/server/README.md](./packages/server/README.md).
-
-## Production Deployment
-
-```bash
-# Build image
-docker build -t ghcr.io/slab1/mira:latest .
-
-# Run with persistent data volume
 docker run -d \
   --name mira \
   -p 4096:4096 \
   -v $(pwd)/data:/app/data \
   --env-file .env \
-  ghcr.io/slab1/mira:latest
+  mira
 ```
 
-**Required env vars:** `HOST=0.0.0.0`, `MIRA_TOKEN`, `OPENROUTER_API_KEY` or `NVIDIA_API_KEY`. See `.env.example` for the full set (multi-tenant keys, CORS allowlist, loop limits, eval gate).
+For production, set `HOST=0.0.0.0`, `MIRA_TOKEN`, and a provider key.
+Health probes: `GET /healthz` (unauthenticated), `GET /health` (behind auth).
 
-Health checks:
-
-- `GET /healthz` — unauthenticated liveness (used by Docker/compose HEALTHCHECK; works under auth)
-- `GET /health` — detailed, behind the bearer gate
-
-### Multi-tenancy
-
-Set `MIRA_API_KEYS=key-alice:alice,key-bob:bob` to issue per-user credentials. Sessions are stamped with an owner; every session route (prompt, messages, export, todos, snapshots, jobs) and WebSocket event stream is owner-scoped — foreign resources return 404. Child sessions spawned by the `task` tool inherit the parent's owner.
-
-Optionally append a role per key — `MIRA_API_KEYS=key-a:alice:viewer,key-b:bob:operator,key-c:carol:admin`. Roles: `viewer` (read-only — all mutating requests 403), `operator` (default — full normal use), `admin` (also reaches `/admin/*` routes: key minting with `role`, audit trail, `GET /admin/audit/export?format=csv|json`). The master `MIRA_TOKEN` is always admin.
-
-Single-token mode (`MIRA_TOKEN` only) maps everything to an implicit `"default"` owner and behaves exactly as before.
-
-**Orgs** (P3.3): platform admins create orgs (`POST /orgs`), org admins manage members (`POST/DELETE /orgs/:id/members`); sessions created under an org are readable by the owner _and_ same-org members (REST + WebSocket), with foreign resources 404ing (no existence leaks). `GET /me` reports the caller's `role` and `org`. One org per owner.
-
-### Troubleshooting
-
-**`OpenCode's free tier can only be used from within OpenCode`** (seen in Mira
-chat, server log, OpenCode itself, or other tools — usually on one machine only):
-an `OPENCODE_API_KEY` (Zen free-tier key) exported in that machine's environment
-poisons every tool that reads env. The key bypasses OpenCode's in-app OAuth flow,
-so even OpenCode itself rejects it. Fix on the affected machine:
-
-```powershell
-# PowerShell: find the culprit
-Get-ChildItem Env: | Where-Object { $_.Name -like '*OPENCODE*' }
-# Remove OPENCODE_API_KEY from System Environment Variables / $PROFILE / .env files,
-# restart the shell, then re-login in-app:  opencode auth login
-# In Mira: do NOT add an `opencode` provider block backed by a Zen free-tier key —
-# use direct anthropic/openai/google keys instead (mira.json is per-machine, gitignored).
-```
-
-Verified clean on a healthy machine: OpenCode auth is OAuth (`google`, no env key),
-`mira.json` providers contain no `opencode` entry, and the server log shows no such error.
-
-### API surface
-
-| Route                                                             | Auth                         | Description                                    |
-| ----------------------------------------------------------------- | ---------------------------- | ---------------------------------------------- |
-| `GET /healthz`                                                    | none                         | liveness                                       |
-| `GET /metrics`                                                    | see note                     | Prometheus scrape                              |
-| `GET/POST /session`                                               | bearer                       | list (owner-scoped) / create                   |
-| `GET/DELETE /session/:id`                                         | bearer                       | detail / delete (404 if foreign)               |
-| `POST /session/:id/prompt`                                        | bearer                       | SSE stream; body `{prompt, model?, maxSteps?}` |
-| `GET /session/:id/message` · `/todo` · `/export`                  | bearer                       | history, todos, transcript                     |
-| `GET /session/:id/export`                                         | bearer                       | export session with snapshots (JSON/MD)        |
-| `POST /session/import`                                            | bearer                       | import session with snapshots                  |
-| `GET/POST/DELETE /session/:id/queue`                              | bearer                       | message queue while streaming                  |
-| `GET /session/:id/snapshots` · `POST …/revert`                    | bearer                       | file undo/rewind                               |
-| `GET /session/:id/jobs` · `GET /job/:id` · `POST /job/:id/cancel` | bearer                       | background subagent job board                  |
-| `WS /`                                                            | bearer or first-message auth | live bus events, owner-scoped                  |
-
-Agent tools include `think` (zero-side-effect reasoning scratchpad, persisted to traces), `revert`/`revert_list` (undo your own edits — file-scoped, context-preserving), `goal_write`/`goal_list`/`goal_update` (strategic memory), `finding_write`/`finding_list`/`finding_resolve` (structured team memory — open findings are auto-injected into every loop context, including critic feedback on recent edits), and codegraph queries (`findCallers`/`findDependencies`/`findDependents`/`analyzeRemoval`).
-
-### Community registry & verticals
-
-Curated, offline catalogs installable per project — everything takes effect without a restart:
+### CLI
 
 ```bash
-POST /community/skills/tdd-workflow      # → .mira/skills/tdd-workflow.md
-POST /community/agents/api-designer      # → mira.json agents
-POST /community/knowledge/api-security-basics  # → knowledge store
-POST /community/verticals/luxora         # agent + skills + knowledge, atomically
+npx mira-cli-ts --help
+
+mira session list
+mira agent list
+mira complete --prefix "function add(a,b) {" --file src/math.ts
 ```
 
-Verticals are domain bundles: `luxora` (fashion design assistant), `security-audit` (audit skills + API-security knowledge), `dev-workflow` (test-writer persona + TDD/verification skills). Browse via `GET /community/registry?kind=…&q=…`; Settings → Community tab in the web UI.
+Point `$MIRA_API_URL` at your server.
 
-CI/CD: `.github/workflows/` — CI (typecheck/build/test with affected filtering + tri-state gates), security (CodeQL + Gitleaks + dependency audit with fail-on-high/critical), CD (multi-arch GHCR image + deploy hook), nightly evals. All third-party actions SHA-pinned; Dependabot keeps them current. Turbo caches are namespace-separated so PR runs can never poison main builds.
+---
+
+## The wrong-edit defense stack
+
+This is the part of Mira that matters most. Each layer is independent and
+can fail without taking the others down.
+
+| Layer | What it does |
+|---|---|
+| **Ambiguity gate** | Refuses edits whose `oldString` matches more than one location. Never "first match." |
+| **Intent anchors** | Tracks what the agent said it was going to do and flags edits that drift from it. |
+| **Symbol binding** | Warns when an edit touches symbols other than the one under discussion. |
+| **Edit critic** | Optional second-model review of every edit before it lands. |
+| **Blast-radius analysis** | In strict mode, blocks edits affecting more than [N] dependents. |
+| **Snapshot** | Every mutation is snapshotted to SQLite first. |
+| **Verification** | Post-edit checks run automatically (tests, typecheck, configurable). |
+| **Auto-rollback** | Failed verification restores the last good snapshot. |
+| **Agent-callable `revert`** | The agent can undo its own work mid-session. |
+
+The full design is documented in [`docs/GUARDRAILS_SUMMARY.md`](docs/GUARDRAILS_SUMMARY.md).
+
+---
+
+## Features
+
+**Agent loop**
+- 42 native tools plus dynamic MCP tools (stdio, Streamable HTTP, legacy HTTP+SSE)
+- Real LSP servers over JSON-RPC 3.17 (e.g. `gopls`) with a 9-layer edit fallback
+- 5-layer permission system, enforced at the tool layer
+- Durable message queue (SQLite) so you can queue prompts while streaming
+- Inspectable subagents — persistent child sessions with full transcripts
+- Human-in-the-loop questions mid-session
+
+**Memory & learning**
+- Hierarchical memory: episodic / semantic / procedural
+- Hybrid retrieval (cosine similarity + tag boost + graph expansion)
+- Per-turn injection of relevant memories
+- Online usage analysis
+
+**Observability**
+- Prometheus `/metrics` with bounded cardinality
+- OpenTelemetry spans correlated to access logs via `X-Request-Id`
+- Full audit trail of every mutating tool call (CSV/JSON export)
+
+**Safety & compliance**
+- Bearer token auth, `0o600` storage, query-param tokens rejected
+- Multi-tenancy with RBAC (`viewer` / `operator` / `admin`), owner-scoped resources
+- Per-socket rate limiting; proxy headers only honored when `MIRA_TRUST_PROXY=1`
+- Secret and PII redaction before persistence
+- Configurable retention sweeps (`MIRA_COMPLIANCE_RETENTION_DAYS`, default 90)
+- Guardrails fail-open in dev, **fail-closed in production** by default
+
+**Interfaces**
+- Web UI (SolidJS + Vite, PWA)
+- TUI (SolidJS)
+- CLI (`mira-cli-ts` via `npx`)
+- Slack bot (Socket Mode — no public tunnel needed)
+- VS Code extension
+
+---
+
+## How Mira differs
+
+This table reflects my design goals, not independent benchmarks. Where a
+checkmark appears, the linked section explains the mechanism — judge the
+mechanism, not the checkmark.
+
+| Capability | Typical proprietary agent | Mira |
+|---|---|---|
+| Provider choice | Vendor-locked or limited | **25+ via gateway** (OpenRouter, NVIDIA NIM) |
+| Real LSP | Rare | **JSON-RPC 3.17** + 9-layer fallback |
+| Hierarchical memory | Rare | **Episodic/semantic/procedural**, hybrid retrieval |
+| Eval gating in CI | Rare | **3-tier pipeline**, PR tier blocks CI |
+| Tool-layer guardrails | Partial, opaque | **Enforced + auditable log** |
+| Ambiguity-gated edits | Rare | **Refuse, never guess** |
+| Auto-rollback on failed verification | Rare | **Default behavior** |
+| Self-hosted | No | **Yes** — Bun + SQLite |
+| Cost visibility | Vendor dashboard only | **Live spend, per-task caps** |
+| License | Proprietary | **MIT** |
+
+---
+
+## Architecture
+
+Mira is a Turborepo monorepo: `server`, `web`, `tui`, `cli`, `shared`, `slack`,
+`vscode-mira`.
+
+```
+SessionPrompt.loop
+  → context = system + skills + memory-retrieval + history
+  → LLM.stream → tool-call → permission → guardrail snapshot → execute
+  → doom-loop detect → compaction → usage learning → SSE events
+```
+
+- **Storage:** SQLite in WAL mode — sessions, messages, parts, todos, snapshots,
+  queue, knowledge.
+- **Protocols:** MCP (stdio / Streamable HTTP / legacy SSE) and LSP 3.17.
+- **Frontends:** SolidJS throughout (web, TUI).
+- **Runtime:** Bun 1.4.0, native SQLite.
+
+Deeper detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+### Repository layout
+
+| Path | What lives here |
+|---|---|
+| `packages/server/src/session/` | The agent loop (`SessionPrompt.loop`) |
+| `packages/server/src/tools/` | Tool registry — start here to add a tool |
+| `packages/server/src/guardrails/` | Permissions and audit layer |
+| `packages/web/` | SolidJS web UI |
+| `packages/slack/` | Slack bot |
+| `docs/` | Architecture, guardrails, evolution specs |
+
+---
+
+## API
+
+REST + SSE + WebSocket. Selected routes:
+
+| Route | Auth | Description |
+|---|---|---|
+| `GET /healthz` | None | Liveness probe |
+| `GET /metrics` | See [docs](docs/) | Prometheus scrape |
+| `GET/POST /session` | Bearer | List (owner-scoped) / create |
+| `POST /session/:id/prompt` | Bearer | SSE stream for agent turn |
+| `GET /session/:id/message` | Bearer | History |
+| `GET/POST/DELETE /session/:id/queue` | Bearer | Message queue |
+| `GET /session/:id/snapshots` | Bearer | File snapshots |
+| `POST /session/:id/revert` | Bearer | Rewind to a message |
+| `WS /` | Bearer | Live event bus |
+
+Full surface documented in [`docs/`](docs/).
+
+---
+
+## Community registry
+
+Installable skills, agents, knowledge packs, and vertical bundles (agent +
+skills + knowledge, atomically) without restarting the server:
+
+```bash
+POST /community/verticals/[NAME]
+POST /community/skills/[NAME]
+```
+
+Browse with `GET /community/registry?kind=…&q=…`, or via
+**Settings → Community** in the web UI.
+
+The registry is thin right now — contributions very welcome.
+
+---
+
+## Development
+
+```bash
+bun install
+bun test              # full suite, no API keys needed
+bun run typecheck
+bun run dev           # server + web + tui
+```
+
+CI runs typecheck, affected-filtered tests, CodeQL, Gitleaks, dependency audit
+(fail on high/critical), and nightly evals. Third-party actions are SHA-pinned
+and kept current by Dependabot.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for where to start, review expectations,
+and PR conventions.
+
+---
 
 ## License
 
-MIT — Open source, provider-agnostic, community-driven.
+[MIT](LICENSE).
+
+---
+
+<div align="center">
+
+Built by [@slab1](https://github.com/slab1). Issues and PRs welcome.
+
+</div>
