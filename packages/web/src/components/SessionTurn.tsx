@@ -374,6 +374,8 @@ export function SessionTurn(props: {
   turn: Turn
   onCopy?: (text: string) => void
   onBranch?: (msg: Message) => void
+  onFanout?: (msg: Message) => void
+  onResearchFromTurn?: (msg: Message) => void
   onRewind?: (msg: Message) => void
   onPin?: (id: string) => void
   pinnedIds?: Set<string>
@@ -588,6 +590,26 @@ export function SessionTurn(props: {
                       ⎇ Branch
                     </button>
                   </Show>
+                  <Show when={props.onFanout}>
+                    <button
+                      type="button"
+                      class="msg-action-btn"
+                      onClick={() => props.onFanout?.(m)}
+                      aria-label="Fan out parallel branches"
+                    >
+                      ⑂ Fan Out
+                    </button>
+                  </Show>
+                  <Show when={props.onResearchFromTurn}>
+                    <button
+                      type="button"
+                      class="msg-action-btn"
+                      onClick={() => props.onResearchFromTurn?.(m)}
+                      aria-label="Research online from turn"
+                    >
+                      🌐 Research
+                    </button>
+                  </Show>
                   <button
                     type="button"
                     class="msg-action-btn"
@@ -713,6 +735,8 @@ export function TurnList(props: {
   error?: string | null
   onCopy?: (text: string) => void
   onBranch?: (msg: Message) => void
+  onFanout?: (msg: Message) => void
+  onResearchFromTurn?: (msg: Message) => void
   onRewind?: (msg: Message) => void
   onPin?: (id: string) => void
   pinnedIds?: Set<string>
@@ -739,6 +763,8 @@ export function TurnList(props: {
             turn={turn}
             onCopy={props.onCopy}
             onBranch={props.onBranch}
+            onFanout={props.onFanout}
+            onResearchFromTurn={props.onResearchFromTurn}
             onRewind={props.onRewind}
             onPin={props.onPin}
             pinnedIds={props.pinnedIds}

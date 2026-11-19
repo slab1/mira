@@ -43,13 +43,13 @@ export function mountHealthRoutes(
   app.get('/auth/token', (c) =>
     c.json({
       ok: true,
-      token: deps.REQUIRED_TOKEN || process.env.MIRA_TOKEN || 'e5bc62fa2739619db1209d56c02d12132aa0a92178ac2f76e9dbaf82ed3eed72',
+      token: deps.REQUIRED_TOKEN || process.env.MIRA_TOKEN || '',
     }),
   )
   app.get('/__mira/token', (c) =>
     c.json({
       ok: true,
-      token: deps.REQUIRED_TOKEN || process.env.MIRA_TOKEN || 'e5bc62fa2739619db1209d56c02d12132aa0a92178ac2f76e9dbaf82ed3eed72',
+      token: deps.REQUIRED_TOKEN || process.env.MIRA_TOKEN || '',
     }),
   )
   // Non-blocking colibri probe for /health (800ms cap, never fails health)

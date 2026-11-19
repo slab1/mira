@@ -465,11 +465,20 @@ export function createAppStore(
     }
   }
 
-  async function forkSession(messageID?: string, title?: string) {
+  async function forkSession(
+    messageID?: string,
+    title?: string,
+    opts?: { branchKind?: string; hypothesisLabel?: string },
+  ) {
     const id = state.currentId
     if (!id) return null
     try {
-      const res = await api.forkSession(id, { messageID, title })
+      const res = await api.forkSession(id, {
+        messageID,
+        title,
+        branchKind: opts?.branchKind,
+        hypothesisLabel: opts?.hypothesisLabel,
+      })
       const forked = res.session
       if (forked?.id) {
         setState('sessions', (prev) => [forked, ...prev.filter((x) => x.id !== forked.id)])
@@ -812,6 +821,11 @@ export function createAppStore(
                 return { ...mm, content: cur ? `${cur}\n\n${banner}` : banner }
               }),
             )
+          } else if (event.type === 'doom_loop_adjusted') {
+            const p = event.payload as { tool?: string; reason?: string } | null
+            const tool = p?.tool ?? 'tool'
+            const reason = p?.reason ?? 'repeating pattern'
+            toast.info(`Loop detected (${reason}) on "${tool}" — agent adjusting strategy`)
           }
         },
       })

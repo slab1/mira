@@ -121,12 +121,22 @@ export type BusEventType =
   | 'server.error'
   | 'github.webhook'
   | 'config.updated'
+  | 'me.updated'
   | 'tool.executed'
   | 'edit.critic'
   | 'canary.promoted'
   | 'canary.rollback'
   | 'agent.tool.allowed'
   | 'agent.tool.denied'
+  | 'research.snapshot'
+  | 'research.step'
+  | 'research.citation'
+  | 'research.status'
+  | 'research.report'
+  | 'research.done'
+  | 'research.error'
+  | 'session.fanout'
+  | 'session.merged'
 
 export interface BusEvent<T = JsonValue> {
   type: BusEventType

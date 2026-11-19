@@ -1,10 +1,12 @@
 // @ts-nocheck
-import { createSignal, createMemo, onMount, Show, For } from 'solid-js'
-import { req } from '../api/client'
+import { createSignal, createMemo, onMount, onCleanup, Show, For } from 'solid-js'
+import { api, req, type ResearchMode, type ResearchRunDTO } from '../api/client'
 import { DataStateBadge, type OperationalState } from '../components/DataState'
 import { createIntelligenceFeatureStore } from '../features/intelligence'
 import { Card, SectionHeader, StatusBadge } from '../components/DesignSystem'
 import { ProgressiveDisclosure } from '../components/ProgressiveDisclosure'
+import { ResearchTimeline } from '../components/ResearchTimeline'
+import { toast } from '../components/Toast'
 
 interface KnowledgeNode {
   id: string
@@ -52,13 +54,31 @@ function provenanceTone(provenance: string): 'success' | 'warning' | 'error' | '
   return 'info'
 }
 
-export default function IntelligencePage() {
+export default function IntelligencePage(props: {
+  store?: any
+  onOpenInChat?: (id: string) => void
+} = {}) {
   const [graph, setGraph] = createSignal<KnowledgeGraph | null>(null)
   const [memories, setMemories] = createSignal<MemoryEntry[]>([])
   const [repoStats, setRepoStats] = createSignal<RepoStats | null>(null)
   const [error, setError] = createSignal<string | null>(null)
   const [state, setState] = createSignal<OperationalState>('loading')
   const intelligenceStore = createIntelligenceFeatureStore()
+
+  // Online Deep Research workbench state
+  const [researchQuery, setResearchQuery] = createSignal('')
+  const [researchMode, setResearchMode] = createSignal<ResearchMode>('deep-investigation')
+  const [spawnBranch, setSpawnBranch] = createSignal(true)
+  const [launchingResearch, setLaunchingResearch] = createSignal(false)
+  const [activeRun, setActiveRun] = createSignal<ResearchRunDTO | null>(null)
+  const [recentRuns, setRecentRuns] = createSignal<ResearchRunDTO[]>([])
+  const [providerLabel, setProviderLabel] = createSignal<string>('grounded-web')
+  let activeStreamAbort: AbortController | null = null
+
+  onCleanup(() => {
+    activeStreamAbort?.abort()
+    activeStreamAbort = null
+  })
 
   const repo = createMemo(() => {
     const d = repoStats() as any
@@ -97,22 +117,80 @@ export default function IntelligencePage() {
     })
   })
 
+  const subscribeRun = (runId: string) => {
+    activeStreamAbort?.abort()
+    const ctrl = new AbortController()
+    activeStreamAbort = ctrl
+    void api
+      .streamResearchRun(
+        runId,
+        (ev) => {
+          if (ev.run) {
+            setActiveRun(ev.run)
+            setRecentRuns((prev) => [ev.run, ...prev.filter((r) => r.id !== ev.run.id)].slice(0, 12))
+          }
+        },
+        ctrl.signal,
+      )
+      .catch(() => {})
+  }
+
+  const handleLaunchResearch = async (e?: Event) => {
+    e?.preventDefault()
+    const q = researchQuery().trim()
+    if (!q || launchingResearch()) return
+    setLaunchingResearch(true)
+    try {
+      let branchSessionID: string | null = null
+      const activeSessionId = props.store?.state?.currentId ?? null
+      if (spawnBranch() && activeSessionId) {
+        const forked = await api.forkSession(activeSessionId, {
+          title: `Research: ${q.slice(0, 48)}`,
+          branchKind: 'research',
+          hypothesisLabel: q.slice(0, 48),
+        })
+        branchSessionID = forked.id ?? forked.session?.id ?? null
+        props.store?.loadSessions?.()
+      }
+      const run = await api.startResearchRun({
+        query: q,
+        mode: researchMode(),
+        autoRun: researchMode() === 'quick-grounded',
+        sessionID: activeSessionId,
+        branchSessionID,
+      })
+      setActiveRun(run)
+      setRecentRuns((prev) => [run, ...prev.filter((r) => r.id !== run.id)].slice(0, 12))
+      setResearchQuery('')
+      subscribeRun(run.id)
+    } catch (err) {
+      toast.error(`Research failed to start: ${(err as Error).message}`)
+    } finally {
+      setLaunchingResearch(false)
+    }
+  }
+
   const loadIntelligence = async () => {
     setState('loading')
     setError(null)
     try {
-      const [g, m, r] = await Promise.all([
+      const [g, m, r, runs, status] = await Promise.all([
         req<KnowledgeGraph>('/knowledge/graph').catch(() => null),
         req<MemoryEntry[]>('/memory').catch(() => null),
         req<any>('/dashboard').catch(() => null),
+        api.listResearchRuns().catch(() => [] as ResearchRunDTO[]),
+        api.researchStatus().catch(() => null),
       ])
       setGraph(g)
       setMemories(Array.isArray(m) ? m : [])
       setRepoStats(r)
+      setRecentRuns(runs)
+      if (!activeRun() && runs.length > 0) setActiveRun(runs[0]!)
+      if (status?.groundingProvider) setProviderLabel(status.groundingProvider)
       const hasNodes = (g?.nodes?.length ?? 0) > 0
       const hasMemories = Array.isArray(m) && m.length > 0
       const hasRepo = (r?.repo?.nodes ?? r?.nodes ?? 0) > 0
-      setState(hasNodes || hasMemories || hasRepo ? 'live' : 'empty')
+      setState(hasNodes || hasMemories || hasRepo || runs.length > 0 ? 'live' : 'empty')
     } catch (e) {
       setError(String(e))
       setState('error')
@@ -254,6 +332,113 @@ export default function IntelligencePage() {
             </div>
           </Card>
         </Show>
+
+        {/* Live Online Deep Research Workbench */}
+        <Card padding="16px" style={{ display: 'flex', 'flex-direction': 'column', gap: '12px' }}>
+          <SectionHeader
+            title="Live Online Deep Research"
+            sub={`Grounded web search, URL extraction & collaborative planning (${providerLabel()})`}
+          />
+          <form
+            onSubmit={handleLaunchResearch}
+            style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap', 'align-items': 'center' }}
+          >
+            <input
+              type="text"
+              value={researchQuery()}
+              onInput={(e) => setResearchQuery(e.currentTarget.value)}
+              placeholder="Investigate libraries, CVEs, benchmarks, architecture trade-offs…"
+              style={{
+                flex: '1',
+                'min-width': '240px',
+                padding: '8px 12px',
+                'border-radius': 'var(--r-sm)',
+                border: '1px solid var(--border-strong)',
+                background: 'var(--bg-surface)',
+                color: 'var(--fg)',
+                'font-size': 'var(--fs-sm)',
+              }}
+              aria-label="Online research query"
+            />
+            <select
+              value={researchMode()}
+              onChange={(e) => setResearchMode(e.currentTarget.value as ResearchMode)}
+              style={{
+                padding: '8px 10px',
+                'border-radius': 'var(--r-sm)',
+                border: '1px solid var(--border)',
+                background: 'var(--bg-surface)',
+                color: 'var(--fg)',
+                'font-size': 'var(--fs-xs)',
+              }}
+              aria-label="Research depth"
+            >
+              <option value="deep-investigation">Deep Investigation (Reviewable Plan)</option>
+              <option value="quick-grounded">Quick Grounded Answer</option>
+            </select>
+            <Show when={props.store?.state?.currentId}>
+              <label style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>
+                <input
+                  type="checkbox"
+                  checked={spawnBranch()}
+                  onChange={(e) => setSpawnBranch(e.currentTarget.checked)}
+                />
+                <span>Isolate in Mira Branch</span>
+              </label>
+            </Show>
+            <button
+              type="submit"
+              class="btn btn-solid"
+              disabled={launchingResearch() || !researchQuery().trim()}
+              style={{ padding: '8px 14px', 'font-size': 'var(--fs-xs)' }}
+            >
+              {launchingResearch() ? 'Planning…' : 'Start Research →'}
+            </button>
+          </form>
+
+          <Show when={recentRuns().length > 0}>
+            <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap', 'align-items': 'center' }}>
+              <span style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>Runs:</span>
+              <For each={recentRuns().slice(0, 6)}>
+                {(r) => (
+                  <button
+                    type="button"
+                    class="btn btn-ghost"
+                    onClick={() => {
+                      setActiveRun(r)
+                      if (r.status === 'running' || r.status === 'planning') subscribeRun(r.id)
+                    }}
+                    style={{
+                      padding: '3px 9px',
+                      'font-size': 'var(--fs-xs)',
+                      border: activeRun()?.id === r.id ? '1px solid var(--accent-border)' : '1px solid var(--border)',
+                      background: activeRun()?.id === r.id ? 'var(--accent-soft)' : 'var(--bg-surface)',
+                      color: activeRun()?.id === r.id ? 'var(--accent)' : 'var(--fg-muted)',
+                      'border-radius': 'var(--r-sm)',
+                    }}
+                  >
+                    {r.query.slice(0, 34)}{r.query.length > 34 ? '…' : ''} · {r.status}
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
+
+          <Show when={activeRun()}>
+            {(run) => (
+              <ResearchTimeline
+                run={run()}
+                onUpdated={(updated) => {
+                  setActiveRun(updated)
+                  setRecentRuns((prev) => prev.map((x) => (x.id === updated.id ? updated : x)))
+                  if (updated.status === 'running') subscribeRun(updated.id)
+                }}
+                onPromoted={() => void loadIntelligence()}
+                onOpenBranch={props.onOpenInChat}
+              />
+            )}
+          </Show>
+        </Card>
 
         {/* Knowledge Graph — Progressive Disclosure */}
         <Show when={graph()}>

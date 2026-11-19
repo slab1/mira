@@ -572,9 +572,12 @@ export function PromptInput(props: {
   onRemovePill?: (index: number) => void
   onAddPill?: (path: string) => void
   cwd?: string | null
+  researchMode?: 'off' | 'quick-grounded' | 'deep-investigation'
+  onResearchModeChange?: (mode: 'off' | 'quick-grounded' | 'deep-investigation') => void
 }) {
   let textareaRef: HTMLTextAreaElement | undefined
   let fileInputRef: HTMLInputElement | undefined
+  let audioFileInputRef: HTMLInputElement | undefined
   const [isListening, setIsListening] = createSignal(false)
   const [isTranscribing, setIsTranscribing] = createSignal(false)
   const [voiceAvailable, setVoiceAvailable] = createSignal(false)
@@ -583,6 +586,10 @@ export function PromptInput(props: {
   let mediaStream: MediaStream | null = null
   let audioChunks: BlobPart[] = []
   let speechBaseText = ''
+  let audioCtx: AudioContext | null = null
+  let silenceMonitorTimer: number | undefined
+  let peakLevel = 0
+  let silenceSampleCount = 0
 
   onMount(() => {
     void api
@@ -593,7 +600,22 @@ export function PromptInput(props: {
       .catch(() => {})
   })
 
+  const stopSilenceMonitor = () => {
+    if (silenceMonitorTimer !== undefined) {
+      window.clearInterval(silenceMonitorTimer)
+      silenceMonitorTimer = undefined
+    }
+    if (audioCtx) {
+      try {
+        void audioCtx.close()
+      } catch {}
+      audioCtx = null
+    }
+    silenceSampleCount = 0
+  }
+
   const stopMediaTracks = () => {
+    stopSilenceMonitor()
     if (mediaStream) {
       for (const track of mediaStream.getTracks()) {
         try {
@@ -640,10 +662,98 @@ export function PromptInput(props: {
     })
   }
 
+  const transcribeAudioBlob = async (blob: Blob, rawMime: string, wasSilent = false) => {
+    if (blob.size < 256) {
+      toast.info('Audio clip too short to transcribe.')
+      return
+    }
+    setIsTranscribing(true)
+    try {
+      const audioBase64 = await blobToBase64(blob)
+      const res = await api.transcribeVoice({
+        audioBase64,
+        mimeType: rawMime.split(';')[0] || 'audio/webm',
+        language: navigator.language || 'en-US',
+      })
+      if (res.ok && res.text?.trim()) {
+        appendTranscript(res.text)
+      } else if (wasSilent) {
+        toast.withAction(
+          'Microphone captured only silence. Check your mic input device or upload an audio clip.',
+          'Upload Audio',
+          () => audioFileInputRef?.click(),
+          'warn',
+          8000,
+        )
+      } else {
+        toast.withAction(
+          'No speech detected in audio. Try speaking closer to the mic or upload an audio clip.',
+          'Upload Audio',
+          () => audioFileInputRef?.click(),
+          'info',
+          7000,
+        )
+      }
+    } catch (err) {
+      const msg = (err as Error).message ?? String(err)
+      if (msg.includes('501') || msg.includes('NO_VOICE_PROVIDER')) {
+        setVoiceAvailable(false)
+        toast.warn('Server voice provider unavailable — using browser speech recognition next time.')
+      } else {
+        toast.error(`Transcription failed: ${msg}`)
+      }
+    } finally {
+      setIsTranscribing(false)
+    }
+  }
+
+  const handleAudioFileUpload = (e: Event & { currentTarget: HTMLInputElement }) => {
+    const file = e.currentTarget.files?.[0]
+    e.currentTarget.value = ''
+    if (!file) return
+    void transcribeAudioBlob(file, file.type || 'audio/webm')
+  }
+
+  const isMicPolicyBlocked = (): boolean => {
+    try {
+      const doc = document as Document & {
+        permissionsPolicy?: { allowsFeature?: (f: string) => boolean }
+        featurePolicy?: { allowsFeature?: (f: string) => boolean }
+      }
+      const policy = doc.permissionsPolicy ?? doc.featurePolicy
+      if (policy && typeof policy.allowsFeature === 'function') {
+        return !policy.allowsFeature('microphone')
+      }
+    } catch {}
+    return false
+  }
+
+  const notifyMicUnavailable = (kind: 'denied' | 'missing') => {
+    const msg =
+      kind === 'missing'
+        ? 'No microphone detected.'
+        : 'Microphone access is blocked or denied. Allow mic permission in browser settings.'
+    if (voiceAvailable()) {
+      toast.withAction(
+        `${msg} You can also upload an audio clip.`,
+        'Upload Audio',
+        () => audioFileInputRef?.click(),
+        'warn',
+        8000,
+      )
+    } else {
+      toast.warn(msg)
+    }
+  }
+
   const startSpeechFallback = () => {
+    if (isMicPolicyBlocked()) {
+      notifyMicUnavailable('denied')
+      return
+    }
     const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SpeechRec) {
-      toast.error('Voice transcription requires a Gemini/OpenAI API key on the server or browser SpeechRecognition.')
+      toast.warn('Voice dictation requires a Gemini/OpenAI API key on the server or browser SpeechRecognition.')
       return
     }
     try {
@@ -670,11 +780,11 @@ export function PromptInput(props: {
         setIsListening(false)
         const err = String(ev?.error ?? '')
         if (err === 'not-allowed' || err === 'service-not-allowed') {
-          toast.error('Microphone permission denied. Allow mic access in browser settings.')
+          notifyMicUnavailable('denied')
         } else if (err === 'audio-capture') {
-          toast.error('No microphone detected.')
+          notifyMicUnavailable('missing')
         } else if (err && err !== 'no-speech' && err !== 'aborted') {
-          toast.error(`Speech recognition failed: ${err}`)
+          toast.warn(`Speech recognition failed: ${err}`)
         }
       }
       speechRec.onend = () => {
@@ -685,13 +795,57 @@ export function PromptInput(props: {
       setIsListening(true)
     } catch (e) {
       setIsListening(false)
-      toast.error(`Voice recognition failed: ${(e as Error).message}`)
+      toast.warn(`Voice recognition failed: ${(e as Error).message}`)
     }
   }
 
   const startServerRecording = async () => {
+    if (isMicPolicyBlocked()) {
+      notifyMicUnavailable('denied')
+      return
+    }
     try {
-      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        })
+      } catch (constraintErr) {
+        const cname = (constraintErr as Error)?.name ?? ''
+        if (cname === 'OverconstrainedError' || cname === 'ConstraintNotSatisfiedError') {
+          mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        } else {
+          throw constraintErr
+        }
+      }
+
+      peakLevel = 0
+      silenceSampleCount = 0
+      try {
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+        if (AudioCtx) {
+          audioCtx = new AudioCtx()
+          void audioCtx.resume().catch(() => {})
+          const source = audioCtx.createMediaStreamSource(mediaStream)
+          const analyser = audioCtx.createAnalyser()
+          analyser.fftSize = 1024
+          source.connect(analyser)
+          const sampleBuf = new Float32Array(analyser.fftSize)
+          silenceMonitorTimer = window.setInterval(() => {
+            if (!audioCtx || audioCtx.state !== 'running') return
+            silenceSampleCount += 1
+            analyser.getFloatTimeDomainData(sampleBuf)
+            for (let i = 0; i < sampleBuf.length; i++) {
+              const abs = Math.abs(sampleBuf[i])
+              if (abs > peakLevel) peakLevel = abs
+            }
+          }, 100)
+        }
+      } catch {}
+
       const preferredTypes = [
         'audio/webm;codecs=opus',
         'audio/webm',
@@ -710,50 +864,26 @@ export function PromptInput(props: {
         const recMime = mediaRecorder?.mimeType || mimeType || 'audio/webm'
         const chunks = audioChunks.slice()
         audioChunks = []
+        const recordedPeak = peakLevel
+        const hadSilenceSamples = silenceSampleCount > 0
         stopMediaTracks()
         setIsListening(false)
 
         if (chunks.length === 0) return
         const blob = new Blob(chunks, { type: recMime })
-        if (blob.size < 256) {
-          toast.info('Recording too short — hold/speak a little longer.')
-          return
-        }
-        setIsTranscribing(true)
-        try {
-          const audioBase64 = await blobToBase64(blob)
-          const res = await api.transcribeVoice({
-            audioBase64,
-            mimeType: recMime.split(';')[0] || 'audio/webm',
-            language: navigator.language || 'en-US',
-          })
-          if (res.ok && res.text?.trim()) {
-            appendTranscript(res.text)
-          } else {
-            toast.info('No speech detected in recording.')
-          }
-        } catch (err) {
-          const msg = (err as Error).message ?? String(err)
-          if (msg.includes('501') || msg.includes('NO_VOICE_PROVIDER')) {
-            setVoiceAvailable(false)
-            toast.warn('Server voice provider unavailable — using browser speech recognition next time.')
-          } else {
-            toast.error(`Transcription failed: ${msg}`)
-          }
-        } finally {
-          setIsTranscribing(false)
-        }
+        const wasSilent = hadSilenceSamples && recordedPeak < 0.002
+        await transcribeAudioBlob(blob, recMime, wasSilent)
       }
-      mediaRecorder.start(250)
+      mediaRecorder.start()
       setIsListening(true)
     } catch (err) {
       stopMediaTracks()
       setIsListening(false)
       const name = (err as Error)?.name ?? ''
-      if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-        toast.error('Microphone permission denied. Allow mic access in browser settings.')
-      } else if (name === 'NotFoundError') {
-        toast.error('No microphone found.')
+      if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError') {
+        notifyMicUnavailable('denied')
+      } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+        notifyMicUnavailable('missing')
       } else {
         // Fallback to browser SpeechRecognition if MediaRecorder fails
         startSpeechFallback()
@@ -938,10 +1068,8 @@ export function PromptInput(props: {
       return
     }
     if (e.key === 'Enter' && !e.shiftKey && !atVisible()) {
-      // Let parent decide if slash autocomplete should intercept
-      // If no slash handling needed, submit
-      const v = props.value
-      if (!v.startsWith('/')) {
+      const v = props.value.trimStart()
+      if (!v.startsWith('/') || v.includes(' ')) {
         e.preventDefault()
         props.onSubmit()
       }
@@ -995,8 +1123,10 @@ export function PromptInput(props: {
         onKeyDown={handleKeyDown}
         onFocus={() => fetchWorkspaceFiles()}
         placeholder={
-          props.placeholder ??
-          'Message Mira…  ( / for commands · @ for files · ⌘K palette · ⌘↵ send )'
+          props.researchMode && props.researchMode !== 'off'
+            ? `Live Online Research (${props.researchMode === 'deep-investigation' ? 'Deep Plan' : 'Quick Grounded'}) — ask anything to search the web…`
+            : props.placeholder ??
+              'Message Mira…  ( / for commands · /research · /fanout · @ for files · ⌘K palette )'
         }
         aria-label="Message Mira"
         aria-autocomplete="list"
@@ -1024,6 +1154,56 @@ export function PromptInput(props: {
             value={props.selectedAgent}
             onSelect={props.onAgentSelect}
           />
+          <Show when={props.onResearchModeChange}>
+            <button
+              type="button"
+              onClick={() => {
+                const cur = props.researchMode ?? 'off'
+                const next =
+                  cur === 'off'
+                    ? 'quick-grounded'
+                    : cur === 'quick-grounded'
+                      ? 'deep-investigation'
+                      : 'off'
+                props.onResearchModeChange?.(next)
+              }}
+              title="Toggle live web research mode (Off → Quick Grounded → Deep Investigation)"
+              aria-label="Toggle live web research mode"
+              style={{
+                display: 'inline-flex',
+                'align-items': 'center',
+                gap: '5px',
+                padding: '4px 9px',
+                'font-size': 'var(--fs-xs)',
+                border:
+                  props.researchMode && props.researchMode !== 'off'
+                    ? '1px solid var(--accent-border)'
+                    : '1px solid var(--border)',
+                'border-radius': 'var(--r-md)',
+                background:
+                  props.researchMode && props.researchMode !== 'off'
+                    ? 'var(--accent-soft)'
+                    : 'var(--bg-surface)',
+                color:
+                  props.researchMode && props.researchMode !== 'off'
+                    ? 'var(--accent)'
+                    : 'var(--fg-muted)',
+                'font-weight':
+                  props.researchMode && props.researchMode !== 'off' ? '600' : '500',
+                cursor: 'pointer',
+                'min-height': '32px',
+              }}
+            >
+              <span>🌐</span>
+              <span>
+                {props.researchMode === 'deep-investigation'
+                  ? 'Deep Research'
+                  : props.researchMode === 'quick-grounded'
+                    ? 'Web Search'
+                    : 'Research'}
+              </span>
+            </button>
+          </Show>
 
           {/* Attachment File Input Button */}
           <button
@@ -1096,6 +1276,13 @@ export function PromptInput(props: {
             </svg>
             <span>{isTranscribing() ? 'Transcribing…' : isListening() ? 'Stop' : 'Voice'}</span>
           </button>
+          <input
+            ref={audioFileInputRef}
+            type="file"
+            accept="audio/*"
+            style={{ display: 'none' }}
+            onChange={handleAudioFileUpload}
+          />
         </div>
         <Show
           when={!props.streaming}

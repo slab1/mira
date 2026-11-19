@@ -349,4 +349,202 @@ describe('doom-loop detection E2E', () => {
     const finishEvents = events.filter((e) => e.event === 'finish')
     expect(finishEvents.length).toBe(1)
   })
+
+  test('agent is notified on doom-loop and adjusts strategy cleanly without aborting', async () => {
+    const observedSystems: string[] = []
+    const observedMessages: Array<Array<{ role: string; content: string }>> = []
+    let callCount = 0
+    const adaptiveGateway: Gateway = {
+      async stream(req): Promise<AsyncIterable<GatewayChunk>> {
+        observedSystems.push(req.system ?? '')
+        observedMessages.push(
+          req.messages.map((m) => ({ role: m.role, content: String(m.content ?? '') })),
+        )
+        callCount++
+        const stepNum = callCount
+        return (async function* () {
+          if (stepNum <= 3) {
+            yield {
+              type: 'tool-call',
+              toolCall: { id: crypto.randomUUID(), name: 'bash', args: { command: 'ls' } },
+            }
+            yield {
+              type: 'finish',
+              finishReason: 'tool-calls',
+              usage: { inputTokens: 10, outputTokens: 5 },
+            }
+          } else {
+            // Step 4: after seeing [DOOM-LOOP DETECTED — ADJUST STRATEGY NOW], agent adjusts and responds cleanly
+            yield {
+              type: 'text-delta',
+              text: 'Adjusted strategy after loop detection.',
+            }
+            yield {
+              type: 'finish',
+              finishReason: 'stop',
+              usage: { inputTokens: 15, outputTokens: 10 },
+            }
+          }
+        })()
+      },
+      complete: async () => ({ text: '' }),
+      summarize: async () => '',
+      listModels: async () => [],
+      stats: () => ({
+        requests: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        costUSD: 0,
+        avgLatencyMs: 0,
+        byModel: {},
+      }),
+    }
+
+    const bus = new Bus()
+    const busErrors: Array<{ type: string; payload: unknown }> = []
+    bus.subscribe('server.error', (event) => busErrors.push({ type: event.type, payload: event.payload }))
+    const permissions = new PermissionManager({})
+    const tools = new ToolRegistry({ db, bus, permissions, gateway: adaptiveGateway })
+    tools.register({
+      name: 'bash',
+      description: 'mock bash',
+      category: 'execution',
+      schema: z.object({ command: z.string() }).passthrough(),
+      execute: async () => ({ stdout: 'ok', exitCode: 0 }),
+    } as never)
+    const testPrompt = new SessionPrompt({ db, bus, gateway: adaptiveGateway, tools, permissions })
+    const session = await testPrompt.createSession({ title: 'adaptive-doom-recovery' })
+
+    const response = await testPrompt.streamResponse(session.id, 'inspect directory', undefined, {
+      maxSteps: 10,
+    })
+    const events = parseSSEEvents(await response.text())
+
+    // Step 3 (after 2 identical calls) receives proactive [Loop Awareness]
+    expect(observedSystems[2]).toContain('[Loop Awareness]')
+    // Step 4 receives [DOOM-LOOP DETECTED — ADJUST STRATEGY NOW] and Workspace Context
+    expect(observedSystems[3]).toContain('[Workspace Context]')
+    expect(observedSystems[3]).toContain('[DOOM-LOOP DETECTED — ADJUST STRATEGY NOW]')
+    // Step 4 messages still include recent role: 'tool' results (summarizeToolTraces must not blind it)
+    expect(
+      observedMessages[3].some(
+        (m) => m.role === 'tool' && m.content.includes('Doom-loop detected'),
+      ),
+    ).toBe(true)
+
+    const adjustedEvents = events.filter((e) => e.event === 'doom_loop_adjusted')
+    expect(adjustedEvents.length).toBe(1)
+
+    const fatalDoomEvents = events.filter((e) => e.event === 'doom_loop')
+    expect(fatalDoomEvents.length).toBe(0)
+    expect(busErrors.length).toBe(0)
+
+    const text = events
+      .filter((e) => e.event === 'text_delta')
+      .map((e) => (JSON.parse(e.data) as { delta?: string }).delta ?? '')
+      .join('')
+    expect(text).toContain('Adjusted strategy after loop detection.')
+    expect(events.filter((e) => e.event === 'finish').length).toBe(1)
+  })
+
+  test('repeated tool error notifies agent and allows multiple recovery steps before breaking loop', async () => {
+    const observedSystems: string[] = []
+    let callCount = 0
+    let execCount = 0
+    const errRecoveryGateway: Gateway = {
+      async stream(req): Promise<AsyncIterable<GatewayChunk>> {
+        observedSystems.push(req.system ?? '')
+        callCount++
+        const stepNum = callCount
+        return (async function* () {
+          if (stepNum <= 3) {
+            yield {
+              type: 'tool-call',
+              toolCall: {
+                id: crypto.randomUUID(),
+                name: 'read_fail',
+                args: { path: `/missing-${stepNum}.txt` },
+              },
+            }
+            yield {
+              type: 'finish',
+              finishReason: 'tool-calls',
+              usage: { inputTokens: 10, outputTokens: 5 },
+            }
+          } else if (stepNum === 4) {
+            // Repeats the exact failed call from step 3 once — must be blocked pre-exec and warned again, NOT aborted
+            yield {
+              type: 'tool-call',
+              toolCall: {
+                id: crypto.randomUUID(),
+                name: 'read_fail',
+                args: { path: '/missing-3.txt' },
+              },
+            }
+            yield {
+              type: 'finish',
+              finishReason: 'tool-calls',
+              usage: { inputTokens: 10, outputTokens: 5 },
+            }
+          } else {
+            yield {
+              type: 'text-delta',
+              text: 'Stopped retrying missing files and reported the blocker.',
+            }
+            yield {
+              type: 'finish',
+              finishReason: 'stop',
+              usage: { inputTokens: 12, outputTokens: 8 },
+            }
+          }
+        })()
+      },
+      complete: async () => ({ text: '' }),
+      summarize: async () => '',
+      listModels: async () => [],
+      stats: () => ({
+        requests: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        costUSD: 0,
+        avgLatencyMs: 0,
+        byModel: {},
+      }),
+    }
+
+    const bus = new Bus()
+    const permissions = new PermissionManager({ read_fail: 'allow' })
+    const tools = new ToolRegistry({ db, bus, permissions, gateway: errRecoveryGateway })
+    tools.register({
+      name: 'read_fail',
+      description: 'always throws same error',
+      category: 'filesystem',
+      schema: z.object({ path: z.string() }).passthrough(),
+      execute: async () => {
+        execCount++
+        throw new Error('ENOENT: no such file')
+      },
+    } as never)
+    const testPrompt = new SessionPrompt({
+      db,
+      bus,
+      gateway: errRecoveryGateway,
+      tools,
+      permissions,
+    })
+    const session = await testPrompt.createSession({ title: 'error-doom-recovery' })
+    const response = await testPrompt.streamResponse(session.id, 'read missing files', undefined, {
+      maxSteps: 10,
+    })
+    const events = parseSSEEvents(await response.text())
+
+    expect(observedSystems[2]).toContain('[Loop Awareness]')
+    expect(observedSystems[3]).toContain('[DOOM-LOOP DETECTED — ADJUST STRATEGY NOW]')
+    expect(observedSystems[4]).toContain('[DOOM-LOOP DETECTED — ADJUST STRATEGY NOW]')
+    // Step 4's repeated failing call must have been blocked pre-execution (execCount stays 3)
+    expect(execCount).toBe(3)
+    expect(events.filter((e) => e.event === 'doom_loop_adjusted').length).toBe(2)
+    expect(events.filter((e) => e.event === 'doom_loop').length).toBe(0)
+    expect(events.filter((e) => e.event === 'finish').length).toBe(1)
+  })
 })

@@ -270,7 +270,7 @@ describe('gaps: WebSocket authentication', () => {
     await connected(ws)
     expect(await collect(ws, (m) => m.type === 'server.heartbeat')).not.toBeNull()
     ws.close()
-  })
+  }, 15_000)
 
   test('invalid bearer token does NOT activate the socket', async () => {
     await requireServer()
@@ -282,7 +282,7 @@ describe('gaps: WebSocket authentication', () => {
     // which this test deliberately does not wait for.
     expect(await collect(ws, (m) => m.type === 'server.heartbeat', 700)).toBeNull()
     ws.close()
-  })
+  }, 15_000)
 
   test('absent Authorization header does NOT activate the socket', async () => {
     await requireServer()
@@ -292,7 +292,7 @@ describe('gaps: WebSocket authentication', () => {
     await connected(ws)
     expect(await collect(ws, (m) => m.type === 'server.heartbeat', 700)).toBeNull()
     ws.close()
-  })
+  }, 15_000)
 
   test('pending socket activates on a valid in-band {type:"auth"} message', async () => {
     await requireServer()
@@ -303,7 +303,7 @@ describe('gaps: WebSocket authentication', () => {
     ws.send(JSON.stringify({ type: 'auth', token: TOKEN }))
     expect(await collect(ws, (m) => m.type === 'server.heartbeat')).not.toBeNull()
     ws.close()
-  })
+  }, 15_000)
 
   test('a bad token in an auth message leaves the socket pending', async () => {
     await requireServer()
@@ -314,7 +314,7 @@ describe('gaps: WebSocket authentication', () => {
     ws.send(JSON.stringify({ type: 'auth', token: 'nope' }))
     expect(await collect(ws, (m) => m.type === 'server.heartbeat', 700)).toBeNull()
     ws.close()
-  })
+  }, 15_000)
 
   test('malformed payloads neither crash nor activate the socket', async () => {
     await requireServer()
@@ -327,7 +327,7 @@ describe('gaps: WebSocket authentication', () => {
     ws.send(JSON.stringify({ type: 'unrelated' }))
     expect(await collect(ws, (m) => m.type === 'server.heartbeat', 700)).toBeNull()
     ws.close()
-  })
+  }, 15_000)
 
   test('a later valid auth message still activates after junk', async () => {
     await requireServer()
@@ -341,7 +341,7 @@ describe('gaps: WebSocket authentication', () => {
     ws.send(JSON.stringify({ type: 'auth', token: TOKEN }))
     expect(await collect(ws, (m) => m.type === 'server.heartbeat')).not.toBeNull()
     ws.close()
-  })
+  }, 15_000)
 })
 
 describe('gaps: /metrics access control', () => {

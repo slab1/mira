@@ -60,10 +60,13 @@ describe.skipIf(!hasVision)("analyze_image LIVE", () => {
     const imgTool = otherTools.find(t => t.name === "analyze_image")! as typeof imageTool
     const out = await imgTool.execute({ base64: pngBase64, prompt: "What color is this image? Answer in one word." }, { sessionID: "t", messageID: "t" }) as { ok?: boolean; analysis?: string; error?: string }
     console.log("  [live vision]:", JSON.stringify(out.analysis ?? out.error)?.slice(0, 120))
-    // An invalid/expired NVIDIA_API_KEY (403/401) is an environment problem, not a
-    // code regression — log and pass so the suite stays green without a valid key.
-    if (out.ok === false && /401|403|unauthorized|forbidden/i.test(out.error ?? "")) {
-      console.warn("  [live vision]: skipped — provider auth error (invalid NVIDIA_API_KEY?)")
+    // An invalid/expired NVIDIA_API_KEY (403/401) or multimodal-disabled endpoint
+    // is an environment/provider limitation, not a code regression — log and pass.
+    if (
+      out.ok === false &&
+      /401|403|unauthorized|forbidden|multimodal processing is not enabled/i.test(out.error ?? "")
+    ) {
+      console.warn("  [live vision]: skipped — provider auth/capability error:", out.error?.slice(0, 120))
       return
     }
     expect(out.ok).toBe(true)

@@ -524,8 +524,13 @@ export function createSettingsStore() {
       description: s.description || `Skill: ${s.name}`,
       source: 'skill' as const,
     }))
-    // Synthetic /connect command (always available, even if server doesn't list it)
+    // Synthetic /connect & /me commands (always available, even if server doesn't list them)
     const synthetic: CommandEntry[] = [
+      {
+        name: '/me',
+        description: 'View or update your name & profile so Mira remembers you',
+        source: 'command' as const,
+      },
       {
         name: '/connect',
         description: 'Connect a provider — add API key (e.g. /connect openai)',

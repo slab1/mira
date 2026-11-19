@@ -3,6 +3,29 @@
   "globalDependencies": [
     "**/.env.*local"
   ],
+  "globalPassThroughEnv": [
+    "DISABLE_HMR",
+    "GOOGLE_RUNTIME",
+    "K_SERVICE",
+    "NG_ALLOWED_HOSTS",
+    "CLOUD_RUN_TIMEOUT_SECONDS",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GOOGLE_GENERATIVE_AI_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "MIRA_DEV_API",
+    "MIRA_DEV_PORT",
+    "MIRA_HMR_HOST",
+    "MIRA_WEB_HMR_PORT",
+    "MIRA_TUI_HMR_PORT",
+    "MIRA_WEB_PORT",
+    "MIRA_TUI_PORT",
+    "MIRA_DIR",
+    "MIRA_TOKEN",
+    "VITE_BASE",
+    "VITE_MIRA_TOKEN"
+  ],
   "tasks": {
     "build": {
       "dependsOn": [
@@ -29,6 +52,9 @@
     "eval": {
       "dependsOn": [
         "build"
+      ],
+      "outputs": [
+        "eval-results/**"
       ]
     }
   }

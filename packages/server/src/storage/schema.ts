@@ -35,6 +35,13 @@ export const sessions = sqliteTable(
     costUsd: real('cost_usd'),
     cwd: text('cwd'),
     projectId: text('project_id'),
+    // Mira Branches metadata — distinguishes conversation forks, research spin-offs, and parallel fan-outs
+    branchKind: text('branch_kind', { enum: ['conversation', 'research', 'fanout'] }),
+    forkedFromMessageId: text('forked_from_message_id'),
+    hypothesisLabel: text('hypothesis_label'),
+    mergedIntoSessionId: text('merged_into_session_id'),
+    mergedAt: integer('merged_at'),
+    mergeSummary: text('merge_summary'),
   },
   (t) => [
     index('sessions_updated_idx').on(t.updatedAt),
@@ -183,11 +190,70 @@ export const findings = sqliteTable(
   (t) => [index('findings_status_idx').on(t.status), index('findings_session_idx').on(t.sessionID)],
 )
 
+// Durable review completeness manifests (feat/review-completeness contract)
+export const reviewCoverageManifests = sqliteTable(
+  'review_coverage_manifests',
+  {
+    id: text('id').primaryKey(),
+    sessionID: text('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    manifestJson: text('manifest_json').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('review_coverage_session_updated_idx').on(t.sessionID, t.updatedAt)],
+)
+
+// Durable online deep research runs (quick-grounded & deep-investigation)
+export const researchRuns = sqliteTable(
+  'research_runs',
+  {
+    id: text('id').primaryKey(),
+    sessionID: text('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+    branchSessionID: text('branch_session_id').references(() => sessions.id, {
+      onDelete: 'set null',
+    }),
+    ownerID: text('owner_id'),
+    orgID: text('org_id'),
+    mode: text('mode', { enum: ['quick-grounded', 'deep-investigation'] })
+      .notNull()
+      .default('deep-investigation'),
+    query: text('query').notNull(),
+    status: text('status', {
+      enum: ['planning', 'awaiting_approval', 'running', 'completed', 'failed', 'cancelled'],
+    })
+      .notNull()
+      .default('planning'),
+    planJson: text('plan_json'),
+    stepsJson: text('steps_json').notNull().default('[]'),
+    reportMarkdown: text('report_markdown'),
+    citationsJson: text('citations_json').notNull().default('[]'),
+    error: text('error'),
+    provider: text('provider'),
+    model: text('model'),
+    tokensIn: integer('tokens_in').default(0),
+    tokensOut: integer('tokens_out').default(0),
+    durationMs: integer('duration_ms').default(0),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    completedAt: integer('completed_at'),
+  },
+  (t) => [
+    index('research_runs_session_idx').on(t.sessionID),
+    index('research_runs_branch_idx').on(t.branchSessionID),
+    index('research_runs_status_idx').on(t.status),
+    index('research_runs_updated_idx').on(t.updatedAt),
+  ],
+)
+
 // ── Relations (for db.query.*.findMany with: { parts: true }) ──────
 
 export const sessionsRelations = relations(sessions, ({ many }) => ({
   messages: many(messages),
   todos: many(todos),
+  reviewCoverageManifests: many(reviewCoverageManifests),
+  researchRuns: many(researchRuns),
 }))
 
 export const messagesRelations = relations(messages, ({ one, many }) => ({
@@ -353,6 +419,8 @@ export const schema = {
   users,
   orgs,
   orgMembers,
+  reviewCoverageManifests,
+  researchRuns,
   sessionsRelations,
   messagesRelations,
   partsRelations,

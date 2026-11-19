@@ -92,7 +92,7 @@ async function main() {
   await cleanupStaleDevProcesses()
   resetPortFiles()
 
-  const child = spawn('bunx', ['turbo', 'dev', '--continue', '--filter=!@mira/slack'], {
+  const child = spawn('bunx', ['turbo', 'dev', '--continue', '--env-mode=loose', '--filter=!@mira/slack'], {
     cwd: ROOT_DIR,
     stdio: 'inherit',
     detached: true,

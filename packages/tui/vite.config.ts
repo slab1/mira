@@ -11,7 +11,9 @@ logger.error = (msg, options) => {
   const errCode = (options?.error as { code?: string } | undefined)?.code ?? ''
   const text = `${msg} ${errMsg} ${errCode}`
   if (
-    (text.includes('ws proxy socket error') || text.includes('ws proxy error')) &&
+    (text.includes('ws proxy socket error') ||
+      text.includes('ws proxy error') ||
+      text.includes('http proxy error')) &&
     (text.includes('ECONNRESET') ||
       text.includes('ECONNREFUSED') ||
       text.includes('EPIPE') ||
@@ -62,28 +64,57 @@ function miraPortFallback(): string {
 
 // Dev-server API target: MIRA_DEV_API (full URL) or MIRA_DEV_PORT (port only).
 const API_TARGET =
-  process.env.MIRA_DEV_API ?? `http://localhost:${process.env.MIRA_DEV_PORT ?? miraPortFallback()}`
+  process.env.MIRA_DEV_API ?? `http://127.0.0.1:${process.env.MIRA_DEV_PORT ?? miraPortFallback()}`
+
+const IS_HOSTED_PREVIEW = Boolean(
+  process.env.DISABLE_HMR === 'true' ||
+    process.env.GOOGLE_RUNTIME ||
+    process.env.K_SERVICE ||
+    process.env.NG_ALLOWED_HOSTS ||
+    process.env.CLOUD_RUN_TIMEOUT_SECONDS,
+)
+
+const HMR_CONFIG = IS_HOSTED_PREVIEW
+  ? false
+  : process.env.MIRA_HMR_HOST || process.env.MIRA_TUI_HMR_PORT
+    ? {
+        ...(process.env.MIRA_HMR_HOST ? { host: process.env.MIRA_HMR_HOST } : {}),
+        ...(process.env.MIRA_TUI_HMR_PORT ? { port: Number(process.env.MIRA_TUI_HMR_PORT) } : {}),
+      }
+    : true
+
+const disableHmrClientPlugin = {
+  name: 'mira-disable-hmr-client-connect',
+  apply: 'serve' as const,
+  enforce: 'post' as const,
+  transform(code: string, id: string) {
+    if (HMR_CONFIG !== false) return null
+    if (!id.endsWith('/client/client.mjs') && !id.endsWith('\\client\\client.mjs')) return null
+    const needle = 'transport.connect(createHMRHandler(handleMessage));'
+    if (!code.includes(needle)) return null
+    return {
+      code: code.replace(needle, '/* hmr disabled in hosted preview */ void 0;'),
+      map: null,
+    }
+  },
+}
 
 export default defineConfig({
   customLogger: logger,
-  plugins: [solid()],
+  plugins: [solid(), disableHmrClientPlugin],
   server: {
     port: Number(process.env.MIRA_TUI_PORT ?? 3002),
     host: true,
     strictPort: false,
     cors: true,
-    hmr: process.env.DISABLE_HMR === 'true'
-      ? false
-      : {
-          host: process.env.MIRA_HMR_HOST ?? 'localhost',
-          ...(process.env.MIRA_TUI_HMR_PORT ? { port: Number(process.env.MIRA_TUI_HMR_PORT) } : {}),
-        },
+    hmr: HMR_CONFIG,
     // Allow Cloudflare tunnel hosts — Vite ServerOptions allows boolean true
     allowedHosts: true,
     proxy: {
       // Proxy to the Mira server (Bun Hono) — same target as web.
       // changeOrigin: true forwards the Origin/Authorization headers
       // so the server's auth gate sees the bearer token.
+      '/me': { target: API_TARGET, changeOrigin: true },
       '/session': { target: API_TARGET, changeOrigin: true },
       '/tools': { target: API_TARGET, changeOrigin: true },
       '/permission': { target: API_TARGET, changeOrigin: true },

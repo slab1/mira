@@ -5,10 +5,37 @@
 set -uo pipefail
 
 PORT="${MIRA_PORT:-4096}"
-TUNNEL_URL="${1:-}"
+TUNNEL_URL=""
 INTERVAL=60
-if [[ "${1:-}" == "--tunnel-url" ]]; then TUNNEL_URL="${2:-}"; shift 2; fi
-if [[ "${1:-}" == "--interval" ]]; then INTERVAL="${2:-60}"; shift 2; fi
+ONCE=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tunnel-url)
+      TUNNEL_URL="${2:-}"
+      shift 2
+      ;;
+    --interval)
+      INTERVAL="${2:-60}"
+      shift 2
+      ;;
+    --once)
+      ONCE=1
+      shift
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+    *)
+      if [[ -z "$TUNNEL_URL" ]]; then
+        TUNNEL_URL="$1"
+      fi
+      shift
+      ;;
+  esac
+done
+
 if [[ -z "$TUNNEL_URL" && -f "${HOME}/.mira/cf-public-url.txt" ]]; then
   TUNNEL_URL="$(cat "${HOME}/.mira/cf-public-url.txt" 2>/dev/null || echo "")"
 fi
@@ -30,7 +57,7 @@ check_url() {
 }
 
 # One-shot check
-if [[ "${1:-}" == "--once" ]] || [[ "$INTERVAL" == "0" ]]; then
+if [[ "$ONCE" == "1" ]] || [[ "$INTERVAL" == "0" ]]; then
   check_url "http://127.0.0.1:${PORT}" "local"
   [ -n "$TUNNEL_URL" ] && check_url "$TUNNEL_URL" "tunnel"
   exit 0

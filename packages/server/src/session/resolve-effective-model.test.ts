@@ -1,17 +1,20 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import { resolveEffectiveModel } from './prompt.js'
 
-// Pin ANTHROPIC_API_KEY so the first routing.fallbacks entry
-// (anthropic/claude-sonnet-4) resolves deterministically. Without it, only
-// GOOGLE_API_KEY may be present in the shell → fallback lands on
-// google/gemini-2.0-flash instead. Restore the original env after the suite.
+// Pin OPENROUTER_API_KEY + ANTHROPIC_API_KEY so the first routing.fallbacks
+// entry (openrouter/google/gemini-2.5-flash) resolves deterministically even if
+// ~/.mira/mira.env provides NVIDIA_API_KEY. Restore original env after the suite.
 const savedAnthropicKey = process.env.ANTHROPIC_API_KEY
+const savedOpenRouterKey = process.env.OPENROUTER_API_KEY
 beforeAll(() => {
   process.env.ANTHROPIC_API_KEY = 'test-key'
+  process.env.OPENROUTER_API_KEY = 'test-key'
 })
 afterAll(() => {
   if (savedAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY
   else process.env.ANTHROPIC_API_KEY = savedAnthropicKey
+  if (savedOpenRouterKey === undefined) delete process.env.OPENROUTER_API_KEY
+  else process.env.OPENROUTER_API_KEY = savedOpenRouterKey
 })
 
 describe('resolveEffectiveModel retired guard', () => {
@@ -21,7 +24,7 @@ describe('resolveEffectiveModel retired guard', () => {
       task: 'stream',
     })
     expect(model).not.toContain('claude-3-opus-20240229')
-    expect(model).toContain('claude-sonnet-4')
+    expect(model).toContain('gemini-2.5-flash')
   })
 
   it('falls back when NVIDIA EOL models (llama-3.3-70b-instruct / deepseek-v4-flash) are requested', () => {

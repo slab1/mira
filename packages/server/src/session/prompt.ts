@@ -38,7 +38,7 @@ import { openFindingsForContext } from '../tools/findings.js'
 import { sharedGoals } from '../strategic/goals.js'
 import type { Todo, JsonValue, MiraConfig } from '../types/index.js'
 import type { MiraDB } from '../storage/db.js'
-import { getUserNameForOwner } from '../storage/users.js'
+import { getUserByOwner, getUserNameForOwner, setUserNameForOwner } from '../storage/users.js'
 import { maybeAutoTitle } from './title.js'
 import { loadSkills } from '../skills/loader.js'
 import { getAgentTemplates, isKnownAgent, isBashCommandAllowed } from '../agents/templates.js'
@@ -68,6 +68,50 @@ import {
   resolveModelViaGateway,
 } from './helpers.js'
 
+
+const INTRO_NON_NAME_WORDS = new Set([
+  'a', 'an', 'the', 'me', 'you', 'it', 'that', 'this', 'here', 'there', 'not', 'no',
+  'user', 'mira', 'assistant', 'bot', 'ai', 'something', 'anything', 'someone', 'anyone',
+  'everything', 'nothing', 'sir', 'boss', 'chief', 'bro', 'dude', 'friend', 'madam',
+  'back', 'later', 'soon', 'if', 'when', 'whenever', 'maybe', 'again', 'whatever',
+  'ready', 'done', 'finished', 'crazy', 'stupid', 'wrong', 'right', 'busy', 'free',
+  'available', 'sure', 'now', 'today', 'tomorrow', 'home', 'away', 'out', 'in', 'up',
+  'down', 'off', 'on', 'testing', 'trying', 'asking', 'sorry', 'variable', 'function',
+  'file', 'code', 'error', 'null', 'undefined', 'true', 'false',
+])
+
+/**
+ * Conservatively extract a user's self-introduced display name from chat text
+ * (e.g. "My name is Ada", "Remember my name is Alex", "Please call me Sam").
+ */
+export function extractIntroducedUserName(userText: string): string | undefined {
+  const trimmed = userText.trim()
+  if (!trimmed || trimmed.length > 500 || trimmed.includes('```')) return undefined
+  const clauses = trimmed
+    .split(/(?:[.!?\n]+|,\s*(?=(?:nice|glad|pleased|what|can|could|would|will|how|who|where|when|why|and|i\b|please\b)))/i)
+    .map((c) => c.trim())
+    .filter(Boolean)
+
+  for (const clause of clauses) {
+    const cleaned = clause
+      .replace(/^(?:(?:hi|hello|hey|yo|mira)(?:\s+mira)?[,!\s]+)+/i, '')
+      .replace(/\s*(?:,\s*)?(?:please|thanks|thank you|for future reference|from now on)$/i, '')
+      .trim()
+    const m = cleaned.match(
+      /^(?:please\s+)?(?:(?:remember\s+(?:that\s+)?my\s+name\s+is)|(?:my\s+name\s+is)|(?:(?:you\s+can\s+)?call\s+me))\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’.-]*(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’.-]*){0,2})$/i,
+    )
+    if (!m?.[1]) continue
+    const candidate = m[1].replace(/[.,!?;:]+$/, '').trim()
+    if (!candidate || candidate.length > 50) continue
+    const words = candidate.split(/\s+/)
+    if (words.length > 3) continue
+    if (words.some((w) => INTRO_NON_NAME_WORDS.has(w.toLowerCase()))) continue
+    const isCallMe = /\bcall\s+me\b/i.test(cleaned)
+    if (isCallMe && words.length > 2) continue
+    return candidate
+  }
+  return undefined
+}
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -612,6 +656,8 @@ export class SessionPrompt {
       model: effectiveModel,
       cwd: resolvedCwd,
       projectId: parentProjectId,
+      ownerID: directParent?.ownerID ?? null,
+      orgID: directParent?.orgID ?? null,
     })
     if (opts.onSessionCreated) {
       await opts.onSessionCreated(s.id)
@@ -635,9 +681,10 @@ export class SessionPrompt {
       const runModel = effectiveModel ?? s.model
       // Agent persona for subagent loop
       const persona = agent ? getAgentTemplates()[agent]?.system : undefined
+      const subOwner = s.ownerID ?? directParent?.ownerID ?? 'default'
       const basePrompt = await buildSystemPrompt(
         s.cwd ?? resolvedCwd ?? process.cwd(),
-        await getUserNameForOwner(this.deps.db, s.ownerID),
+        await getUserNameForOwner(this.deps.db, subOwner),
       )
       const systemPrompt = persona ? `${persona}\n\n${basePrompt}` : basePrompt
 
@@ -736,14 +783,41 @@ export class SessionPrompt {
         timestamp: Date.now(),
       })
     }
-    const basePrompt = await buildSystemPrompt(
+    const effectiveOwner = session.ownerID ?? options?.callerOwner ?? 'default'
+    const presentOwner = options?.callerOwner ?? undefined
+    const activeOwner = presentOwner ?? effectiveOwner
+    const introducedName = extractIntroducedUserName(userText)
+    if (introducedName) {
+      try {
+        const updatedUser = await setUserNameForOwner(this.deps.db, activeOwner, introducedName)
+        this.deps.bus.publish({
+          type: 'me.updated',
+          sessionID,
+          payload: { owner: activeOwner, name: updatedUser.name },
+          timestamp: updatedUser.updatedAt,
+        })
+      } catch {}
+    }
+
+    const ownerUser = await getUserByOwner(this.deps.db, effectiveOwner)
+    const presentUserName = presentOwner
+      ? await getUserNameForOwner(this.deps.db, presentOwner)
+      : undefined
+    const rawBasePrompt = await buildSystemPrompt(
       session.cwd ?? process.cwd(),
-      await getUserNameForOwner(this.deps.db, session.ownerID),
+      ownerUser.name,
       // Who is present this turn (P3.3): same-org member ≠ absent session owner
-      options?.callerOwner
-        ? await getUserNameForOwner(this.deps.db, options.callerOwner)
-        : undefined,
+      presentUserName,
     )
+    const profileBio =
+      ownerUser.profile &&
+      typeof ownerUser.profile === 'object' &&
+      typeof ownerUser.profile.bio === 'string'
+        ? ownerUser.profile.bio.trim()
+        : ''
+    const basePrompt = profileBio
+      ? `${rawBasePrompt}\n\nUser profile note: ${profileBio}`
+      : rawBasePrompt
     // Agent persona (researcher/coder/reviewer) prepended when set on the session or per-turn
     const persona = effectiveAgent ? getAgentTemplates()[effectiveAgent]?.system : undefined
     const systemPrompt = persona ? `${persona}\n\n${basePrompt}` : basePrompt
@@ -901,6 +975,18 @@ export class SessionPrompt {
     let accumulatedReasoning = ''
     let turnHadError = false
     this.getDoomDetector(sessionID).reset()
+    const maxDoomRecoveriesRaw = Number(process.env.MIRA_DOOM_MAX_RECOVERIES ?? 3)
+    const MAX_DOOM_RECOVERIES =
+      Number.isFinite(maxDoomRecoveriesRaw) && maxDoomRecoveriesRaw >= 0
+        ? Math.floor(maxDoomRecoveriesRaw)
+        : 3
+    let doomRecoveryCount = 0
+    let activeDoomGuidance: string | null = null
+    const doomAdjustmentHistory: string[] = []
+    const blockedLoopFingerprints = new Map<
+      string,
+      { reason: string; tool: string; pattern?: string[] }
+    >()
     const lf = initLangfuse()
     const trace = lf?.trace?.('session') ?? { update: () => {}, end: () => {} }
     // usage-learning counters for recordSession at finalize
@@ -936,6 +1022,7 @@ export class SessionPrompt {
     loop: while (step < MAX_STEPS) {
       step++
       let stepDoomed = false
+      let stepAdjusted = false
 
       // Honour an explicit cancellation (e.g. cancelJob / /session/:id/abort) between steps —
       // abort the run promptly rather than waiting for the next stream call.
@@ -1090,6 +1177,27 @@ export class SessionPrompt {
         )
       }
 
+      const effectiveCwd = sessionCwd ?? process.cwd()
+      const approachingHint = this.getDoomDetector(sessionID).getApproachingWarning()
+      const guidanceSections: string[] = [
+        `[Workspace Context]\nCurrent working directory (cwd): ${effectiveCwd}. Use relative paths (e.g. ".") or paths inside ${effectiveCwd} when calling read, glob, grep, edit, or write. Do not invent paths outside cwd (such as /workspace).`,
+      ]
+      if (activeDoomGuidance) {
+        guidanceSections.push(`[DOOM-LOOP DETECTED — ADJUST STRATEGY NOW]\n${activeDoomGuidance}`)
+      } else if (doomAdjustmentHistory.length > 0) {
+        guidanceSections.push(
+          `[Prior doom-loop adjustments in this turn — do NOT repeat blocked approaches]\n${doomAdjustmentHistory.map((g) => `- ${g}`).join('\n')}`,
+        )
+      }
+      if (approachingHint) {
+        guidanceSections.push(`[Loop Awareness]\n${approachingHint}`)
+      }
+      const effectiveSystemPrompt =
+        guidanceSections.length > 0
+          ? `${systemPrompt}\n\n${guidanceSections.join('\n\n')}`
+          : systemPrompt
+      activeDoomGuidance = null
+
       const maxStreamAttempts = 3
       let streamDone = false
       for (let attempt = 1; attempt <= maxStreamAttempts && !streamDone; attempt++) {
@@ -1098,7 +1206,7 @@ export class SessionPrompt {
             model,
             messages: streamMessages,
             tools: this.filterToolsForAgent(opts.agent), // lane-contract enforcement (agent allowlist)
-            system: systemPrompt,
+            system: effectiveSystemPrompt,
             signal: loopSignal,
             sessionID,
           })
@@ -1238,9 +1346,78 @@ export class SessionPrompt {
         isError: boolean
       }> = []
       for (const tc of toolCalls) {
-        // Doom-loop detection — per-session
-        const doomSignal = this.getDoomDetector(sessionID).check({ name: tc.name, args: tc.args })
+        if (stepAdjusted) {
+          const skipped = 'Skipped due to doom-loop strategy adjustment — review the adjustment guidance and change approach.'
+          send('tool_result', { toolCallID: tc.id, name: tc.name, result: { error: skipped }, isError: true })
+          await this.persistToolResult(assistantMessageID, sessionID, tc, { error: skipped }, true)
+          toolResults.push({
+            toolCallID: tc.id,
+            name: tc.name,
+            result: { error: skipped },
+            isError: true,
+          })
+          continue
+        }
+
+        // Doom-loop detection — per-session (two-stage: warn & adjust first, hard-break if repeated)
+        const detector = this.getDoomDetector(sessionID)
+        const fp = detector.fingerprintOf(tc.name, tc.args)
+        const priorBlocked = blockedLoopFingerprints.get(fp)
+        const doomSignal = priorBlocked
+          ? {
+              detected: true,
+              reason: priorBlocked.reason,
+              tool: tc.name,
+              pattern: priorBlocked.pattern,
+            }
+          : detector.check({ name: tc.name, args: tc.args })
         if (doomSignal.detected) {
+          if (doomRecoveryCount < MAX_DOOM_RECOVERIES) {
+            doomRecoveryCount++
+            if (!priorBlocked) {
+              blockedLoopFingerprints.set(fp, {
+                reason: doomSignal.reason ?? 'repeating tool call',
+                tool: tc.name,
+                pattern: doomSignal.pattern,
+              })
+            }
+            detector.reset()
+            const extraHint =
+              tc.name === 'bash'
+                ? ' If bash failed due to sandbox/container runtime limits, stop calling bash and use glob, grep, read, write, or edit tools directly instead.'
+                : ` Use paths inside cwd "${effectiveCwd}" (or relative ".") instead of external paths.`
+            const adjustMsg = `${priorBlocked ? 'FINAL ADJUSTMENT WARNING: ' : ''}Doom-loop detected (${doomSignal.reason ?? 'repeating tool call'}) for tool "${tc.name}" at step ${step} (recovery ${doomRecoveryCount}/${MAX_DOOM_RECOVERIES}). Execution of this repeated call was blocked so you can adjust strategy. Do NOT repeat "${tc.name}" with the same arguments; switch tools or arguments, or report findings to the user.${extraHint}`
+            send('doom_loop_adjusted', {
+              tool: tc.name,
+              args: tc.args,
+              step,
+              reason: doomSignal.reason,
+              pattern: doomSignal.pattern,
+              attempt: doomRecoveryCount,
+              maxAttempts: MAX_DOOM_RECOVERIES,
+              message: adjustMsg,
+            })
+            send('tool_result', {
+              toolCallID: tc.id,
+              name: tc.name,
+              result: { error: adjustMsg, doomLoopDetected: true, action: 'adjust' },
+              isError: true,
+            })
+            await this.persistToolResult(assistantMessageID, sessionID, tc, { error: adjustMsg }, true)
+            toolResults.push({
+              toolCallID: tc.id,
+              name: tc.name,
+              result: { error: adjustMsg, doomLoopDetected: true, action: 'adjust' },
+              isError: true,
+            })
+            activeDoomGuidance = adjustMsg
+            doomAdjustmentHistory.push(
+              `Step ${step}: Avoid repeating ${tc.name} with args ${JSON.stringify(tc.args).slice(0, 100)} (${doomSignal.reason ?? 'repeating tool call'})`,
+            )
+            stepAdjusted = true
+            continue
+          }
+
           const msg = `Doom-loop detected: ${doomSignal.reason ?? 'repeating tool call'} — tool "${tc.name}". Breaking loop and asking user.`
           send('doom_loop', {
             tool: tc.name,
@@ -1478,10 +1655,77 @@ export class SessionPrompt {
         }
         if (isError) toolErrorCount++
 
-        // Doom-loop detection for repeated errors
+        // Doom-loop detection for repeated errors (two-stage: warn & adjust first, hard-break if repeated)
         if (isError) {
-          const errSignal = this.getDoomDetector(sessionID).checkError(tc.name, result)
+          const errKey = `err:${tc.name}:${JSON.stringify(result ?? '').slice(0, 200)}`
+          const priorErrBlocked = blockedLoopFingerprints.get(errKey)
+          const errSignal = priorErrBlocked
+            ? { detected: true, reason: priorErrBlocked.reason, tool: tc.name }
+            : this.getDoomDetector(sessionID).checkError(tc.name, result)
           if (errSignal.detected) {
+            if (doomRecoveryCount < MAX_DOOM_RECOVERIES) {
+              doomRecoveryCount++
+              if (!priorErrBlocked) {
+                blockedLoopFingerprints.set(errKey, {
+                  reason: errSignal.reason ?? 'repeating error',
+                  tool: tc.name,
+                })
+              }
+              if (!blockedLoopFingerprints.has(fp)) {
+                blockedLoopFingerprints.set(fp, {
+                  reason: errSignal.reason ?? 'repeating error',
+                  tool: tc.name,
+                })
+              }
+              this.getDoomDetector(sessionID).reset()
+              const errSnippet = JSON.stringify(result ?? '').slice(0, 180)
+              const envHint = errSnippet.toLowerCase().includes('outside allowed roots')
+                ? ` Use relative paths (".") or paths inside cwd "${effectiveCwd}" instead.`
+                : errSnippet.toLowerCase().includes('container runtime')
+                  ? ' Bash is unavailable in this environment; use glob, grep, read, write, or edit directly.'
+                  : ''
+              const adjustMsg = `Doom-loop detected (${errSignal.reason ?? 'repeating error'}) on tool "${tc.name}" at step ${step} (recovery ${doomRecoveryCount}/${MAX_DOOM_RECOVERIES}; error: ${errSnippet}). Stop repeating this failing pattern.${envHint} Analyze why "${tc.name}" failed, try a different tool or valid arguments, or tell the user what is blocked.`
+              send('doom_loop_adjusted', {
+                tool: tc.name,
+                args: tc.args,
+                step,
+                reason: errSignal.reason,
+                attempt: doomRecoveryCount,
+                maxAttempts: MAX_DOOM_RECOVERIES,
+                message: adjustMsg,
+              })
+              await this.persistToolResult(
+                assistantMessageID,
+                sessionID,
+                tc,
+                { error: adjustMsg, originalError: result },
+                true,
+              )
+              toolResults.push({
+                toolCallID: tc.id,
+                name: tc.name,
+                result: {
+                  error: adjustMsg,
+                  originalError: result,
+                  doomLoopDetected: true,
+                  action: 'adjust',
+                },
+                isError: true,
+              })
+              this.deps.bus.publish({
+                type: 'part.created',
+                sessionID,
+                payload: { tool: tc.name, toolCallID: tc.id, result: { error: adjustMsg } },
+                timestamp: Date.now(),
+              })
+              activeDoomGuidance = adjustMsg
+              doomAdjustmentHistory.push(
+                `Step ${step}: Avoid repeating failing ${tc.name} with args ${JSON.stringify(tc.args).slice(0, 100)} (${errSignal.reason ?? 'repeating error'})`,
+              )
+              stepAdjusted = true
+              continue
+            }
+
             const msg = `Doom-loop detected: ${errSignal.reason ?? 'repeating error'} — tool "${tc.name}". Breaking loop and asking user.`
             send('doom_loop', {
               tool: tc.name,
@@ -1569,41 +1813,58 @@ export class SessionPrompt {
         })
       }
 
-      // Doom-loop detection for repeated LLM outputs — skip if already doomed this step (deduplicate)
-      if (!stepDoomed) {
+      // Doom-loop detection for repeated LLM outputs — skip if already doomed or adjusted this step
+      if (!stepDoomed && !stepAdjusted) {
         const llmSignal = this.getDoomDetector(sessionID).checkLLMOutput(stepText)
         if (llmSignal.detected) {
-          const msg = `Doom-loop detected: ${llmSignal.reason ?? 'repeating LLM output'} — breaking loop and asking user.`
-          send('doom_loop', {
-            step,
-            reason: llmSignal.reason,
-          })
-          this.deps.bus.publish({
-            type: 'server.error',
-            sessionID,
-            payload: {
-              error: msg,
-              source: 'doom-loop',
+          if (doomRecoveryCount < MAX_DOOM_RECOVERIES) {
+            doomRecoveryCount++
+            this.getDoomDetector(sessionID).reset()
+            const adjustMsg = `Doom-loop detected (${llmSignal.reason ?? 'repeating LLM output'}) at step ${step}. You repeated the same response without progress. Change your strategy: use a different diagnostic tool, adjust arguments, or provide a direct final answer to the user.`
+            send('doom_loop_adjusted', {
               tool: 'llm-output',
-            } as JsonValue,
-            timestamp: Date.now(),
-          })
-          doomLoopCount++
-          this.persistDoomPattern({
-            sessionID,
-            tool: 'llm-output',
-            reason: llmSignal.reason ?? 'repeating LLM output',
-            pattern: llmSignal.pattern,
-            step,
-            stepText,
-          })
-          accumulatedText += `\n\n[System: ${msg}]\n`
-          messages.push({ role: 'assistant', content: accumulatedText })
-          messages.push({
-            role: 'user',
-            content: `[Doom-loop guard: ${msg} — please clarify or adjust.]`,
-          })
-          break
+              step,
+              reason: llmSignal.reason,
+              attempt: doomRecoveryCount,
+              maxAttempts: MAX_DOOM_RECOVERIES,
+              message: adjustMsg,
+            })
+            activeDoomGuidance = adjustMsg
+            doomAdjustmentHistory.push(`Step ${step}: Avoid repeating identical assistant output`)
+            stepAdjusted = true
+          } else {
+            const msg = `Doom-loop detected: ${llmSignal.reason ?? 'repeating LLM output'} — breaking loop and asking user.`
+            send('doom_loop', {
+              step,
+              reason: llmSignal.reason,
+            })
+            this.deps.bus.publish({
+              type: 'server.error',
+              sessionID,
+              payload: {
+                error: msg,
+                source: 'doom-loop',
+                tool: 'llm-output',
+              } as JsonValue,
+              timestamp: Date.now(),
+            })
+            doomLoopCount++
+            this.persistDoomPattern({
+              sessionID,
+              tool: 'llm-output',
+              reason: llmSignal.reason ?? 'repeating LLM output',
+              pattern: llmSignal.pattern,
+              step,
+              stepText,
+            })
+            accumulatedText += `\n\n[System: ${msg}]\n`
+            messages.push({ role: 'assistant', content: accumulatedText })
+            messages.push({
+              role: 'user',
+              content: `[Doom-loop guard: ${msg} — please clarify or adjust.]`,
+            })
+            break
+          }
         }
       }
 

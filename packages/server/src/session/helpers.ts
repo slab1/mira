@@ -38,45 +38,61 @@ export function pruneReasoning(messages: LoopMessage[]): LoopMessage[] {
  * Aggregates multiple tool calls into summary messages.
  */
 export function summarizeToolTraces(messages: LoopMessage[], stepCount: number): LoopMessage[] {
-  if (stepCount < 3) return messages
+  if (stepCount < 3 || messages.length <= 10) return messages
+
+  // Always preserve at least the recent tail of active tool interactions verbatim so the LLM
+  // can see tool outputs, validation errors, and doom-loop adjustment guidance.
+  let preserveStart = Math.max(0, messages.length - 8)
+  // Align preserveStart cleanly on a non-tool boundary so tool results never become orphaned
+  while (preserveStart > 0 && messages[preserveStart]?.role === 'tool') {
+    preserveStart--
+  }
+  // Never split right after an assistant message that had toolCalls without its following tool results
+  if (
+    preserveStart > 0 &&
+    messages[preserveStart - 1]?.role === 'assistant' &&
+    messages[preserveStart - 1]?.toolCalls?.length
+  ) {
+    preserveStart--
+  }
+
+  const head = messages.slice(0, preserveStart)
+  const tail = messages.slice(preserveStart)
+  if (head.length === 0) return messages
 
   const summarized: LoopMessage[] = []
   let toolCallBuffer: LoopMessage[] = []
 
-  for (const msg of messages) {
-    if (msg.toolCalls?.length || msg.toolResults?.length) {
-      toolCallBuffer.push(msg)
-    } else {
-      if (toolCallBuffer.length > 0) {
-        // Summarize buffered tool calls
-        const toolNames = toolCallBuffer
-          .flatMap((m) => m.toolCalls?.map((tc) => tc.name) ?? [])
-          .join(', ')
-        const results = toolCallBuffer
-          .flatMap((m) => m.toolResults?.map((tr) => `${tr.name}: ${JSON.stringify(tr.result).slice(0, 100)}`) ?? [])
-          .join('; ')
-        summarized.push({
-          role: 'assistant',
-          content: `[Tool Execution Summary: ${toolNames}] Results: ${results}`,
-        })
-        toolCallBuffer = []
-      }
-      summarized.push(msg)
-    }
-  }
-
-  // Flush any remaining buffered tool calls
-  if (toolCallBuffer.length > 0) {
+  const flushBuffer = () => {
+    if (toolCallBuffer.length === 0) return
     const toolNames = toolCallBuffer
       .flatMap((m) => m.toolCalls?.map((tc) => tc.name) ?? [])
       .join(', ')
+    const results = toolCallBuffer
+      .flatMap((m) =>
+        m.toolResults?.map((tr) => `${tr.name}: ${JSON.stringify(tr.result).slice(0, 120)}`) ?? [],
+      )
+      .join('; ')
     summarized.push({
       role: 'assistant',
-      content: `[Tool Execution Summary: ${toolNames}]`,
+      content: results
+        ? `[Earlier Tool Execution Summary: ${toolNames || 'tools'}] Results: ${results}`
+        : `[Earlier Tool Execution Summary: ${toolNames || 'tools'}]`,
     })
+    toolCallBuffer = []
   }
 
-  return summarized
+  for (const msg of head) {
+    if (msg.toolCalls?.length || msg.toolResults?.length || msg.role === 'tool') {
+      toolCallBuffer.push(msg)
+    } else {
+      flushBuffer()
+      summarized.push(msg)
+    }
+  }
+  flushBuffer()
+
+  return [...summarized, ...tail]
 }
 
 /**

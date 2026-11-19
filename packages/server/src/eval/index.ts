@@ -264,6 +264,7 @@ function parseTier(argv: string[]): TierName | 'all' {
   const idx = argv.findIndex((a) => a === '--tier' || a === '-t')
   const raw = idx !== -1 ? argv[idx + 1] : argv.find((a) => a.startsWith('--tier='))?.split('=')[1]
   const v = (raw ?? 'pr').toLowerCase()
+  if (v === 'fast') return 'pr'
   if (v === 'all' || v === 'pr' || v === 'nightly' || v === 'prod') return v
   console.warn(`[eval] unrecognized tier "${raw}", defaulting to pr`)
   return 'pr'
@@ -286,6 +287,77 @@ export function printReport(report: EvalReport): void {
 }
 
 if (import.meta.main) {
+  const { existsSync, mkdirSync, readdirSync, readFileSync } = await import('node:fs')
+  const { dirname, join, resolve } = await import('node:path')
+
+  if (Bun.argv.includes('--check-drift')) {
+    const baselineEnv = process.env.EVAL_BASELINE_PATH ?? 'eval/baseline.json'
+    const baselineCandidates = [
+      resolve(process.cwd(), baselineEnv),
+      resolve(process.cwd(), '../..', baselineEnv),
+    ]
+    const baselinePath = baselineCandidates.find((p) => existsSync(p))
+    const resultDirs = [
+      resolve(process.cwd(), 'eval-results'),
+      resolve(process.cwd(), '../../eval-results'),
+      resolve(process.cwd(), '../../packages/server/eval-results'),
+    ].filter((d) => existsSync(d))
+
+    const reports: Array<{ suite: string; passRate: number; durationMs?: number }> = []
+    for (const dir of resultDirs) {
+      for (const entry of readdirSync(dir)) {
+        if (!entry.endsWith('.json')) continue
+        try {
+          const parsed = JSON.parse(readFileSync(join(dir, entry), 'utf8')) as {
+            suite?: string
+            passRate?: number
+            durationMs?: number
+          }
+          if (typeof parsed.passRate === 'number') {
+            reports.push({
+              suite: parsed.suite ?? entry.replace(/\.json$/, ''),
+              passRate: parsed.passRate,
+              durationMs: parsed.durationMs,
+            })
+          }
+        } catch {}
+      }
+    }
+
+    if (!baselinePath) {
+      console.log(
+        `[eval:drift] No baseline file found (${baselineEnv}); observed ${reports.length} suite report(s) — skipping strict drift failure.`,
+      )
+      process.exit(0)
+    }
+
+    const baseline = JSON.parse(readFileSync(baselinePath, 'utf8')) as Record<
+      string,
+      { passRate?: number; minPassRate?: number }
+    >
+    const maxDrop = Number(process.env.EVAL_DRIFT_MAX_DROP ?? '0.1')
+    const regressions: string[] = []
+    for (const r of reports) {
+      const base = baseline[r.suite]
+      if (!base) continue
+      const floor =
+        typeof base.minPassRate === 'number'
+          ? base.minPassRate
+          : typeof base.passRate === 'number'
+            ? base.passRate - maxDrop
+            : 0
+      if (r.passRate < floor) {
+        regressions.push(`${r.suite}: passRate=${r.passRate.toFixed(2)} < floor=${floor.toFixed(2)}`)
+      }
+    }
+    if (regressions.length > 0) {
+      console.error(`[eval:drift] Regression detected:\n  - ${regressions.join('\n  - ')}`)
+      process.exit(1)
+    }
+    console.log(`[eval:drift] OK — ${reports.length} suite report(s) within baseline tolerances.`)
+    process.exit(0)
+  }
+
   const suite = parseSuite(Bun.argv)
   const runner = new EvalRunner()
 
@@ -301,8 +373,10 @@ if (import.meta.main) {
     if (Bun.argv.includes('--json')) {
       const out = Bun.argv.includes('--out') ? Bun.argv[Bun.argv.indexOf('--out') + 1] : undefined
       const json = JSON.stringify(report, null, 2)
-      if (out) await Bun.write(out, json)
-      else console.log(json)
+      if (out) {
+        mkdirSync(dirname(out), { recursive: true })
+        await Bun.write(out, json)
+      } else console.log(json)
     }
     if (process.env.GITHUB_OUTPUT) {
       try {
@@ -322,8 +396,10 @@ if (import.meta.main) {
   if (Bun.argv.includes('--json')) {
     const out = Bun.argv.includes('--out') ? Bun.argv[Bun.argv.indexOf('--out') + 1] : undefined
     const json = JSON.stringify(report, null, 2)
-    if (out) await Bun.write(out, json)
-    else console.log(json)
+    if (out) {
+      mkdirSync(dirname(out), { recursive: true })
+      await Bun.write(out, json)
+    } else console.log(json)
   }
   // GitHub Actions output
   if (process.env.GITHUB_OUTPUT) {

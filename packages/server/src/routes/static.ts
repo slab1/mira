@@ -51,6 +51,8 @@ const API_ROUTE_PREFIXES = [
   '/changes',
   '/missions',
   '/cost',
+  '/research',
+  '/review',
   // Registered route (index.ts: /eval/model/:model) that had no prefix.
   '/eval',
 ]

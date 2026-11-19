@@ -15,11 +15,14 @@ import type { Gateway, GatewayChunk } from '../gateway/index.js'
 // to exercise the resolve vs fallback paths; originals are always restored.
 const savedNvidiaKey = process.env.NVIDIA_API_KEY
 const savedAnthropicKey = process.env.ANTHROPIC_API_KEY
+const savedOpenRouterKey = process.env.OPENROUTER_API_KEY
 afterEach(() => {
   if (savedNvidiaKey === undefined) delete process.env.NVIDIA_API_KEY
   else process.env.NVIDIA_API_KEY = savedNvidiaKey
   if (savedAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY
   else process.env.ANTHROPIC_API_KEY = savedAnthropicKey
+  if (savedOpenRouterKey === undefined) delete process.env.OPENROUTER_API_KEY
+  else process.env.OPENROUTER_API_KEY = savedOpenRouterKey
 })
 
 const stubGateway: Gateway = {
@@ -47,7 +50,7 @@ describe('agent model via gateway (P0-1 exp-1)', () => {
       sessionModel: 'claude-sonnet-4',
     })
     // Gateway normalization prefixes unprefixed models with default provider
-    expect(resolved).toMatch(/^(nvidia\/)?claude-3.5-sonnet$/)
+    expect(resolved).toMatch(/^(nvidia\/|openrouter\/)?claude-3.5-sonnet$/)
     expect(resolved).toContain('claude-3.5-sonnet')
   })
 
@@ -59,14 +62,15 @@ describe('agent model via gateway (P0-1 exp-1)', () => {
   })
 
   test('selection flows through gateway resolveModel (default-provider normalization)', () => {
-    process.env.NVIDIA_API_KEY = 'test-key'
+    process.env.OPENROUTER_API_KEY = 'test-key'
     delete process.env.ANTHROPIC_API_KEY
-    // Default provider is nvidia — an unprefixed model gains that prefix via
+    // Default provider is openrouter — an unprefixed model gains that prefix via
     // the gateway path; raw string passthrough would return it unchanged.
-    expect(resolveEffectiveModel({ explicitModel: 'deepseek-chat' })).toBe('nvidia/deepseek-chat')
+    expect(resolveEffectiveModel({ explicitModel: 'deepseek-chat' })).toBe('openrouter/deepseek-chat')
   })
 
   test('falls back to raw candidate when gateway cannot resolve (no API key)', () => {
+    delete process.env.OPENROUTER_API_KEY
     delete process.env.NVIDIA_API_KEY
     delete process.env.ANTHROPIC_API_KEY
     expect(resolveEffectiveModel({ explicitModel: 'deepseek-chat' })).toBe('deepseek-chat')

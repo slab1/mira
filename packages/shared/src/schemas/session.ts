@@ -138,6 +138,7 @@ export const busEventTypeSchema = z.enum([
   'sandbox.exited',
   'memory.evicted',
   'codegraph.built',
+  'me.updated',
 ])
 export type BusEventType = z.infer<typeof busEventTypeSchema>
 

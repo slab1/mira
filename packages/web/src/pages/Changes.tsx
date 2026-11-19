@@ -1,8 +1,31 @@
 import { createSignal, onMount, Show, For } from 'solid-js'
-import { req } from '../api/client'
+import {
+  api,
+  req,
+  type ReviewCoverageManifest,
+  type ReviewDisposition,
+  type Session,
+} from '../api/client'
 import { DataStateBadge, type OperationalState } from '../components/DataState'
 import { Card, SectionHeader } from '../components/DesignSystem'
 import { ProgressiveDisclosure } from '../components/ProgressiveDisclosure'
+import { toast } from '../components/Toast'
+
+const SECTION_TITLES: Record<string, string> = {
+  changed_files: '1. Changed Files',
+  callers_dependents: '2. Callers & Reverse-Import Dependents',
+  tool_event_registrations: '3. Tool & Event Registrations',
+  adapters_hooks: '4. Adapters & Hooks',
+  configuration_schema_migrations: '5. Configuration, Schema & Migrations',
+  expected_tests: '6. Expected Tests',
+  analysis_limitations: '7. Analysis Limitations',
+}
+
+function manifestStateColor(st: string): string {
+  if (st === 'complete') return 'var(--ok)'
+  if (st === 'in_progress') return 'var(--accent)'
+  return 'var(--warn)'
+}
 
 interface ChangeEntry {
   id: string
@@ -34,11 +57,69 @@ export default function ChangesPage() {
   const [state, setState] = createSignal<OperationalState>('loading')
   const [showAll, setShowAll] = createSignal(false)
 
+  // Review Completeness Manifest state
+  const [sessions, setSessions] = createSignal<Session[]>([])
+  const [selectedSessionId, setSelectedSessionId] = createSignal<string>('')
+  const [manifest, setManifest] = createSignal<ReviewCoverageManifest | null>(null)
+  const [generatingManifest, setGeneratingManifest] = createSignal(false)
+
+  const loadManifestForSession = async (sid: string) => {
+    if (!sid) return
+    try {
+      const res = await api.getSessionReviewManifest(sid)
+      setManifest(res.latest ?? null)
+    } catch {
+      setManifest(null)
+    }
+  }
+
+  const handleGenerateManifest = async () => {
+    const sid = selectedSessionId()
+    if (!sid) {
+      toast.error('Select a session first to generate a Review Completeness Manifest')
+      return
+    }
+    setGeneratingManifest(true)
+    try {
+      const m = await api.generateReviewManifest(sid)
+      setManifest(m)
+      toast.success('Generated 7-section Review Completeness Manifest')
+    } catch (e) {
+      toast.error(`Manifest generation failed: ${(e as Error).message}`)
+    } finally {
+      setGeneratingManifest(false)
+    }
+  }
+
+  const handleUpdateSectionDisposition = async (sectionId: any, disposition: ReviewDisposition) => {
+    const cur = manifest()
+    if (!cur) return
+    try {
+      const updated = await api.updateReviewManifest(cur.id, {
+        section: { id: sectionId, disposition },
+      })
+      setManifest(updated)
+    } catch (e) {
+      toast.error(`Update failed: ${(e as Error).message}`)
+    }
+  }
+
   const loadChanges = async () => {
     setState('loading')
     setError(null)
     try {
-      const res = await req<any>('/changes')
+      const [res, sessList] = await Promise.all([
+        req<any>('/changes'),
+        api.listSessions().catch(() => [] as Session[]),
+      ])
+      setSessions(sessList)
+      if (!selectedSessionId() && sessList.length > 0) {
+        const firstId = sessList[0]!.id
+        setSelectedSessionId(firstId)
+        void loadManifestForSession(firstId)
+      } else if (selectedSessionId()) {
+        void loadManifestForSession(selectedSessionId())
+      }
       const list: ChangeEntry[] = Array.isArray(res)
         ? res
         : (res && Array.isArray(res.changes)
@@ -145,6 +226,153 @@ export default function ChangesPage() {
             No file changes recorded in this workspace yet.
           </div>
         </Show>
+
+        {/* Review Completeness Manifest & Candidate Hash Verification */}
+        <Card padding="16px" style={{ display: 'flex', 'flex-direction': 'column', gap: '12px' }}>
+          <SectionHeader
+            title="Review Completeness Manifest"
+            sub="7-section coverage ledger across git diff, CodeGraph dependents, registrations & workspace fingerprint"
+            right={
+              <div style={{ display: 'flex', gap: '8px', 'align-items': 'center', 'flex-wrap': 'wrap' }}>
+                <select
+                  value={selectedSessionId()}
+                  onChange={(e) => {
+                    const id = e.currentTarget.value
+                    setSelectedSessionId(id)
+                    void loadManifestForSession(id)
+                  }}
+                  style={{
+                    padding: '5px 8px',
+                    'border-radius': 'var(--r-sm)',
+                    border: '1px solid var(--border)',
+                    background: 'var(--bg-surface)',
+                    color: 'var(--fg)',
+                    'font-size': 'var(--fs-xs)',
+                    'max-width': '220px',
+                  }}
+                  aria-label="Session for review manifest"
+                >
+                  <For each={sessions()}>
+                    {(s) => <option value={s.id}>{s.title || s.id.slice(0, 8)}</option>}
+                  </For>
+                </select>
+                <button
+                  type="button"
+                  class="btn btn-solid"
+                  disabled={generatingManifest() || !selectedSessionId()}
+                  onClick={() => void handleGenerateManifest()}
+                  style={{ padding: '5px 12px', 'font-size': 'var(--fs-xs)' }}
+                >
+                  {generatingManifest() ? 'Generating…' : 'Generate Manifest'}
+                </button>
+              </div>
+            }
+          />
+
+          <Show
+            when={manifest()}
+            fallback={
+              <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-subtle)' }}>
+                No review completeness manifest recorded for this session yet. Click Generate Manifest to fingerprint the candidate workspace and map all 7 review surfaces.
+              </div>
+            }
+          >
+            {(m) => (
+              <div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
+                <div
+                  class="tabular-nums"
+                  style={{
+                    display: 'flex',
+                    gap: '10px',
+                    'flex-wrap': 'wrap',
+                    'font-size': 'var(--fs-xs)',
+                    'font-family': 'var(--font-mono)',
+                    color: 'var(--fg-subtle)',
+                  }}
+                >
+                  <span style={{ color: manifestStateColor(m().state), 'font-weight': '600' }}>
+                    ● {m().state}
+                  </span>
+                  <span>·</span>
+                  <span>{m().diff.changedFiles.length} changed files</span>
+                  <span>·</span>
+                  <span>{m().items.length} tracked items</span>
+                  <span>·</span>
+                  <span>{m().graph.indexedFiles} CodeGraph files</span>
+                  <Show when={m().candidateHash}>
+                    <span>·</span>
+                    <span title={m().candidateHash}>fp:{m().candidateHash?.slice(0, 12)}</span>
+                  </Show>
+                </div>
+
+                <Show when={m().blockers.length > 0}>
+                  <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--warn)' }}>
+                    Remaining: {m().blockers.join(' · ')}
+                  </div>
+                </Show>
+
+                <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
+                  <For each={m().sections}>
+                    {(sec) => (
+                      <div
+                        style={{
+                          display: 'flex',
+                          'align-items': 'center',
+                          'justify-content': 'space-between',
+                          gap: '10px',
+                          padding: '8px 10px',
+                          background: 'var(--bg-surface)',
+                          border: '1px solid var(--border)',
+                          'border-radius': 'var(--r-sm)',
+                          'font-size': 'var(--fs-xs)',
+                          'flex-wrap': 'wrap',
+                        }}
+                      >
+                        <div style={{ flex: '1', 'min-width': '220px' }}>
+                          <div style={{ 'font-weight': '600', color: 'var(--fg)' }}>
+                            {SECTION_TITLES[sec.id] ?? sec.id}
+                          </div>
+                          <div style={{ color: 'var(--fg-subtle)', 'margin-top': '2px' }}>
+                            {sec.candidatePaths.length > 0
+                              ? sec.candidatePaths.slice(0, 4).join(', ') +
+                                (sec.candidatePaths.length > 4
+                                  ? ` (+${sec.candidatePaths.length - 4} more)`
+                                  : '')
+                              : sec.reason || 'No candidate files'}
+                          </div>
+                        </div>
+                        <select
+                          value={sec.disposition}
+                          onChange={(e) =>
+                            void handleUpdateSectionDisposition(
+                              sec.id,
+                              e.currentTarget.value as ReviewDisposition,
+                            )
+                          }
+                          aria-label={`Disposition for ${sec.id}`}
+                          style={{
+                            padding: '4px 8px',
+                            background: 'var(--bg-app)',
+                            border: '1px solid var(--border)',
+                            'border-radius': 'var(--r-sm)',
+                            color: 'var(--fg)',
+                            'font-size': 'var(--fs-xs)',
+                          }}
+                        >
+                          <option value="pending">pending</option>
+                          <option value="inspected">inspected</option>
+                          <option value="tested">tested</option>
+                          <option value="not_applicable">not_applicable</option>
+                          <option value="unresolved">unresolved</option>
+                        </select>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </div>
+            )}
+          </Show>
+        </Card>
 
         {/* Changes list — Progressive Disclosure */}
         <Show when={visibleChanges().length > 0}>

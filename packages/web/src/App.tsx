@@ -10,14 +10,16 @@ import './m3-expressive.css'
 import { createAppStore } from './stores/app'
 import { createSettingsStore } from './stores/settings'
 import { createRealtimeLayer } from './realtime/websocket'
-import { ToastViewport } from './components/Toast'
+import { ToastViewport, toast } from './components/Toast'
 import { SettingsPanel } from './components/SettingsPanel'
 import { CommandPalette } from './components/CommandPalette'
 import { TraceViewer } from './components/TraceViewer'
 import { ConnectModal } from './components/ConnectModal'
+import { MeModal } from './components/Me'
 import { MiraGoldLayout } from './components/MiraGoldLayout'
 
 import {
+  api,
   getToken,
   setToken,
   ensureToken,
@@ -314,6 +316,7 @@ export default function App() {
   const [traceOpen, setTraceOpen] = createSignal(false)
   const [connectOpen, setConnectOpen] = createSignal(false)
   const [connectProvider, setConnectProvider] = createSignal<string | undefined>(undefined)
+  const [meOpen, setMeOpen] = createSignal(false)
 
   const openConnect = (provider?: string) => {
     setConnectProvider(provider?.trim() || undefined)
@@ -365,6 +368,9 @@ export default function App() {
     const onTraceEvent = () => setTraceOpen(true)
     window.addEventListener('mira:open-trace', onTraceEvent)
 
+    const onMeEvent = () => setMeOpen(true)
+    window.addEventListener('mira:open-me', onMeEvent)
+
     const onSignOut = () => {
       setToken('')
       setAuthorized(false)
@@ -400,6 +406,7 @@ export default function App() {
       window.removeEventListener('mira:open-settings', onSettingsEvent)
       window.removeEventListener('mira:open-connect', onConnectEvent)
       window.removeEventListener('mira:open-trace', onTraceEvent)
+      window.removeEventListener('mira:open-me', onMeEvent)
       window.removeEventListener('mira:sign-out', onSignOut)
       window.removeEventListener('keydown', onKey)
     })
@@ -418,6 +425,23 @@ export default function App() {
     }
     if (low === '/settings' || low === '/models') {
       setSettingsOpen(true)
+      return
+    }
+    if (low === '/me' || low.startsWith('/me ')) {
+      const nextName = trimmed.slice('/me'.length).trim()
+      if (!nextName) {
+        setMeOpen(true)
+      } else {
+        void api
+          .updateMe({ name: nextName })
+          .then((updated) => {
+            window.dispatchEvent(new CustomEvent('mira:me-updated', { detail: updated }))
+            toast.success(`Mira will remember you as ${updated.name}`)
+          })
+          .catch((err) => {
+            toast.error(`Failed to update name: ${err instanceof Error ? err.message : String(err)}`)
+          })
+      }
       return
     }
     if (low === '/connect' || low.startsWith('/connect ')) {
@@ -464,6 +488,10 @@ export default function App() {
         onClose={() => setConnectOpen(false)}
         initialProvider={connectProvider()}
         settings={settings}
+      />
+      <MeModal
+        open={meOpen()}
+        onClose={() => setMeOpen(false)}
       />
       <ToastViewport />
     </Show>

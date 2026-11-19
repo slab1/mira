@@ -122,4 +122,26 @@ describe('PATCH /me (name update)', () => {
     })
     expect(res.status).toBe(401)
   })
+
+  test('updates profile.bio alongside or independently of name', async () => {
+    const res = await fetch(`${BASE}/me`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...AUTH },
+      body: JSON.stringify({ name: 'Ada', profile: { bio: 'Senior compiler engineer' } }),
+    })
+    expect(res.status).toBe(200)
+    const me = (await res.json()) as { name: string; profile: { bio?: string } | null }
+    expect(me.name).toBe('Ada')
+    expect(me.profile?.bio).toBe('Senior compiler engineer')
+
+    const bioOnly = await fetch(`${BASE}/me`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...AUTH },
+      body: JSON.stringify({ profile: { bio: 'Updated bio' } }),
+    })
+    expect(bioOnly.status).toBe(200)
+    const after = (await bioOnly.json()) as { name: string; profile: { bio?: string } | null }
+    expect(after.name).toBe('Ada')
+    expect(after.profile?.bio).toBe('Updated bio')
+  })
 })

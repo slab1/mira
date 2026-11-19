@@ -110,10 +110,7 @@ export function mountSessionExtrasRoutes(
     const signal = (c.req.raw as Request & { signal?: AbortSignal })?.signal
     // Who is present (P3.3): the driving owner may be a same-org member, not
     // the session's creator — agents address whoever is actually here.
-    const callerOwner =
-      deps.API_KEY_OWNERS.size > 0
-        ? (deps.resolveOwner(deps.bearerOf(c.req.header('Authorization'))) ?? null)
-        : null
+    const callerOwner = deps.resolveOwner(deps.bearerOf(c.req.header('Authorization'))) ?? null
     return prompt.streamResponse(id, text as string, model as string | undefined, {
       maxSteps: maxSteps as number | undefined,
       agent: (agent as string | undefined) ?? undefined,

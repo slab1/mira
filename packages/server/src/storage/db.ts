@@ -249,12 +249,61 @@ export async function migrate(db: MiraDB) {
   addColumn('sessions', 'agent', 'TEXT')
   addColumn('sessions', 'cwd', 'TEXT')
   addColumn('sessions', 'project_id', 'TEXT')
+  addColumn('sessions', 'branch_kind', 'TEXT')
+  addColumn('sessions', 'forked_from_message_id', 'TEXT')
+  addColumn('sessions', 'hypothesis_label', 'TEXT')
+  addColumn('sessions', 'merged_into_session_id', 'TEXT')
+  addColumn('sessions', 'merged_at', 'INTEGER')
+  addColumn('sessions', 'merge_summary', 'TEXT')
   try {
     sqlite.exec(`CREATE INDEX IF NOT EXISTS sessions_project_id_idx ON sessions(project_id);`)
   } catch {}
   try {
     sqlite.exec(`CREATE INDEX IF NOT EXISTS sessions_org_idx ON sessions(org_id);`)
   } catch {}
+  try {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS review_coverage_manifests (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        manifest_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS review_coverage_session_updated_idx
+        ON review_coverage_manifests(session_id, updated_at);
+
+      CREATE TABLE IF NOT EXISTS research_runs (
+        id TEXT PRIMARY KEY,
+        session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+        branch_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+        owner_id TEXT,
+        org_id TEXT,
+        mode TEXT NOT NULL DEFAULT 'deep-investigation',
+        query TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'planning',
+        plan_json TEXT,
+        steps_json TEXT NOT NULL DEFAULT '[]',
+        report_markdown TEXT,
+        citations_json TEXT NOT NULL DEFAULT '[]',
+        error TEXT,
+        provider TEXT,
+        model TEXT,
+        tokens_in INTEGER DEFAULT 0,
+        tokens_out INTEGER DEFAULT 0,
+        duration_ms INTEGER DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS research_runs_session_idx ON research_runs(session_id);
+      CREATE INDEX IF NOT EXISTS research_runs_branch_idx ON research_runs(branch_session_id);
+      CREATE INDEX IF NOT EXISTS research_runs_status_idx ON research_runs(status);
+      CREATE INDEX IF NOT EXISTS research_runs_updated_idx ON research_runs(updated_at);
+    `)
+  } catch (e) {
+    console.warn('[storage] review/research table migration failed:', String(e))
+  }
   // P3-1 / Option 1 safe: api_keys hash/prefix for DB-dump protection (hash-only storage)
   // `key` holds hash for new rows; `key_hash` authoritative; legacy rows backfilled on load
   addColumn('api_keys', 'key_hash', 'TEXT')

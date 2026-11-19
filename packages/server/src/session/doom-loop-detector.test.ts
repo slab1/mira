@@ -169,4 +169,37 @@ describe('DoomLoopDetector', () => {
     expect(stats.errorHistoryLength).toBe(0)
     expect(stats.llmOutputHistoryLength).toBe(0)
   })
+
+  test('fingerprintOf normalizes key order deterministically', () => {
+    const d = new DoomLoopDetector()
+    const fp1 = d.fingerprintOf('edit', { path: '/a', oldString: 'x' })
+    const fp2 = d.fingerprintOf('edit', { oldString: 'x', path: '/a' })
+    expect(fp1).toBe(fp2)
+  })
+
+  test('getApproachingWarning warns on 2 identical calls or 2 identical errors and clears on reset', () => {
+    const d = new DoomLoopDetector()
+    expect(d.getApproachingWarning()).toBeNull()
+
+    d.check({ name: 'bash', args: { command: 'ls' } })
+    expect(d.getApproachingWarning()).toBeNull()
+
+    d.check({ name: 'bash', args: { command: 'ls' } })
+    const callWarn = d.getApproachingWarning()
+    expect(callWarn).not.toBeNull()
+    expect(callWarn!).toContain('"bash"')
+
+    d.reset()
+    expect(d.getApproachingWarning()).toBeNull()
+
+    d.checkError('read', { error: 'ENOENT' })
+    expect(d.getApproachingWarning()).toBeNull()
+    d.checkError('read', { error: 'ENOENT' })
+    const errWarn = d.getApproachingWarning()
+    expect(errWarn).not.toBeNull()
+    expect(errWarn!).toContain('"read"')
+
+    d.reset()
+    expect(d.getApproachingWarning()).toBeNull()
+  })
 })

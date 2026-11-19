@@ -95,7 +95,7 @@ describe('provider model discovery with an array apiKey', () => {
       if (url.includes('g.test')) {
         const auth = new Headers(init?.headers).get('authorization')
         expect(auth).toBe('Bearer gkey-value')
-        return new Response(JSON.stringify({ data: [{ id: 'text-embedding-004' }] }), {
+        return new Response(JSON.stringify({ data: [{ id: 'gemini-2.5-flash' }] }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         })
@@ -107,7 +107,7 @@ describe('provider model discovery with an array apiKey', () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as { ok: boolean; models?: Array<{ id: string }> }
     expect(body.ok).toBe(true)
-    expect(body.models?.[0]?.id).toContain('text-embedding-004')
+    expect(body.models?.[0]?.id).toContain('gemini-2.5-flash')
     delete process.env.MIRA_TEST_GKEY
   })
 })

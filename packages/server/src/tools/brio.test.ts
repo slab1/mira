@@ -96,6 +96,8 @@ describe('brio tool (colibri)', () => {
   })
 
   test('cloud scoring fallback parses options and computes entropy', async () => {
+    const origNv = process.env.NVIDIA_API_KEY
+    process.env.NVIDIA_API_KEY = 'test-nv-key'
     const realFetch = globalThis.fetch
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString()
@@ -144,6 +146,11 @@ describe('brio tool (colibri)', () => {
       expect((res.choices as Array<{ option: string }>)[0].option).toBe('merge')
     } finally {
       globalThis.fetch = realFetch
+      if (origNv === undefined) {
+        delete process.env.NVIDIA_API_KEY
+      } else {
+        process.env.NVIDIA_API_KEY = origNv
+      }
     }
   })
 })

@@ -8,8 +8,8 @@ import { isAbsolute, join } from "node:path"
 
 const readSchema = z.object({
   path: z.string().describe("Absolute or relative path to file"),
-  offset: z.number().optional().describe("Line offset (1-indexed)"),
-  limit: z.number().optional().describe("Max lines to return (default 2000)"),
+  offset: z.coerce.number().int().positive().optional().describe("Line offset (1-indexed)"),
+  limit: z.coerce.number().int().positive().optional().describe("Max lines to return (default 2000)"),
 })
 
 export const readTool = {

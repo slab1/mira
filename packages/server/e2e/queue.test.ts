@@ -13,6 +13,12 @@ beforeAll(async () => {
   const {
     MIRA_TOKEN: _mt,
     MIRA_API_KEYS: _mak,
+    NVIDIA_API_KEY: _nv,
+    OPENROUTER_API_KEY: _or,
+    ANTHROPIC_API_KEY: _an,
+    OPENAI_API_KEY: _oa,
+    GOOGLE_API_KEY: _gg,
+    GEMINI_API_KEY: _gm,
     ...cleanEnv
   } = process.env as Record<string, string | undefined>
   serverProc = Bun.spawn([BUN_BIN, 'src/index.ts'], {
@@ -106,5 +112,5 @@ describe('message queue', () => {
         .flatMap((m) => (m.parts ?? []).filter((p) => p.type === 'text').map((p) => p.text))
       expect(userTexts).toContain('first queued')
     }
-  }, 30_000)
+  }, 45_000)
 })

@@ -44,6 +44,8 @@ const createSessionSchema = z.object({
 const forkSessionSchema = z.object({
   messageID: z.string().min(1).optional(),
   title: z.string().max(200).optional(),
+  branchKind: z.enum(['conversation', 'research', 'fanout']).optional(),
+  hypothesisLabel: z.string().max(120).optional(),
 })
 
 /** Zod schemas for the versioned session export/import envelope (P2-2). */
@@ -257,6 +259,14 @@ export function mountSessionRoutes(
         messageID: parsed.data.messageID,
         title: parsed.data.title,
       })
+      await db
+        .update(sessions)
+        .set({
+          branchKind: parsed.data.branchKind ?? 'conversation',
+          forkedFromMessageId: parsed.data.messageID ?? null,
+          hypothesisLabel: parsed.data.hypothesisLabel ?? null,
+        })
+        .where(eq(sessions.id, forked.sessionID))
       const created = (await prompt.getSession(forked.sessionID)) as SessionRow | undefined
       if (created) {
         deps.sessionOwnerCache.set(created.id, {

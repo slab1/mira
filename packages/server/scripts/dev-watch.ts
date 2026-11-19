@@ -47,21 +47,46 @@ const DEBOUNCE_MS = 300
 const ARGS = Bun.argv.slice(2)
 let child: ReturnType<typeof Bun.spawn> | null = null
 let restartTimer: ReturnType<typeof setTimeout> | null = null
+let crashRestartTimer: ReturnType<typeof setTimeout> | null = null
+let consecutiveCrashes = 0
 let stopping = false
 
+function clearCrashRestart() {
+  if (crashRestartTimer) {
+    clearTimeout(crashRestartTimer)
+    crashRestartTimer = null
+  }
+}
+
 function start() {
-  child = Bun.spawn([process.execPath, 'src/index.ts', ...ARGS], {
+  if (stopping || child) return
+  clearCrashRestart()
+  const startedAt = Date.now()
+  const spawned = Bun.spawn([process.execPath, 'src/index.ts', ...ARGS], {
     cwd: SERVER_DIR,
     stdio: ['inherit', 'inherit', 'inherit'],
   })
-  void child.exited.then((code) => {
-    if (!stopping && restartTimer === null) {
-      console.log(`[dev-watch] server exited (code ${code}) — waiting for changes…`)
-    }
+  child = spawned
+  void spawned.exited.then((code) => {
+    if (child === spawned) child = null
+    if (stopping || restartTimer !== null) return
+    const uptimeMs = Date.now() - startedAt
+    if (uptimeMs > 10_000) consecutiveCrashes = 0
+    consecutiveCrashes += 1
+    const delayMs = Math.min(1000 * 2 ** Math.min(consecutiveCrashes - 1, 4), 10_000)
+    console.log(
+      `[dev-watch] server exited (code ${code}) after ${Math.round(uptimeMs / 1000)}s — auto-restarting in ${delayMs}ms…`,
+    )
+    clearCrashRestart()
+    crashRestartTimer = setTimeout(() => {
+      crashRestartTimer = null
+      start()
+    }, delayMs)
   })
 }
 
 function stop(): Promise<void> {
+  clearCrashRestart()
   const c = child
   child = null
   if (!c) return Promise.resolve()
@@ -80,12 +105,15 @@ function stop(): Promise<void> {
 
 async function restart(reason: string) {
   if (stopping) return
+  consecutiveCrashes = 0
   console.log(`[dev-watch] change in ${reason} — restarting…`)
   await stop()
+  await Bun.sleep(100)
   if (!stopping) start()
 }
 
 function scheduleRestart(reason: string) {
+  clearCrashRestart()
   if (restartTimer) clearTimeout(restartTimer)
   restartTimer = setTimeout(() => {
     restartTimer = null

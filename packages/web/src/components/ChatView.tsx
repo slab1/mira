@@ -11,12 +11,14 @@ import {
 } from 'solid-js'
 import type { AppStore } from '../stores/app'
 import type { SettingsStore } from '../stores/settings'
-import type { Message, Part, Job, JsonValue } from '../api/client'
+import type { Message, Part, Job, JsonValue, ResearchMode, ResearchRunDTO } from '../api/client'
 import { api, sessionParentId } from '../api/client'
 import { SlashAutocomplete, filterCommands } from './CommandPalette'
 import { toast } from './Toast'
 import { TurnList } from './SessionTurn'
 import { PromptInput, type FilePill } from './PromptInput'
+import { BranchExplorerDrawer } from './BranchExplorerDrawer'
+import { ResearchTimeline } from './ResearchTimeline'
 
 const EXAMPLE_PROMPTS = [
   "Explain this repo's architecture",
@@ -450,8 +452,73 @@ export function ChatView(props: {
       setFilePills([])
       setInlineSel({})
       setPinned(true)
+      setActiveResearchRun(null)
     }
     prevChatSessionId = id
+  })
+
+  // Mira Branches & Live Online Research state
+  const [branchesOpen, setBranchesOpen] = createSignal(false)
+  const [researchMode, setResearchMode] = createSignal<'off' | ResearchMode>('off')
+  const [activeResearchRun, setActiveResearchRun] = createSignal<ResearchRunDTO | null>(null)
+  let researchStreamAbort: AbortController | null = null
+
+  onCleanup(() => {
+    researchStreamAbort?.abort()
+    researchStreamAbort = null
+  })
+
+  const subscribeSessionResearch = (runId: string) => {
+    researchStreamAbort?.abort()
+    const ctrl = new AbortController()
+    researchStreamAbort = ctrl
+    void api
+      .streamResearchRun(
+        runId,
+        (ev) => {
+          if (ev.run) setActiveResearchRun(ev.run)
+        },
+        ctrl.signal,
+      )
+      .catch(() => {})
+  }
+
+  const launchSessionResearch = async (query: string, mode: ResearchMode) => {
+    const sid = s().currentId
+    if (!sid || !query.trim()) return
+    try {
+      const run = await api.startResearchRun({
+        query: query.trim(),
+        mode,
+        autoRun: mode === 'quick-grounded',
+        sessionID: sid,
+      })
+      setActiveResearchRun(run)
+      subscribeSessionResearch(run.id)
+      toast.success(
+        mode === 'deep-investigation'
+          ? 'Drafted deep research plan — review & approve below'
+          : 'Started live online grounded research',
+      )
+    } catch (e) {
+      toast.error(`Research failed: ${(e as Error).message}`)
+    }
+  }
+
+  createEffect(() => {
+    const id = s().currentId
+    if (!id) return
+    void api
+      .listResearchRuns(id)
+      .then((runs) => {
+        if (runs.length > 0 && s().currentId === id) {
+          setActiveResearchRun(runs[0]!)
+          if (runs[0]!.status === 'running' || runs[0]!.status === 'planning') {
+            subscribeSessionResearch(runs[0]!.id)
+          }
+        }
+      })
+      .catch(() => {})
   })
 
   // Live 1s ticker while waiting on any tool approval gate
@@ -487,7 +554,23 @@ export function ChatView(props: {
     const v = props.store.input()
     return v.startsWith('/') ? v : ''
   }
-  const slashCommands = () => props.settings?.allCommands() ?? []
+  const slashCommands = () => {
+    const base = props.settings?.allCommands() ?? []
+    const extras = [
+      {
+        name: '/research',
+        description: 'Run live online deep research with citations & editable plan',
+        source: 'built-in' as const,
+      },
+      {
+        name: '/fanout',
+        description: 'Fan out competing hypotheses: /fanout Option A | Option B',
+        source: 'built-in' as const,
+      },
+    ]
+    const seen = new Set(base.map((c) => c.name))
+    return [...base, ...extras.filter((e) => !seen.has(e.name))]
+  }
   const slashFiltered = () => filterCommands(slashQuery(), slashCommands())
   const [slashIndex, setSlashIndex] = createSignal(0)
   const [slashDismissed, setSlashDismissed] = createSignal(false)
@@ -595,10 +678,71 @@ export function ChatView(props: {
     return s().streaming && !!lm && lm.role === 'assistant' && !!lm.content
   }
 
+  const submitComposerPrompt = () => {
+    const raw = props.store.input().trim()
+    const low = raw.toLowerCase()
+    if (low === '/me' || low.startsWith('/me ')) {
+      const nextName = raw.slice('/me'.length).trim()
+      props.store.setInput('')
+      if (!nextName) {
+        window.dispatchEvent(new CustomEvent('mira:open-me'))
+      } else {
+        void api
+          .updateMe({ name: nextName })
+          .then((updated) => {
+            window.dispatchEvent(new CustomEvent('mira:me-updated', { detail: updated }))
+            toast.success(`Mira will remember you as ${updated.name}`)
+          })
+          .catch((err) => {
+            toast.error(`Failed to update name: ${err instanceof Error ? err.message : String(err)}`)
+          })
+      }
+      return
+    }
+    if (low.startsWith('/research ')) {
+      const q = raw.slice('/research '.length).trim()
+      props.store.setInput('')
+      if (q) void launchSessionResearch(q, 'deep-investigation')
+      return
+    }
+    if (low.startsWith('/fanout ')) {
+      const spec = raw.slice('/fanout '.length).trim()
+      const parts = spec.split('|').map((p) => p.trim()).filter(Boolean)
+      const sid = s().currentId
+      props.store.setInput('')
+      if (sid && parts.length > 0) {
+        void api
+          .fanoutSession(sid, {
+            mode: 'research',
+            researchTier: 'quick-grounded',
+            autoRun: true,
+            hypotheses: parts.slice(0, 4).map((q, i) => ({
+              label: `Track ${String.fromCharCode(65 + i)}: ${q.slice(0, 28)}`,
+              query: q,
+            })),
+          })
+          .then((res) => {
+            toast.success(`Launched ${res.branches.length} parallel branches`)
+            setBranchesOpen(true)
+            void props.store.loadSessions?.()
+          })
+          .catch((err) => toast.error(`Fan-out failed: ${(err as Error).message}`))
+      }
+      return
+    }
+    if (researchMode() !== 'off' && raw) {
+      const mode = researchMode() as ResearchMode
+      props.store.setInput('')
+      void launchSessionResearch(raw, mode)
+      return
+    }
+    props.store.sendPrompt(undefined, selectedModel() || undefined)
+  }
+
   const handleSubmit = (e: Event) => {
     e.preventDefault()
     if (s().streaming) return
-    props.store.sendPrompt(undefined, selectedModel() || undefined)
+    submitComposerPrompt()
     inputRef?.focus()
   }
 
@@ -756,6 +900,26 @@ export function ChatView(props: {
           </span>
         </div>
         <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'flex-shrink': '0' }}>
+          <Show when={s().currentId}>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              onClick={() => setBranchesOpen(!branchesOpen())}
+              aria-expanded={branchesOpen() ? 'true' : 'false'}
+              title="Open visual branch tree, parallel fan-out, compare & merge"
+              style={{
+                padding: '4px 9px',
+                'min-height': '28px',
+                'font-size': 'var(--fs-xs)',
+                border: branchesOpen() ? '1px solid var(--accent-border)' : '1px solid var(--border)',
+                'border-radius': 'var(--r-sm)',
+                background: branchesOpen() ? 'var(--accent-soft)' : 'transparent',
+                color: branchesOpen() ? 'var(--accent)' : 'var(--fg-muted)',
+              }}
+            >
+              ⎇ Branches
+            </button>
+          </Show>
           <button
             type="button"
             class="btn btn-ghost"
@@ -866,6 +1030,16 @@ export function ChatView(props: {
             </For>
           </Show>
         </div>
+      </Show>
+
+      {/* Mira Branches Explorer Drawer (SVG Tree, Fan-Out, Compare, Merge) */}
+      <Show when={branchesOpen() && s().currentId}>
+        <BranchExplorerDrawer
+          sessionId={s().currentId!}
+          onSelectSession={(id) => void props.store.selectSession(id)}
+          onRefreshSessions={() => void props.store.loadSessions?.()}
+          onClose={() => setBranchesOpen(false)}
+        />
       </Show>
 
       {/* messages */}
@@ -1093,6 +1267,25 @@ export function ChatView(props: {
                   pinnedIds={pinnedIds()}
                   onCopy={(text) => toast.success('Copied')}
                   onBranch={branchFrom}
+                  onFanout={() => setBranchesOpen(true)}
+                  onResearchFromTurn={(m) => {
+                    let snippet = contentOf(m).trim().slice(0, 220)
+                    if (!/[a-zA-Z0-9]{2,}/.test(snippet)) {
+                      const msgs = s().messages
+                      const idx = msgs.findIndex((msg) => msg.id === m.id)
+                      const prevSearchable = msgs
+                        .slice(0, idx >= 0 ? idx : msgs.length)
+                        .reverse()
+                        .map((msg) => contentOf(msg).trim())
+                        .find((txt) => /[a-zA-Z0-9]{2,}/.test(txt))
+                      snippet = (prevSearchable ?? '').slice(0, 220)
+                    }
+                    if (!snippet) {
+                      toast.info('Turn has no searchable text — enter a topic in the prompt bar to research.')
+                      return
+                    }
+                    void launchSessionResearch(snippet, 'quick-grounded')
+                  }}
                   onRewind={(m) => {
                     const sessionId = props.store.state.currentId
                     const messageId = m.id
@@ -1108,6 +1301,20 @@ export function ChatView(props: {
                   onPin={togglePin}
                   onClearError={() => props.store.clearError()}
                 />
+
+                {/* Inline Live Online Research Run card for active session */}
+                <Show when={activeResearchRun()}>
+                  {(run) => (
+                    <ResearchTimeline
+                      run={run()}
+                      onUpdated={(updated) => {
+                        setActiveResearchRun(updated)
+                        if (updated.status === 'running') subscribeSessionResearch(updated.id)
+                      }}
+                      onOpenBranch={(id) => void props.store.selectSession(id)}
+                    />
+                  )}
+                </Show>
 
                 {/* ARIA live region for streaming */}
                 <div aria-live="polite" aria-atomic="false" class="sr-only">
@@ -1670,7 +1877,7 @@ export function ChatView(props: {
               }}
               onSubmit={() => {
                 if (s().streaming) return
-                props.store.sendPrompt(undefined, selectedModel() || undefined)
+                submitComposerPrompt()
               }}
               onQueue={() => {
                 const val = props.store.input().trim()
@@ -1696,6 +1903,8 @@ export function ChatView(props: {
               onAddPill={addFilePill}
               slashCommands={slashCommands()}
               cwd={currentCwd()}
+              researchMode={researchMode()}
+              onResearchModeChange={setResearchMode}
             />
           </form>
         </div>

@@ -10,6 +10,7 @@ import {
   type ToolInfo,
   type PatchProposal,
   type AuditEntry,
+  type MeProfile,
 } from '../api/client'
 import { type WorkspaceId } from './TopNav'
 import { WorkspaceRouter } from './WorkspaceRouter'
@@ -18,6 +19,7 @@ import { TerminalView } from './TerminalView'
 import { ChatView } from './ChatView'
 import { SessionList } from './SessionList'
 import { ActivityPanel } from './ActivityPanel'
+import { initialsForName, displayNameForMe } from './Me'
 import { toast } from './Toast'
 import BrioPage from '../pages/Brio'
 
@@ -137,7 +139,13 @@ export function MiraGoldLayout(props: {
   const [showSessions, setShowSessions] = createSignal<boolean>(window.innerWidth >= 1024)
   const [showActivity, setShowActivity] = createSignal<boolean>(false)
   const [showProfileMenu, setShowProfileMenu] = createSignal<boolean>(false)
-  const [avatarFailed, setAvatarFailed] = createSignal<boolean>(false)
+  const [meProfile, setMeProfile] = createSignal<MeProfile | null>(null)
+  const meDisplayName = () => displayNameForMe(meProfile())
+  const meInitials = () => initialsForName(meProfile()?.name)
+  const isMeUnnamed = () => {
+    const n = meProfile()?.name?.trim().toLowerCase()
+    return !n || n === 'user'
+  }
 
   // Live Telemetry State (null until verified from backend)
   const [activeAgentsCount, setActiveAgentsCount] = createSignal<number | null>(null)
@@ -170,6 +178,7 @@ export function MiraGoldLayout(props: {
         propsData,
         auditData,
         filesData,
+        meData,
       ] = await Promise.all([
         req<any>('/health').catch(() => null),
         api.getGatewayHealth().catch(() => null),
@@ -178,8 +187,12 @@ export function MiraGoldLayout(props: {
         req<{ proposals: PatchProposal[] }>('/evolution/proposals').catch(() => ({ proposals: [] })),
         api.listAuditTrail({ limit: 30 }).catch(() => ({ entries: [] })),
         req<{ files?: any[] }>('/workspace/tree').catch(() => ({ files: [] })),
+        api.getMe().catch(() => null),
       ])
 
+      if (meData) {
+        setMeProfile(meData)
+      }
       if (Array.isArray(agentsData)) {
         setRealAgents(agentsData)
         setActiveAgentsCount(agentsData.length)
@@ -265,7 +278,29 @@ export function MiraGoldLayout(props: {
     }
     document.addEventListener('mousedown', handleOutsideClick)
 
+    const onMeUpdated = (e: Event) => {
+      const detail = (e as CustomEvent<MeProfile>).detail
+      if (detail?.name) {
+        setMeProfile(detail)
+      } else {
+        void api.getMe().then((me) => setMeProfile(me)).catch(() => {})
+      }
+    }
+    window.addEventListener('mira:me-updated', onMeUpdated)
+
+    const unsubMeBus = props.store.subscribeBus((ev) => {
+      if (ev.type === 'me.updated') {
+        const p = ev.payload as { name?: unknown } | undefined
+        if (p && typeof p.name === 'string') {
+          setMeProfile((prev) => (prev ? { ...prev, name: p.name as string } : prev))
+        }
+        void api.getMe().then((me) => setMeProfile(me)).catch(() => {})
+      }
+    })
+
     onCleanup(() => {
+      unsubMeBus()
+      window.removeEventListener('mira:me-updated', onMeUpdated)
       window.removeEventListener('resize', handleResize)
       window.removeEventListener('keydown', handleKeyDown)
       document.removeEventListener('mousedown', handleOutsideClick)
@@ -1023,8 +1058,9 @@ export function MiraGoldLayout(props: {
               <button
                 type="button"
                 onClick={() => setShowProfileMenu((v) => !v)}
-                aria-label="Account and gateway menu"
+                aria-label={`Account menu (${meDisplayName()})`}
                 aria-expanded={showProfileMenu() ? 'true' : 'false'}
+                title={isMeUnnamed() ? 'Set your name (/me)' : `Signed in as ${meDisplayName()}`}
                 style={{
                   width: isMobileScreen() ? '38px' : '34px',
                   height: isMobileScreen() ? '38px' : '34px',
@@ -1041,14 +1077,7 @@ export function MiraGoldLayout(props: {
                   padding: '0',
                 }}
               >
-                <Show when={!avatarFailed()} fallback={<span>S</span>}>
-                  <img
-                    src="/assets/user_avatar_saheed.jpg"
-                    alt="Saheed"
-                    style={{ width: '100%', height: '100%', 'object-fit': 'cover' }}
-                    onError={() => setAvatarFailed(true)}
-                  />
-                </Show>
+                <span>{meInitials()}</span>
               </button>
 
               <Show when={showProfileMenu()}>
@@ -1059,7 +1088,7 @@ export function MiraGoldLayout(props: {
                     position: 'absolute',
                     right: '0',
                     top: 'calc(100% + 8px)',
-                    width: '240px',
+                    width: '248px',
                     background: '#0D111E',
                     border: '1px solid #2B3552',
                     'border-radius': '12px',
@@ -1072,11 +1101,34 @@ export function MiraGoldLayout(props: {
                   }}
                 >
                   <div style={{ padding: '8px 10px', 'border-bottom': '1px solid #1E253A', 'margin-bottom': '4px' }}>
-                    <div style={{ 'font-size': '13px', 'font-weight': '700', color: '#F1F3FA' }}>Saheed</div>
+                    <div style={{ 'font-size': '13px', 'font-weight': '700', color: '#F1F3FA' }}>
+                      {isMeUnnamed() ? 'User (unnamed)' : meDisplayName()}
+                    </div>
                     <div style={{ 'font-size': '11px', color: '#7A859E', 'font-family': 'var(--font-mono)', overflow: 'hidden', 'text-overflow': 'ellipsis' }}>
                       {serverLabel()}
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setShowProfileMenu(false)
+                      window.dispatchEvent(new CustomEvent('mira:open-me'))
+                    }}
+                    class="btn btn-ghost"
+                    style={{
+                      'justify-content': 'space-between',
+                      padding: '8px 10px',
+                      'font-size': '12.5px',
+                      'border-radius': '8px',
+                      color: isMeUnnamed() ? '#F5D061' : undefined,
+                    }}
+                  >
+                    <span>My Profile (/me)</span>
+                    <Show when={isMeUnnamed()}>
+                      <span style={{ 'font-size': '11px', 'font-weight': '700' }}>Set name</span>
+                    </Show>
+                  </button>
                   <button
                     type="button"
                     role="menuitem"

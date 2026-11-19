@@ -12,7 +12,9 @@ logger.error = (msg, options) => {
   const errCode = (options?.error as { code?: string } | undefined)?.code ?? ''
   const text = `${msg} ${errMsg} ${errCode}`
   if (
-    (text.includes('ws proxy socket error') || text.includes('ws proxy error')) &&
+    (text.includes('ws proxy socket error') ||
+      text.includes('ws proxy error') ||
+      text.includes('http proxy error')) &&
     (text.includes('ECONNRESET') ||
       text.includes('ECONNREFUSED') ||
       text.includes('EPIPE') ||
@@ -82,7 +84,7 @@ function resolveActiveToken(): string {
   if (fileToken) return fileToken
   const envToken = process.env.VITE_MIRA_TOKEN?.trim()
   if (envToken && envToken !== 'dev-local-token-not-secret') return envToken
-  return 'e5bc62fa2739619db1209d56c02d12132aa0a92178ac2f76e9dbaf82ed3eed72'
+  return ''
 }
 
 const FIRST_RUN_TOKEN = resolveActiveToken()
@@ -94,11 +96,78 @@ const API_TARGET =
     ? process.env.MIRA_DEV_API
     : `http://127.0.0.1:${process.env.MIRA_DEV_PORT ?? miraPortFallback()}`
 
+const IS_HOSTED_PREVIEW = Boolean(
+  process.env.DISABLE_HMR === 'true' ||
+    process.env.GOOGLE_RUNTIME ||
+    process.env.K_SERVICE ||
+    process.env.NG_ALLOWED_HOSTS ||
+    process.env.CLOUD_RUN_TIMEOUT_SECONDS,
+)
+
+const HMR_CONFIG = IS_HOSTED_PREVIEW
+  ? false
+  : process.env.MIRA_HMR_HOST || process.env.MIRA_WEB_HMR_PORT
+    ? {
+        ...(process.env.MIRA_HMR_HOST ? { host: process.env.MIRA_HMR_HOST } : {}),
+        ...(process.env.MIRA_WEB_HMR_PORT ? { port: Number(process.env.MIRA_WEB_HMR_PORT) } : {}),
+      }
+    : true
+
+const disableHmrClientPlugin = {
+  name: 'mira-disable-hmr-client-connect',
+  apply: 'serve' as const,
+  enforce: 'post' as const,
+  transform(code: string, id: string) {
+    if (HMR_CONFIG !== false) return null
+    if (!id.endsWith('/client/client.mjs') && !id.endsWith('\\client\\client.mjs')) return null
+    const needle = 'transport.connect(createHMRHandler(handleMessage));'
+    if (!code.includes(needle)) return null
+    return {
+      code: code.replace(needle, '/* hmr disabled in hosted preview */ void 0;'),
+      map: null,
+    }
+  },
+}
+
+const httpProxyOpts = {
+  target: API_TARGET,
+  changeOrigin: true,
+  configure: (proxy: any) => {
+    proxy.on('error', (err: Error & { code?: string }, _req: any, res: any) => {
+      const code = err?.code ?? ''
+      const msg = String(err?.message ?? err)
+      if (
+        (code === 'ECONNREFUSED' ||
+          code === 'ECONNRESET' ||
+          msg.includes('ECONNREFUSED') ||
+          msg.includes('ECONNRESET')) &&
+        res &&
+        typeof res.writeHead === 'function' &&
+        !res.headersSent &&
+        !res.writableEnded
+      ) {
+        res.writeHead(503, {
+          'Content-Type': 'application/json',
+          'Retry-After': '1',
+        })
+        res.end(
+          JSON.stringify({
+            ok: false,
+            code: 'SERVER_STARTING',
+            error: 'Mira server is starting or restarting — retrying shortly.',
+          }),
+        )
+      }
+    })
+  },
+}
+
 export default defineConfig({
   root: __dirname,
   customLogger: logger,
   plugins: [
     solid(),
+    disableHmrClientPlugin,
     {
       name: 'mira-auth-token-endpoint',
       configureServer(server: any) {
@@ -125,12 +194,7 @@ export default defineConfig({
     port: Number(process.env.MIRA_WEB_PORT ?? 3000),
     host: true,
     strictPort: false,
-    hmr: process.env.DISABLE_HMR === 'true'
-      ? false
-      : {
-          host: process.env.MIRA_HMR_HOST ?? 'localhost',
-          ...(process.env.MIRA_WEB_HMR_PORT ? { port: Number(process.env.MIRA_WEB_HMR_PORT) } : {}),
-        },
+    hmr: HMR_CONFIG,
     cors: true,
     // Allow Cloudflare tunnel hosts — Vite ServerOptions allows boolean true (Vite 6+)
     allowedHosts: true,
@@ -138,30 +202,31 @@ export default defineConfig({
       // Proxy API + WebSocket to Mira server (IPv4 — server binds 127.0.0.1).
       // changeOrigin: true forwards the Origin/Authorization headers so the
       // server's auth gate sees the bearer token the browser sent.
-      '/auth': { target: API_TARGET, changeOrigin: true },
-      '/session': { target: API_TARGET, changeOrigin: true },
-      '/tools': { target: API_TARGET, changeOrigin: true },
-      '/permission': { target: API_TARGET, changeOrigin: true },
-      '/health': { target: API_TARGET, changeOrigin: true },
-      '/skills': { target: API_TARGET, changeOrigin: true },
-      '/mcp': { target: API_TARGET, changeOrigin: true },
-      '/dev': { target: API_TARGET, changeOrigin: true },
-      '/learning': { target: API_TARGET, changeOrigin: true },
-      '/knowledge': { target: API_TARGET, changeOrigin: true },
-      '/finding': { target: API_TARGET, changeOrigin: true },
-      '/job': { target: API_TARGET, changeOrigin: true },
-      '/guardrails': { target: API_TARGET, changeOrigin: true },
-      '/config': { target: API_TARGET, changeOrigin: true },
-      '/provider': { target: API_TARGET, changeOrigin: true },
-      '/providers': { target: API_TARGET, changeOrigin: true },
-      '/commands': { target: API_TARGET, changeOrigin: true },
-      '/agents': { target: API_TARGET, changeOrigin: true },
-      '/admin': { target: API_TARGET, changeOrigin: true },
-      '/workspaces': { target: API_TARGET, changeOrigin: true },
-      '/workspace': { target: API_TARGET, changeOrigin: true },
-      '/voice': { target: API_TARGET, changeOrigin: true },
-      '/complete': { target: API_TARGET, changeOrigin: true },
-      '/autocomplete': { target: API_TARGET, changeOrigin: true },
+      '/auth': { ...httpProxyOpts },
+      '/me': { ...httpProxyOpts },
+      '/session': { ...httpProxyOpts },
+      '/tools': { ...httpProxyOpts },
+      '/permission': { ...httpProxyOpts },
+      '/health': { ...httpProxyOpts },
+      '/skills': { ...httpProxyOpts },
+      '/mcp': { ...httpProxyOpts },
+      '/dev': { ...httpProxyOpts },
+      '/learning': { ...httpProxyOpts },
+      '/knowledge': { ...httpProxyOpts },
+      '/finding': { ...httpProxyOpts },
+      '/job': { ...httpProxyOpts },
+      '/guardrails': { ...httpProxyOpts },
+      '/config': { ...httpProxyOpts },
+      '/provider': { ...httpProxyOpts },
+      '/providers': { ...httpProxyOpts },
+      '/commands': { ...httpProxyOpts },
+      '/agents': { ...httpProxyOpts },
+      '/admin': { ...httpProxyOpts },
+      '/workspaces': { ...httpProxyOpts },
+      '/workspace': { ...httpProxyOpts },
+      '/voice': { ...httpProxyOpts },
+      '/complete': { ...httpProxyOpts },
+      '/autocomplete': { ...httpProxyOpts },
       '/terminal': {
         target: API_TARGET,
         changeOrigin: true,
@@ -174,13 +239,29 @@ export default defineConfig({
           })
         },
       },
-      '/metrics': { target: API_TARGET, changeOrigin: true },
-      '/dashboard': { target: API_TARGET, changeOrigin: true },
-      '/evolution': { target: API_TARGET, changeOrigin: true },
-      '/engines': { target: API_TARGET, changeOrigin: true },
-      '/shadow': { target: API_TARGET, changeOrigin: true },
-      '/canary': { target: API_TARGET, changeOrigin: true },
-      '/memory': { target: API_TARGET, changeOrigin: true },
+      '/metrics': { ...httpProxyOpts },
+      '/dashboard': { ...httpProxyOpts },
+      '/evolution': { ...httpProxyOpts },
+      '/engines': { ...httpProxyOpts },
+      '/shadow': { ...httpProxyOpts },
+      '/canary': { ...httpProxyOpts },
+      '/memory': { ...httpProxyOpts },
+      '/gateway': { ...httpProxyOpts },
+      '/eval': { ...httpProxyOpts },
+      '/community': { ...httpProxyOpts },
+      '/manager': { ...httpProxyOpts },
+      '/webhooks': { ...httpProxyOpts },
+      '/v1': { ...httpProxyOpts },
+      '/symbol': { ...httpProxyOpts },
+      '/jobs': { ...httpProxyOpts },
+      '/task': { ...httpProxyOpts },
+      '/files': { ...httpProxyOpts },
+      '/artifacts': { ...httpProxyOpts },
+      '/changes': { ...httpProxyOpts },
+      '/missions': { ...httpProxyOpts },
+      '/cost': { ...httpProxyOpts },
+      '/research': { ...httpProxyOpts },
+      '/review': { ...httpProxyOpts },
       '/ws': {
         target: API_TARGET,
         ws: true,

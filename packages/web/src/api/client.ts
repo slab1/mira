@@ -174,6 +174,23 @@ export type Job = {
   updatedAt: number
 }
 
+export type MeProfile = {
+  id: string
+  owner: string
+  name: string
+  profile?: {
+    bio?: string
+    avatar?: string
+    theme?: string
+    locale?: string
+    [key: string]: unknown
+  } | null
+  role?: 'viewer' | 'operator' | 'admin'
+  org?: { id: string; name: string; role: string } | null
+  createdAt: number
+  updatedAt: number
+}
+
 export type BusEvent = {
   type: string
   payload?: JsonValue
@@ -917,6 +934,202 @@ function invalidateToolCache(): void {
   toolCache = null
 }
 
+// ── Online Deep Research DTOs ──────────────────────────────────────
+export type ResearchMode = 'quick-grounded' | 'deep-investigation'
+export type ResearchStatus =
+  | 'planning'
+  | 'awaiting_approval'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+export type ResearchPlanTrack = {
+  id: string
+  title: string
+  query: string
+  focus: string
+}
+
+export type ResearchStep = {
+  id: string
+  kind: 'thought' | 'search_query' | 'url_read' | 'synthesis' | 'error'
+  title: string
+  detail?: string
+  url?: string
+  at: number
+}
+
+export type ResearchCitation = {
+  index: number
+  title: string
+  url: string
+  domain: string
+  snippet?: string
+}
+
+export type ResearchRunDTO = {
+  id: string
+  sessionID: string | null
+  branchSessionID: string | null
+  query: string
+  mode: ResearchMode
+  status: ResearchStatus
+  provider: string
+  plan: ResearchPlanTrack[]
+  steps: ResearchStep[]
+  citations: ResearchCitation[]
+  reportMarkdown: string
+  error: string | null
+  promotedMemoryId: string | null
+  createdAt: number
+  updatedAt: number
+  completedAt: number | null
+}
+
+export type ResearchStreamEvent = {
+  type: 'snapshot' | 'step' | 'citation' | 'status' | 'report' | 'done' | 'error'
+  run: ResearchRunDTO
+  payload?: unknown
+}
+
+// ── Mira Branches DTOs ─────────────────────────────────────────────
+export type BranchNodeDTO = {
+  id: string
+  parentID: string | null
+  title: string
+  model: string
+  branchKind: string
+  forkedFromMessageId: string | null
+  hypothesisLabel: string | null
+  mergedIntoSessionId: string | null
+  mergedAt: number | null
+  messageCount: number
+  verificationState: string | null
+  researchRun: {
+    id: string
+    mode: ResearchMode
+    status: ResearchStatus
+    citationCount: number
+    stepCount: number
+  } | null
+  createdAt: number
+  updatedAt: number
+}
+
+export type BranchTreeResponse = {
+  ok: boolean
+  rootId: string
+  activeId: string
+  nodes: BranchNodeDTO[]
+}
+
+export type BranchCompareSide = {
+  id: string
+  title: string
+  branchKind: string
+  hypothesisLabel: string | null
+  mergedAt: number | null
+  messageCount: number
+  verificationState: string
+  costUsd: number
+  tokensIn: number
+  tokensOut: number
+  conclusionPreview: string
+  citationCount: number
+}
+
+export type BranchCompareResponse = {
+  ok: boolean
+  divergence: {
+    sharedParentID: string | null
+    leftForkedFromMessageId: string | null
+    rightForkedFromMessageId: string | null
+  }
+  left: BranchCompareSide
+  right: BranchCompareSide
+  citations: {
+    shared: ResearchCitation[]
+    leftOnly: ResearchCitation[]
+    rightOnly: ResearchCitation[]
+  }
+  files: {
+    shared: string[]
+    leftOnly: string[]
+    rightOnly: string[]
+  }
+}
+
+// ── Review Completeness Manifest DTOs ──────────────────────────────
+export type ReviewSectionId =
+  | 'changed_files'
+  | 'callers_dependents'
+  | 'tool_event_registrations'
+  | 'adapters_hooks'
+  | 'configuration_schema_migrations'
+  | 'expected_tests'
+  | 'analysis_limitations'
+
+export type ReviewDisposition =
+  | 'pending'
+  | 'inspected'
+  | 'tested'
+  | 'not_applicable'
+  | 'unresolved'
+
+export type ReviewCoverageManifest = {
+  version: 1
+  id: string
+  sessionID: string
+  baseRef: string
+  baseSha: string
+  headRef: string
+  headSha: string
+  candidateHash?: string
+  generatedAt: number
+  updatedAt: number
+  state: 'in_progress' | 'complete' | 'blocked'
+  diff: {
+    changedFiles: Array<{ path: string; status: string }>
+    truncated: boolean
+  }
+  graph: {
+    complete: boolean
+    indexedFiles: number
+    discoveredSourceFiles: number
+    truncated: boolean
+    caveats: string[]
+  }
+  sections: Array<{
+    id: ReviewSectionId
+    candidatePaths: string[]
+    disposition: ReviewDisposition
+    evidenceRefs: string[]
+    reason?: string
+    testCommand?: string
+  }>
+  items: Array<{
+    id: string
+    kind: 'changed_file' | 'dependent'
+    path: string
+    sourcePath?: string
+    provenance?: string
+    detail?: string
+    disposition: ReviewDisposition
+    evidenceRefs: string[]
+    reason?: string
+    testCommand?: string
+  }>
+  findings: Array<{
+    id: string
+    title: string
+    severity: string
+    disposition: string
+    rationale?: string
+  }>
+  blockers: string[]
+}
+
 // ── REST ─────────────────────────────────────────────────────────────
 export const api = {
   health: () =>
@@ -939,7 +1152,10 @@ export const api = {
     req<Session[] | { sessions: Session[] }>(`/session/${id}/children`).then((r) =>
       Array.isArray(r) ? r : ((r as any)?.sessions ?? []),
     ),
-  forkSession: (id: string, body: { messageID?: string; title?: string } = {}) =>
+  forkSession: (
+    id: string,
+    body: { messageID?: string; title?: string; branchKind?: string; hypothesisLabel?: string } = {},
+  ) =>
     req<{ id: string; session: Session | null; copiedMessages: number }>(
       `/session/${id}/fork`,
       { method: 'POST', body: JSON.stringify(body) },
@@ -1134,6 +1350,14 @@ export const api = {
       blocked: string[]
       allowlist: string[]
     }>(`/agents/${encodeURIComponent(name)}/preview`),
+
+  // ── Identity (/me) ───────────────────────────────────────────────
+  getMe: () => req<MeProfile>('/me'),
+  updateMe: (patch: { name?: string; profile?: Record<string, unknown> | null }) =>
+    req<MeProfile>('/me', {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
 
   // ── Settings ─────────────────────────────────────────────────────
   getConfig: (cwd?: string) =>
@@ -1677,6 +1901,194 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ reason }),
     }),
+
+  // ── Online Deep Research ───────────────────────────────────────────
+  researchStatus: () =>
+    req<{
+      ok: boolean
+      modes: ResearchMode[]
+      groundingProvider: string
+      geminiConfigured: boolean
+    }>('/research/status'),
+
+  listResearchRuns: (sessionId?: string) =>
+    req<{ ok: boolean; runs: ResearchRunDTO[] }>(
+      sessionId
+        ? `/research/runs?sessionId=${encodeURIComponent(sessionId)}`
+        : '/research/runs',
+    ).then((r) => r.runs ?? []),
+
+  getResearchRun: (id: string) =>
+    req<{ ok: boolean; run: ResearchRunDTO }>(`/research/runs/${encodeURIComponent(id)}`).then(
+      (r) => r.run,
+    ),
+
+  startResearchRun: (body: {
+    query: string
+    mode?: ResearchMode
+    autoRun?: boolean
+    sessionID?: string | null
+    branchSessionID?: string | null
+  }) =>
+    req<{ ok: boolean; run: ResearchRunDTO }>('/research/runs', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }).then((r) => r.run),
+
+  approveResearchRun: (id: string, plan?: ResearchPlanTrack[]) =>
+    req<{ ok: boolean; run: ResearchRunDTO }>(
+      `/research/runs/${encodeURIComponent(id)}/approve`,
+      {
+        method: 'POST',
+        body: JSON.stringify(plan ? { plan } : {}),
+      },
+    ).then((r) => r.run),
+
+  cancelResearchRun: (id: string) =>
+    req<{ ok: boolean; run: ResearchRunDTO }>(
+      `/research/runs/${encodeURIComponent(id)}/cancel`,
+      { method: 'POST' },
+    ).then((r) => r.run),
+
+  promoteResearchToMemory: (id: string, title?: string) =>
+    req<{ ok: boolean; entry: { id: string; title: string } }>(
+      `/research/runs/${encodeURIComponent(id)}/promote-memory`,
+      {
+        method: 'POST',
+        body: JSON.stringify(title ? { title } : {}),
+      },
+    ),
+
+  streamResearchRun: async (
+    id: string,
+    onEvent: (ev: ResearchStreamEvent) => void,
+    signal?: AbortSignal,
+  ) => {
+    const res = await fetch(`${baseUrl()}/research/runs/${encodeURIComponent(id)}/stream`, {
+      method: 'GET',
+      mode: 'cors',
+      headers: authHeaders({ Accept: 'text/event-stream' }),
+      signal,
+    })
+    if (res.status === 401) {
+      clearTokenOn401()
+      throw new ApiError(401, 'unauthorized')
+    }
+    if (!res.ok || !res.body) {
+      const txt = await res.text().catch(() => '')
+      throw new ApiError(res.status, txt || `Failed to stream research run ${id}`)
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const frames = buf.split('\n\n')
+      buf = frames.pop() || ''
+      for (const f of frames) {
+        const lines = f.split('\n')
+        const dataLines: string[] = []
+        for (const l of lines) {
+          if (l.startsWith('data:')) dataLines.push(l.slice(5).trim())
+        }
+        if (dataLines.length === 0) continue
+        try {
+          const parsed = JSON.parse(dataLines.join('\n')) as ResearchStreamEvent
+          onEvent(parsed)
+        } catch {}
+      }
+    }
+  },
+
+  // ── Mira Branches (Tree, Fan-Out, Compare, Merge) ──────────────────
+  getSessionTree: (id: string) =>
+    req<BranchTreeResponse>(`/session/${encodeURIComponent(id)}/tree`),
+
+  fanoutSession: (
+    id: string,
+    body: {
+      messageID?: string
+      mode?: 'research' | 'chat'
+      researchTier?: ResearchMode
+      autoRun?: boolean
+      hypotheses: Array<{ label: string; query: string }>
+    },
+  ) =>
+    req<{
+      ok: boolean
+      parentSessionId: string
+      branches: Array<{ sessionId: string; label: string; researchRunId?: string }>
+    }>(`/session/${encodeURIComponent(id)}/fanout`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  compareBranches: (left: string, right: string) =>
+    req<BranchCompareResponse>(
+      `/session/compare?left=${encodeURIComponent(left)}&right=${encodeURIComponent(right)}`,
+    ),
+
+  mergeBranch: (
+    id: string,
+    body: { targetSessionId?: string; summary?: string; promoteToMemory?: boolean } = {},
+  ) =>
+    req<{ ok: boolean; mergedInto: string; messageId: string; memoryEntryId: string | null }>(
+      `/session/${encodeURIComponent(id)}/merge`,
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      },
+    ),
+
+  // ── Review Completeness Manifests ──────────────────────────────────
+  listReviewManifests: (sessionId?: string) =>
+    req<{ ok: boolean; manifests: ReviewCoverageManifest[] }>(
+      sessionId
+        ? `/review/coverage?sessionId=${encodeURIComponent(sessionId)}`
+        : '/review/coverage',
+    ).then((r) => r.manifests ?? []),
+
+  getSessionReviewManifest: (sessionId: string) =>
+    req<{ ok: boolean; latest: ReviewCoverageManifest | null; manifests: ReviewCoverageManifest[] }>(
+      `/review/coverage/session/${encodeURIComponent(sessionId)}`,
+    ),
+
+  generateReviewManifest: (
+    sessionID: string,
+    opts?: { baseRef?: string; headRef?: string },
+  ) =>
+    req<{ ok: boolean; manifest: ReviewCoverageManifest }>('/review/coverage/generate', {
+      method: 'POST',
+      body: JSON.stringify({ sessionID, ...opts }),
+    }).then((r) => r.manifest),
+
+  updateReviewManifest: (
+    id: string,
+    patch: {
+      section?: {
+        id: ReviewSectionId
+        disposition: ReviewDisposition
+        reason?: string
+        evidenceRefs?: string[]
+      }
+      item?: {
+        id: string
+        disposition: ReviewDisposition
+        reason?: string
+        evidenceRefs?: string[]
+        testCommand?: string
+      }
+    },
+  ) =>
+    req<{ ok: boolean; manifest: ReviewCoverageManifest }>(
+      `/review/coverage/${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      },
+    ).then((r) => r.manifest),
 }
 
 /** Add or update a permission rule for a tool pattern */

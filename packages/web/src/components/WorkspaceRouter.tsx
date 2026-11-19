@@ -44,7 +44,10 @@ export function WorkspaceRouter(props: {
 
       {/* Intelligence workspace */}
       <Match when={props.workspace === 'intelligence'}>
-        <IntelligencePage />
+        <IntelligencePage
+          store={props.store}
+          onOpenInChat={props.onOpenInChat}
+        />
       </Match>
 
       {/* Changes workspace */}

@@ -56,6 +56,10 @@ export class DoomLoopDetector {
     return `${tool}:${normalized}`
   }
 
+  fingerprintOf(tool: string, args: JsonValue): string {
+    return this.fingerprint(tool, args)
+  }
+
   private extractFilePath(tool: string, args: JsonValue): string | undefined {
     if (!args || typeof args !== 'object') return undefined
     const a = args as Record<string, JsonValue>
@@ -259,6 +263,31 @@ export class DoomLoopDetector {
     } catch {
       return 'empty'
     }
+  }
+
+  /**
+   * Returns a concise early-warning hint when the last two consecutive tool calls
+   * or errors are identical (one step short of triggering the full doom-loop threshold),
+   * giving the agent an opportunity to adjust proactively before execution is blocked.
+   */
+  getApproachingWarning(): string | null {
+    if (this.maxIdentical >= 3 && this.history.length >= 2) {
+      const a = this.history[this.history.length - 2]
+      const b = this.history[this.history.length - 1]
+      if (a && a === b) {
+        const toolName = a.split(':')[0] || 'tool'
+        return `You have called "${toolName}" with identical arguments twice in a row. Do NOT repeat the exact same call a 3rd time—change arguments, try a different tool (e.g. glob/grep/bash), or report what you found.`
+      }
+    }
+    if (this.maxErrorIdentical >= 3 && this.errorHistory.length >= 2) {
+      const a = this.errorHistory[this.errorHistory.length - 2]
+      const b = this.errorHistory[this.errorHistory.length - 1]
+      if (a && a === b) {
+        const toolName = a.split(':')[0] || 'tool'
+        return `Tool "${toolName}" returned the exact same error twice in a row. Adjust your parameters or inspect the target first before calling "${toolName}" again.`
+      }
+    }
+    return null
   }
 
   reset() {

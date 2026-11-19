@@ -457,6 +457,12 @@ async function cmdSessionPrompt(opts: Record<string, string | boolean>): Promise
           if (d) process.stdout.write(String(d))
         } else if (event === 'error') {
           if (j.error) console.error(`\n[error] ${String(j.error)}`)
+        } else if (event === 'doom_loop_adjusted') {
+          const reason = String(j.reason ?? 'repeating pattern')
+          const tool = String(j.tool ?? '')
+          console.error(
+            `\n[doom-loop]${tool ? ` tool=${tool}` : ''} ${reason} — adjusting strategy`.trimEnd(),
+          )
         } else if (event === 'doom_loop' || event === 'doom-loop') {
           // Surfaced (was silently dropped): tells the user WHY the loop stopped.
           const reason = String(j.reason ?? j.error ?? 'repeated identical steps')

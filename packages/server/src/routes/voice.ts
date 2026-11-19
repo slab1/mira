@@ -3,6 +3,12 @@ import { GoogleGenAI } from '@google/genai'
 import { readMiraEnv } from '../providers/auth.js'
 import { getConfig } from '../config/index.js'
 
+function isUsableGeminiApiKey(value: string | undefined | null): boolean {
+  if (!value || typeof value !== 'string') return false
+  const t = value.trim()
+  return Boolean(t && t !== '***' && !t.includes('{env:') && !t.startsWith('AQ.'))
+}
+
 function expandConfigEnv(value: string | string[] | undefined): string {
   const pick = Array.isArray(value) ? value.find(Boolean) : value
   if (!pick || typeof pick !== 'string') return ''
@@ -10,7 +16,7 @@ function expandConfigEnv(value: string | string[] | undefined): string {
   const resolved = pick.replace(/\{env:([^}]+)\}/g, (_, name: string) => {
     return process.env[name] ?? envMap[name] ?? ''
   })
-  return resolved.trim()
+  return isUsableGeminiApiKey(resolved) ? resolved.trim() : ''
 }
 
 function resolveGeminiKey(): string {
@@ -24,12 +30,12 @@ function resolveGeminiKey(): string {
     envMap.GOOGLE_API_KEY,
   ]
   for (const c of candidates) {
-    if (c && c.trim()) return c.trim()
+    if (isUsableGeminiApiKey(c)) return c!.trim()
   }
   try {
     const cfg = getConfig()
     const gKey = expandConfigEnv(cfg.provider?.google?.options?.apiKey)
-    if (gKey) return gKey
+    if (isUsableGeminiApiKey(gKey)) return gKey
   } catch {}
   return ''
 }
@@ -50,7 +56,11 @@ function resolveOpenAIKey(): string {
 
 function normalizeMimeType(raw?: string): string {
   const base = (raw || 'audio/webm').split(';')[0]?.trim().toLowerCase()
-  if (!base || !base.startsWith('audio/')) return 'audio/webm'
+  if (!base) return 'audio/webm'
+  if (base === 'audio/x-m4a' || base === 'audio/m4a') return 'audio/mp4'
+  if (base === 'audio/x-wav') return 'audio/wav'
+  if (base === 'video/webm') return 'audio/webm'
+  if (!base.startsWith('audio/')) return 'audio/webm'
   return base
 }
 
@@ -123,19 +133,30 @@ export function mountVoiceRoutes(app: Hono<{ Variables: { requestId: string } }>
           data: audioBase64,
         },
       }
-      const modelsToTry = ['gemini-3.5-transcribe', 'gemini-2.5-flash']
+      const modelsToTry = ['gemini-3.5-transcribe', 'gemini-4-hydrogen']
       let lastErr: unknown = null
+      let lastEmptyModel: string | null = null
       for (const model of modelsToTry) {
         try {
           const response = await ai.models.generateContent({
             model,
             contents: { parts: [audioPart, { text: promptText }] },
           })
-          const text = (response.text ?? '').trim()
-          return c.json({ ok: true, text, provider: 'gemini', model })
+          const partText =
+            response.candidates?.[0]?.content?.parts
+              ?.map((p) => (typeof (p as { text?: unknown }).text === 'string' ? (p as { text: string }).text : ''))
+              .join('') ?? ''
+          const text = (response.text ?? partText ?? '').trim()
+          if (text) {
+            return c.json({ ok: true, text, provider: 'gemini', model })
+          }
+          lastEmptyModel = model
         } catch (err) {
           lastErr = err
         }
+      }
+      if (lastEmptyModel) {
+        return c.json({ ok: true, text: '', provider: 'gemini', model: lastEmptyModel })
       }
       const msg = lastErr instanceof Error ? lastErr.message : String(lastErr)
       return c.json({ ok: false, error: `Gemini transcription failed: ${msg}` }, 502)

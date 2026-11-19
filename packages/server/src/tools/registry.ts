@@ -218,6 +218,7 @@ export class ToolRegistry {
       () => import('./memory.js'),
       () => import('./session.js'),
       () => import('./brio.js'),
+      () => import('./review-coverage.js'),
       () => import('./other.js'),
     ]
     for (const load of modules) {

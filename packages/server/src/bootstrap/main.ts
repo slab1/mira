@@ -104,6 +104,10 @@ import { ShadowMira } from '../shadow/shadow.js'
 import { mountEngineRoutes } from '../routes/engines.js'
 import { CanaryManager } from '../canary/canary.js'
 import { mountCanaryRoutes } from '../routes/canary.js'
+import { OnlineResearchService } from '../research/online-research.js'
+import { mountResearchRoutes } from '../routes/research.js'
+import { mountReviewRoutes } from '../routes/review.js'
+import { mountBranchRoutes } from '../routes/branches.js'
 /** Auto-canary hook: set inside main() when MIRA_CANARY_AUTO_START=1 (Phase 5 automation) */
 let canaryStartAfterPromote: ((affectedEngine: string) => { canaryId: string } | null) | null = null
 /** Late-bound ShadowMira: constructed in the Phase 4 block, after mountEvolutionRoutes
@@ -938,6 +942,35 @@ async function main() {
     return sessionVisibleTo(row, caller, orgOfOwner) ? s : null
   }
 
+  const onlineResearch = new OnlineResearchService({
+    db,
+    bus,
+    knowledge: learning.knowledge,
+    gateway,
+  })
+
+  // Mounted before mountSessionRoutes so /session/compare resolves ahead of /session/:id
+  mountBranchRoutes(app, {
+    db,
+    bus,
+    prompt,
+    research: onlineResearch,
+    knowledge: learning.knowledge,
+    authorizedSession,
+    resolveOwner,
+    bearerOf,
+  })
+  mountResearchRoutes(app, {
+    service: onlineResearch,
+    resolveOwner,
+    bearerOf,
+    orgOfOwner,
+  })
+  mountReviewRoutes(app, {
+    db,
+    authorizedSession,
+  })
+
   mountSessionRoutes(app, {
     db,
     bus,
@@ -981,7 +1014,7 @@ async function main() {
   })
   mountWebhookRoutes(app, { bus })
 
-  mountMeRoutes(app, { db, resolveOwner, resolveRole, bearerOf, ORG_NAMES, ORG_MEMBERS })
+  mountMeRoutes(app, { db, bus, resolveOwner, resolveRole, bearerOf, ORG_NAMES, ORG_MEMBERS })
 
   mountSessionExtrasRoutes(app, {
     db,

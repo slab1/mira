@@ -23,6 +23,14 @@
 
 import { main, sandbox } from './bootstrap/main.js'
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[mira] unhandledRejection (kept alive):', reason)
+})
+
+process.on('uncaughtException', (err) => {
+  console.error('[mira] uncaughtException (kept alive):', err)
+})
+
 // Start the server
 main().catch((e) => {
   console.error('Fatal error:', e)

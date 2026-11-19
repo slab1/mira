@@ -8,7 +8,7 @@ import { Glob } from "bun"
 const globSchema = z.object({
   pattern: z.string().describe("Glob pattern, e.g. **/*.ts"),
   cwd: z.string().optional().describe("Base directory (default cwd)"),
-  limit: z.number().optional().describe("Max results (default 100)"),
+  limit: z.coerce.number().int().positive().optional().describe("Max results (default 100)"),
 })
 
 export const globTool = {
@@ -32,7 +32,7 @@ const grepSchema = z.object({
   pattern: z.string().describe("Regex pattern to search"),
   include: z.string().optional().describe("Glob filter, e.g. *.ts"),
   path: z.string().optional().describe("Directory to search (default cwd)"),
-  limit: z.number().optional().describe("Max matches (default 50)"),
+  limit: z.coerce.number().int().positive().optional().describe("Max matches (default 50)"),
 })
 
 export const grepTool = {

@@ -11,7 +11,9 @@
 import type { Hono, Context } from 'hono'
 import { eq } from 'drizzle-orm'
 import type { MiraDB } from '../storage/db.js'
+import type { Bus } from '../bus/index.js'
 import { getUserByOwner } from '../storage/users.js'
+import type { JsonValue } from '../types/index.js'
 
 const NAME_MAX = 50
 
@@ -24,6 +26,11 @@ function sanitizeProfile(profile: unknown): Record<string, unknown> | null {
   for (const [k, v] of Object.entries(profile as Record<string, unknown>)) {
     if (SECRET_PROFILE_RE.test(k)) continue
     if (!SAFE_PROFILE_KEYS.has(k) && typeof v === 'string' && v.length > 200) continue
+    if (k === 'bio' && typeof v === 'string') {
+      const trimmed = v.trim().slice(0, 500)
+      if (trimmed) out[k] = trimmed
+      continue
+    }
     out[k] = v
   }
   return Object.keys(out).length ? out : null
@@ -42,6 +49,7 @@ export function mountMeRoutes(
   app: Hono<{ Variables: { requestId: string } }>,
   deps: {
     db: MiraDB
+    bus?: Bus
     resolveOwner: (t: string) => string | undefined
     /** RBAC (P3.1): exposed as `role` in GET /me so clients can adapt their UI */
     resolveRole?: (t: string) => import('../auth/roles.js').Role
@@ -52,7 +60,7 @@ export function mountMeRoutes(
     ORG_MEMBERS?: Map<string, import('./orgs.js').OrgMembership>
   },
 ) {
-  const { db } = deps
+  const { db, bus } = deps
 
   /** Live org membership for the caller — null when orgless or maps unwired. */
   const orgOf = (owner: string) => {
@@ -73,30 +81,87 @@ export function mountMeRoutes(
   })
 
   app.patch('/me', async (c: Context) => {
-    const owner = deps.resolveOwner(deps.bearerOf(c.req.header('Authorization')))
+    const bearer = deps.bearerOf(c.req.header('Authorization'))
+    const owner = deps.resolveOwner(bearer)
     if (!owner) return c.json({ error: 'unauthorized' }, 401)
-    const body = (await c.req.json().catch(() => null)) as { name?: unknown } | null
-    const raw = body?.name
-    if (typeof raw !== 'string') {
+    const body = (await c.req.json().catch(() => null)) as {
+      name?: unknown
+      profile?: unknown
+    } | null
+    const hasNameField = body !== null && typeof body === 'object' && 'name' in body
+    const hasProfileField = body !== null && typeof body === 'object' && 'profile' in body
+
+    if (!hasNameField && !hasProfileField) {
       return c.json({ error: 'name must be a string' }, 400)
     }
-    const name = raw.trim()
-    if (!name) {
-      return c.json({ error: 'name must not be empty' }, 400)
+
+    let nextName: string | undefined
+    if (hasNameField) {
+      const raw = body?.name
+      if (typeof raw !== 'string') {
+        return c.json({ error: 'name must be a string' }, 400)
+      }
+      const trimmed = raw.trim()
+      if (!trimmed) {
+        return c.json({ error: 'name must not be empty' }, 400)
+      }
+      if (trimmed.length > NAME_MAX) {
+        return c.json({ error: `name must be at most ${NAME_MAX} characters` }, 400)
+      }
+      nextName = trimmed
     }
-    if (name.length > NAME_MAX) {
-      return c.json({ error: `name must be at most ${NAME_MAX} characters` }, 400)
-    }
+
     const user = await getUserByOwner(db, owner)
+    let nextProfile = user.profile ?? null
+    if (hasProfileField) {
+      if (body?.profile === null) {
+        nextProfile = null
+      } else {
+        const sanitizedIncoming = sanitizeProfile(body?.profile)
+        const base = sanitizeProfile(user.profile) ?? {}
+        const merged = { ...base, ...(sanitizedIncoming ?? {}) }
+        if (
+          body?.profile &&
+          typeof body.profile === 'object' &&
+          !Array.isArray(body.profile) &&
+          'bio' in (body.profile as Record<string, unknown>) &&
+          typeof (body.profile as Record<string, unknown>).bio === 'string' &&
+          !(body.profile as Record<string, unknown>).bio!.toString().trim()
+        ) {
+          delete merged.bio
+        }
+        nextProfile = Object.keys(merged).length > 0 ? merged : null
+      }
+    }
+
     const updated = {
       ...user,
-      name,
+      name: nextName ?? user.name,
+      profile: nextProfile,
       updatedAt: Date.now(),
     }
     await db
       .update(db.schema.users)
-      .set({ name, updatedAt: updated.updatedAt })
+      .set({
+        name: updated.name,
+        profile: updated.profile,
+        updatedAt: updated.updatedAt,
+      })
       .where(eq(db.schema.users.owner, owner))
-    return c.json(sanitizeUser(updated))
+
+    const safe = sanitizeUser(updated)
+    bus?.publish({
+      type: 'me.updated',
+      payload: {
+        owner,
+        name: updated.name,
+        profile: (safe?.profile ?? null) as JsonValue,
+      },
+      timestamp: updated.updatedAt,
+    })
+
+    const org = orgOf(owner)
+    if (deps.resolveRole) return c.json({ ...safe, role: deps.resolveRole(bearer), org })
+    return c.json({ ...safe, org })
   })
 }

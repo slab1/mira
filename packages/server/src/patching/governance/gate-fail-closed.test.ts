@@ -50,12 +50,13 @@ const runner = (t?: LatencyTracker, deps: Record<string, unknown> = {}) =>
 const observingRunner = (
   t: LatencyTracker,
   samples: Array<{ ms: number; error?: boolean }>,
-  opts: { trafficPct?: number } = {},
+  opts: { trafficPct?: number; cycle?: boolean } = {},
 ) => {
   const router = new VariantRouter()
   let i = 0
   const sleep = async () => {
-    const s = samples[i++]
+    const s =
+      opts.cycle && samples.length > 0 ? samples[i++ % samples.length] : samples[i++]
     if (s) t.record(s.ms, 'proposal_x', 'trace', s.error ?? false)
     await new Promise((r) => setTimeout(r, 2))
   }
@@ -320,12 +321,16 @@ describe('§3 acceptance: invalid canary config is blocked', () => {
 
 describe('§3 acceptance: SLO breach fails, compliance passes', () => {
   test('p95 over the limit → FAILED', async () => {
-    const r = await observingRunner(new LatencyTracker(), [
-      ...Array.from({ length: 12 }, () => ({ ms: 100 })),
-      { ms: 9000 },
-      { ms: 9000 },
-      { ms: 9000 },
-    ]).start('proposal_x', { trafficPct: 5, durationMs: 120, slo: SLO, minSamples: 3 })
+    const r = await observingRunner(
+      new LatencyTracker(),
+      [
+        ...Array.from({ length: 12 }, () => ({ ms: 100 })),
+        { ms: 9000 },
+        { ms: 9000 },
+        { ms: 9000 },
+      ],
+      { cycle: true },
+    ).start('proposal_x', { trafficPct: 5, durationMs: 120, slo: SLO, minSamples: 3 })
     expect(r.passed).toBe(false)
     expect(outcomeOf(r)).toBe('FAILED')
     expect(r.reason).toContain('p95')
@@ -333,14 +338,13 @@ describe('§3 acceptance: SLO breach fails, compliance passes', () => {
 
   test('healthy candidate within every configured limit → PASSED', async () => {
     // traffic arrives DURING the observation window, which is what the canary
-    // is supposed to measure. Window is generous (500ms, ~8ms of ticks) so a
-    // loaded CI event loop cannot close it before the samples land.
-    const r = await observingRunner(new LatencyTracker(), [
-      { ms: 10 },
-      { ms: 20 },
-      { ms: 30 },
-      { ms: 40 },
-    ]).start('proposal_x', { trafficPct: 5, durationMs: 500, slo: SLO, minSamples: 3 })
+    // is supposed to measure. Cycling keeps samples arriving across the full
+    // durationMs window so early ticks cannot age out under CI load.
+    const r = await observingRunner(
+      new LatencyTracker(),
+      [{ ms: 10 }, { ms: 20 }, { ms: 30 }, { ms: 40 }],
+      { cycle: true },
+    ).start('proposal_x', { trafficPct: 5, durationMs: 500, slo: SLO, minSamples: 3 })
     expect(r.passed).toBe(true)
     expect(outcomeOf(r)).toBe('PASSED')
     expect(Number(r.metrics!.count)).toBeGreaterThanOrEqual(3)

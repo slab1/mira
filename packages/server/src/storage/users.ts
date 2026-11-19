@@ -7,12 +7,14 @@
  * Lane C reads the name via getUserNameForOwner to inject it into the system
  * prompt (agents address the user by name).
  */
+import { eq } from 'drizzle-orm'
 import type { MiraDB } from './db.js'
 
 export type UserRow = {
   id: string
   owner: string
   name: string
+  profile?: Record<string, unknown> | null
   createdAt: number
   updatedAt: number
 }
@@ -28,6 +30,7 @@ export async function getUserByOwner(db: MiraDB, owner: string): Promise<UserRow
     id: crypto.randomUUID(),
     owner,
     name: 'user',
+    profile: null,
     createdAt: now,
     updatedAt: now,
   }
@@ -51,4 +54,30 @@ export async function getUserNameForOwner(
   if (!owner) return undefined
   const u = await getUserByOwner(db, owner)
   return u.name
+}
+
+/**
+ * Persist a new display name (and optional profile) for an owner, creating
+ * the row first if it does not yet exist.
+ */
+export async function setUserNameForOwner(
+  db: MiraDB,
+  owner: string,
+  rawName: string,
+): Promise<UserRow> {
+  const name = rawName.trim()
+  if (!name || name.length > 50) {
+    throw new Error('name must be 1-50 non-empty characters')
+  }
+  const existing = await getUserByOwner(db, owner)
+  const updatedAt = Date.now()
+  await db
+    .update(db.schema.users)
+    .set({ name, updatedAt })
+    .where(eq(db.schema.users.owner, owner))
+  return {
+    ...existing,
+    name,
+    updatedAt,
+  }
 }
