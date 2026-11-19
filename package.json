@@ -15,7 +15,7 @@
     "lint": "eslint . || true",
     "deps:install": "scripts/install.sh",
     "deps:check": "node scripts/verify-install.js",
-    "scripts:chmod": "chmod +x oc-aether-pulse.sh opencode_improvement/track.py scripts/*.sh scripts/*.fish scripts/verify-install.js scripts/ci/*.js scripts/gc-db.ts .husky/commit-msg .husky/pre-commit .husky/pre-commit-secrets",
+    "scripts:chmod": "chmod +x oc-aether-pulse.sh opencode_improvement/track.py scripts/*.sh scripts/gen-mira-token.sh scripts/*.fish scripts/verify-install.js scripts/ci/*.js scripts/gc-db.ts .husky/commit-msg .husky/pre-commit .husky/pre-commit-secrets",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
