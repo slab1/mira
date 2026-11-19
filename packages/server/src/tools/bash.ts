@@ -34,7 +34,7 @@ export function __setSandbox(s: ContainerSandbox | null): void {
 export const bashTool = {
   name: 'bash',
   description:
-    'Execute a bash command. Use for building, testing, git, file ops. Prefer read/grep/glob for file inspection. Timeout 30s default.',
+    'Execute a bash command. Use for building, testing, git, file ops, installing packages (bun add, npm i), running tools/scripts. Prefer read/grep/glob for file inspection. Timeout 30s default.',
   category: 'execution',
   needsPermission: true,
   schema: bashSchema,

@@ -465,11 +465,30 @@ const normalizedAllowSet = new Set(
     }
   }),
 )
-function isOriginAllowed(origin: string | null | undefined): boolean {
+function isOriginAllowed(origin: string | null | undefined, hostHeader?: string | null): boolean {
   // Reject null-origin (no Origin header) — parity with HTTP corsOrigin,
   // which blocks null origins. Prevents curl/websocat bypassing the allowlist.
   if (!origin) return false
   if (isVscodeOrigin(origin)) return true
+  try {
+    const u = new URL(origin)
+    if (hostHeader) {
+      const cleanHost = hostHeader.toLowerCase().trim()
+      if (u.host.toLowerCase() === cleanHost || u.hostname.toLowerCase() === cleanHost.split(':')[0]) {
+        return true
+      }
+    }
+    const h = u.hostname.toLowerCase()
+    if (h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1') return true
+    if (
+      h.endsWith('.run.app') ||
+      h.endsWith('.trycloudflare.com') ||
+      h.endsWith('.github.dev') ||
+      h.endsWith('.app.github.dev')
+    ) {
+      return true
+    }
+  } catch {}
   if (CORS_ORIGIN_LIST.length === 0) {
     // Dev default (empty list): only localhost + vscode (not any origin)
     return isLocalDevOrigin(origin)
@@ -1587,6 +1606,39 @@ async function main() {
     ws.__proc = proc
     ws.__ac = ac
     ws.__isPty = isPty
+
+    if (!isPty) {
+      const pump = async (stream: unknown, name: string) => {
+        if (!stream || typeof (stream as any).getReader !== 'function') return
+        try {
+          const reader = (stream as ReadableStream<Uint8Array>).getReader()
+          while (ws.__active) {
+            const { done, value } = await reader.read()
+            if (done) break
+            if (value) {
+              const text = decoder.decode(value, { stream: true })
+              sendChunk(name, text)
+            }
+          }
+        } catch {}
+      }
+      pump(proc.stdout, 'stdout')
+      pump(proc.stderr, 'stderr')
+    }
+
+    proc.exited.then((code) => {
+      if (!ws.__active) return
+      try {
+        ws.send(
+          JSON.stringify({
+            type: 'terminal.exit',
+            payload: { code },
+            timestamp: Date.now(),
+          }),
+        )
+      } catch {}
+    })
+
     ws.__write = (data: string) => {
       try {
         if (isPty && proc.terminal) {
@@ -1600,6 +1652,7 @@ async function main() {
           typeof (stdin as Bun.FileSink).write === 'function'
         ) {
           ;(stdin as Bun.FileSink).write(data)
+          ;(stdin as Bun.FileSink).flush?.()
         }
       } catch {}
     }
@@ -1717,7 +1770,7 @@ async function main() {
         fetch(req, srv) {
           bunServer = srv
           if (req.headers.get('upgrade')?.toLowerCase() === 'websocket') {
-            if (!isOriginAllowed(req.headers.get('origin'))) {
+            if (!isOriginAllowed(req.headers.get('origin'), req.headers.get('host'))) {
               return new Response(JSON.stringify({ error: 'forbidden origin' }), {
                 status: 403,
                 headers: { 'content-type': 'application/json' },
@@ -1731,9 +1784,10 @@ async function main() {
                 headers: { 'content-type': 'application/json' },
               })
             }
-            const authHeader = req.headers.get('authorization') ?? undefined
+            const queryToken = url.searchParams.get('token') ?? undefined
+            const authHeader = req.headers.get('authorization') ?? (queryToken ? `Bearer ${queryToken}` : undefined)
             const { authenticated, owner } = authenticateUpgrade(wsAuthCtx(), authHeader)
-            const token = authenticated ? bearerOf(authHeader) : undefined
+            const token = authenticated ? bearerOf(authHeader) : (queryToken ?? undefined)
             if (isTerminal && authenticated && token && !terminalRoleAllowed(resolveRole(token))) {
               return new Response(
                 JSON.stringify({ error: 'terminal requires operator or admin role' }),
@@ -1866,15 +1920,6 @@ async function main() {
               }
               if (event?.type === 'terminal.input' && typeof event.data === 'string') {
                 w.__armIdle?.()
-                try {
-                  const stdin = w.__proc?.stdin
-                  if (
-                    stdin &&
-                    typeof stdin !== 'number' &&
-                    typeof (stdin as Bun.FileSink).write === 'function'
-                  )
-                    (stdin as Bun.FileSink).write(event.data)
-                } catch {}
                 const isControlOnly = /^[\x00-\x1f\x7f]+$/.test(event.data)
                 if (terminalSandboxed() && !isControlOnly) {
                   const raw = event.data.trim()

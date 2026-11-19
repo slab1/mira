@@ -17,6 +17,9 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+env:
+  PATH: ${{ github.workspace }}/bin:/usr/local/bin:/usr/bin:/bin
+
 jobs:
   build:
     runs-on: ubuntu-latest

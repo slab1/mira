@@ -15,6 +15,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  PATH: ${{ github.workspace }}/bin:/usr/local/bin:/usr/bin:/bin
+
 jobs:
   build:
     name: build

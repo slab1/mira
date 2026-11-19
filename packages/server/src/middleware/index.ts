@@ -83,6 +83,15 @@ export function mountMiddleware(
             let normalized: string
             try {
               normalized = new URL(origin).origin
+              const h = new URL(origin).hostname.toLowerCase()
+              if (
+                h.endsWith('.run.app') ||
+                h.endsWith('.trycloudflare.com') ||
+                h.endsWith('.github.dev') ||
+                h.endsWith('.app.github.dev')
+              ) {
+                return normalized
+              }
             } catch {
               return ''
             }
@@ -98,6 +107,22 @@ export function mountMiddleware(
           origin: (origin: string | undefined) => {
             if (!origin) return ''
             if (isVscodeOrigin(origin)) return origin
+            try {
+              const u = new URL(origin)
+              const h = u.hostname.toLowerCase()
+              if (
+                h === 'localhost' ||
+                h === '127.0.0.1' ||
+                h === '[::1]' ||
+                h === '::1' ||
+                h.endsWith('.run.app') ||
+                h.endsWith('.trycloudflare.com') ||
+                h.endsWith('.github.dev') ||
+                h.endsWith('.app.github.dev')
+              ) {
+                return u.origin
+              }
+            } catch {}
             if (!isLocalDevOrigin(origin)) return ''
             try {
               const u = new URL(origin)

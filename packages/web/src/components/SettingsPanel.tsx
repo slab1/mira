@@ -1303,9 +1303,14 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
       let wsUrl = ''
       try {
         const base = getApiUrl()
+        const token = getToken() || (import.meta.env.VITE_MIRA_TOKEN as string) || ''
+        const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : ''
         if (base) {
           const u = new URL(base)
-          wsUrl = `${u.protocol === 'https:' ? 'wss:' : 'ws:'}//${u.host}/terminal`
+          wsUrl = `${u.protocol === 'https:' ? 'wss:' : 'ws:'}//${u.host}/terminal${tokenQuery}`
+        } else {
+          const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+          wsUrl = `${proto}//${location.host}/terminal${tokenQuery}`
         }
       } catch {}
       if (!wsUrl) {
@@ -1326,10 +1331,14 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
       ws.onopen = async () => {
         let t = getToken()
         if (!t || t === 'dev-local-token-not-secret') {
-          t = await ensureToken().catch(() => '')
+          const fetched = await ensureToken().catch(() => '')
+          if (fetched) t = fetched
         }
         if (!t) {
           t = (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
+        }
+        if (!t) {
+          t = 'dev-local-token-not-secret'
         }
         if (t && ws.readyState === WebSocket.OPEN) {
           try {

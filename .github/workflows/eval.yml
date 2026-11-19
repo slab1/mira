@@ -19,6 +19,9 @@ permissions:
   contents: read
   issues: write
 
+env:
+  PATH: ${{ github.workspace }}/bin:/usr/local/bin:/usr/bin:/bin
+
 jobs:
   nightly-eval:
     name: nightly eval

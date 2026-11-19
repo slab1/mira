@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Wrapper for bun to gracefully handle npm-style flags like --production=false
+ARGS=()
+for arg in "$@"; do
+  if [[ "$arg" == --production=false* ]] || [[ "$arg" == --production=no* ]]; then
+    continue
+  elif [[ "$arg" == --production=true* ]] || [[ "$arg" == --production=yes* ]]; then
+    ARGS+=("--production")
+  elif [[ "$arg" == --production=* ]]; then
+    continue
+  else
+    ARGS+=("$arg")
+  fi
+done
+exec "$(command -v bun)" "${ARGS[@]}"

@@ -10,6 +10,9 @@ concurrency:
   group: pipeline-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PATH: ${{ github.workspace }}/bin:/usr/local/bin:/usr/bin:/bin
+
 jobs:
   setup:
     name: setup

@@ -19,6 +19,9 @@ permissions:
 # NOTE: the token is scoped per-job (build/test/eval) — a top-level env would
 # inject it into jobs that never touch turbo (repo-hygiene, auth-guard, changes).
 
+env:
+  PATH: ${{ github.workspace }}/bin:/usr/local/bin:/usr/bin:/bin
+
 jobs:
   # H3-C Fix 3 — path-filtered gating (verdict §5.5 / §7.4). Keeps one
   # workflow; docs-only PRs skip build/test as "skipped" (never a vacuous

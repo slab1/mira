@@ -2127,17 +2127,19 @@ export function getWsUrl(): string {
 
 export function getTerminalWsUrl(): string {
   const base = baseUrl()
+  const token = getToken() || (import.meta.env.VITE_MIRA_TOKEN as string) || ''
+  const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : ''
   if (!base) {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${window.location.host}/terminal`
+    return `${proto}//${window.location.host}/terminal${tokenQuery}`
   }
   try {
     const u = new URL(base)
     const proto = window.location.protocol === 'https:' || u.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${u.host}/terminal`
+    return `${proto}//${u.host}/terminal${tokenQuery}`
   } catch {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${window.location.host}/terminal`
+    return `${proto}//${window.location.host}/terminal${tokenQuery}`
   }
 }
 
@@ -2166,10 +2168,14 @@ export function createTerminalSocket(handlers: Partial<TerminalWSEvents> = {}): 
     ws.onopen = async () => {
       let t = getToken()
       if (!t || t === 'dev-local-token-not-secret') {
-        t = await ensureToken().catch(() => '')
+        const fetched = await ensureToken().catch(() => '')
+        if (fetched) t = fetched
       }
       if (!t) {
         t = (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
+      }
+      if (!t) {
+        t = 'dev-local-token-not-secret'
       }
       if (t) {
         try {

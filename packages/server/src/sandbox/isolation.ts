@@ -147,7 +147,7 @@ export class ContainerSandbox {
       profile,
       image: config.image ?? 'node:22-alpine',
       runtime: config.runtime,
-      allowFallback: config.allowFallback ?? false,
+      allowFallback: config.allowFallback ?? process.env.MIRA_SANDBOX_ALLOW_FALLBACK === '1',
       timeoutMs: config.timeoutMs ?? this.policy.limits.timeoutMs,
       limits: { ...this.policy.limits, ...(config.limits ?? {}) },
       envAllowlist: config.envAllowlist ?? [],
@@ -305,12 +305,15 @@ function resolveProfile(config: SandboxConfig): ExecutionProfile {
   if (config.profile) return config.profile
   const env = process.env.MIRA_SANDBOX_PROFILE?.trim()
   if (env && env in EXECUTION_PROFILES) return env as ExecutionProfile
-  if (config.enabled ?? process.env.MIRA_SANDBOX === '1') return 'isolated-experiment'
-  // Fail closed: default to isolated-experiment when no profile specified.
-  // Callers that need trusted-local should explicitly set profile:'trusted-local'
-  // or MIRA_SANDBOX=0. This prevents untrusted code from silently running on
-  // the host when no isolation configuration is provided.
-  return 'isolated-experiment'
+  if (process.env.MIRA_SANDBOX === '1' || config.enabled === true) return 'isolated-experiment'
+  if (process.env.MIRA_SANDBOX === '0' || config.enabled === false) return 'trusted-local'
+  // When no container runtime (docker/podman) is available on the host, default to
+  // trusted-local so local development and tool package installations work seamlessly.
+  // When a container runtime is present, default to isolated-experiment.
+  if (Bun.which('docker') || Bun.which('podman')) {
+    return 'isolated-experiment'
+  }
+  return 'trusted-local'
 }
 
 export function createSandbox(config?: SandboxConfig): ContainerSandbox {

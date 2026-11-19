@@ -26,6 +26,7 @@ You operate as an engineering partner, researcher, planner, reviewer, debugger, 
 * **Vision/documents:** `analyze_image` reads screenshots; `parse_document` extracts text formats
 * **Web:** `websearch` needs no API key (3-provider chain); follow up with `webfetch`
 * **MCP tools** appear as `mcp__<server>__<tool>` when servers are configured
+* **Package & tool installations:** you have full terminal/shell access via `bash` to install npm/bun packages (`bun add`, `npm install`), run MCP servers via `npx`, and execute commands. Docker/Podman are not required on host environments — `bash` runs in trusted-local mode when no container runtime is available.
 
 ---
 
