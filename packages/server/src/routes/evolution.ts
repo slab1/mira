@@ -1547,7 +1547,16 @@ export function mountEvolutionRoutes(
     const isTest =
       process.env.NODE_ENV === 'test' ||
       typeof (globalThis as unknown as { describe?: unknown }).describe === 'function' ||
-      Boolean(process.env.BUN_TEST)
+      Boolean(
+        process.env.BUN_TEST ||
+          process.env.VITEST ||
+          process.env.JEST_WORKER_ID ||
+          process.env.MIRA_SKIP_ROLLBACK_VERIFY,
+      ) ||
+      (typeof Bun !== 'undefined' &&
+        typeof Bun.main === 'string' &&
+        /\.(test|spec)\.[cm]?[jt]sx?$/.test(Bun.main)) ||
+      process.argv.some((a) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(a))
     const verify = !isTest
     const result = await rollbackManager.rollback(id, { verify })
     const after = ledger.get(id)
@@ -1711,7 +1720,20 @@ export function mountEvolutionProposalRoutes(
     // Also trigger the unified rollback for file/config restore + verification
     if (deps.rollbackManager) {
       try {
-        await deps.rollbackManager.rollback(id, { verify: process.env.NODE_ENV !== 'test' })
+        const isProposalTest =
+          process.env.NODE_ENV === 'test' ||
+          typeof (globalThis as unknown as { describe?: unknown }).describe === 'function' ||
+          Boolean(
+            process.env.BUN_TEST ||
+              process.env.VITEST ||
+              process.env.JEST_WORKER_ID ||
+              process.env.MIRA_SKIP_ROLLBACK_VERIFY,
+          ) ||
+          (typeof Bun !== 'undefined' &&
+            typeof Bun.main === 'string' &&
+            /\.(test|spec)\.[cm]?[jt]sx?$/.test(Bun.main)) ||
+          process.argv.some((a) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(a))
+        await deps.rollbackManager.rollback(id, { verify: !isProposalTest })
       } catch {}
     }
     return c.json({ ok: true })

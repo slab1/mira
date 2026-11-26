@@ -136,7 +136,7 @@ export default defineConfig({
       '/workspace': { target: API_TARGET, changeOrigin: true },
       '/complete': { target: API_TARGET, changeOrigin: true },
       '/autocomplete': { target: API_TARGET, changeOrigin: true },
-      '/terminal': { target: API_TARGET, changeOrigin: true },
+      '/terminal': { target: API_TARGET, changeOrigin: true, ws: true, rewriteWsOrigin: true },
       '/metrics': { target: API_TARGET, changeOrigin: true },
       // WebSocket (GlobalBus + terminal) — catch-all must be last; HMR WS isolated on 24679 so it never hits this proxy
       '/': {

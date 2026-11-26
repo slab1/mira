@@ -4,15 +4,14 @@
 
 **A self-hostable AI coding agent with hierarchical memory, eval-gated changes, and a wrong-edit defense stack.**
 
-[![Tests](https://img.shields.io/badge/server%20tests-[1152]-passing-brightgreen)](#status)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/server%20tests-1847%20passing-brightgreen)](#status)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
 [![Runtime: Bun](https://img.shields.io/badge/runtime-Bun%201.4.0-black)](https://bun.sh)
 [![Status: beta](https://img.shields.io/badge/status-beta-orange)](#status)
 
 [Quickstart](#quickstart) · [Why Mira](#why-mira) · [Architecture](#architecture) · [Contributing](CONTRIBUTING.md) · [Docs](docs/)
 
-<!-- TODO before launch: replace with the auto-rollback demo GIF -->
-![Mira refusing an ambiguous edit and rolling back a failed change](docs/assets/demo.gif)
+<!-- Demo GIF placeholder: add docs/assets/demo.gif before publishing -->
 
 </div>
 
@@ -48,8 +47,8 @@ Mira is a solo-maintained project. See [Status](#status) before you depend on it
 
 ## Status
 
-- **[1152]** server tests passing as of [DATE]
-- Actively developed — last commit [DATE]
+- **1,847** server tests passing as of 2026-11-26
+- Actively developed — last commit 2026-11-26
 - **Solo-maintained.** Issues triaged weekly. PRs welcome, expect review latency
   (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 - **Beta.** Not yet deployed in production by anyone but the author.
@@ -130,13 +129,13 @@ can fail without taking the others down.
 | **Intent anchors** | Tracks what the agent said it was going to do and flags edits that drift from it. |
 | **Symbol binding** | Warns when an edit touches symbols other than the one under discussion. |
 | **Edit critic** | Optional second-model review of every edit before it lands. |
-| **Blast-radius analysis** | In strict mode, blocks edits affecting more than [N] dependents. |
+| **Blast-radius analysis** | In strict mode, blocks edits affecting more than 10 dependents. |
 | **Snapshot** | Every mutation is snapshotted to SQLite first. |
 | **Verification** | Post-edit checks run automatically (tests, typecheck, configurable). |
 | **Auto-rollback** | Failed verification restores the last good snapshot. |
 | **Agent-callable `revert`** | The agent can undo its own work mid-session. |
 
-The full design is documented in [`docs/GUARDRAILS_SUMMARY.md`](docs/GUARDRAILS_SUMMARY.md).
+The full design is documented in [`GUARDRAILS_SUMMARY.md`](GUARDRAILS_SUMMARY.md).
 
 ---
 
@@ -217,7 +216,7 @@ SessionPrompt.loop
 - **Frontends:** SolidJS throughout (web, TUI).
 - **Runtime:** Bun 1.4.0, native SQLite.
 
-Deeper detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Deeper detail: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ### Repository layout
 
@@ -258,8 +257,8 @@ Installable skills, agents, knowledge packs, and vertical bundles (agent +
 skills + knowledge, atomically) without restarting the server:
 
 ```bash
-POST /community/verticals/[NAME]
-POST /community/skills/[NAME]
+POST /community/verticals/dev-workflow
+POST /community/skills/tdd-workflow
 ```
 
 Browse with `GET /community/registry?kind=…&q=…`, or via
@@ -289,7 +288,7 @@ and PR conventions.
 
 ## License
 
-[MIT](LICENSE).
+MIT.
 
 ---
 

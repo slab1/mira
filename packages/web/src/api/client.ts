@@ -504,7 +504,7 @@ const API_URL_KEY = 'mira_api_url'
 function getEnvBase(): string {
   try {
     const env = (import.meta as { env?: Record<string, string> }).env
-    return env?.VITE_API_URL ?? ''
+    return (env?.VITE_API_URL ?? '').trim().replace(/\/+$/, '')
   } catch {
     return ''
   }
@@ -573,6 +573,20 @@ function getRuntimeApiUrl(): string {
 
 export function getApiUrl(): string {
   return getRuntimeApiUrl() || getEnvBase()
+}
+
+export function resolveServerHost(fallback = 'unknown'): string {
+  try {
+    const u = getApiUrl()
+    const winHost = typeof window !== 'undefined' ? window.location.host : ''
+    if (u) {
+      const origin = typeof window !== 'undefined' ? window.location.origin : undefined
+      return new URL(u, origin).host || winHost || 'localhost'
+    }
+    return winHost || 'localhost'
+  } catch {
+    return (typeof window !== 'undefined' && window.location.host) || fallback
+  }
 }
 
 export function setApiUrl(url: string): void {
@@ -2127,7 +2141,8 @@ export function getWsUrl(): string {
 
 export function getTerminalWsUrl(): string {
   const base = baseUrl()
-  const token = getToken() || (import.meta.env.VITE_MIRA_TOKEN as string) || ''
+  const rawToken = getToken() || (import.meta.env.VITE_MIRA_TOKEN as string) || ''
+  const token = rawToken === 'dev-local-token-not-secret' ? '' : rawToken
   const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : ''
   if (!base) {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -2146,9 +2161,15 @@ export function getTerminalWsUrl(): string {
 export type TerminalWSEvents = {
   open: () => void
   data: (data: string) => void
-  connected: (info: { cwd?: string; pty?: boolean; platform?: string; env?: Record<string, string> }) => void
+  connected: (info: {
+    cwd?: string
+    pty?: boolean
+    sandbox?: boolean
+    platform?: string
+    env?: Record<string, string>
+  }) => void
   exit: (code: number) => void
-  close: () => void
+  close: (info?: { code?: number; reason?: string }) => void
   error: (err: Event) => void
 }
 
@@ -2174,10 +2195,7 @@ export function createTerminalSocket(handlers: Partial<TerminalWSEvents> = {}): 
       if (!t) {
         t = (import.meta.env.VITE_MIRA_TOKEN as string) ?? ''
       }
-      if (!t) {
-        t = 'dev-local-token-not-secret'
-      }
-      if (t) {
+      if (t && t !== 'dev-local-token-not-secret') {
         try {
           ws?.send(JSON.stringify({ type: 'auth', token: t }))
         } catch {}
@@ -2204,7 +2222,7 @@ export function createTerminalSocket(handlers: Partial<TerminalWSEvents> = {}): 
         }
       }
     }
-    ws.onclose = () => handlers.close?.()
+    ws.onclose = (ev) => handlers.close?.({ code: ev.code, reason: ev.reason })
     ws.onerror = (e) => handlers.error?.(e as Event)
     return ws
   }

@@ -189,7 +189,7 @@ export default function TerminalView(props: Props) {
               <span style={{ 'font-weight': '700', 'font-size': '14px' }}>▣ Terminal</span>
               <span
                 style={{
-                  padding: '2px 7px',
+                  padding: '2px 8px',
                   'border-radius': '999px',
                   'font-size': '11px',
                   'font-weight': '600',
@@ -198,9 +198,21 @@ export default function TerminalView(props: Props) {
                     ? '1px solid rgba(52,211,153,0.25)'
                     : '1px solid rgba(239,68,68,0.25)',
                   color: connected() ? '#6ee7b7' : '#fca5a5',
+                  display: 'inline-flex',
+                  'align-items': 'center',
+                  gap: '6px',
                 }}
               >
-                {connected() ? '● connected' : '○ offline'}
+                <span
+                  style={{
+                    width: '6px',
+                    height: '6px',
+                    'border-radius': '50%',
+                    background: connected() ? '#34d399' : '#ef4444',
+                    'box-shadow': connected() ? '0 0 6px #34d399' : 'none',
+                  }}
+                />
+                {connected() ? 'connected' : 'offline'}
               </span>
             </div>
             <div style={{ display: 'flex', gap: '6px' }}>
@@ -258,20 +270,51 @@ export default function TerminalView(props: Props) {
             </div>
           </div>
 
-          <Show when={error()}>
+          <Show when={!connected() || error()}>
             <div
               role="alert"
               style={{
                 margin: '8px 12px 0 12px',
-                padding: '8px 10px',
+                padding: '10px 12px',
                 'border-radius': '8px',
-                background: 'rgba(239,68,68,0.10)',
-                border: '1px solid rgba(239,68,68,0.22)',
-                color: '#fecaca',
+                background: error() ? 'rgba(239,68,68,0.12)' : 'rgba(245,158,11,0.12)',
+                border: error() ? '1px solid rgba(239,68,68,0.25)' : '1px solid rgba(245,158,11,0.25)',
+                color: error() ? '#fecaca' : '#fde68a',
                 'font-size': '12px',
+                display: 'flex',
+                'align-items': 'center',
+                'justify-content': 'space-between',
+                gap: '8px',
               }}
             >
-              ⚠ {error()}
+              <div>
+                <span style={{ 'font-weight': '600' }}>
+                  {error() ? `⚠ ${error()}` : '⚠ Terminal offline / disconnected'}
+                </span>
+                <div style={{ 'font-size': '11px', opacity: '0.85', 'margin-top': '2px' }}>
+                  {error() ? 'Check server health and token configuration.' : 'WebSocket connection to /terminal is closed.'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setOutput((prev) => prev + '\n[sys] Reconnecting...\n')
+                  connect()
+                }}
+                style={{
+                  padding: '6px 12px',
+                  'border-radius': '6px',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  background: 'rgba(255,255,255,0.1)',
+                  color: '#ffffff',
+                  cursor: 'pointer',
+                  'font-size': '11px',
+                  'font-weight': '600',
+                  'white-space': 'nowrap',
+                }}
+              >
+                ↻ Reconnect Now
+              </button>
             </div>
           </Show>
 

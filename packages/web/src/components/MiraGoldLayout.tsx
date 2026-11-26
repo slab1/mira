@@ -5,7 +5,7 @@ import type { SettingsStore } from '../stores/settings'
 import {
   req,
   api,
-  getApiUrl,
+  resolveServerHost,
   type AgentEntry,
   type ToolInfo,
   type PatchProposal,
@@ -420,14 +420,7 @@ export function MiraGoldLayout(props: {
     return ringCircumference * (1 - clamped / 100)
   })
 
-  const serverLabel = () => {
-    try {
-      const u = getApiUrl()
-      return u ? new URL(u).host : window.location.host
-    } catch {
-      return 'same-origin'
-    }
-  }
+  const serverLabel = () => resolveServerHost('same-origin')
 
   return (
     <div
@@ -460,6 +453,7 @@ export function MiraGoldLayout(props: {
           }}
         >
           <div
+            role="presentation"
             onClick={(e) => e.stopPropagation()}
             style={{
               width: '276px',
@@ -1288,6 +1282,7 @@ export function MiraGoldLayout(props: {
                         {/* Mobile Session Drawer */}
                         <Show when={showSessions() && isMobileScreen()}>
                           <div
+                            role="presentation"
                             class="mira-gold-drawer-sessions"
                             onClick={() => setShowSessions(false)}
                             style={{
@@ -1299,6 +1294,7 @@ export function MiraGoldLayout(props: {
                             }}
                           >
                             <div
+                              role="presentation"
                               onClick={(e) => e.stopPropagation()}
                               style={{
                                 height: '100%',
@@ -1369,6 +1365,7 @@ export function MiraGoldLayout(props: {
                             when={!isMobileScreen()}
                             fallback={
                               <div
+                                role="presentation"
                                 onClick={() => setShowActivity(false)}
                                 style={{
                                   position: 'fixed',
@@ -1379,7 +1376,7 @@ export function MiraGoldLayout(props: {
                                   'justify-content': 'flex-end',
                                 }}
                               >
-                                <div onClick={(e) => e.stopPropagation()} style={{ height: '100%', display: 'flex' }}>
+                                <div role="presentation" onClick={(e) => e.stopPropagation()} style={{ height: '100%', display: 'flex' }}>
                                   <ActivityPanel
                                     store={props.store}
                                     collapsed={false}
@@ -1630,6 +1627,7 @@ export function MiraGoldLayout(props: {
           <Show when={isRightSidebarOpen()}>
             <Show when={isMobileScreen()}>
               <div
+                role="presentation"
                 onClick={() => setIsRightSidebarOpen(false)}
                 style={{
                   position: 'fixed',
@@ -1970,6 +1968,7 @@ export function MiraGoldLayout(props: {
           }}
         >
           <div
+            role="presentation"
             onClick={(e) => e.stopPropagation()}
             style={{
               background: '#0D111E',

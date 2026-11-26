@@ -89,17 +89,20 @@ export function M3Card(props: {
 
 /* Material 3 Filled Button */
 export function M3FilledButton(props: {
-  children: JSX.Element;
-  onClick?: () => void;
-  disabled?: boolean;
+  children: JSX.Element
+  onClick?: () => void
+  disabled?: boolean
+  'aria-label'?: string
 }) {
   return (
     <button
+      type="button"
       class="m3-filled-button"
+      aria-label={props['aria-label']}
       onClick={props.onClick}
       disabled={props.disabled}
     >
       {props.children}
     </button>
-  );
+  )
 }

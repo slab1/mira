@@ -9,7 +9,6 @@ import './index.css'
 import './m3-expressive.css'
 import { createAppStore } from './stores/app'
 import { createSettingsStore } from './stores/settings'
-import { createRealtimeLayer } from './realtime/websocket'
 import { ToastViewport, toast } from './components/Toast'
 import { SettingsPanel } from './components/SettingsPanel'
 import { CommandPalette } from './components/CommandPalette'
@@ -27,7 +26,6 @@ import {
   getApiUrl,
   defaultApiUrl,
   setApiUrl,
-  getWsUrl,
 } from './api/client'
 
 function AuthGate(props: { onReady: () => void }) {
@@ -323,14 +321,9 @@ export default function App() {
     setConnectOpen(true)
   }
 
-  // RealtimeLayer — connect to WebSocket server
-  const realtime = createRealtimeLayer({
-    url: getWsUrl(),
-  })
-
   onMount(() => {
-    realtime.connect()
-    onCleanup(() => realtime.disconnect())
+    store.socket.connect()
+    onCleanup(() => store.socket.disconnect())
 
     const probe = async (): Promise<void> => {
       let token = await ensureToken().catch(() => '')
@@ -460,6 +453,7 @@ export default function App() {
         <AuthGate
           onReady={() => {
             setAuthorized(true)
+            store.socket.reconnect()
             void store.loadSessions()
             void settings.loadAll()
           }}

@@ -381,6 +381,7 @@ export default function IntelligencePage(props: {
                 <input
                   type="checkbox"
                   checked={spawnBranch()}
+                  aria-label="Isolate research in Mira Branch"
                   onChange={(e) => setSpawnBranch(e.currentTarget.checked)}
                 />
                 <span>Isolate in Mira Branch</span>

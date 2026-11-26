@@ -12,6 +12,7 @@ const STALE_PATTERNS = [
   '/app/applet/packages/cli/node_modules/.bin/tsc --watch',
   './scripts/dev-watch.ts',
   'src/index.ts --port=4096',
+  'packages/server/src/index.ts',
   'turbo dev --continue --filter=!@mira/slack',
 ]
 

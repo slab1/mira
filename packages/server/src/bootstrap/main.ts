@@ -32,7 +32,13 @@ import {
   appendFileSync,
 } from 'node:fs'
 import { parseKeyPair, roleForOwner, isRole, type Role } from '../auth/roles.js'
-import { terminalExecutionAllowed, terminalRoleAllowed } from '../terminal-security.js'
+import {
+  DEFAULT_SANDBOX_ALLOWED_COMMANDS,
+  parseSandboxedCommand,
+  resolveSandboxCwd,
+  terminalExecutionAllowed,
+  terminalRoleAllowed,
+} from '../terminal-security.js'
 import { ENV_OVERRIDES_FILE_WARNING, resolveTokenPrecedence } from '../token-provisioning.js'
 import { Bus } from '../bus/index.js'
 import { createDatabase, migrate } from '../storage/db.js'
@@ -521,8 +527,7 @@ function terminalToolConfig(): TerminalToolConfig | undefined {
 }
 function terminalEnabled(): boolean {
   if (process.env.MIRA_TERMINAL_ENABLED === '0') return false
-  if (terminalToolConfig()?.enabled === false || !terminalExecutionAllowed(terminalSandboxed()))
-    return false
+  if (terminalToolConfig()?.enabled === false) return false
   return true
 }
 function terminalSandboxed(): boolean {
@@ -1454,7 +1459,9 @@ async function main() {
     __armIdle?: () => void
     __write?: (data: string) => void
     __resize?: (cols: number, rows: number) => void
+    __signal?: (signal: string) => void
     __isPty?: boolean
+    __sandbox?: boolean
     send(data: string): void
     close(code: number, reason?: string): void
     getBufferedAmount?(): number
@@ -1535,19 +1542,13 @@ async function main() {
 
   function activateTerminalSocket(ws: MiraWS, owner?: string, token?: string) {
     if (ws.__active) return
-    if (terminalSandboxed()) {
-      try {
-        ws.close(1008, 'sandboxed interactive terminal is disabled')
-      } catch {}
-      return
-    }
     ws.__active = true
     ws.__owner = owner ?? null
     ws.__token = token
     clearTimeout(ws.__authTimer)
 
-    const shell = process.platform === 'win32' ? 'cmd.exe' : 'bash'
-    const cwd = process.cwd()
+    const workspaceRoot = process.cwd()
+    let sandboxCwd = workspaceRoot
     const decoder = new TextDecoder()
     const sendChunk = (streamName: string, text: string) => {
       if (!text || !ws.__active) return
@@ -1564,6 +1565,190 @@ async function main() {
         evictSlowSocket(ws, 'terminal client too slow')
       }
     }
+
+    const armIdle = () => {
+      if (ws.__idleTimer) clearTimeout(ws.__idleTimer)
+      const ms = terminalTimeoutMs()
+      if (!ms) return
+      ws.__idleTimer = setTimeout(() => {
+        try {
+          ws.send(
+            JSON.stringify({
+              type: 'terminal.output',
+              payload: {
+                stream: 'stderr',
+                data: `\n[idle timeout after ${ms}ms — terminal closed]\n`,
+              },
+              timestamp: Date.now(),
+            }),
+          )
+        } catch {}
+        try {
+          ws.__ac?.abort()
+        } catch {}
+        try {
+          ws.__proc?.terminal?.close()
+        } catch {}
+        try {
+          ws.__proc?.kill()
+        } catch {}
+        try {
+          ws.close(1000, 'terminal idle timeout')
+        } catch {}
+      }, ms)
+    }
+    ws.__armIdle = armIdle
+
+    // Sandboxed mode: persistent interactive shells are disallowed (`terminalExecutionAllowed(true) === false`).
+    // Execute each command directly via Bun.spawn([cmd, ...args]) with no shell interpreter,
+    // strictly gated by the command allowlist and workspace-root directory containment.
+    if (!terminalExecutionAllowed(terminalSandboxed())) {
+      ws.__sandbox = true
+      ws.__isPty = false
+      let activeChild: ReturnType<typeof Bun.spawn> | null = null
+      let lineBuf = ''
+      let running = false
+
+      const configuredAllowed = (): readonly string[] | undefined => {
+        try {
+          const cfg = getConfig() as MiraConfig
+          const t = (cfg.tools as Record<string, JsonValue> | undefined)?.terminal as
+            | Record<string, JsonValue>
+            | undefined
+          const list = t?.allowedCommands as string[] | undefined
+          return Array.isArray(list) ? list : undefined
+        } catch {
+          return undefined
+        }
+      }
+
+      const runSandboxedLine = async (rawLine: string) => {
+        const parsed = parseSandboxedCommand(rawLine, configuredAllowed())
+        if (!parsed.ok) {
+          sendChunk('stderr', `${parsed.error}\n`)
+          return
+        }
+        if (parsed.kind === 'noop') return
+        if (parsed.kind === 'builtin') {
+          if (parsed.cmd === 'pwd') {
+            sendChunk('stdout', `${sandboxCwd}\n`)
+          } else if (parsed.cmd === 'cd') {
+            const next = resolveSandboxCwd(workspaceRoot, sandboxCwd, parsed.args[0])
+            if (!next.ok) {
+              sendChunk('stderr', `${next.error}\n`)
+            } else {
+              sandboxCwd = next.cwd
+              sendChunk('stdout', `${sandboxCwd}\n`)
+            }
+          } else if (parsed.cmd === 'help') {
+            const list = configuredAllowed() ?? DEFAULT_SANDBOX_ALLOWED_COMMANDS
+            sendChunk(
+              'stdout',
+              `Sandboxed commands (no shell): ${list.join(', ')}, cd, pwd, clear, help, exit\n`,
+            )
+          } else if (parsed.cmd === 'exit') {
+            try {
+              ws.send(JSON.stringify({ type: 'terminal.exit', payload: { code: 0 }, timestamp: Date.now() }))
+            } catch {}
+            try {
+              ws.close(1000, 'terminal exit')
+            } catch {}
+          }
+          return
+        }
+
+        running = true
+        const ac = new AbortController()
+        ws.__ac = ac
+        try {
+          const child = Bun.spawn([parsed.cmd, ...parsed.args], {
+            cwd: sandboxCwd,
+            stdin: 'ignore',
+            stdout: 'pipe',
+            stderr: 'pipe',
+            env: terminalEnv(),
+          })
+          activeChild = child
+          ws.__proc = child
+          const pumpPipe = async (stream: ReadableStream<Uint8Array> | null, name: string) => {
+            if (!stream) return
+            const reader = stream.getReader()
+            const dec = new TextDecoder()
+            try {
+              while (!ac.signal.aborted && ws.__active) {
+                const { done, value } = await reader.read()
+                if (done) break
+                if (value?.length) sendChunk(name, dec.decode(value, { stream: true }))
+              }
+            } catch {}
+          }
+          await Promise.all([
+            pumpPipe(child.stdout as ReadableStream<Uint8Array>, 'stdout'),
+            pumpPipe(child.stderr as ReadableStream<Uint8Array>, 'stderr'),
+            child.exited,
+          ])
+        } catch (e) {
+          sendChunk('stderr', `sandbox: failed to execute "${parsed.cmd}": ${e instanceof Error ? e.message : String(e)}\n`)
+        } finally {
+          running = false
+          activeChild = null
+          ws.__proc = undefined
+          ws.__ac = undefined
+        }
+      }
+
+      ws.__write = (data: string) => {
+        if (!ws.__active) return
+        if (data === '\x03') {
+          ws.__signal?.('SIGINT')
+          return
+        }
+        lineBuf += data
+        const parts = lineBuf.split(/\r?\n/)
+        lineBuf = parts.pop() ?? ''
+        for (const part of parts) {
+          if (running) {
+            sendChunk('stderr', 'sandbox: command already running (press Ctrl+C to interrupt)\n')
+            continue
+          }
+          void runSandboxedLine(part)
+        }
+      }
+      ws.__resize = () => {}
+      ws.__signal = () => {
+        if (activeChild) {
+          try {
+            activeChild.kill()
+          } catch {}
+          sendChunk('stderr', '^C\n')
+        }
+      }
+
+      ws.send(
+        JSON.stringify({
+          type: 'terminal.connected',
+          payload: {
+            connected: true,
+            owner: ws.__owner,
+            sandbox: true,
+            cwd: workspaceRoot,
+            pty: false,
+            platform: process.platform,
+          },
+          timestamp: Date.now(),
+        }),
+      )
+      const allowedBanner = (configuredAllowed() ?? DEFAULT_SANDBOX_ALLOWED_COMMANDS).join(', ')
+      sendChunk(
+        'stdout',
+        `[sandbox] Non-shell allowlisted terminal ready (${workspaceRoot})\n[sandbox] Allowed: ${allowedBanner}, cd, pwd, clear, help, exit\n`,
+      )
+      armIdle()
+      return
+    }
+
+    const shell = process.platform === 'win32' ? 'cmd.exe' : 'bash'
+    const cwd = workspaceRoot
 
     let proc: ReturnType<typeof Bun.spawn>
     let isPty = false
@@ -1897,15 +2082,6 @@ async function main() {
               return
             }
             if ((w.data as MiraWSData | undefined)?.isTerminal) {
-              if (terminalSandboxed()) {
-                try {
-                  w.__proc?.kill()
-                } catch {}
-                try {
-                  w.close(WS_CLOSE_UNAUTHORIZED, 'sandboxed interactive terminal is disabled')
-                } catch {}
-                return
-              }
               if (event?.type === 'terminal.resize') {
                 w.__armIdle?.()
                 const cols = Number(event.cols)
@@ -1915,68 +2091,12 @@ async function main() {
               }
               if (event?.type === 'terminal.signal') {
                 w.__armIdle?.()
-                w.__write?.('\x03')
+                if (w.__signal) w.__signal('SIGINT')
+                else w.__write?.('\x03')
                 return
               }
               if (event?.type === 'terminal.input' && typeof event.data === 'string') {
                 w.__armIdle?.()
-                const isControlOnly = /^[\x00-\x1f\x7f]+$/.test(event.data)
-                if (terminalSandboxed() && !isControlOnly) {
-                  const raw = event.data.trim()
-                  if (raw && !raw.startsWith('#')) {
-                    const first = raw.split(/[\s;|&]+/)[0] ?? ''
-                    const base = first.split('/').pop() ?? first
-                    let allowed: string[] = [
-                      'bash',
-                      'ls',
-                      'cat',
-                      'grep',
-                      'find',
-                      'git',
-                      'bun',
-                      'node',
-                      'tsc',
-                      'echo',
-                      'pwd',
-                      'head',
-                      'tail',
-                      'wc',
-                      'sort',
-                      'uniq',
-                      'date',
-                      'env',
-                      'which',
-                      'whoami',
-                      'printf',
-                      'sed',
-                      'awk',
-                      'clear',
-                      'exit',
-                    ]
-                    try {
-                      const cfg = getConfig() as MiraConfig
-                      const t = (cfg.tools as Record<string, JsonValue> | undefined)?.terminal as
-                        Record<string, JsonValue> | undefined
-                      const list = t?.allowedCommands as string[] | undefined
-                      if (Array.isArray(list)) allowed = list
-                    } catch {}
-                    if (base && !allowed.includes(base) && !allowed.includes(first)) {
-                      try {
-                        w.send(
-                          JSON.stringify({
-                            type: 'terminal.output',
-                            payload: {
-                              stream: 'stderr',
-                              data: `sandbox: command "${base}" not in allowedCommands [${allowed.join(',')}] — blocked\n`,
-                            },
-                            timestamp: Date.now(),
-                          }),
-                        )
-                      } catch {}
-                      return
-                    }
-                  }
-                }
                 w.__write?.(event.data)
               }
               if (event?.type === 'permission.reply' || event?.type === 'question.reply')

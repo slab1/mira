@@ -36,14 +36,22 @@ afterEach(() => {
 
 describe('token clear marker', () => {
   test('401 prevents a rejected VITE_MIRA_TOKEN fallback from being reused', async () => {
-    expect(import.meta.env.VITE_MIRA_TOKEN).toBe('rejected-env-token')
-    setToken('rejected-env-token')
-    clearTokenOn401()
+    const env = import.meta.env as Record<string, string | undefined>
+    const prevEnvToken = env.VITE_MIRA_TOKEN
+    env.VITE_MIRA_TOKEN = 'rejected-env-token'
+    try {
+      expect(import.meta.env.VITE_MIRA_TOKEN).toBe('rejected-env-token')
+      setToken('rejected-env-token')
+      clearTokenOn401()
 
-    expect(getToken()).toBe('')
-    globalThis.fetch = async () => ({ json: async () => ({}) }) as Response
-    expect(await ensureToken()).toBe('')
-    expect(getToken()).toBe('')
+      expect(getToken()).toBe('')
+      globalThis.fetch = async () => ({ json: async () => ({}) }) as Response
+      expect(await ensureToken()).toBe('')
+      expect(getToken()).toBe('')
+    } finally {
+      if (prevEnvToken === undefined) delete env.VITE_MIRA_TOKEN
+      else env.VITE_MIRA_TOKEN = prevEnvToken
+    }
   })
 
   test('explicit token replacement clears the marker and becomes active', () => {

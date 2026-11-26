@@ -13,6 +13,7 @@ export function TerminalView(_props: { open?: boolean }) {
   const [connected, setConnected] = createSignal(false)
   const [ready, setReady] = createSignal(false)
   const [ptyMode, setPtyMode] = createSignal<boolean | null>(null)
+  const [sandboxed, setSandboxed] = createSignal(false)
   const [cwd, setCwd] = createSignal<string>('~')
 
   let termContainerRef: HTMLDivElement | undefined
@@ -111,6 +112,7 @@ export function TerminalView(_props: { open?: boolean }) {
     lineBuffer = ''
     setPartialLine('')
     setReady(false)
+    setSandboxed(false)
     socket = createTerminalSocket({
       open: () => {
         setConnected(true)
@@ -120,7 +122,9 @@ export function TerminalView(_props: { open?: boolean }) {
         setReady(true)
         if (info?.cwd) setCwd(info.cwd)
         if (typeof info?.pty === 'boolean') setPtyMode(info.pty)
-        flushLineBuffer(`[sys] Session ready (${info?.pty === false ? 'pipe' : 'PTY'} · ${info?.cwd ?? '~'})`)
+        setSandboxed(info?.sandbox === true)
+        const modeLabel = info?.sandbox ? 'sandbox' : info?.pty === false ? 'pipe' : 'PTY'
+        flushLineBuffer(`[sys] Session ready (${modeLabel} · ${info?.cwd ?? '~'})`)
         sendResize()
         flushQueue()
       },
@@ -130,10 +134,11 @@ export function TerminalView(_props: { open?: boolean }) {
       exit: (code) => {
         flushLineBuffer(`[sys] Process exited with code ${code}`)
       },
-      close: () => {
+      close: (info) => {
         setConnected(false)
         setReady(false)
-        flushLineBuffer('[sys] Connection closed.')
+        const detail = info?.reason ? ` (${info.reason})` : ''
+        flushLineBuffer(`[sys] Connection closed${detail}.`)
       },
       error: () => {
         setConnected(false)
@@ -180,6 +185,9 @@ export function TerminalView(_props: { open?: boolean }) {
     }
 
     if (socket && connected() && ready()) {
+      if (ptyMode() === false) {
+        flushLineBuffer(`$ ${trimmed}`)
+      }
       socket.sendInput(trimmed + '\n')
     } else if (socket && connected()) {
       // Auth/spawn handshake still finishing — queue so first command executes seamlessly
@@ -243,6 +251,7 @@ export function TerminalView(_props: { open?: boolean }) {
 
   return (
     <div
+      tabIndex={0}
       style={{
         display: 'flex',
         'flex-direction': 'column',
@@ -282,7 +291,7 @@ export function TerminalView(_props: { open?: boolean }) {
             }}
           />
           <span style={{ 'font-weight': '700', color: '#E2E8F0', 'letter-spacing': '0.03em' }}>
-            {ptyMode() === false ? 'Shell' : 'PTY Terminal'}
+            {sandboxed() ? 'Sandbox Shell' : ptyMode() === false ? 'Shell' : 'PTY Terminal'}
           </span>
           <span style={{ color: '#64748B' }}>•</span>
           <span
@@ -301,6 +310,7 @@ export function TerminalView(_props: { open?: boolean }) {
 
         {/* Preset Actions & Toolbar */}
         <div
+          role="presentation"
           style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'flex-shrink': '0' }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -418,6 +428,7 @@ export function TerminalView(_props: { open?: boolean }) {
 
       {/* Command Input Field */}
       <div
+        role="presentation"
         style={{
           display: 'flex',
           'align-items': 'center',

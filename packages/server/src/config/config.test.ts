@@ -12,14 +12,27 @@ import {
   resetConfigCache,
 } from './index.js'
 
+import { envToConfigMap } from '../../../shared/src/schemas/config.js'
+
 let testDir: string
+let savedMappedEnv: Record<string, string | undefined> = {}
 
 beforeEach(() => {
+  savedMappedEnv = {}
+  for (const key of Object.keys(envToConfigMap)) {
+    savedMappedEnv[key] = process.env[key]
+    delete process.env[key]
+  }
   resetConfigCache()
   testDir = mkdtempSync(join(tmpdir(), 'mira-config-test-'))
 })
 
 afterEach(() => {
+  for (const [key, val] of Object.entries(savedMappedEnv)) {
+    if (val === undefined) delete process.env[key]
+    else process.env[key] = val
+  }
+  resetConfigCache()
   try {
     rmSync(testDir, { recursive: true, force: true })
   } catch {}

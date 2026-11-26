@@ -1306,7 +1306,7 @@ export function SettingsPanel(props: { store: SettingsStore; open: boolean; onCl
         const token = getToken() || (import.meta.env.VITE_MIRA_TOKEN as string) || ''
         const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : ''
         if (base) {
-          const u = new URL(base)
+          const u = new URL(base, location.origin)
           wsUrl = `${u.protocol === 'https:' ? 'wss:' : 'ws:'}//${u.host}/terminal${tokenQuery}`
         } else {
           const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'

@@ -343,6 +343,12 @@ export function parseEnvConfig(
   for (const [key, path] of Object.entries(envToConfigMap)) {
     const value = env[key]
     if (value === undefined || value === '') continue
+    if (
+      (key === 'GOOGLE_API_KEY' || key === 'GOOGLE_GENERATIVE_AI_API_KEY') &&
+      value.trim().startsWith('AQ.')
+    ) {
+      continue
+    }
     const parts = path.split('.')
     let cursor = out as Record<string, unknown>
     for (let i = 0; i < parts.length - 1; i++) {

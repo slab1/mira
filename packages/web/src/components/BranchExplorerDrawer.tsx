@@ -746,6 +746,7 @@ export function BranchExplorerDrawer(props: {
                 <input
                   type="checkbox"
                   checked={promoteMerge()}
+                  aria-label="Also save branch decision and sources to Semantic Memory"
                   onChange={(e) => setPromoteMerge(e.currentTarget.checked)}
                 />
                 <span>Also save branch decision & sources to Semantic Memory</span>

@@ -287,7 +287,11 @@ describe('Phase 2 Safety — wired routes (Risk→Autonomy→Approval→Resource
   let dir: string
   let db: ReturnType<typeof createDatabase>
 
+  let prevSkipVerify: string | undefined
+
   beforeEach(async () => {
+    prevSkipVerify = process.env.MIRA_SKIP_ROLLBACK_VERIFY
+    process.env.MIRA_SKIP_ROLLBACK_VERIFY = '1'
     dir = mkdtempSync(join(tmpdir(), 'mira-evo-phase2-routes-'))
     const dbPath = join(dir, 'test.db')
     process.env.MIRA_NO_AUTOPROVISION = '1'
@@ -295,6 +299,8 @@ describe('Phase 2 Safety — wired routes (Risk→Autonomy→Approval→Resource
     await migrate(db as unknown as Parameters<typeof migrate>[0])
   })
   afterEach(() => {
+    if (prevSkipVerify === undefined) delete process.env.MIRA_SKIP_ROLLBACK_VERIFY
+    else process.env.MIRA_SKIP_ROLLBACK_VERIFY = prevSkipVerify
     try {
       db.sqlite?.close?.()
     } catch {}

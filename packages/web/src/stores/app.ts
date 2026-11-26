@@ -148,7 +148,6 @@ export function createAppStore(
     assistantId: string
   }
   const streams = new Map<string, ActiveStream>()
-  void apiClient
 
   // ── WebSocket: GlobalBus subscription ────────────────────────────
   let reconnectAttempts = 0
@@ -203,7 +202,7 @@ export function createAppStore(
 
   async function loadPendingPermissions(sessionID?: string, expectedSeq?: number) {
     try {
-      const res = await api.listPendingPermissions(sessionID)
+      const res = await apiClient.listPendingPermissions?.(sessionID)
       if (expectedSeq !== undefined && expectedSeq !== selectSeq) return
       const list = Array.isArray(res?.pending) ? res.pending : []
       if (!sessionID || sessionID === state.currentId) {
@@ -413,12 +412,12 @@ export function createAppStore(
     setState('loading', true)
     setState('error', null)
     try {
-      let sessions = await api.listSessions()
+      let sessions = await apiClient.listSessions()
       // First-run UX: land straight into a usable chat.
       // Skip if a session was just created (race with createSession guard).
       if (sessions.length === 0 && !state.currentId && !creating) {
         await createSession('New chat')
-        sessions = await api.listSessions()
+        sessions = await apiClient.listSessions()
       }
       setState('sessions', sessions)
       // Restore previously selected session if still present; otherwise fall back to first session
@@ -453,7 +452,7 @@ export function createAppStore(
       if (opts.cwd) body.cwd = opts.cwd
       if (opts.projectId) body.projectId = opts.projectId
       if (opts.parentID) body.parentID = opts.parentID
-      const s = await api.createSession(body)
+      const s = await apiClient.createSession(body)
       setState('sessions', (prev) => [s, ...prev.filter((x) => x.id !== s.id)])
       await selectSession(s.id)
       return s
@@ -473,7 +472,7 @@ export function createAppStore(
     const id = state.currentId
     if (!id) return null
     try {
-      const res = await api.forkSession(id, {
+      const res = await apiClient.forkSession(id, {
         messageID,
         title,
         branchKind: opts?.branchKind,
@@ -497,24 +496,21 @@ export function createAppStore(
   async function selectSession(id: string) {
     if (!id) return
     const seq = ++selectSeq
-    const switchedSession = state.currentId !== id
-    if (switchedSession && state.streaming) {
-      abort?.abort()
-    }
     persistCurrentId(id)
+    const active = streams.get(id)
     setState({
       currentId: id,
       messages: [],
       todos: [],
       queued: [],
       pendingQuestion: null,
-      streaming: false,
-      streamText: '',
+      streaming: Boolean(active),
+      streamText: active?.text ?? '',
       error: null,
       doomLoop: null,
       budgetWarning: null,
       liveJobs: {},
-      liveStreamEvents: [],
+      liveStreamEvents: active?.events ?? [],
       pendingPermissions: [],
     })
     await Promise.all([
@@ -525,7 +521,7 @@ export function createAppStore(
   }
 
   async function deleteSession(id: string) {
-    await api.deleteSession(id)
+    await apiClient.deleteSession(id)
     const remaining = state.sessions.filter((s) => s.id !== id)
     setState('sessions', remaining)
     if (state.currentId === id) {
@@ -551,7 +547,7 @@ export function createAppStore(
 
   async function loadMessages(id: string, expectedSeq?: number) {
     try {
-      const msgs = await api.getMessages(id)
+      const msgs = await apiClient.getMessages(id)
       if (state.currentId !== id || (expectedSeq !== undefined && expectedSeq !== selectSeq)) return
       if (Array.isArray(msgs) && msgs.length > 0) {
         setState('messages', msgs)
@@ -560,7 +556,7 @@ export function createAppStore(
       }
       // Reconcile queue with server truth (queued items drain as chained turns)
       try {
-        const q = await api.getQueue(id)
+        const q = await apiClient.getQueue(id)
         if (state.currentId !== id || (expectedSeq !== undefined && expectedSeq !== selectSeq)) return
         setState('queued', q)
       } catch {}
@@ -576,18 +572,18 @@ export function createAppStore(
   /** Refresh live spend from the gateway (called on mount, after turns, + interval) */
   async function loadCost() {
     try {
-      const dev = await api.devHealth()
+      const dev = await apiClient.devHealth()
       if (dev.gateway) setState('cost', dev.gateway)
     } catch {}
     // Also refresh per-session cost for current session + costCap from config
     try {
-      const cfg = await api.getConfig()
+      const cfg = await apiClient.getConfig()
       if (cfg.costCap) setState('costCap', cfg.costCap)
     } catch {}
     // Refresh current session's costUsd/tokens without full list reload
     if (state.currentId) {
       try {
-        const sess = await api.getSession(state.currentId)
+        const sess = await apiClient.getSession(state.currentId)
         if (sess) {
           setState('sessions', (prev) =>
             prev.map((s) =>
@@ -621,7 +617,7 @@ export function createAppStore(
 
   async function loadTodos(id: string, expectedSeq?: number) {
     try {
-      const todos = await api.getTodos(id)
+      const todos = await apiClient.getTodos(id)
       if (state.currentId !== id || (expectedSeq !== undefined && expectedSeq !== selectSeq)) return
       setState('todos', todos)
     } catch {
@@ -658,7 +654,7 @@ export function createAppStore(
     if (streams.has(sessionId)) {
       const startSeq = selectSeq
       try {
-        const result = await api.queuePrompt(sessionId, prompt)
+        const result = await apiClient.queuePrompt(sessionId, prompt)
         if (state.currentId !== sessionId || selectSeq !== startSeq) return
         setState('queued', (q) => [...q, prompt])
         setState('messages', (m) => [
@@ -675,7 +671,7 @@ export function createAppStore(
         toast.info(`Queued (#${result.position})`)
         // Reconcile queue with server in case server-side ordering differs
         try {
-          const serverQueue = await api.getQueue(sessionId)
+          const serverQueue = await apiClient.getQueue(sessionId)
           if (state.currentId !== sessionId || selectSeq !== startSeq) return
           setState('queued', serverQueue)
           // If our prompt didn't make it to the queue, surface the failure
@@ -721,14 +717,15 @@ export function createAppStore(
     ])
 
     try {
-      await api.streamPrompt(sessionId, prompt, {
+      await apiClient.streamPrompt(sessionId, prompt, {
         model,
         signal: controller.signal,
         onChunk: (chunk) => {
+          if (streams.get(sessionId) !== stream) return
+          stream.text += chunk
           if (state.currentId !== sessionId) return
           setState('streamText', (t) => t + chunk)
           // O(1) in-place update of the streaming assistant message (always last)
-          if (state.currentId !== sessionId) return
           const msgs = state.messages
           const idx = msgs.length - 1
           const last = msgs[idx]
@@ -737,7 +734,7 @@ export function createAppStore(
           }
         },
         onEvent: (event) => {
-          if (state.currentId !== sessionId) return
+          if (streams.get(sessionId) !== stream) return
           // Push live streaming events for the activity panel
           const streamEvent = {
             type: event.type,
@@ -745,8 +742,8 @@ export function createAppStore(
             timestamp: Date.now(),
           }
           stream.events = [...stream.events, streamEvent]
-          if (state.currentId === sessionId) setState('liveStreamEvents', stream.events)
-          else return
+          if (state.currentId !== sessionId) return
+          setState('liveStreamEvents', stream.events)
           if (event.type === 'error') {
             const raw = event.payload as unknown
             let msg: string
@@ -850,7 +847,7 @@ export function createAppStore(
 
   function stopStream() {
     const id = state.currentId
-    if (id) void api.abortPrompt(id).catch(() => {})
+    if (id) void apiClient.abortPrompt?.(id)?.catch(() => {})
     const stream = id ? streams.get(id) : undefined
     stream?.controller.abort()
     if (id && stream) streams.delete(id)
@@ -880,7 +877,7 @@ export function createAppStore(
       timestamp: Date.now(),
     })
     try {
-      await api.replyPermission({ toolCallID, nonce, decision })
+      await apiClient.replyPermission({ toolCallID, nonce, decision })
     } catch {
       // WS reply may have already resolved and cleared the waiter
     }
@@ -901,7 +898,7 @@ export function createAppStore(
     try {
       // NOTE: req() throws ApiError on non-2xx, so a returned `!ok` is unreachable —
       // server 400s (e.g. unknown messageID) surface via the catch branch below.
-      const out = await api.revertSession(id, messageID)
+      const out = await apiClient.revertSession(id, messageID)
       if (out.ok && out.reverted > 0) {
         await loadMessages(id)
         const extra =
@@ -941,7 +938,7 @@ export function createAppStore(
     patch: Partial<{ title: string; model: string; agent: string }>,
   ) {
     try {
-      const updated = await api.updateSession(id, patch)
+      const updated = await apiClient.updateSession(id, patch)
       setState('sessions', (prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
       return updated
     } catch (e) {

@@ -1,9 +1,10 @@
-import { describe, test, expect, afterEach, afterAll } from 'bun:test'
+import { describe, test, expect, beforeEach, afterEach, afterAll } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createDatabase, migrate } from '../storage/db.js'
 import { SessionPrompt, resolveEffectiveModel } from './prompt.js'
+import { resetConfigCache } from '../config/index.js'
 import { Bus } from '../bus/index.js'
 import { PermissionManager } from '../permission/index.js'
 import { ToolRegistry } from '../tools/registry.js'
@@ -16,6 +17,9 @@ import type { Gateway, GatewayChunk } from '../gateway/index.js'
 const savedNvidiaKey = process.env.NVIDIA_API_KEY
 const savedAnthropicKey = process.env.ANTHROPIC_API_KEY
 const savedOpenRouterKey = process.env.OPENROUTER_API_KEY
+beforeEach(() => {
+  resetConfigCache()
+})
 afterEach(() => {
   if (savedNvidiaKey === undefined) delete process.env.NVIDIA_API_KEY
   else process.env.NVIDIA_API_KEY = savedNvidiaKey
@@ -23,6 +27,7 @@ afterEach(() => {
   else process.env.ANTHROPIC_API_KEY = savedAnthropicKey
   if (savedOpenRouterKey === undefined) delete process.env.OPENROUTER_API_KEY
   else process.env.OPENROUTER_API_KEY = savedOpenRouterKey
+  resetConfigCache()
 })
 
 const stubGateway: Gateway = {

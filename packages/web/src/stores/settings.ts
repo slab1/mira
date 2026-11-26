@@ -362,21 +362,34 @@ export function createSettingsStore() {
     }
   }
 
+  const inFlightLoadAll = new Map<string, Promise<void>>()
+
   async function loadAll(cwd?: string): Promise<void> {
-    setState({ loading: true, error: null })
-    await Promise.all([
-      loadConfig(cwd),
-      loadSchema(),
-      loadMcp(),
-      loadAgents(),
-      loadCommands(),
-      loadSkills(),
-    ])
-    // providers & permission may depend on config, load after
-    await Promise.all([loadProviders(), loadPermission(cwd)])
-    // also warm workspace tree for cwd if provided
-    if (cwd) await loadWorkspaceTree(cwd)
-    setState('loading', false)
+    const key = cwd ?? ''
+    const existing = inFlightLoadAll.get(key)
+    if (existing) return existing
+    const p = (async () => {
+      setState({ loading: true, error: null })
+      try {
+        await Promise.all([
+          loadConfig(cwd),
+          loadSchema(),
+          loadMcp(),
+          loadAgents(),
+          loadCommands(),
+          loadSkills(),
+        ])
+        // providers & permission may depend on config, load after
+        await Promise.all([loadProviders(), loadPermission(cwd)])
+        // also warm workspace tree for cwd if provided
+        if (cwd) await loadWorkspaceTree(cwd)
+      } finally {
+        setState('loading', false)
+        inFlightLoadAll.delete(key)
+      }
+    })()
+    inFlightLoadAll.set(key, p)
+    return p
   }
 
   async function saveConfig(

@@ -70,6 +70,7 @@ export class TokenBucket {
   /** For testing: set tokens directly */
   _setTokens(n: number): void {
     this.tokens = Math.max(0, Math.min(this.burst, n))
+    this.lastRefill = Date.now()
   }
 
   get config(): TokenBucketOptions {

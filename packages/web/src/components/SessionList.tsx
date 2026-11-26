@@ -1,18 +1,18 @@
 // @ts-nocheck
 import { For, Show, createSignal, createMemo, onMount, type JSX } from 'solid-js'
 import type { AppStore } from '../stores/app'
-import { api, getApiUrl, sessionParentId, type Session, type WorkspaceEntry } from '../api/client'
+import {
+  api,
+  resolveServerHost,
+  sessionParentId,
+  type Session,
+  type WorkspaceEntry,
+} from '../api/client'
 import { ConfirmDialog } from './ConfirmDialog'
 import { toast } from './Toast'
 
 function serverHost(): string {
-  try {
-    const u = getApiUrl()
-    if (u) return new URL(u).host
-    return window.location.host
-  } catch {
-    return 'unknown'
-  }
+  return resolveServerHost('unknown')
 }
 
 type StatusInfo = { label: string; color: string; bg: string; border: string; icon: string }

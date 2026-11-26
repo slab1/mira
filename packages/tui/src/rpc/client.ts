@@ -367,15 +367,19 @@ const API_URL_KEY = 'mira_api_url'
 function getEnvBase(): string {
   try {
     const env = (import.meta as { env?: Record<string, string> }).env
-    if (env?.VITE_API_URL) return env.VITE_API_URL
+    const v = env?.VITE_API_URL?.trim().replace(/\/+$/, '')
+    if (v) return v
   } catch {}
   try {
-    const envUrl =
+    const envUrl = (
       (typeof process !== 'undefined' &&
         (process as { env?: Record<string, string> }).env?.MIRA_API_URL) ||
       (typeof process !== 'undefined' &&
         (process as { env?: Record<string, string> }).env?.VITE_API_URL) ||
       ''
+    )
+      .trim()
+      .replace(/\/+$/, '')
     if (envUrl) return envUrl
   } catch {}
   return ''

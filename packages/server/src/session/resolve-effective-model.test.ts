@@ -1,20 +1,33 @@
-import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test'
 import { resolveEffectiveModel } from './prompt.js'
+import { resetConfigCache } from '../config/index.js'
 
 // Pin OPENROUTER_API_KEY + ANTHROPIC_API_KEY so the first routing.fallbacks
 // entry (openrouter/google/gemini-2.5-flash) resolves deterministically even if
 // ~/.mira/mira.env provides NVIDIA_API_KEY. Restore original env after the suite.
 const savedAnthropicKey = process.env.ANTHROPIC_API_KEY
 const savedOpenRouterKey = process.env.OPENROUTER_API_KEY
+const savedNvidiaKey = process.env.NVIDIA_API_KEY
 beforeAll(() => {
+  resetConfigCache()
+  delete process.env.NVIDIA_API_KEY
   process.env.ANTHROPIC_API_KEY = 'test-key'
   process.env.OPENROUTER_API_KEY = 'test-key'
+})
+beforeEach(() => {
+  resetConfigCache()
+})
+afterEach(() => {
+  resetConfigCache()
 })
 afterAll(() => {
   if (savedAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY
   else process.env.ANTHROPIC_API_KEY = savedAnthropicKey
   if (savedOpenRouterKey === undefined) delete process.env.OPENROUTER_API_KEY
   else process.env.OPENROUTER_API_KEY = savedOpenRouterKey
+  if (savedNvidiaKey === undefined) delete process.env.NVIDIA_API_KEY
+  else process.env.NVIDIA_API_KEY = savedNvidiaKey
+  resetConfigCache()
 })
 
 describe('resolveEffectiveModel retired guard', () => {

@@ -1234,6 +1234,7 @@ export function PromptInput(props: {
             ref={fileInputRef}
             type="file"
             multiple
+            aria-label="Attach files"
             style={{ display: 'none' }}
             onChange={handleFileUpload}
           />
@@ -1280,6 +1281,7 @@ export function PromptInput(props: {
             ref={audioFileInputRef}
             type="file"
             accept="audio/*"
+            aria-label="Upload audio file for transcription"
             style={{ display: 'none' }}
             onChange={handleAudioFileUpload}
           />
