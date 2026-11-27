@@ -21,7 +21,14 @@ import type { Gateway } from '../gateway/index.js'
 import { sanitizeResearchContent } from '../evolution/research.js'
 import { readMiraEnv } from '../providers/auth.js'
 import { getConfig } from '../config/index.js'
-import { websearchTool, webfetchTool } from '../tools/websearch.js'
+import {
+  websearchTool,
+  webfetchTool,
+  markInvalidGeminiKey,
+  isInvalidGeminiKey,
+  markGeminiModelCooldown,
+  isGeminiModelInCooldown,
+} from '../tools/websearch.js'
 
 export type ResearchMode = 'quick-grounded' | 'deep-investigation'
 export type ResearchStatus =
@@ -89,8 +96,27 @@ const invalidGeminiKeys = new Set<string>()
 export function isUsableGeminiApiKey(value: string | undefined | null): boolean {
   if (!value || typeof value !== 'string') return false
   const t = value.trim()
-  if (!t || t === '***' || t.includes('{env:') || t.startsWith('AQ.') || invalidGeminiKeys.has(t)) return false
+  if (
+    !t ||
+    t === '***' ||
+    t.includes('{env:') ||
+    t.startsWith('AQ.') ||
+    invalidGeminiKeys.has(t) ||
+    isInvalidGeminiKey(t)
+  ) {
+    return false
+  }
   return true
+}
+
+function isSafeHttpUrl(raw: string | undefined | null): raw is string {
+  if (!raw || typeof raw !== 'string') return false
+  try {
+    const parsed = new URL(raw.trim())
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
 }
 
 function expandEnv(value: string | string[] | undefined): string {
@@ -266,8 +292,8 @@ export class OnlineResearchService {
     orgID?: string | null
   }): Promise<ResearchRunDTO> {
     const query = input.query.trim()
-    if (!query || !/[a-zA-Z0-9]{2,}/.test(query)) {
-      throw new Error('Research query must contain at least 2 alphanumeric characters.')
+    if (!query || query.replace(/\s+/g, '').length < 2) {
+      throw new Error('Research query must contain at least 2 characters.')
     }
     const mode: ResearchMode = input.mode ?? 'deep-investigation'
     const id = `res_${randomUUID().slice(0, 12)}`
@@ -328,6 +354,8 @@ export class OnlineResearchService {
     await this.savePatch(id, { stepsJson: JSON.stringify(steps) })
     try {
       const tracks = await this.buildPlanTracks(run.query)
+      const latestBeforeSave = await this.getRun(id)
+      if (!latestBeforeSave || latestBeforeSave.status === 'cancelled') return
       steps[0] = { ...steps[0], status: 'done', detail: `${tracks.length} tracks prepared for review` }
       const updated = await this.savePatch(id, {
         planJson: JSON.stringify(tracks),
@@ -352,6 +380,10 @@ export class OnlineResearchService {
   async approveAndRun(id: string, editedPlan?: ResearchPlanTrack[]): Promise<ResearchRunDTO> {
     const run = await this.getRun(id)
     if (!run) throw new Error('Research run not found')
+    if (run.status === 'running') return run
+    if (run.status === 'completed' || run.status === 'cancelled') {
+      throw new Error(`Research run cannot be started from status "${run.status}"`)
+    }
     const plan = editedPlan && editedPlan.length > 0 ? editedPlan : run.plan
     const updated = await this.savePatch(id, {
       planJson: JSON.stringify(plan),
@@ -374,27 +406,30 @@ export class OnlineResearchService {
   private async buildPlanTracks(query: string): Promise<ResearchPlanTrack[]> {
     const geminiKey = resolveResearchGeminiKey()
     if (geminiKey) {
-      try {
-        const ai = new GoogleGenAI({
-          apiKey: geminiKey,
-          httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
-        })
-        const res = await ai.models.generateContent({
-          model: 'gemini-4-hydrogen',
-          contents: `Break down this research question into 3 to 4 focused, non-overlapping online research tracks. Return ONLY valid JSON array of objects with keys: "title", "query", "focus". Question: ${query}`,
-          config: { responseMimeType: 'application/json' },
-        })
-        const raw = (res.text ?? '').trim()
-        const parsed = JSON.parse(raw) as Array<{ title?: string; query?: string; focus?: string }>
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.slice(0, 4).map((t, i) => ({
-            id: `track_${i + 1}`,
-            title: String(t.title || `Track ${i + 1}`).slice(0, 120),
-            query: String(t.query || query).slice(0, 260),
-            focus: String(t.focus || 'Primary documentation and live verification').slice(0, 220),
-          }))
-        }
-      } catch {}
+      const ai = new GoogleGenAI({
+        apiKey: geminiKey,
+        httpOptions: { apiVersion: 'v1beta', headers: { 'User-Agent': 'aistudio-build' } },
+      })
+      const baseModels = ['gemini-4-hydrogen', 'gemini-2.5-flash', 'gemini-3-flash-preview']
+      for (const model of baseModels) {
+        try {
+          const res = await ai.models.generateContent({
+            model,
+            contents: `Break down this research question into 3 to 4 focused, non-overlapping online research tracks. Return ONLY valid JSON array of objects with keys: "title", "query", "focus". Question: ${query}`,
+            config: { responseMimeType: 'application/json' },
+          })
+          const raw = (res.text ?? '').trim()
+          const parsed = JSON.parse(raw) as Array<{ title?: string; query?: string; focus?: string }>
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed.slice(0, 4).map((t, i) => ({
+              id: `track_${i + 1}`,
+              title: String(t.title || `Track ${i + 1}`).slice(0, 120),
+              query: String(t.query || query).slice(0, 260),
+              focus: String(t.focus || 'Primary documentation and live verification').slice(0, 220),
+            }))
+          }
+        } catch {}
+      }
     }
 
     return [
@@ -435,46 +470,61 @@ export class OnlineResearchService {
     const geminiKey = resolveResearchGeminiKey()
     let geminiErrorMsg = ''
     if (geminiKey) {
-      try {
-        const ai = new GoogleGenAI({
-          apiKey: geminiKey,
-          httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
-        })
-        const response = await ai.models.generateContent({
-          model: 'gemini-4-hydrogen',
-          contents: `Research this thoroughly using live Google Search and synthesize concrete, verifiable facts with dates and technical specifics. Question: ${query}`,
-          config: {
-            tools: [{ googleSearch: {} }],
-          },
-        })
-
-        const text = (response.text ?? '').trim()
-        const rawChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? []
-        const sources: Array<{ title: string; url: string; snippet?: string; trust: 'grounded' | 'websearch' | 'webfetch' }> = []
-        const seen = new Set<string>()
-        for (const ch of rawChunks) {
-          const uri = ch?.web?.uri
-          if (!uri || seen.has(uri)) continue
-          seen.add(uri)
-          sources.push({
-            title: (ch.web?.title || domainOf(uri)).trim(),
-            url: uri,
-            trust: 'grounded',
+      const ai = new GoogleGenAI({
+        apiKey: geminiKey,
+        httpOptions: { apiVersion: 'v1beta', headers: { 'User-Agent': 'aistudio-build' } },
+      })
+      const baseModels = ['gemini-4-hydrogen', 'gemini-2.5-flash', 'gemini-3-flash-preview']
+      const candidates = [
+        ...baseModels.filter((m) => !isGeminiModelInCooldown(m)),
+        ...baseModels.filter((m) => isGeminiModelInCooldown(m)),
+      ]
+      for (const model of candidates) {
+        try {
+          const response = await ai.models.generateContent({
+            model,
+            contents: `Research this thoroughly using live Google Search and synthesize concrete, verifiable facts with dates and technical specifics. Question: ${query}`,
+            config: {
+              tools: [{ googleSearch: {} }],
+            },
           })
-        }
-        const usage = response.usageMetadata
-        return {
-          answer: text,
-          sources,
-          provider: 'google',
-          model: 'gemini-4-hydrogen',
-          tokensIn: usage?.promptTokenCount ?? 0,
-          tokensOut: usage?.candidatesTokenCount ?? 0,
-        }
-      } catch (err) {
-        geminiErrorMsg = err instanceof Error ? err.message : String(err)
-        if (/API_KEY_INVALID|API key not valid|PERMISSION_DENIED|403|401/i.test(geminiErrorMsg)) {
-          invalidGeminiKeys.add(geminiKey)
+
+          const text = (response.text ?? '').trim()
+          const rawChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? []
+          const sources: Array<{ title: string; url: string; snippet?: string; trust: 'grounded' | 'websearch' | 'webfetch' }> = []
+          const seen = new Set<string>()
+          for (const ch of rawChunks) {
+            const uri = ch?.web?.uri
+            if (!isSafeHttpUrl(uri) || seen.has(uri)) continue
+            seen.add(uri)
+            sources.push({
+              title: (ch.web?.title || domainOf(uri)).trim(),
+              url: uri,
+              trust: 'grounded',
+            })
+          }
+          const usage = response.usageMetadata
+          if (text || sources.length > 0) {
+            return {
+              answer: text,
+              sources,
+              provider: 'google',
+              model,
+              tokensIn: usage?.promptTokenCount ?? 0,
+              tokensOut: usage?.candidatesTokenCount ?? 0,
+            }
+          }
+        } catch (err) {
+          geminiErrorMsg = err instanceof Error ? err.message : String(err)
+          if (/API_KEY_INVALID|API key not valid|PERMISSION_DENIED|403|401/i.test(geminiErrorMsg)) {
+            invalidGeminiKeys.add(geminiKey)
+            markInvalidGeminiKey(geminiKey)
+            break
+          }
+          if (/429|RESOURCE_EXHAUSTED|quota|404|NOT_FOUND|not found|no longer available/i.test(geminiErrorMsg)) {
+            markGeminiModelCooldown(model)
+            continue
+          }
         }
       }
     }
@@ -488,7 +538,7 @@ export class OnlineResearchService {
       results?: Array<{ title?: string; url?: string; snippet?: string }>
       note?: string
     }
-    const results = (searchOut.results ?? []).filter((r) => Boolean(r.url))
+    const results = (searchOut.results ?? []).filter((r) => isSafeHttpUrl(r.url))
     if (results.length === 0) {
       if (geminiErrorMsg) {
         const isAuthErr = /API_KEY_INVALID|API key not valid|PERMISSION_DENIED|403|401/i.test(geminiErrorMsg)
@@ -579,7 +629,8 @@ export class OnlineResearchService {
           at: Date.now(),
         },
       ]
-      await this.savePatch(id, { stepsJson: JSON.stringify(steps) })
+      const stepSnap = await this.savePatch(id, { stepsJson: JSON.stringify(steps) })
+      if (stepSnap) this.emit(stepSnap, 'step', steps[0])
 
       const res = await this.runGroundedSearch(run.query, ac.signal)
       const citations: ResearchCitation[] = res.sources.map((s, idx) => ({
@@ -635,11 +686,15 @@ export class OnlineResearchService {
         error: ac.signal.aborted ? null : msg,
         stepsJson: JSON.stringify([
           ...steps.map((s) => (s.status === 'running' ? { ...s, status: 'failed' as const } : s)),
-          { id: randomUUID().slice(0, 8), kind: 'error', title: 'Research failed', detail: msg, status: 'failed', at: Date.now() },
+          ...(ac.signal.aborted
+            ? []
+            : [{ id: randomUUID().slice(0, 8), kind: 'error' as const, title: 'Research failed', detail: msg, status: 'failed' as const, at: Date.now() }]),
         ]),
         durationMs: Date.now() - startedAt,
       })
-      if (failed) this.emit(failed, 'error', { error: msg })
+      if (failed) {
+        this.emit(failed, ac.signal.aborted ? 'done' : 'error', { error: msg })
+      }
     } finally {
       this.controllers.delete(id)
     }
@@ -733,7 +788,8 @@ export class OnlineResearchService {
         status: 'running',
         at: Date.now(),
       })
-      await this.savePatch(id, { stepsJson: JSON.stringify(steps) })
+      const synthSnap = await this.savePatch(id, { stepsJson: JSON.stringify(steps) })
+      if (synthSnap) this.emit(synthSnap, 'step', steps[steps.length - 1])
 
       let finalReport = ''
       const citationIndex = citations.map((c) => `[${c.index}] ${c.title} (${c.url})`).join('\n')
@@ -760,20 +816,24 @@ ${dossier}`
 
       const geminiKey = resolveResearchGeminiKey()
       if (geminiKey) {
-        try {
-          const ai = new GoogleGenAI({
-            apiKey: geminiKey,
-            httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
-          })
-          const synth = await ai.models.generateContent({
-            model: 'gemini-4-hydrogen',
-            contents: synthPrompt,
-          })
-          finalReport = (synth.text ?? '').trim()
-          tokensIn += synth.usageMetadata?.promptTokenCount ?? 0
-          tokensOut += synth.usageMetadata?.candidatesTokenCount ?? 0
-        } catch (err) {
-          console.warn('[research] Gemini deep synthesis failed, falling back:', err instanceof Error ? err.message : String(err))
+        const ai = new GoogleGenAI({
+          apiKey: geminiKey,
+          httpOptions: { apiVersion: 'v1beta', headers: { 'User-Agent': 'aistudio-build' } },
+        })
+        const baseModels = ['gemini-4-hydrogen', 'gemini-2.5-flash', 'gemini-3-flash-preview']
+        for (const model of baseModels) {
+          try {
+            const synth = await ai.models.generateContent({
+              model,
+              contents: synthPrompt,
+            })
+            finalReport = (synth.text ?? '').trim()
+            tokensIn += synth.usageMetadata?.promptTokenCount ?? 0
+            tokensOut += synth.usageMetadata?.candidatesTokenCount ?? 0
+            if (finalReport) break
+          } catch (err) {
+            console.warn(`[research] Gemini deep synthesis failed with ${model}:`, err instanceof Error ? err.message : String(err))
+          }
         }
       }
       if (!finalReport && this.deps.gateway) {
@@ -837,7 +897,9 @@ ${dossier}`
         ]),
         durationMs: Date.now() - startedAt,
       })
-      if (failed) this.emit(failed, 'error', { error: msg })
+      if (failed) {
+        this.emit(failed, ac.signal.aborted ? 'done' : 'error', { error: msg })
+      }
     } finally {
       this.controllers.delete(id)
     }

@@ -5,6 +5,7 @@ import {
   OnlineResearchService,
   resolveResearchGeminiKey,
   type ResearchPlanTrack,
+  type ResearchRunDTO,
 } from '../research/online-research.js'
 
 const startSchema = z.object({
@@ -46,6 +47,13 @@ export function mountResearchRoutes(
       ? deps.resolveOwner(deps.bearerOf(c.req.header('Authorization')))
       : undefined
 
+  const canAccessRun = (c: Context, run: ResearchRunDTO | null): run is ResearchRunDTO => {
+    if (!run) return false
+    const ownerID = callerOwner(c)
+    if (ownerID && run.ownerID && run.ownerID !== ownerID) return false
+    return true
+  }
+
   app.get('/research/status', (c: Context) => {
     const geminiConfigured = Boolean(resolveResearchGeminiKey())
     const firecrawlConfigured = Boolean(process.env.FIRECRAWL_API_KEY)
@@ -75,9 +83,7 @@ export function mountResearchRoutes(
     const id = c.req.param('id') ?? ''
     if (!id) return c.json({ error: 'Missing run ID' }, 400)
     const run = await deps.service.getRun(id)
-    if (!run) return c.json({ error: 'Research run not found' }, 404)
-    const ownerID = callerOwner(c)
-    if (ownerID && run.ownerID && run.ownerID !== ownerID) {
+    if (!canAccessRun(c, run)) {
       return c.json({ error: 'Research run not found' }, 404)
     }
     return c.json({ ok: true, run })
@@ -87,7 +93,9 @@ export function mountResearchRoutes(
     const id = c.req.param('id') ?? ''
     if (!id) return c.json({ error: 'Missing run ID' }, 400)
     const run = await deps.service.getRun(id)
-    if (!run) return c.json({ error: 'Research run not found' }, 404)
+    if (!canAccessRun(c, run)) {
+      return c.json({ error: 'Research run not found' }, 404)
+    }
 
     return streamSSE(c, async (stream) => {
       await stream.writeSSE({
@@ -130,17 +138,25 @@ export function mountResearchRoutes(
     }
     const ownerID = callerOwner(c) ?? null
     const orgID = ownerID && deps.orgOfOwner ? (deps.orgOfOwner(ownerID) ?? null) : null
-    const run = await deps.service.startRun({
-      ...parsed.data,
-      ownerID,
-      orgID,
-    })
-    return c.json({ ok: true, run }, 201)
+    try {
+      const run = await deps.service.startRun({
+        ...parsed.data,
+        ownerID,
+        orgID,
+      })
+      return c.json({ ok: true, run }, 201)
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 400)
+    }
   })
 
   app.post('/research/runs/:id/approve', async (c: Context) => {
     const id = c.req.param('id') ?? ''
     if (!id) return c.json({ error: 'Missing run ID' }, 400)
+    const existing = await deps.service.getRun(id)
+    if (!canAccessRun(c, existing)) {
+      return c.json({ error: 'Research run not found' }, 404)
+    }
     const parsed = approveSchema.safeParse(await c.req.json().catch(() => ({})))
     if (!parsed.success) {
       return c.json({ error: 'Invalid plan payload', issues: parsed.error.issues }, 400)
@@ -149,13 +165,19 @@ export function mountResearchRoutes(
       const run = await deps.service.approveAndRun(id, parsed.data.plan as ResearchPlanTrack[] | undefined)
       return c.json({ ok: true, run })
     } catch (e) {
-      return c.json({ error: e instanceof Error ? e.message : String(e) }, 404)
+      const msg = e instanceof Error ? e.message : String(e)
+      const status = /cannot be started/i.test(msg) ? 409 : 400
+      return c.json({ error: msg }, status)
     }
   })
 
   app.post('/research/runs/:id/cancel', async (c: Context) => {
     const id = c.req.param('id') ?? ''
     if (!id) return c.json({ error: 'Missing run ID' }, 400)
+    const existing = await deps.service.getRun(id)
+    if (!canAccessRun(c, existing)) {
+      return c.json({ error: 'Research run not found' }, 404)
+    }
     const run = await deps.service.cancelRun(id)
     if (!run) return c.json({ error: 'Research run not found' }, 404)
     return c.json({ ok: true, run })
@@ -164,6 +186,10 @@ export function mountResearchRoutes(
   app.post('/research/runs/:id/promote-memory', async (c: Context) => {
     const id = c.req.param('id') ?? ''
     if (!id) return c.json({ error: 'Missing run ID' }, 400)
+    const existing = await deps.service.getRun(id)
+    if (!canAccessRun(c, existing)) {
+      return c.json({ error: 'Research run not found' }, 404)
+    }
     const parsed = promoteSchema.safeParse(await c.req.json().catch(() => ({})))
     try {
       const entry = await deps.service.promoteRunToMemory(

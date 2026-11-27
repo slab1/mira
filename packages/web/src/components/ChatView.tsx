@@ -443,57 +443,127 @@ export function ChatView(props: {
     setSelectedModel(sess?.model ?? '')
   })
 
+  // Mira Branches & Live Online Research state
+  const [branchesOpen, setBranchesOpen] = createSignal(false)
+  const [researchMode, setResearchMode] = createSignal<'off' | ResearchMode>('off')
+  const [sessionResearchRuns, setSessionResearchRuns] = createSignal<ResearchRunDTO[]>([])
+  const [activeResearchRun, setActiveResearchRun] = createSignal<ResearchRunDTO | null>(null)
+  const [researchDismissed, setResearchDismissed] = createSignal(false)
+  let researchStreamAbort: AbortController | null = null
+  let researchPollTimer: number | undefined
+
+  const stopResearchStreaming = () => {
+    researchStreamAbort?.abort()
+    researchStreamAbort = null
+    if (researchPollTimer) {
+      clearTimeout(researchPollTimer)
+      researchPollTimer = undefined
+    }
+  }
+
+  onCleanup(stopResearchStreaming)
+
   // Clear per-session ephemeral UI state when switching sessions
   let prevChatSessionId: string | null = null
   createEffect(() => {
     const id = s().currentId
-    if (prevChatSessionId !== null && prevChatSessionId !== id) {
-      setPinnedIds(new Set<string>())
-      setFilePills([])
-      setInlineSel({})
-      setPinned(true)
+    if (prevChatSessionId !== id) {
+      stopResearchStreaming()
+      setSessionResearchRuns([])
       setActiveResearchRun(null)
+      setResearchDismissed(false)
+      if (prevChatSessionId !== null) {
+        setPinnedIds(new Set<string>())
+        setFilePills([])
+        setInlineSel({})
+        setPinned(true)
+      }
     }
     prevChatSessionId = id
   })
 
-  // Mira Branches & Live Online Research state
-  const [branchesOpen, setBranchesOpen] = createSignal(false)
-  const [researchMode, setResearchMode] = createSignal<'off' | ResearchMode>('off')
-  const [activeResearchRun, setActiveResearchRun] = createSignal<ResearchRunDTO | null>(null)
-  let researchStreamAbort: AbortController | null = null
+  const upsertSessionResearchRun = (run: ResearchRunDTO) => {
+    const curSid = s().currentId
+    if (run.sessionID && curSid && run.sessionID !== curSid && run.branchSessionID !== curSid) {
+      return
+    }
+    setActiveResearchRun(run)
+    setSessionResearchRuns((prev) => [run, ...prev.filter((x) => x.id !== run.id)])
+    setResearchDismissed(false)
+  }
 
-  onCleanup(() => {
-    researchStreamAbort?.abort()
-    researchStreamAbort = null
-  })
+  const scheduleResearchRecoveryPoll = (runId: string, expectedSessionId: string | null, ctrl: AbortController) => {
+    if (researchPollTimer) clearTimeout(researchPollTimer)
+    researchPollTimer = window.setTimeout(() => {
+      if (ctrl.signal.aborted || s().currentId !== expectedSessionId) return
+      void api
+        .getResearchRun(runId)
+        .then((latest) => {
+          if (ctrl.signal.aborted || s().currentId !== expectedSessionId) return
+          upsertSessionResearchRun(latest)
+          if (latest.status === 'planning' || latest.status === 'running') {
+            scheduleResearchRecoveryPoll(runId, expectedSessionId, ctrl)
+          }
+        })
+        .catch(() => {})
+    }, 2000)
+  }
 
   const subscribeSessionResearch = (runId: string) => {
-    researchStreamAbort?.abort()
+    stopResearchStreaming()
     const ctrl = new AbortController()
     researchStreamAbort = ctrl
+    const expectedSessionId = s().currentId
     void api
       .streamResearchRun(
         runId,
         (ev) => {
-          if (ev.run) setActiveResearchRun(ev.run)
+          if (ctrl.signal.aborted) return
+          if (ev.run) upsertSessionResearchRun(ev.run)
         },
         ctrl.signal,
       )
-      .catch(() => {})
+      .then(() => {
+        if (ctrl.signal.aborted || s().currentId !== expectedSessionId) return
+        const cur = activeResearchRun()
+        if (cur && cur.id === runId && (cur.status === 'planning' || cur.status === 'running')) {
+          scheduleResearchRecoveryPoll(runId, expectedSessionId, ctrl)
+        }
+      })
+      .catch(() => {
+        if (ctrl.signal.aborted || s().currentId !== expectedSessionId) return
+        scheduleResearchRecoveryPoll(runId, expectedSessionId, ctrl)
+      })
   }
 
   const launchSessionResearch = async (query: string, mode: ResearchMode) => {
-    const sid = s().currentId
-    if (!sid || !query.trim()) return
+    const q = query.trim()
+    if (!q) {
+      toast.info('Enter a topic or question to research.')
+      return
+    }
+    let sid = s().currentId
+    if (!sid) {
+      try {
+        const created = await props.store.createSession(q.slice(0, 48))
+        sid = created?.id ?? s().currentId
+      } catch (e) {
+        toast.error(`Could not create session for research: ${(e as Error).message}`)
+        return
+      }
+    }
+    if (!sid) {
+      toast.error('No active session available for research.')
+      return
+    }
     try {
       const run = await api.startResearchRun({
-        query: query.trim(),
+        query: q,
         mode,
         autoRun: mode === 'quick-grounded',
         sessionID: sid,
       })
-      setActiveResearchRun(run)
+      upsertSessionResearchRun(run)
       subscribeSessionResearch(run.id)
       toast.success(
         mode === 'deep-investigation'
@@ -511,11 +581,22 @@ export function ChatView(props: {
     void api
       .listResearchRuns(id)
       .then((runs) => {
-        if (runs.length > 0 && s().currentId === id) {
-          setActiveResearchRun(runs[0]!)
-          if (runs[0]!.status === 'running' || runs[0]!.status === 'planning') {
-            subscribeSessionResearch(runs[0]!.id)
+        if (s().currentId !== id) return
+        setSessionResearchRuns(runs)
+        if (runs.length > 0) {
+          const preferred =
+            runs.find((r) => r.status === 'running' || r.status === 'planning' || r.status === 'awaiting_approval') ??
+            runs[0]!
+          setActiveResearchRun(preferred)
+          if (
+            preferred.status === 'running' ||
+            preferred.status === 'planning' ||
+            preferred.status === 'awaiting_approval'
+          ) {
+            subscribeSessionResearch(preferred.id)
           }
+        } else {
+          setActiveResearchRun(null)
         }
       })
       .catch(() => {})
@@ -637,6 +718,14 @@ export function ChatView(props: {
     void s().streamText
     if (pinned()) queueMicrotask(() => scrollToBottom(false))
   })
+  createEffect(() => {
+    const r = activeResearchRun()
+    if (!r) return
+    void r.status
+    void r.steps?.length
+    void r.reportMarkdown
+    if (pinned() && !researchDismissed()) queueMicrotask(() => scrollToBottom(false))
+  })
 
   const onScroll = () => {
     const el = scrollRef
@@ -699,17 +788,28 @@ export function ChatView(props: {
       }
       return
     }
-    if (low.startsWith('/research ')) {
-      const q = raw.slice('/research '.length).trim()
+    if (low === '/research' || low.startsWith('/research ')) {
+      const q = raw.slice('/research'.length).trim()
       props.store.setInput('')
-      if (q) void launchSessionResearch(q, 'deep-investigation')
+      if (!q) {
+        setResearchMode('deep-investigation')
+        toast.info('Deep Research mode active — enter a topic and press Send')
+        queueMicrotask(() => inputRef?.focus())
+        return
+      }
+      void launchSessionResearch(q, 'deep-investigation')
       return
     }
-    if (low.startsWith('/fanout ')) {
-      const spec = raw.slice('/fanout '.length).trim()
+    if (low === '/fanout' || low.startsWith('/fanout ')) {
+      const spec = raw.slice('/fanout'.length).trim()
       const parts = spec.split('|').map((p) => p.trim()).filter(Boolean)
       const sid = s().currentId
       props.store.setInput('')
+      if (!parts.length) {
+        toast.info('Use /fanout Option A | Option B to launch parallel branches')
+        queueMicrotask(() => inputRef?.focus())
+        return
+      }
       if (sid && parts.length > 0) {
         void api
           .fanoutSession(sid, {
@@ -1134,7 +1234,7 @@ export function ChatView(props: {
               }
             >
               <Show
-                when={s().messages.length > 0}
+                when={s().messages.length > 0 || (activeResearchRun() && !researchDismissed())}
                 fallback={
                   <div
                     style={{
@@ -1206,114 +1306,227 @@ export function ChatView(props: {
                           )}
                         </For>
                       </div>
+                      <Show when={researchDismissed() && sessionResearchRuns().length > 0}>
+                        <button
+                          type="button"
+                          class="btn btn-ghost"
+                          onClick={() => setResearchDismissed(false)}
+                          style={{
+                            'margin-top': '6px',
+                            padding: '5px 11px',
+                            'font-size': 'var(--fs-xs)',
+                            border: '1px solid var(--accent-border)',
+                            color: 'var(--accent)',
+                            'border-radius': 'var(--r-sm)',
+                          }}
+                        >
+                          🌐 Show Session Research ({sessionResearchRuns().length})
+                        </button>
+                      </Show>
                     </div>
                   </div>
                 }
               >
-                {/* Pinned messages strip */}
-                <Show when={pinnedIds().size > 0}>
+                <Show when={s().messages.length > 0}>
+                  {/* Pinned messages strip */}
+                  <Show when={pinnedIds().size > 0}>
+                    <div
+                      data-slot="pinned-strip"
+                      style={{
+                        display: 'flex',
+                        gap: '6px',
+                        'flex-wrap': 'wrap',
+                        'align-items': 'center',
+                        padding: '6px 0',
+                        'border-bottom': '1px solid var(--border)',
+                        'margin-bottom': '4px',
+                      }}
+                    >
+                      <span
+                        style={{
+                          'font-size': 'var(--fs-2xs)',
+                          color: 'var(--fg-faint)',
+                          'font-weight': '600',
+                          'letter-spacing': '0.04em',
+                          'text-transform': 'uppercase',
+                        }}
+                      >
+                        Pinned
+                      </span>
+                      <For each={s().messages.filter((m) => pinnedIds().has(m.id))}>
+                        {(m) => (
+                          <span class="msg-pinned-badge">
+                            {m.role === 'user' ? 'You' : 'Mira'}: {contentOf(m).slice(0, 40)}…
+                            <button
+                              type="button"
+                              onClick={() => togglePin(m.id)}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                cursor: 'pointer',
+                                color: 'inherit',
+                                'font-size': '10px',
+                                padding: '0 2px',
+                              }}
+                              aria-label="Unpin"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+
+                  <TurnList
+                    messages={s().messages}
+                    streaming={s().streaming}
+                    error={s().error}
+                    pinnedIds={pinnedIds()}
+                    onCopy={(text) => toast.success('Copied')}
+                    onBranch={branchFrom}
+                    onFanout={() => setBranchesOpen(true)}
+                    onResearchFromTurn={(m) => {
+                      let snippet = contentOf(m).trim().slice(0, 220)
+                      if (snippet.replace(/\s+/g, '').length < 2) {
+                        const msgs = s().messages
+                        const idx = msgs.findIndex((msg) => msg.id === m.id)
+                        const prevSearchable = msgs
+                          .slice(0, idx >= 0 ? idx : msgs.length)
+                          .reverse()
+                          .map((msg) => contentOf(msg).trim())
+                          .find((txt) => txt.replace(/\s+/g, '').length >= 2)
+                        snippet = (prevSearchable ?? '').slice(0, 220)
+                      }
+                      if (!snippet || snippet.replace(/\s+/g, '').length < 2) {
+                        toast.info('Turn has no searchable text — enter a topic in the prompt bar to research.')
+                        return
+                      }
+                      void launchSessionResearch(snippet, 'quick-grounded')
+                    }}
+                    onRewind={(m) => {
+                      const sessionId = props.store.state.currentId
+                      const messageId = m.id
+                      if (!sessionId || !messageId) return
+                      void api
+                        .revertSession(sessionId, messageId)
+                        .then(() => {
+                          props.store.loadMessages(sessionId)
+                          toast.success('Rewound to message')
+                        })
+                        .catch((e) => toast.error(`Rewind failed: ${(e as Error).message}`))
+                    }}
+                    onPin={togglePin}
+                    onClearError={() => props.store.clearError()}
+                  />
+                </Show>
+
+                {/* Session Research Run Switcher (when > 1 run exists in this session) */}
+                <Show when={!researchDismissed() && sessionResearchRuns().length > 1}>
                   <div
-                    data-slot="pinned-strip"
+                    data-slot="research-run-switcher"
                     style={{
                       display: 'flex',
                       gap: '6px',
                       'flex-wrap': 'wrap',
                       'align-items': 'center',
-                      padding: '6px 0',
-                      'border-bottom': '1px solid var(--border)',
-                      'margin-bottom': '4px',
+                      'font-size': 'var(--fs-xs)',
                     }}
                   >
-                    <span
-                      style={{
-                        'font-size': 'var(--fs-2xs)',
-                        color: 'var(--fg-faint)',
-                        'font-weight': '600',
-                        'letter-spacing': '0.04em',
-                        'text-transform': 'uppercase',
-                      }}
-                    >
-                      Pinned
+                    <span style={{ color: 'var(--fg-subtle)', 'font-weight': '600' }}>
+                      Research ({sessionResearchRuns().length}):
                     </span>
-                    <For each={s().messages.filter((m) => pinnedIds().has(m.id))}>
-                      {(m) => (
-                        <span class="msg-pinned-badge">
-                          {m.role === 'user' ? 'You' : 'Mira'}: {contentOf(m).slice(0, 40)}…
-                          <button
-                            type="button"
-                            onClick={() => togglePin(m.id)}
-                            style={{
-                              background: 'transparent',
-                              border: 'none',
-                              cursor: 'pointer',
-                              color: 'inherit',
-                              'font-size': '10px',
-                              padding: '0 2px',
-                            }}
-                            aria-label="Unpin"
-                          >
-                            ✕
-                          </button>
-                        </span>
+                    <For each={sessionResearchRuns().slice(0, 6)}>
+                      {(r) => (
+                        <button
+                          type="button"
+                          class="btn btn-ghost"
+                          onClick={() => {
+                            setActiveResearchRun(r)
+                            if (
+                              r.status === 'running' ||
+                              r.status === 'planning' ||
+                              r.status === 'awaiting_approval'
+                            ) {
+                              subscribeSessionResearch(r.id)
+                            }
+                          }}
+                          style={{
+                            padding: '3px 9px',
+                            'font-size': 'var(--fs-xs)',
+                            border:
+                              activeResearchRun()?.id === r.id
+                                ? '1px solid var(--accent-border)'
+                                : '1px solid var(--border)',
+                            background:
+                              activeResearchRun()?.id === r.id
+                                ? 'var(--accent-soft)'
+                                : 'var(--bg-surface)',
+                            color:
+                              activeResearchRun()?.id === r.id
+                                ? 'var(--accent)'
+                                : 'var(--fg-muted)',
+                            'border-radius': 'var(--r-sm)',
+                          }}
+                        >
+                          {r.query.slice(0, 28)}
+                          {r.query.length > 28 ? '…' : ''} · {r.status.replace('_', ' ')}
+                        </button>
                       )}
                     </For>
                   </div>
                 </Show>
 
-                <TurnList
-                  messages={s().messages}
-                  streaming={s().streaming}
-                  error={s().error}
-                  pinnedIds={pinnedIds()}
-                  onCopy={(text) => toast.success('Copied')}
-                  onBranch={branchFrom}
-                  onFanout={() => setBranchesOpen(true)}
-                  onResearchFromTurn={(m) => {
-                    let snippet = contentOf(m).trim().slice(0, 220)
-                    if (!/[a-zA-Z0-9]{2,}/.test(snippet)) {
-                      const msgs = s().messages
-                      const idx = msgs.findIndex((msg) => msg.id === m.id)
-                      const prevSearchable = msgs
-                        .slice(0, idx >= 0 ? idx : msgs.length)
-                        .reverse()
-                        .map((msg) => contentOf(msg).trim())
-                        .find((txt) => /[a-zA-Z0-9]{2,}/.test(txt))
-                      snippet = (prevSearchable ?? '').slice(0, 220)
-                    }
-                    if (!snippet) {
-                      toast.info('Turn has no searchable text — enter a topic in the prompt bar to research.')
-                      return
-                    }
-                    void launchSessionResearch(snippet, 'quick-grounded')
-                  }}
-                  onRewind={(m) => {
-                    const sessionId = props.store.state.currentId
-                    const messageId = m.id
-                    if (!sessionId || !messageId) return
-                    void api
-                      .revertSession(sessionId, messageId)
-                      .then(() => {
-                        props.store.loadMessages(sessionId)
-                        toast.success('Rewound to message')
-                      })
-                      .catch((e) => toast.error(`Rewind failed: ${(e as Error).message}`))
-                  }}
-                  onPin={togglePin}
-                  onClearError={() => props.store.clearError()}
-                />
-
                 {/* Inline Live Online Research Run card for active session */}
-                <Show when={activeResearchRun()}>
+                <Show when={!researchDismissed() && activeResearchRun()}>
                   {(run) => (
                     <ResearchTimeline
                       run={run()}
                       onUpdated={(updated) => {
-                        setActiveResearchRun(updated)
-                        if (updated.status === 'running') subscribeSessionResearch(updated.id)
+                        upsertSessionResearchRun(updated)
+                        if (updated.status === 'running' || updated.status === 'planning') {
+                          subscribeSessionResearch(updated.id)
+                        }
                       }}
                       onOpenBranch={(id) => void props.store.selectSession(id)}
+                      onRetry={(r) => void launchSessionResearch(r.query, r.mode)}
+                      onInsertToChat={(r) => {
+                        const summary = (r.reportMarkdown || '').slice(0, 1400)
+                        const cites = (r.citations ?? [])
+                          .slice(0, 6)
+                          .map((c) => `[${c.index}] ${c.title || c.url} — ${c.url}`)
+                          .join('\n')
+                        const draft = `Using this verified research on "${r.query}":\n\n${summary}${cites ? `\n\nSources:\n${cites}` : ''}\n\n`
+                        props.store.setInput(draft)
+                        setResearchMode('off')
+                        toast.success('Research summary inserted into prompt')
+                        queueMicrotask(() => {
+                          inputRef?.focus()
+                          autoGrow()
+                        })
+                      }}
+                      onDismiss={() => setResearchDismissed(true)}
                     />
                   )}
+                </Show>
+
+                <Show when={researchDismissed() && sessionResearchRuns().length > 0}>
+                  <div style={{ display: 'flex', 'justify-content': 'flex-end' }}>
+                    <button
+                      type="button"
+                      class="btn btn-ghost"
+                      onClick={() => setResearchDismissed(false)}
+                      style={{
+                        padding: '4px 10px',
+                        'font-size': 'var(--fs-xs)',
+                        border: '1px solid var(--border)',
+                        'border-radius': 'var(--r-sm)',
+                        color: 'var(--accent)',
+                      }}
+                    >
+                      🌐 Show Research ({sessionResearchRuns().length})
+                    </button>
+                  </div>
                 </Show>
 
                 {/* ARIA live region for streaming */}

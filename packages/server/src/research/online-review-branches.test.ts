@@ -88,7 +88,8 @@ describe('Workspace Fingerprint, Review Coverage, Online Research & Mira Branche
 
     const app = new Hono<{ Variables: { requestId: string } }>()
     const bearerOf = (h?: string) => (h?.startsWith('Bearer ') ? h.slice(7) : '')
-    const resolveOwner = (t: string) => (t === 'tok' ? 'owner-1' : undefined)
+    const resolveOwner = (t: string) =>
+      t === 'tok' ? 'owner-1' : t === 'tok2' ? 'owner-2' : undefined
     const authorizedSession = async (id: string) => (await sp.getSession(id)) ?? null
 
     mountBranchRoutes(app, {
@@ -366,5 +367,87 @@ describe('Workspace Fingerprint, Review Coverage, Online Research & Mira Branche
         else process.env[k] = v
       }
     }
+  })
+
+  test('Research routes enforce query validation, owner isolation, 409 state transitions, and SSE streaming', async () => {
+    // 1. Short invalid query returns clean 400 (not 500)
+    const badStart = await fetch(`${BASE}/research/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer tok' },
+      body: JSON.stringify({ query: 'a', mode: 'deep-investigation', autoRun: false }),
+    })
+    expect(badStart.status).toBe(400)
+
+    // 2. Short technical queries like "Go" / "C#" succeed
+    const goStart = await fetch(`${BASE}/research/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer tok' },
+      body: JSON.stringify({ query: 'Go', mode: 'deep-investigation', autoRun: false }),
+    })
+    expect(goStart.status).toBe(201)
+    const goJson = (await goStart.json()) as { ok: boolean; run: { id: string; ownerID: string | null } }
+    expect(goJson.ok).toBe(true)
+    expect(goJson.run.ownerID).toBe('owner-1')
+    const runId = goJson.run.id
+
+    // Wait for collaborative plan draft to reach awaiting_approval
+    let status = ''
+    for (let i = 0; i < 20; i++) {
+      const r = await researchService.getRun(runId)
+      status = r?.status ?? ''
+      if (status === 'awaiting_approval') break
+      await new Promise((res) => setTimeout(res, 25))
+    }
+    expect(status).toBe('awaiting_approval')
+
+    // 3. Non-owner (owner-2 / tok2) cannot read, stream, approve, cancel, or promote owner-1's run
+    const otherStream = await fetch(`${BASE}/research/runs/${runId}/stream`, {
+      headers: { Authorization: 'Bearer tok2' },
+    })
+    expect(otherStream.status).toBe(404)
+
+    const otherApprove = await fetch(`${BASE}/research/runs/${runId}/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer tok2' },
+      body: JSON.stringify({}),
+    })
+    expect(otherApprove.status).toBe(404)
+
+    const otherCancel = await fetch(`${BASE}/research/runs/${runId}/cancel`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer tok2' },
+    })
+    expect(otherCancel.status).toBe(404)
+
+    const otherPromote = await fetch(`${BASE}/research/runs/${runId}/promote-memory`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer tok2' },
+      body: JSON.stringify({}),
+    })
+    expect(otherPromote.status).toBe(404)
+
+    // 4. Owner cancels run, then re-approving returns 409 Conflict cleanly
+    const ownerCancel = await fetch(`${BASE}/research/runs/${runId}/cancel`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer tok' },
+    })
+    expect(ownerCancel.status).toBe(200)
+
+    const reapproveCancelled = await fetch(`${BASE}/research/runs/${runId}/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer tok' },
+      body: JSON.stringify({}),
+    })
+    expect(reapproveCancelled.status).toBe(409)
+
+    // 5. SSE stream for terminal run emits snapshot + done cleanly
+    const sseRes = await fetch(`${BASE}/research/runs/${runId}/stream`, {
+      headers: { Authorization: 'Bearer tok' },
+    })
+    expect(sseRes.status).toBe(200)
+    const sseText = await sseRes.text()
+    expect(sseText).toContain('event: snapshot')
+    expect(sseText).toContain('event: done')
+    expect(sseText).toContain(runId)
   })
 })

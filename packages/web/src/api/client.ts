@@ -2186,23 +2186,33 @@ export const api = {
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buf = ''
+    const dispatchFrame = (frame: string) => {
+      const dataLines: string[] = []
+      for (const l of frame.split('\n')) {
+        if (l.startsWith('data:')) dataLines.push(l.slice(5).trim())
+      }
+      if (dataLines.length === 0) return
+      try {
+        const parsed = JSON.parse(dataLines.join('\n')) as ResearchStreamEvent
+        onEvent(parsed)
+      } catch {}
+    }
     while (true) {
       const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
+      if (done) {
+        buf += decoder.decode()
+        if (buf.trim()) {
+          for (const f of buf.replace(/\r\n/g, '\n').split('\n\n')) {
+            if (f.trim()) dispatchFrame(f)
+          }
+        }
+        break
+      }
+      buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
       const frames = buf.split('\n\n')
       buf = frames.pop() || ''
       for (const f of frames) {
-        const lines = f.split('\n')
-        const dataLines: string[] = []
-        for (const l of lines) {
-          if (l.startsWith('data:')) dataLines.push(l.slice(5).trim())
-        }
-        if (dataLines.length === 0) continue
-        try {
-          const parsed = JSON.parse(dataLines.join('\n')) as ResearchStreamEvent
-          onEvent(parsed)
-        } catch {}
+        dispatchFrame(f)
       }
     }
   },
