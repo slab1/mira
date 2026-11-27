@@ -67,6 +67,10 @@ import { isProposalState, type ProposalState } from '../patching/governance/type
 import { getConfig } from '../config/store.js'
 import type { GovernanceGateLike } from '../patching/governance/index.js'
 import { ShadowComparison } from '../shadow/comparison.js'
+import { GeneralizationGate } from '../evolution/generalization.js'
+import { BoundedLoopContextManager } from '../evolution/context-budget.js'
+import { EvolutionLineageStore, type GenerationStatus } from '../evolution/lineage.js'
+import { BanditSearchEngine, type SearchStepOptions } from '../evolution/bandit.js'
 
 export interface EvolutionRouteDeps {
   db: MiraDB
@@ -403,6 +407,38 @@ export function mountEvolutionRoutes(
     }
   })()
 
+  // ── AIDE² Recursive Self-Improvement subsystems ──────────────────
+  const generalizationGate = new GeneralizationGate()
+  const contextManager = new BoundedLoopContextManager()
+  const lineageStore = (() => {
+    try {
+      return new EvolutionLineageStore(db, bus)
+    } catch {
+      return new EvolutionLineageStore(null, bus)
+    }
+  })()
+  const banditSearch = (() => {
+    try {
+      return new BanditSearchEngine({
+        db,
+        lineage: lineageStore,
+        generalization: generalizationGate,
+        contextManager,
+        loopGuard,
+        bus,
+      })
+    } catch {
+      return new BanditSearchEngine({
+        db: null,
+        lineage: lineageStore,
+        generalization: generalizationGate,
+        contextManager,
+        loopGuard,
+        bus,
+      })
+    }
+  })()
+
   // ── GET /evolution/health ────────────────────────────────────────
   app.get('/evolution/health', (c) => {
     return c.json({
@@ -446,7 +482,16 @@ export function mountEvolutionRoutes(
         'POST /evolution/proposals/:id/advance',
         'POST /evolution/proposals/:id/promote',
         'POST /evolution/proposals/:id/rollback',
+        'GET /evolution/lineage',
+        'POST /evolution/search/step',
+        'POST /evolution/generations/:id/promote',
+        'POST /evolution/generations/:id/reject',
       ],
+      aide2: {
+        generalization: generalizationGate.health(),
+        lineage: lineageStore.summary(),
+        banditArms: banditSearch.listArms().length,
+      },
       canary: 'Implemented (Phase 5)',
       shadow: 'Implemented (Phase 4)',
       timestamp: Date.now(),
@@ -1581,6 +1626,155 @@ export function mountEvolutionRoutes(
       ok: true,
       metadata: meta,
       note: '§6: file rollback ≠ system rollback — this metadata drives engine rollback()/config restore; systemRollbackMetadata is recorded in ledger evidence',
+    })
+  })
+
+  // ── GET /evolution/lineage — AIDE² generation tree & bandit telemetry ──
+  app.get('/evolution/lineage', (c) => {
+    const statusParam = c.req.query('status') as GenerationStatus | undefined
+    const limitRaw = c.req.query('limit')
+    const limit = limitRaw ? Math.min(250, Math.max(1, Number(limitRaw) || 100)) : 100
+    const generations = lineageStore.list(limit, statusParam || undefined)
+    const activeBase = lineageStore.getActiveBase()
+    const banditArms = banditSearch.listArms()
+    const contextStats = banditSearch.getContextStats()
+    return c.json({
+      ok: true,
+      activeBase,
+      generations,
+      banditArms,
+      contextStats,
+      summary: lineageStore.summary(),
+      timestamp: Date.now(),
+    })
+  })
+
+  // ── POST /evolution/search/step — UCB1 multi-candidate exploration ──
+  app.post('/evolution/search/step', async (c) => {
+    let body: SearchStepOptions | null = null
+    try {
+      body = (await c.req.json()) as unknown as SearchStepOptions
+    } catch {
+      body = null
+    }
+    const stepResult = banditSearch.runSearchStep({
+      k: typeof body?.k === 'number' ? Math.min(5, Math.max(1, body.k)) : 3,
+      budgetTokens:
+        typeof body?.budgetTokens === 'number' ? Math.max(128, body.budgetTokens) : undefined,
+      strategyArm: typeof body?.strategyArm === 'string' ? body.strategyArm : undefined,
+      candidates: Array.isArray(body?.candidates) ? body.candidates : undefined,
+    })
+    return c.json({
+      ok: true,
+      stepResult,
+      activeBase: lineageStore.getActiveBase(),
+      generations: lineageStore.list(100),
+      banditArms: banditSearch.listArms(),
+      contextStats: stepResult.contextStats,
+      summary: lineageStore.summary(),
+    })
+  })
+
+  // ── POST /evolution/generations/:id/promote — human-gated baseline step ──
+  app.post('/evolution/generations/:id/promote', async (c) => {
+    const id = c.req.param('id')
+    const bearer = c.req.header('authorization')?.startsWith('Bearer ')
+      ? c.req.header('authorization')!.slice(7)
+      : ''
+
+    let approver = 'operator'
+    if (deps.resolveOwner) {
+      const owner = deps.resolveOwner(bearer)
+      if (!owner) {
+        return c.json(
+          { ok: false, error: 'generation promotion requires an authenticated caller', id },
+          401,
+        )
+      }
+      const role = deps.resolveRole?.(bearer)
+      if (role === 'viewer') {
+        return c.json(
+          { ok: false, error: 'viewer role cannot promote a baseline generation', id },
+          403,
+        )
+      }
+      approver = owner
+    }
+
+    let body: { expectedHash?: unknown } | null = null
+    try {
+      body = (await c.req.json()) as unknown as { expectedHash?: unknown }
+    } catch {
+      body = null
+    }
+    const expectedHash = typeof body?.expectedHash === 'string' ? body.expectedHash : undefined
+
+    const existing = lineageStore.get(id)
+    if (!existing) return c.json({ ok: false, error: 'generation not found', id }, 404)
+
+    const res = lineageStore.promoteGeneration(id, { approver, expectedHash })
+    if (!res.ok) {
+      return c.json({ ok: false, error: res.reason ?? 'promotion rejected', id }, 400)
+    }
+
+    return c.json({
+      ok: true,
+      generation: res.node,
+      previousBaseId: res.previousBaseId,
+      activeBase: lineageStore.getActiveBase(),
+      summary: lineageStore.summary(),
+    })
+  })
+
+  // ── POST /evolution/generations/:id/reject — reject candidate generation ──
+  app.post('/evolution/generations/:id/reject', async (c) => {
+    const id = c.req.param('id')
+    const bearer = c.req.header('authorization')?.startsWith('Bearer ')
+      ? c.req.header('authorization')!.slice(7)
+      : ''
+
+    let actor = 'operator'
+    if (deps.resolveOwner) {
+      const owner = deps.resolveOwner(bearer)
+      if (!owner) {
+        return c.json(
+          { ok: false, error: 'generation rejection requires an authenticated caller', id },
+          401,
+        )
+      }
+      const role = deps.resolveRole?.(bearer)
+      if (role === 'viewer') {
+        return c.json(
+          { ok: false, error: 'viewer role cannot reject a generation', id },
+          403,
+        )
+      }
+      actor = owner
+    }
+
+    let body: { reason?: unknown } | null = null
+    try {
+      body = (await c.req.json()) as unknown as { reason?: unknown }
+    } catch {
+      body = null
+    }
+    const reason =
+      typeof body?.reason === 'string' && body.reason.trim()
+        ? body.reason.trim().slice(0, 300)
+        : 'Rejected by human operator'
+
+    const existing = lineageStore.get(id)
+    if (!existing) return c.json({ ok: false, error: 'generation not found', id }, 404)
+
+    const res = lineageStore.rejectGeneration(id, { reason, actor })
+    if (!res.ok) {
+      return c.json({ ok: false, error: res.reason ?? 'rejection failed', id }, 400)
+    }
+    return c.json({
+      ok: true,
+      generation: res.node,
+      activeBase: lineageStore.getActiveBase(),
+      summary: lineageStore.summary(),
     })
   })
 

@@ -1,102 +1,41 @@
 /* ===========================================================================
-   Mira Web — Material 3 Expressive Design System + Google Navigation
+   Mira Web — Unified Material 3 Expressive Token Aliases
+   ---------------------------------------------------------------------------
+   All M3 tokens map directly to canonical Obsidian & Gold tokens in index.css
+   so light/dark theme switching and single-elevation borders stay consistent.
    =========================================================================== */
 
 :root {
-  /* Material 3 Dynamic Color — Tonal Palette (Indigo/Violet baseline) */
-  /* Primary */
-  --m3-primary-0: #000000;
-  --m3-primary-10: #1d1b2e;
-  --m3-primary-20: #2f2a42;
-  --m3-primary-30: #453f59;
-  --m3-primary-40: #5b5370;
-  --m3-primary-50: #716a88;
-  --m3-primary-60: #8a83a0;
-  --m3-primary-70: #a49db9;
-  --m3-primary-80: #c0b8d5;
-  --m3-primary-90: #e1dbf4;
-  --m3-primary-95: #f0eafe;
-  --m3-primary-99: #fffbff;
-  --m3-primary-100: #ffffff;
+  --m3-primary-40: var(--accent);
+  --m3-primary-80: var(--accent-strong);
+  --m3-secondary-container: var(--accent-soft);
+  --m3-on-secondary-container: var(--accent);
+  --m3-outline: var(--border-strong);
 
-  /* Secondary */
-  --m3-secondary-10: #1d1c25;
-  --m3-secondary-20: #302f3a;
-  --m3-secondary-30: #48464f;
-  --m3-secondary-40: #61606a;
-  --m3-secondary-80: #c5c3ce;
-  --m3-secondary-90: #e6e4ee;
-  --m3-secondary-95: #f3f1f9;
+  --m3-surface-dim: var(--bg-app);
+  --m3-surface-bright: var(--bg-active);
+  --m3-surface-container-lowest: var(--bg-app);
+  --m3-surface-container-low: var(--bg-canvas);
+  --m3-surface-container: var(--bg-surface);
+  --m3-surface-container-high: var(--bg-hover);
+  --m3-surface-container-highest: var(--bg-active);
 
-  /* Tertiary */
-  --m3-tertiary-40: #6b5b75;
-  --m3-tertiary-80: #d1b8d3;
+  --m3-on-surface: var(--fg);
+  --m3-on-surface-variant: var(--fg-subtle);
+  --m3-on-primary: var(--on-accent);
+  --m3-on-primary-container: var(--accent);
+  --m3-error-40: var(--danger);
 
-  /* Neutral */
-  --m3-neutral-10: #1a1a1e;
-  --m3-neutral-20: #2b2b31;
-  --m3-neutral-30: #454449;
-  --m3-neutral-40: #5e5b61;
-  --m3-neutral-80: #c2bfc5;
-  --m3-neutral-90: #e3e0e6;
-  --m3-neutral-95: #f2eff3;
-  --m3-neutral-99: #fffbff;
+  --m3-shape-corner-extra-small: var(--r-sm);
+  --m3-shape-corner-small: var(--r-sm);
+  --m3-shape-corner-medium: var(--r-md);
+  --m3-shape-corner-large: var(--r-lg);
+  --m3-shape-corner-extra-large: var(--m3-shape-xl, 28px);
+  --m3-shape-corner-full: var(--r-full);
 
-  /* Neutral Variant */
-  --m3-neutral-variant-30: #4b4653;
-  --m3-neutral-variant-40: #65616f;
-  --m3-neutral-variant-90: #e7e3ec;
-  --m3-neutral-variant-95: #f5f2f9;
-
-  /* Error */
-  --m3-error-40: #b3261e;
-  --m3-error-80: #f2b8b5;
-  --m3-error-90: #f9dedc;
-
-  /* Surface */
-  --m3-surface-0: #000000;
-  --m3-surface-10: #1b1b1e;
-  --m3-surface-20: #2b2b2f;
-  --m3-surface-30: #45454a;
-  --m3-surface-80: #c5c5c8;
-  --m3-surface-90: #e4e4e6;
-  --m3-surface-95: #f2f1f5;
-  --m3-surface-99: #fffbff;
-  --m3-surface-100: #ffffff;
-
-  /* Surface Dim / Bright — aligned with Obsidian & Gold palette */
-  --m3-surface-dim: #07090e;
-  --m3-surface-bright: #1d263d;
-  --m3-surface-container-lowest: #07090e;
-  --m3-surface-container-low: #0b0e17;
-  --m3-surface-container: #101522;
-  --m3-surface-container-high: #161d2f;
-  --m3-surface-container-highest: #1d263d;
-
-  /* On colors */
-  --m3-on-surface: #f1f3fa;
-  --m3-on-surface-variant: #a0a9c0;
-  --m3-on-primary: #07090e;
-  --m3-on-primary-container: #f5d061;
-  --m3-on-secondary: #f1f3fa;
-  --m3-on-tertiary: #f1f3fa;
-  --m3-on-error: #ffffff;
-
-  /* M3 Expressive Shapes */
-  --m3-shape-corner-extra-small: 4px;
-  --m3-shape-corner-small: 8px;
-  --m3-shape-corner-medium: 12px;
-  --m3-shape-corner-large: 16px;
-  --m3-shape-corner-extra-large: 28px;
-  --m3-shape-corner-full: 999px;
-
-  /* M3 Elevation */
   --m3-elevation-0: none;
-  --m3-elevation-1: 0px 1px 2px rgba(0,0,0,0.35), 0px 1px 3px 1px rgba(0,0,0,0.2);
-  --m3-elevation-2: 0px 2px 6px rgba(0,0,0,0.45), 0px 1px 3px rgba(0,0,0,0.3);
-  --m3-elevation-3: 0px 4px 12px rgba(0,0,0,0.5), 0px 1px 3px rgba(0,0,0,0.35);
-  --m3-elevation-4: 0px 6px 16px rgba(0,0,0,0.55), 0px 2px 4px rgba(0,0,0,0.35);
-  --m3-elevation-5: 0px 10px 24px rgba(0,0,0,0.6), 0px 4px 6px rgba(0,0,0,0.4);
+  --m3-elevation-1: var(--shadow-card);
+  --m3-elevation-2: var(--shadow-card);
 }
 
 /* Navigation Rail */
@@ -106,7 +45,7 @@
   width: 72px;
   min-height: 100vh;
   background: var(--m3-surface-container-low);
-  border-right: 1px solid var(--m3-neutral-variant-30);
+  border-right: 1px solid var(--border);
   padding: 8px 0;
   gap: 8px;
   position: fixed;
@@ -119,14 +58,14 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   padding: 12px 8px;
   border-radius: var(--m3-shape-corner-small);
   color: var(--m3-on-surface-variant);
   text-decoration: none;
-  transition: background 120ms ease, color 120ms ease;
   min-height: 64px;
-  justify-content: center;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
 .m3-rail-item:hover {
@@ -135,8 +74,8 @@
 }
 
 .m3-rail-item[aria-selected='true'] {
-  background: var(--m3-secondary-container, var(--m3-surface-container-high));
-  color: var(--m3-on-secondary-container, var(--m3-primary-40));
+  background: var(--m3-secondary-container);
+  color: var(--m3-on-secondary-container);
 }
 
 /* Top App Bar */
@@ -146,59 +85,63 @@
   height: 64px;
   padding: 0 24px;
   background: var(--m3-surface-container-low);
-  border-bottom: 1px solid var(--m3-neutral-variant-30);
-  margin-left: 72px;
+  border-bottom: 1px solid var(--border);
   gap: 16px;
 }
 
 .m3-app-bar-title {
-  font-size: 22px;
-  font-weight: 400;
-  letter-spacing: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--m3-on-surface);
 }
 
-/* Cards */
+/* Single-elevation flat surface cards */
 .m3-card {
   background: var(--m3-surface-container);
-  border-radius: var(--m3-shape-corner-large);
+  border: 1px solid var(--border);
+  border-radius: var(--m3-shape-corner-medium);
   padding: 16px;
-  box-shadow: var(--m3-elevation-1);
-  transition: box-shadow 120ms ease;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 
 .m3-card:hover {
-  box-shadow: var(--m3-elevation-2);
+  border-color: var(--border-strong);
 }
 
 /* Buttons */
 .m3-filled-button {
   height: 40px;
-  padding: 0 24px;
-  border-radius: var(--m3-shape-corner-full);
-  background: var(--m3-primary-40);
-  color: var(--m3-on-primary);
+  padding: 0 20px;
+  border-radius: var(--m3-shape-corner-medium);
+  background: var(--accent);
+  color: var(--on-accent);
   border: none;
-  font-weight: 500;
-  font-size: 14px;
-  letter-spacing: 0.1px;
+  font-weight: 600;
+  font-size: 13.5px;
   cursor: pointer;
-  transition: box-shadow 120ms ease;
-  box-shadow: var(--m3-elevation-1);
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease);
 }
 
-.m3-filled-button:hover {
-  box-shadow: var(--m3-elevation-2);
+.m3-filled-button:hover:not(:disabled) {
+  background: var(--accent-strong);
 }
 
 .m3-outlined-button {
   height: 40px;
-  padding: 0 24px;
-  border-radius: var(--m3-shape-corner-full);
+  padding: 0 20px;
+  border-radius: var(--m3-shape-corner-medium);
   background: transparent;
-  color: var(--m3-primary-40);
-  border: 1px solid var(--m3-outline);
-  font-weight: 500;
-  font-size: 14px;
+  color: var(--accent);
+  border: 1px solid var(--border-strong);
+  font-weight: 600;
+  font-size: 13.5px;
   cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.m3-outlined-button:hover:not(:disabled) {
+  background: var(--bg-hover);
 }

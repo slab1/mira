@@ -412,21 +412,36 @@ export default function Brio() {
                   </div>
                 </div>
               </div>
-              <div style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'flex-wrap': 'wrap' }}>
+              <div class="meta-inline" role="status" aria-live="polite">
                 <span
-                  class={`pill ${colibriOk() === true ? 'pill-ok' : colibriOk() === false ? 'pill-ok' : 'pill'}`}
-                  style={{ 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-2xs)' }}
-                  title={colibriOk() === true ? `colibri ${colibriLatency() ?? ''}ms · ${colibriBase()}` : colibriOk() === false ? `colibri offline · cloud scoring ready (nvidia / google)` : 'checking status…'}
-                  role="status"
-                  aria-live="polite"
+                  style={{
+                    color:
+                      colibriOk() === true
+                        ? 'var(--ok)'
+                        : colibriOk() === false
+                          ? 'var(--accent)'
+                          : 'var(--fg-faint)',
+                    'font-weight': '600',
+                  }}
+                  title={
+                    colibriOk() === true
+                      ? `colibri ${colibriLatency() ?? ''}ms · ${colibriBase()}`
+                      : colibriOk() === false
+                        ? 'colibri offline · cloud scoring ready (nvidia / google)'
+                        : 'checking status…'
+                  }
                 >
-                  <span class={`dot ${colibriOk() === true ? 'dot-pulse' : ''}`} style={{ background: colibriOk() === true ? 'var(--ok)' : colibriOk() === false ? 'var(--accent)' : 'var(--fg-faint)' }} />
-                  {colibriOk() === true ? 'colibri ready' : colibriOk() === false ? 'cloud ready (nvidia / google)' : 'checking…'}
-                  <Show when={colibriLatency() != null && colibriOk() === true}>
-                    <span style={{ opacity: '0.8' }}>{colibriLatency()}ms</span>
-                  </Show>
+                  {colibriOk() === true
+                    ? 'Colibri ready'
+                    : colibriOk() === false
+                      ? 'Cloud ready (nvidia / google)'
+                      : 'Checking…'}
                 </span>
-                <span class="pill" style={{ 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-2xs)' }} title={colibriBase()}>
+                <Show when={colibriLatency() != null && colibriOk() === true}>
+                  <span>{colibriLatency()}ms</span>
+                </Show>
+                <span aria-hidden="true">·</span>
+                <span title={colibriBase()}>
                   {colibriBase().replace('http://', '').replace('https://', '')}
                 </span>
               </div>
@@ -434,22 +449,14 @@ export default function Brio() {
             <div
               style={{
                 display: 'flex',
-                gap: '6px',
+                gap: '10px',
                 'flex-wrap': 'wrap',
                 'font-size': 'var(--fs-2xs)',
                 color: 'var(--fg-faint)',
                 'align-items': 'center',
               }}
             >
-              <span
-                style={{
-                  'font-family': 'var(--font-mono)',
-                  background: 'var(--bg-app)',
-                  border: '1px solid var(--border)',
-                  padding: '2px 6px',
-                  'border-radius': 'var(--r-full)',
-                }}
-              >
+              <span style={{ 'font-family': 'var(--font-mono)' }}>
                 entropy &lt;0.4 confident · 0.4–0.8 unsure · &gt;0.8 abstain
               </span>
               <span style={{ display: 'flex', gap: '6px' }}>

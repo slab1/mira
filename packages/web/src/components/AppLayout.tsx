@@ -1,8 +1,7 @@
-// AppLayout.tsx - Refactored layout with Material 3 Navigation Rail
-// @ts-nocheck
-import { Show, For } from 'solid-js';
-import { NavigationRail, TopAppBar } from './M3Components';
-import { WORKSPACES, type WorkspaceId } from './TopNav';
+// AppLayout.tsx - Layout shell with Navigation Rail & Top App Bar
+import { Show, type JSX } from 'solid-js'
+import { NavigationRail, TopAppBar } from './M3Components'
+import { WORKSPACES, type WorkspaceId } from './TopNav'
 
 /**
  * ============================================================================
@@ -30,7 +29,7 @@ export function AppLayout(props: {
           icon: w.icon,
         }))}
         selected={props.workspace}
-        onSelect={props.onWorkspaceChange}
+        onSelect={(id) => props.onWorkspaceChange(id as WorkspaceId)}
       />
 
       {/* ===== MAIN AREA ===== */}
@@ -75,12 +74,24 @@ export function AppHeader(props: {
       'background': 'var(--m3-surface-container)',
       'border-bottom': '1px solid var(--border)'
     }}>
-      {/* Status Indicators */}
-      <div style={{ 'display': 'flex', 'gap': '12px', 'align-items': 'center' }}>
-        <span class={`pill ${props.connected ? 'pill-ok' : 'pill-danger'}`}>
-          <span class={`dot ${props.connected ? 'dot-pulse' : ''}`} 
-                style={{ 'background': props.connected ? 'var(--ok)' : 'var(--danger)' }} />
-          {props.connected ? 'live' : 'offline'}
+      {/* Connection Status */}
+      <div style={{ display: 'flex', gap: '8px', 'align-items': 'center' }}>
+        <span
+          style={{
+            display: 'inline-flex',
+            'align-items': 'center',
+            gap: '6px',
+            'font-size': 'var(--fs-xs)',
+            'font-weight': '600',
+            color: props.connected ? 'var(--ok)' : 'var(--danger)',
+          }}
+        >
+          <span
+            class="dot"
+            style={{ background: props.connected ? 'var(--ok)' : 'var(--danger)' }}
+            aria-hidden="true"
+          />
+          {props.connected ? 'Connected' : 'Offline'}
         </span>
       </div>
 

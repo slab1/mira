@@ -1,16 +1,5 @@
-// @ts-nocheck
 /**
  * InvestigationQueue — open questions awaiting a real fix (§24)
- *
- * An investigation is NOT a failure. It is a proposal that carried no
- * appliable change: Mira observed and diagnosed something real, but has no
- * honest fix to verify yet. This panel surfaces those questions with what is
- * needed to act on them — the failure, the cause, the risk, any research
- * evidence validated against the diagnosis (§10) — and states the next step:
- * produce a real unified diff and re-observe.
- *
- * Like the approval queue, this is a SURFACE: it reads
- * GET /evolution/investigations and holds no authority of its own.
  */
 
 import { createSignal, onMount, onCleanup, Show, For } from 'solid-js'
@@ -30,11 +19,11 @@ type Investigation = {
   createdAt?: number
 }
 
-function riskPill(risk: string | undefined): string {
+function riskColor(risk: string | undefined): string {
   const r = (risk ?? '').toLowerCase()
-  if (r === 'high') return 'pill-danger'
-  if (r === 'medium') return 'pill-warn'
-  return 'pill-ok'
+  if (r === 'high') return 'var(--danger)'
+  if (r === 'medium') return 'var(--warn)'
+  return 'var(--ok)'
 }
 
 export function InvestigationQueue() {
@@ -113,34 +102,28 @@ export function InvestigationQueue() {
       >
         <For each={items()}>
           {(inv) => (
-            <div
-              style={{
-                border: '1px solid var(--border)',
-                'border-radius': 'var(--r-md)',
-                padding: '10px',
-                display: 'flex',
-                'flex-direction': 'column',
-                gap: '8px',
-                background: 'var(--bg-app)',
-              }}
-            >
+            <div class="flat-row" style={{ gap: '6px' }}>
               <div
                 style={{
                   display: 'flex',
                   'align-items': 'center',
+                  'justify-content': 'space-between',
                   gap: '8px',
                   'flex-wrap': 'wrap',
                 }}
               >
-                <span class={`pill ${riskPill(inv.risk)}`}>{inv.risk ?? 'risk?'} risk</span>
                 <span style={{ 'font-size': 'var(--fs-sm)', 'font-weight': '600', flex: '1' }}>
                   {inv.title ?? inv.id}
                 </span>
-                <Show when={inv.affectedEngine}>
-                  <span style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-faint)' }}>
-                    {inv.affectedEngine}
+                <div class="meta-inline">
+                  <span style={{ color: riskColor(inv.risk), 'font-weight': '600' }}>
+                    {inv.risk ?? 'unknown'} risk
                   </span>
-                </Show>
+                  <Show when={inv.affectedEngine}>
+                    <span aria-hidden="true">·</span>
+                    <span>{inv.affectedEngine}</span>
+                  </Show>
+                </div>
               </div>
 
               <Show when={inv.cause}>

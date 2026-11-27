@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * ApprovalQueue — the operator's pending approval queue (§18)
  *
@@ -7,10 +6,6 @@
  * same authenticated endpoints a curl would (POST /evolution/approve|deny/:id
  * with the operator's bearer token). It owns no approval logic and trusts no
  * client state — identity comes from the caller's credentials server-side.
- *
- * Evidence-at-decision-time: each row shows the risk level/score/reasons and
- * autonomy level the operator is deciding on, captured by the server when the
- * approval was requested.
  */
 
 import { createSignal, onMount, onCleanup, Show, For } from 'solid-js'
@@ -26,17 +21,15 @@ type PendingApproval = {
   riskReasons?: string[]
   level?: number
   requestedAt?: number
-  /** Two-person rule progress: distinct operators that already approved. */
   approvers?: string[]
-  /** Quorum size (1 unless the two-person rule applies). */
   requiredApprovals?: number
 }
 
-function riskPill(risk: string | undefined): string {
+function riskColor(risk: string | undefined): string {
   const r = (risk ?? '').toLowerCase()
-  if (r === 'high') return 'pill-danger'
-  if (r === 'medium') return 'pill-warn'
-  return 'pill-ok'
+  if (r === 'high') return 'var(--danger)'
+  if (r === 'medium') return 'var(--warn)'
+  return 'var(--ok)'
 }
 
 function fmtAge(ts: number | undefined): string {
@@ -153,55 +146,45 @@ export function ApprovalQueue(props: { onDecided?: () => void }) {
         >
           <For each={pending()}>
             {(p) => (
-              <div
-                class="m3-card"
-                style={{
-                  padding: '14px 16px',
-                  display: 'flex',
-                  'flex-direction': 'column',
-                  gap: '8px',
-                }}
-              >
+              <div class="flat-row" style={{ gap: '8px' }}>
                 <div
                   style={{
                     display: 'flex',
                     'align-items': 'center',
+                    'justify-content': 'space-between',
                     gap: '8px',
                     'flex-wrap': 'wrap',
                   }}
                 >
-                  <span class={`pill ${riskPill(p.risk)}`}>{p.risk ?? 'risk?'} risk</span>
-                  <Show when={p.level !== undefined}>
-                    <span class="pill pill-accent">L{p.level}</span>
-                  </Show>
                   <span style={{ 'font-size': 'var(--fs-sm)', 'font-weight': '600', flex: '1' }}>
                     {p.title ?? p.id}
                   </span>
-                  <span
-                    style={{
-                      'font-size': 'var(--fs-2xs)',
-                      color: 'var(--fg-faint)',
-                      'font-family': 'var(--font-mono)',
-                    }}
-                    title={p.requestedAt ? new Date(p.requestedAt).toLocaleString() : ''}
-                  >
-                    waiting {fmtAge(p.requestedAt)}
-                  </span>
-                </div>
-
-                <Show when={p.affectedEngine}>
-                  <div style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--fg-subtle)' }}>
-                    engine: {p.affectedEngine}
-                    <Show when={p.riskScore !== undefined}>
-                      {' '}
-                      · risk score {p.riskScore?.toFixed(2)}
+                  <div class="meta-inline">
+                    <span style={{ color: riskColor(p.risk), 'font-weight': '600' }}>
+                      {p.risk ?? 'unknown'} risk
+                    </span>
+                    <Show when={p.level !== undefined}>
+                      <span aria-hidden="true">·</span>
+                      <span>L{p.level}</span>
                     </Show>
+                    <Show when={p.affectedEngine}>
+                      <span aria-hidden="true">·</span>
+                      <span>{p.affectedEngine}</span>
+                    </Show>
+                    <Show when={p.riskScore !== undefined}>
+                      <span aria-hidden="true">·</span>
+                      <span>score {p.riskScore?.toFixed(2)}</span>
+                    </Show>
+                    <span aria-hidden="true">·</span>
+                    <span title={p.requestedAt ? new Date(p.requestedAt).toLocaleString() : ''}>
+                      waiting {fmtAge(p.requestedAt)}
+                    </span>
                   </div>
-                </Show>
+                </div>
 
                 {/* Two-person rule progress — one operator cannot approve twice */}
                 <Show when={(p.requiredApprovals ?? 1) > 1}>
-                  <div style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--warn)' }}>
+                  <div style={{ 'font-size': 'var(--fs-2xs)', color: 'var(--warn)', 'font-variant-numeric': 'tabular-nums' }}>
                     two-person rule: {p.approvers?.length ?? 0} of {p.requiredApprovals} operator
                     approvals
                     <Show when={(p.approvers ?? []).length > 0}> ({p.approvers?.join(', ')})</Show>
@@ -209,14 +192,38 @@ export function ApprovalQueue(props: { onDecided?: () => void }) {
                 </Show>
 
                 {/* Evidence at decision time — the operator decides on THIS */}
-                <button
-                  class="btn btn-ghost"
-                  style={{ 'font-size': 'var(--fs-2xs)', 'align-self': 'flex-start' }}
-                  onClick={() => setExpanded(expanded() === p.id ? null : p.id)}
-                  aria-expanded={expanded() === p.id}
-                >
-                  {expanded() === p.id ? 'Hide evidence' : 'View evidence'}
-                </button>
+                <div style={{ display: 'flex', gap: '8px', 'align-items': 'center', 'flex-wrap': 'wrap' }}>
+                  <button
+                    type="button"
+                    class="btn btn-solid"
+                    disabled={busyId() === p.id}
+                    onClick={() => void decide(p.id, 'approve')}
+                    aria-label={`Approve ${p.title ?? p.id}`}
+                    style={{ padding: '6px 14px', 'font-size': 'var(--fs-xs)' }}
+                  >
+                    {busyId() === p.id ? '…' : 'Approve'}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-danger-ghost"
+                    disabled={busyId() === p.id}
+                    onClick={() => void decide(p.id, 'deny')}
+                    aria-label={`Deny ${p.title ?? p.id}`}
+                    style={{ padding: '6px 14px', 'font-size': 'var(--fs-xs)' }}
+                  >
+                    Deny
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost"
+                    style={{ 'font-size': 'var(--fs-2xs)', padding: '5px 10px' }}
+                    onClick={() => setExpanded(expanded() === p.id ? null : p.id)}
+                    aria-expanded={expanded() === p.id}
+                  >
+                    {expanded() === p.id ? 'Hide evidence' : 'View evidence'}
+                  </button>
+                </div>
+
                 <Show when={expanded() === p.id}>
                   <ul
                     style={{
@@ -232,25 +239,6 @@ export function ApprovalQueue(props: { onDecided?: () => void }) {
                     </Show>
                   </ul>
                 </Show>
-
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    class="btn btn-solid"
-                    disabled={busyId() === p.id}
-                    onClick={() => decide(p.id, 'approve')}
-                    aria-label={`Approve ${p.title ?? p.id}`}
-                  >
-                    {busyId() === p.id ? '…' : 'Approve'}
-                  </button>
-                  <button
-                    class="btn btn-danger"
-                    disabled={busyId() === p.id}
-                    onClick={() => decide(p.id, 'deny')}
-                    aria-label={`Deny ${p.title ?? p.id}`}
-                  >
-                    Deny
-                  </button>
-                </div>
               </div>
             )}
           </For>

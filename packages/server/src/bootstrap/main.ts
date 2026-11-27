@@ -1071,7 +1071,7 @@ async function main() {
   mountLearningRoutes(app, learning)
   // Community distribution (P3.4) — install skills/agents/knowledge modules
   mountCommunityRoutes(app, { knowledge: learning.knowledge })
-  mountWorkspaceRoutes(app)
+  mountWorkspaceRoutes(app, { db })
   mountWorkspacesRoutes(app, {
     db,
     // P3.3 tenancy: file snapshots are scoped to the caller's sessions

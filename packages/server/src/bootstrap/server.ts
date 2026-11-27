@@ -113,7 +113,7 @@ export function createApp(serverConfig: ServerConfig): Hono {
   mountVoiceRoutes(app)
 
   // Workspace routes
-  mountWorkspaceRoutes(app)
+  mountWorkspaceRoutes(app, { db })
 
   // Workspaces routes
   mountWorkspacesRoutes(app, { db })

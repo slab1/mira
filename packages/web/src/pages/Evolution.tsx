@@ -5,6 +5,7 @@ import { toast } from '../components/Toast'
 import { DataStateBadge } from '../components/DataState'
 import { ApprovalQueue } from '../components/ApprovalQueue'
 import { InvestigationQueue } from '../components/InvestigationQueue'
+import { RecursiveLineagePanel } from '../components/RecursiveLineagePanel'
 
 type EngineHealth = { id: string; status: string; healthy: boolean }
 type LedgerEntry = {
@@ -74,23 +75,23 @@ const ADVANCEABLE_STATES: readonly ProposalState[] = [
 const canAdvance = (state: string | undefined) =>
   ADVANCEABLE_STATES.includes((state ?? '') as ProposalState)
 
-/** State pill — color is decorative; the pill always carries the state text. */
-function statePillClass(state: string | undefined): string {
+/** Semantic color for proposal pipeline state — rendered as unboxed text. */
+function stateTextColor(state: string | undefined): string {
   const s = state ?? ''
-  if (s === 'PROMOTED' || s.endsWith('_PASSED')) return 'pill-ok'
-  if (s === 'ROLLED_BACK' || s.endsWith('_FAILED')) return 'pill-danger'
-  if (s.endsWith('_PENDING')) return 'pill-warn'
-  if (s === 'PROPOSED') return 'pill-accent'
-  return '' // REJECTED / unknown → neutral pill
+  if (s === 'PROMOTED' || s.endsWith('_PASSED')) return 'var(--ok)'
+  if (s === 'ROLLED_BACK' || s.endsWith('_FAILED')) return 'var(--danger)'
+  if (s.endsWith('_PENDING')) return 'var(--warn)'
+  if (s === 'PROPOSED') return 'var(--accent)'
+  return 'var(--fg-subtle)'
 }
 
-/** Severity pill — high=danger, medium=warn, low=ok. */
-function severityPillClass(severity: string | undefined): string {
+/** Semantic color for proposal severity — rendered as unboxed text. */
+function severityTextColor(severity: string | undefined): string {
   const s = (severity ?? '').toLowerCase()
-  if (s === 'high' || s === 'critical') return 'pill-danger'
-  if (s === 'medium' || s === 'mid') return 'pill-warn'
-  if (s === 'low') return 'pill-ok'
-  return ''
+  if (s === 'high' || s === 'critical') return 'var(--danger)'
+  if (s === 'medium' || s === 'mid') return 'var(--warn)'
+  if (s === 'low') return 'var(--ok)'
+  return 'var(--fg-subtle)'
 }
 
 /** epoch ms (or s) → local timestamp; malformed values degrade to a dash. */
@@ -650,7 +651,16 @@ export default function EvolutionPage() {
                   </div>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '8px', 'align-items': 'center' }}>
+              <div style={{ display: 'flex', gap: '10px', 'align-items': 'center' }}>
+                <span
+                  style={{
+                    'font-family': 'var(--font-mono)',
+                    'font-size': 'var(--fs-2xs)',
+                    color: loading() ? 'var(--warn)' : 'var(--fg-subtle)',
+                  }}
+                >
+                  {loading() ? 'Syncing…' : 'Ready'}
+                </span>
                 <button
                   type="button"
                   class="btn btn-ghost"
@@ -667,16 +677,6 @@ export default function EvolutionPage() {
                 >
                   ↻ Refresh
                 </button>
-                <span
-                  class={`pill ${loading() ? 'pill-warn' : 'pill-ok'}`}
-                  style={{ 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-2xs)' }}
-                >
-                  <span
-                    class={`dot ${loading() ? 'dot-pulse' : ''}`}
-                    style={{ background: loading() ? 'var(--warn)' : 'var(--ok)' }}
-                  />
-                  {loading() ? 'loading' : 'ready'}
-                </span>
               </div>
             </div>
             <Show when={error()}>
@@ -784,6 +784,7 @@ export default function EvolutionPage() {
                   'font-size': 'var(--fs-2xs)',
                   color: 'var(--fg-faint)',
                   'font-family': 'var(--font-mono)',
+                  'font-variant-numeric': 'tabular-nums',
                 }}
               >
                 {summary().enginesHealthy}/{summary().enginesTotal} healthy ·{' '}
@@ -820,6 +821,7 @@ export default function EvolutionPage() {
                   'letter-spacing': '-0.03em',
                   color: 'var(--fg)',
                   'line-height': '1',
+                  'font-variant-numeric': 'tabular-nums',
                 }}
               >
                 {summary().activeExperiments}
@@ -829,29 +831,17 @@ export default function EvolutionPage() {
                   'font-size': 'var(--fs-xs)',
                   color: 'var(--fg-subtle)',
                   'line-height': '1.5',
+                  'font-variant-numeric': 'tabular-nums',
                 }}
               >
                 Shadow {shadowCount()} · Canary {canaryCount()}{' '}
                 {canaryRunning() ? `(${canaryRunning()} running)` : ''} · Experiments isolated — no
                 prod side-effects
               </div>
-              <div style={{ display: 'flex', gap: '6px', 'margin-top': '4px' }}>
-                <a
-                  href="#shadow"
-                  class="pill pill-btn"
-                  style={{ 'font-size': 'var(--fs-2xs)' }}
-                  onClick={(e) => e.preventDefault()}
-                >
-                  Shadow → isolate
-                </a>
-                <a
-                  href="#canary"
-                  class="pill pill-btn"
-                  style={{ 'font-size': 'var(--fs-2xs)' }}
-                  onClick={(e) => e.preventDefault()}
-                >
-                  Canary 5%
-                </a>
+              <div class="meta-inline" style={{ 'margin-top': '2px' }}>
+                <span>Shadow isolated</span>
+                <span aria-hidden="true">·</span>
+                <span>Canary 5% traffic gate</span>
               </div>
             </section>
 
@@ -880,6 +870,7 @@ export default function EvolutionPage() {
                   'letter-spacing': '-0.03em',
                   color: 'var(--warn)',
                   'line-height': '1',
+                  'font-variant-numeric': 'tabular-nums',
                 }}
               >
                 {summary().pendingApproval}
@@ -938,6 +929,7 @@ export default function EvolutionPage() {
                   'letter-spacing': '-0.03em',
                   color: 'var(--accent)',
                   'line-height': '1',
+                  'font-variant-numeric': 'tabular-nums',
                 }}
               >
                 {summary().recentImprovements}
@@ -951,20 +943,13 @@ export default function EvolutionPage() {
               >
                 Ledger entries · Verify → Shadow → Canary → Promote · Rollback visible
               </div>
-              <div
-                style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap', 'margin-top': '2px' }}
-              >
-                <span class="pill" style={{ 'font-size': 'var(--fs-2xs)' }}>
-                  ledger:{' '}
-                  <strong style={{ color: 'var(--fg)', 'font-family': 'var(--font-mono)' }}>
-                    {ledgerCount()}
-                  </strong>
+              <div class="meta-inline" style={{ 'margin-top': '2px' }}>
+                <span>
+                  Ledger <strong style={{ color: 'var(--fg)' }}>{ledgerCount()}</strong>
                 </span>
-                <span class="pill" style={{ 'font-size': 'var(--fs-2xs)' }}>
-                  memory:{' '}
-                  <strong style={{ color: 'var(--fg)', 'font-family': 'var(--font-mono)' }}>
-                    {memoryEvolutionCount()}
-                  </strong>
+                <span aria-hidden="true">·</span>
+                <span>
+                  Memory <strong style={{ color: 'var(--fg)' }}>{memoryEvolutionCount()}</strong>
                 </span>
               </div>
             </section>
@@ -1092,15 +1077,21 @@ export default function EvolutionPage() {
                 </div>
               </div>
               <span
-                class={`pill ${c()!.status.toLowerCase().includes('verif') || c()!.status.toLowerCase().includes('pass') ? 'pill-ok' : c()!.status.toLowerCase().includes('pend') ? 'pill-warn' : 'pill'}`}
                 style={{
                   'font-family': 'var(--font-mono)',
                   'font-size': 'var(--fs-xs)',
                   'font-weight': '700',
+                  color:
+                    c()!.status.toLowerCase().includes('verif') ||
+                    c()!.status.toLowerCase().includes('pass')
+                      ? 'var(--ok)'
+                      : c()!.status.toLowerCase().includes('pend')
+                        ? 'var(--warn)'
+                        : 'var(--fg-muted)',
+                  'white-space': 'nowrap',
                 }}
                 aria-label={`Status ${c()!.status}`}
               >
-                <Dot healthy={c()!.status.toLowerCase().includes('verif') || c()!.status.toLowerCase().includes('pass')} />{' '}
                 {c()!.status}
               </span>
             </div>
@@ -1109,18 +1100,15 @@ export default function EvolutionPage() {
               style={{
                 display: 'grid',
                 'grid-template-columns': 'repeat(auto-fit, minmax(160px, 1fr))',
-                gap: '8px',
+                gap: '12px',
+                padding: '10px 12px',
+                background: 'var(--bg-app)',
+                border: '1px solid var(--border)',
+                'border-radius': 'var(--r-md)',
                 'font-size': 'var(--fs-sm)',
               }}
             >
-              <div
-                class="card"
-                style={{
-                  padding: '10px 12px',
-                  background: 'var(--bg-app)',
-                  border: '1px solid var(--border)',
-                }}
-              >
+              <div>
                 <div
                   style={{
                     'font-size': 'var(--fs-2xs)',
@@ -1142,14 +1130,7 @@ export default function EvolutionPage() {
                   {c()!.risk}
                 </div>
               </div>
-              <div
-                class="card"
-                style={{
-                  padding: '10px 12px',
-                  background: 'var(--bg-app)',
-                  border: '1px solid var(--border)',
-                }}
-              >
+              <div>
                 <div
                   style={{
                     'font-size': 'var(--fs-2xs)',
@@ -1173,14 +1154,7 @@ export default function EvolutionPage() {
                   {c()!.expectedImpact}
                 </div>
               </div>
-              <div
-                class="card"
-                style={{
-                  padding: '10px 12px',
-                  background: 'var(--bg-app)',
-                  border: '1px solid var(--border)',
-                }}
-              >
+              <div>
                 <div
                   style={{
                     'font-size': 'var(--fs-2xs)',
@@ -1197,20 +1171,14 @@ export default function EvolutionPage() {
                     'font-weight': '700',
                     color: 'var(--ok)',
                     'font-family': 'var(--font-mono)',
+                    'font-variant-numeric': 'tabular-nums',
                     'margin-top': '2px',
                   }}
                 >
                   {c()!.benchmark}
                 </div>
               </div>
-              <div
-                class="card"
-                style={{
-                  padding: '10px 12px',
-                  background: 'var(--bg-app)',
-                  border: '1px solid var(--border)',
-                }}
-              >
+              <div>
                 <div
                   style={{
                     'font-size': 'var(--fs-2xs)',
@@ -1223,19 +1191,17 @@ export default function EvolutionPage() {
                   Regression / Security
                 </div>
                 <div
+                  class="meta-inline"
                   style={{
-                    display: 'flex',
-                    gap: '6px',
-                    'align-items': 'center',
                     'margin-top': '2px',
+                    'font-size': 'var(--fs-xs)',
+                    'font-weight': '600',
+                    color: 'var(--ok)',
                   }}
                 >
-                  <span class="pill pill-ok" style={{ 'font-size': 'var(--fs-2xs)' }}>
-                    reg {c()!.regression}
-                  </span>
-                  <span class="pill pill-ok" style={{ 'font-size': 'var(--fs-2xs)' }}>
-                    {c()!.security}
-                  </span>
+                  <span>reg {c()!.regression}</span>
+                  <span aria-hidden="true" style={{ color: 'var(--fg-faint)' }}>·</span>
+                  <span>{c()!.security}</span>
                 </div>
               </div>
             </div>
@@ -1430,7 +1396,7 @@ export default function EvolutionPage() {
                     >
                       Security Review
                     </div>
-                    <div style={{ 'font-size': 'var(--fs-sm)', color: 'var(--fg-success)' }}>
+                    <div style={{ 'font-size': 'var(--fs-sm)', color: 'var(--ok)' }}>
                       Passed
                     </div>
                   </div>
@@ -1460,7 +1426,7 @@ export default function EvolutionPage() {
                     >
                       Regression Checks
                     </div>
-                    <div style={{ 'font-size': 'var(--fs-sm)', color: 'var(--fg-success)' }}>
+                    <div style={{ 'font-size': 'var(--fs-sm)', color: 'var(--ok)' }}>
                       0 regressions
                     </div>
                   </div>
@@ -1674,6 +1640,9 @@ export default function EvolutionPage() {
           </section>
         </Show>
 
+          {/* AIDE² Recursive Self-Improvement Lineage Tree & Bandit Telemetry */}
+          <RecursiveLineagePanel onMutated={() => void fetchAll()} />
+
           {/* Proposals — governance pipeline (GET /evolution/proposals) */}
           <section
             class="card"
@@ -1805,7 +1774,7 @@ export default function EvolutionPage() {
                 style={{
                   display: 'flex',
                   'flex-direction': 'column',
-                  gap: '8px',
+                  'border-top': '1px solid var(--border)',
                   'min-height': '48px',
                 }}
                 role="list"
@@ -1818,15 +1787,13 @@ export default function EvolutionPage() {
                     return (
                       <div
                         role="listitem"
-                        class="card"
+                        class="flat-row"
                         style={{
-                          padding: '10px 12px',
-                          background: 'var(--bg-app)',
-                          border: '1px solid var(--border)',
+                          padding: '10px 2px',
                           display: 'flex',
                           'flex-direction': 'column',
-                          gap: '8px',
-                          'min-height': '64px',
+                          gap: '6px',
+                          'min-height': '56px',
                         }}
                       >
                         <div
@@ -1841,64 +1808,67 @@ export default function EvolutionPage() {
                           <div
                             style={{
                               display: 'flex',
-                              'align-items': 'center',
-                              gap: '8px',
-                              'flex-wrap': 'wrap',
+                              'flex-direction': 'column',
+                              gap: '3px',
                               'min-width': '0',
+                              flex: '1',
                             }}
                           >
-                            <span
+                            <div
                               style={{
-                                'font-family': 'var(--font-mono)',
-                                'font-size': 'var(--fs-xs)',
-                                'font-weight': '700',
-                                color: 'var(--fg)',
+                                display: 'flex',
+                                'align-items': 'center',
+                                gap: '8px',
+                                'flex-wrap': 'wrap',
+                                'min-width': '0',
                               }}
                             >
-                              {p.id}
-                            </span>
-                            <span
-                              title={p.targetFile ?? 'no target file'}
-                              style={{
-                                'font-family': 'var(--font-mono)',
-                                'font-size': 'var(--fs-2xs)',
-                                color: 'var(--fg-subtle)',
-                                'max-width': '300px',
-                                overflow: 'hidden',
-                                'text-overflow': 'ellipsis',
-                                'white-space': 'nowrap',
-                              }}
-                            >
-                              {p.targetFile ?? '—'}
-                            </span>
-                            <span
-                              class={`pill ${severityPillClass(p.severity)}`}
-                              style={{ 'font-size': 'var(--fs-2xs)' }}
-                            >
-                              {p.severity || '—'}
-                            </span>
-                            <span class="pill pill-cost" style={{ 'font-size': 'var(--fs-2xs)' }}>
-                              score {Number.isFinite(p.score) ? p.score : '—'}
-                            </span>
-                            <span
-                              class={`pill ${statePillClass(p.state)}`}
-                              style={{
-                                'font-size': 'var(--fs-2xs)',
-                                'font-family': 'var(--font-mono)',
-                              }}
-                              aria-label={`State ${p.state ?? 'unknown'}`}
-                            >
-                              {p.state ?? 'UNKNOWN'}
-                            </span>
-                            <span
-                              style={{
-                                'font-size': 'var(--fs-2xs)',
-                                color: 'var(--fg-faint)',
-                                'font-family': 'var(--font-mono)',
-                              }}
-                            >
-                              {fmtProposalTime(p.createdAt)}
-                            </span>
+                              <span
+                                style={{
+                                  'font-family': 'var(--font-mono)',
+                                  'font-size': 'var(--fs-xs)',
+                                  'font-weight': '700',
+                                  color: 'var(--fg)',
+                                }}
+                              >
+                                {p.id}
+                              </span>
+                              <span
+                                title={p.targetFile ?? 'no target file'}
+                                style={{
+                                  'font-family': 'var(--font-mono)',
+                                  'font-size': 'var(--fs-2xs)',
+                                  color: 'var(--fg-subtle)',
+                                  'max-width': '300px',
+                                  overflow: 'hidden',
+                                  'text-overflow': 'ellipsis',
+                                  'white-space': 'nowrap',
+                                }}
+                              >
+                                {p.targetFile ?? '—'}
+                              </span>
+                            </div>
+                            <div class="meta-inline">
+                              <span style={{ color: severityTextColor(p.severity), 'font-weight': '600' }}>
+                                {p.severity || '—'}
+                              </span>
+                              <span aria-hidden="true">·</span>
+                              <span>
+                                score {Number.isFinite(p.score) ? p.score : '—'}
+                              </span>
+                              <span aria-hidden="true">·</span>
+                              <span
+                                style={{
+                                  color: stateTextColor(p.state),
+                                  'font-weight': '600',
+                                }}
+                                aria-label={`State ${p.state ?? 'unknown'}`}
+                              >
+                                {p.state ?? 'UNKNOWN'}
+                              </span>
+                              <span aria-hidden="true">·</span>
+                              <span>{fmtProposalTime(p.createdAt)}</span>
+                            </div>
                           </div>
                           <div
                             role="group"

@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { createSignal, createMemo, onMount, onCleanup, Show, For } from 'solid-js'
+import { createSignal, createMemo, createEffect, onMount, onCleanup, Show, For } from 'solid-js'
 import type { AppStore } from '../stores/app'
 import type { SettingsStore } from '../stores/settings'
 import {
@@ -11,6 +11,7 @@ import {
   type PatchProposal,
   type AuditEntry,
   type MeProfile,
+  type ThemeChoice,
 } from '../api/client'
 import { type WorkspaceId } from './TopNav'
 import { WorkspaceRouter } from './WorkspaceRouter'
@@ -21,6 +22,14 @@ import { SessionList } from './SessionList'
 import { ActivityPanel } from './ActivityPanel'
 import { initialsForName, displayNameForMe } from './Me'
 import { toast } from './Toast'
+import { UXModeSwitcher } from './UXModeSwitcher'
+import { WorkspaceExplorer } from './WorkspaceExplorer'
+import {
+  uxMode,
+  visibleWorkspaces,
+  visibleWorkSubTabs,
+  telemetryDrawerEnabled,
+} from '../stores/uxMode'
 import BrioPage from '../pages/Brio'
 
 type WorkSubTabId = 'chat' | 'brio' | 'terminal' | 'agents' | 'tools' | 'files'
@@ -159,7 +168,6 @@ export function MiraGoldLayout(props: {
   const [realTools, setRealTools] = createSignal<ToolInfo[]>([])
   const [proposals, setProposals] = createSignal<PatchProposal[]>([])
   const [auditLogs, setAuditLogs] = createSignal<AuditEntry[]>([])
-  const [workspaceFiles, setWorkspaceFiles] = createSignal<Array<{ path: string; isDir: boolean; size: number; mtime: number }>>([])
   const [gatewayHealth, setGatewayHealth] = createSignal<any>(null)
 
   // Interactive Modal States
@@ -177,7 +185,6 @@ export function MiraGoldLayout(props: {
         toolsData,
         propsData,
         auditData,
-        filesData,
         meData,
       ] = await Promise.all([
         req<any>('/health').catch(() => null),
@@ -186,7 +193,6 @@ export function MiraGoldLayout(props: {
         api.listToolsCached().catch(() => []),
         req<{ proposals: PatchProposal[] }>('/evolution/proposals').catch(() => ({ proposals: [] })),
         api.listAuditTrail({ limit: 30 }).catch(() => ({ entries: [] })),
-        req<{ files?: any[] }>('/workspace/tree').catch(() => ({ files: [] })),
         api.getMe().catch(() => null),
       ])
 
@@ -205,9 +211,6 @@ export function MiraGoldLayout(props: {
       }
       if (auditData?.entries) {
         setAuditLogs(auditData.entries)
-      }
-      if (filesData?.files) {
-        setWorkspaceFiles(filesData.files.filter((f) => !f.isDir))
       }
       if (gatewayData?.gateway) {
         setGatewayHealth(gatewayData)
@@ -308,21 +311,13 @@ export function MiraGoldLayout(props: {
   })
 
   const navItems: Array<{ id: WorkspaceId; label: string; desc: string }> = [
-    { id: 'work', label: 'Work', desc: 'Chat, Brio, Terminal & Tools' },
+    { id: 'work', label: 'Work', desc: 'Chat, workspace files, and tools' },
     { id: 'missions', label: 'Missions', desc: 'Autonomous execution cockpit' },
     { id: 'intelligence', label: 'Intelligence', desc: 'Memory & knowledge graph' },
     { id: 'changes', label: 'Changes', desc: 'File diffs & snapshots' },
     { id: 'evolution', label: 'Evolution', desc: 'Proposals & canary gates' },
     { id: 'system', label: 'System', desc: 'Health, security & config' },
     { id: 'dashboard', label: 'Analytics', desc: 'Reliability & token spend' },
-  ]
-
-  const mobileBottomNavItems: Array<{ id: WorkspaceId | 'menu'; label: string }> = [
-    { id: 'work', label: 'Work' },
-    { id: 'missions', label: 'Missions' },
-    { id: 'evolution', label: 'Evolution' },
-    { id: 'system', label: 'System' },
-    { id: 'menu', label: 'More' },
   ]
 
   const workSubTabs: Array<{ id: WorkSubTabId; label: string }> = [
@@ -333,6 +328,56 @@ export function MiraGoldLayout(props: {
     { id: 'tools', label: 'Tools' },
     { id: 'files', label: 'Files' },
   ]
+
+  const filteredNavItems = createMemo(() => {
+    const allowed = visibleWorkspaces(uxMode())
+    return navItems.filter((item) => allowed.includes(item.id))
+  })
+
+  const filteredWorkSubTabs = createMemo(() => {
+    const allowed = visibleWorkSubTabs(uxMode())
+    return workSubTabs.filter((tab) => allowed.includes(tab.id))
+  })
+
+  const filteredMobileBottomNavItems = createMemo(() => {
+    const allowed = visibleWorkspaces(uxMode())
+    const priority: Array<{ id: WorkspaceId; label: string }> = [
+      { id: 'work', label: 'Work' },
+      { id: 'changes', label: 'Changes' },
+      { id: 'missions', label: 'Missions' },
+      { id: 'evolution', label: 'Evolution' },
+      { id: 'system', label: 'System' },
+    ]
+    const picked = priority.filter((item) => allowed.includes(item.id)).slice(0, 4)
+    return [...picked, { id: 'menu' as const, label: 'More' }]
+  })
+
+  createEffect(() => {
+    const m = uxMode()
+    if (!visibleWorkspaces(m).includes(currentWorkspace())) {
+      setCurrentWorkspace('work')
+    }
+    if (!visibleWorkSubTabs(m).includes(activeSubTab())) {
+      setActiveSubTab('chat')
+    }
+    if (!telemetryDrawerEnabled(m) && isRightSidebarOpen()) {
+      setIsRightSidebarOpen(false)
+    }
+  })
+
+  const activeSession = createMemo(
+    () => props.store.state.sessions.find((s) => s.id === props.store.state.currentId) ?? null,
+  )
+
+  const activeWorkspaceCwd = createMemo(() => {
+    const sessionCwd = activeSession()?.cwd
+    if (sessionCwd && sessionCwd.trim()) return sessionCwd.trim()
+    try {
+      return localStorage.getItem('mira.selectedWorkspace')?.trim() || undefined
+    } catch {
+      return undefined
+    }
+  })
 
   const selectWorkspace = (id: WorkspaceId, subTab?: WorkSubTabId) => {
     setCurrentWorkspace(id)
@@ -368,12 +413,11 @@ export function MiraGoldLayout(props: {
     return list.filter((t) => (t.name || '').toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q))
   })
 
-  const filteredFiles = createMemo(() => {
-    const q = searchQuery().toLowerCase().trim()
-    const list = workspaceFiles()
-    if (!q) return list
-    return list.filter((f) => (f.path || '').toLowerCase().includes(q))
-  })
+  const themeOptions: Array<{ id: ThemeChoice; label: string }> = [
+    { id: 'light', label: 'Light' },
+    { id: 'dark', label: 'Dark' },
+    { id: 'system', label: 'Auto' },
+  ]
 
   // Recent Activity derived exclusively from real backend data (audit logs, proposals, sessions)
   const recentActivityItems = createMemo(() => {
@@ -430,9 +474,9 @@ export function MiraGoldLayout(props: {
         height: '100dvh',
         width: '100vw',
         overflow: 'hidden',
-        background: '#07090E',
-        color: '#F1F3FA',
-        'font-family': "var(--font-sans)",
+        background: 'var(--bg-app)',
+        color: 'var(--fg)',
+        'font-family': 'var(--font-sans)',
         position: 'relative',
       }}
     >
@@ -458,18 +502,18 @@ export function MiraGoldLayout(props: {
             style={{
               width: '276px',
               height: '100%',
-              background: '#090B12',
-              'border-right': '1px solid #1A2033',
+              background: 'var(--bg-canvas)',
+              'border-right': '1px solid var(--border)',
               display: 'flex',
               'flex-direction': 'column',
               padding: '16px 14px',
               gap: '14px',
             }}
           >
-            <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', 'border-bottom': '1px solid #151A2C', 'padding-bottom': '12px' }}>
+            <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', 'border-bottom': '1px solid var(--border)', 'padding-bottom': '12px' }}>
               <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
-                <div style={{ 'font-size': '19px', 'font-weight': '900', color: '#F5D061', 'letter-spacing': '0.06em' }}>MIRA</div>
-                <span style={{ 'font-size': '11px', color: '#A0A9C0' }}>Platform</span>
+                <div style={{ 'font-size': '19px', 'font-weight': '900', color: 'var(--accent)', 'letter-spacing': '0.06em' }}>MIRA</div>
+                <span style={{ 'font-size': '11px', color: 'var(--fg-muted)' }}>Platform</span>
               </div>
               <button
                 type="button"
@@ -478,7 +522,7 @@ export function MiraGoldLayout(props: {
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  color: '#A0A9C0',
+                  color: 'var(--fg-muted)',
                   'font-size': '20px',
                   cursor: 'pointer',
                   'min-height': '44px',
@@ -491,12 +535,12 @@ export function MiraGoldLayout(props: {
               </button>
             </div>
 
-            <div style={{ 'padding-bottom': '8px', 'border-bottom': '1px solid #151A2C' }}>
+            <div style={{ 'padding-bottom': '8px', 'border-bottom': '1px solid var(--border)' }}>
               <HeaderModelSelector settings={props.settings} />
             </div>
 
             <nav aria-label="Primary workspaces" style={{ display: 'flex', 'flex-direction': 'column', gap: '4px', flex: '1', overflow: 'auto' }}>
-              <For each={navItems}>
+              <For each={filteredNavItems()}>
                 {(item) => {
                   const active = () => currentWorkspace() === item.id
                   return (
@@ -510,11 +554,9 @@ export function MiraGoldLayout(props: {
                         'justify-content': 'space-between',
                         padding: '10px 12px',
                         'border-radius': '10px',
-                        border: active() ? '1px solid rgba(229, 184, 66, 0.35)' : '1px solid transparent',
-                        background: active()
-                          ? 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)'
-                          : 'transparent',
-                        color: active() ? '#07090E' : '#A0A9C0',
+                        border: active() ? '1px solid var(--accent-border)' : '1px solid transparent',
+                        background: active() ? 'var(--grad-brand)' : 'transparent',
+                        color: active() ? 'var(--on-accent)' : 'var(--fg-muted)',
                         'font-size': '13.5px',
                         'font-weight': active() ? '700' : '500',
                         cursor: 'pointer',
@@ -535,7 +577,47 @@ export function MiraGoldLayout(props: {
               </For>
             </nav>
 
-            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', 'padding-top': '8px', 'border-top': '1px solid #151A2C' }}>
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px', 'padding-top': '10px', 'border-top': '1px solid var(--border)' }}>
+              <UXModeSwitcher compact />
+              <div
+                role="radiogroup"
+                aria-label="Color theme"
+                style={{
+                  display: 'grid',
+                  'grid-template-columns': 'repeat(3, minmax(0, 1fr))',
+                  gap: '3px',
+                  padding: '3px',
+                  background: 'var(--bg-app)',
+                  border: '1px solid var(--border)',
+                  'border-radius': 'var(--r-md)',
+                }}
+              >
+                <For each={themeOptions}>
+                  {(opt) => {
+                    const active = () => props.settings.state.theme === opt.id
+                    return (
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={active() ? 'true' : 'false'}
+                        onClick={() => props.settings.setTheme(opt.id)}
+                        style={{
+                          padding: '4px 6px',
+                          'border-radius': 'calc(var(--r-md) - 3px)',
+                          border: active() ? '1px solid var(--accent-border)' : '1px solid transparent',
+                          background: active() ? 'var(--bg-surface)' : 'transparent',
+                          color: active() ? 'var(--accent)' : 'var(--fg-muted)',
+                          'font-size': 'var(--fs-2xs)',
+                          'font-weight': active() ? '700' : '500',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    )
+                  }}
+                </For>
+              </div>
               <button
                 type="button"
                 onClick={() => {
@@ -543,9 +625,9 @@ export function MiraGoldLayout(props: {
                   window.dispatchEvent(new CustomEvent('mira:open-palette'))
                 }}
                 style={{
-                  background: '#101522',
-                  border: '1px solid #1E253A',
-                  color: '#F1F3FA',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--fg)',
                   padding: '10px 12px',
                   'border-radius': '10px',
                   'font-size': '12.5px',
@@ -563,9 +645,9 @@ export function MiraGoldLayout(props: {
                   window.dispatchEvent(new CustomEvent('mira:open-connect'))
                 }}
                 style={{
-                  background: '#101522',
-                  border: '1px solid #1E253A',
-                  color: '#E5B842',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--accent)',
                   padding: '10px 12px',
                   'border-radius': '10px',
                   'font-size': '12.5px',
@@ -585,9 +667,9 @@ export function MiraGoldLayout(props: {
                   }}
                   style={{
                     flex: '1',
-                    background: '#101522',
-                    border: '1px solid #1E253A',
-                    color: '#A0A9C0',
+                    background: 'var(--bg-surface)',
+                    border: '1px solid var(--border)',
+                    color: 'var(--fg-muted)',
                     padding: '9px 10px',
                     'border-radius': '10px',
                     'font-size': '12px',
@@ -605,9 +687,9 @@ export function MiraGoldLayout(props: {
                   }}
                   style={{
                     flex: '1',
-                    background: '#101522',
-                    border: '1px solid #1E253A',
-                    color: '#A0A9C0',
+                    background: 'var(--bg-surface)',
+                    border: '1px solid var(--border)',
+                    color: 'var(--fg-muted)',
                     padding: '9px 10px',
                     'border-radius': '10px',
                     'font-size': '12px',
@@ -630,8 +712,8 @@ export function MiraGoldLayout(props: {
           style={{
             width: '216px',
             'flex-shrink': '0',
-            background: '#090B12',
-            'border-right': '1px solid #1A2033',
+            background: 'var(--bg-canvas)',
+            'border-right': '1px solid var(--border)',
             display: 'flex',
             'flex-direction': 'column',
             padding: '14px 12px',
@@ -649,7 +731,7 @@ export function MiraGoldLayout(props: {
               'align-items': 'center',
               gap: '10px',
               padding: '6px 8px 14px',
-              'border-bottom': '1px solid #151A2C',
+              'border-bottom': '1px solid var(--border)',
               background: 'transparent',
               borderTop: 'none',
               borderLeft: 'none',
@@ -670,10 +752,10 @@ export function MiraGoldLayout(props: {
               <path d="M12 38 L22 14 L27 24 L32 14 L42 38" stroke="url(#miraGold)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.8" />
             </svg>
             <div>
-              <div style={{ 'font-size': '17px', 'font-weight': '900', 'letter-spacing': '0.08em', color: '#F5D061', 'line-height': '1.1' }}>
+              <div style={{ 'font-size': '17px', 'font-weight': '900', 'letter-spacing': '0.08em', color: 'var(--accent)', 'line-height': '1.1' }}>
                 MIRA
               </div>
-              <div style={{ 'font-size': '10.5px', color: '#7A859E', 'font-weight': '500' }}>
+              <div style={{ 'font-size': '10.5px', color: 'var(--fg-subtle)', 'font-weight': '500' }}>
                 Autonomous AI
               </div>
             </div>
@@ -681,7 +763,7 @@ export function MiraGoldLayout(props: {
 
           {/* Navigation List */}
           <nav aria-label="Workspaces" style={{ display: 'flex', 'flex-direction': 'column', gap: '4px', flex: '1', overflow: 'auto' }}>
-            <For each={navItems}>
+            <For each={filteredNavItems()}>
               {(item) => {
                 const active = () => currentWorkspace() === item.id
                 return (
@@ -697,15 +779,13 @@ export function MiraGoldLayout(props: {
                       padding: '9px 12px',
                       'border-radius': '10px',
                       border: 'none',
-                      background: active()
-                        ? 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)'
-                        : 'transparent',
-                      color: active() ? '#07090E' : '#A0A9C0',
+                      background: active() ? 'var(--grad-brand)' : 'transparent',
+                      color: active() ? 'var(--on-accent)' : 'var(--fg-muted)',
                       'font-size': '13px',
                       'font-weight': active() ? '700' : '500',
                       cursor: 'pointer',
                       transition: 'all 0.14s ease',
-                      'box-shadow': active() ? '0 4px 14px rgba(212, 175, 55, 0.25)' : 'none',
+                      'box-shadow': active() ? 'var(--shadow-card)' : 'none',
                       'text-align': 'left',
                       'min-height': '38px',
                     }}
@@ -718,8 +798,8 @@ export function MiraGoldLayout(props: {
                       <span
                         class="tabular-nums"
                         style={{
-                          background: 'rgba(229, 184, 66, 0.18)',
-                          color: '#F5D061',
+                          background: 'var(--accent-soft)',
+                          color: 'var(--accent)',
                           'font-size': '10px',
                           'font-weight': '700',
                           padding: '1px 6px',
@@ -738,15 +818,55 @@ export function MiraGoldLayout(props: {
           {/* Bottom Quick Utilities */}
           <div
             style={{
-              background: '#0D111E',
-              border: '1px solid #1A2033',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border)',
               'border-radius': '12px',
               padding: '10px',
               display: 'flex',
               'flex-direction': 'column',
-              gap: '6px',
+              gap: '8px',
             }}
           >
+            <UXModeSwitcher compact />
+            <div
+              role="radiogroup"
+              aria-label="Color theme"
+              style={{
+                display: 'grid',
+                'grid-template-columns': 'repeat(3, minmax(0, 1fr))',
+                gap: '3px',
+                padding: '3px',
+                background: 'var(--bg-app)',
+                border: '1px solid var(--border)',
+                'border-radius': 'var(--r-md)',
+              }}
+            >
+              <For each={themeOptions}>
+                {(opt) => {
+                  const active = () => props.settings.state.theme === opt.id
+                  return (
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={active() ? 'true' : 'false'}
+                      onClick={() => props.settings.setTheme(opt.id)}
+                      style={{
+                        padding: '4px 6px',
+                        'border-radius': 'calc(var(--r-md) - 3px)',
+                        border: active() ? '1px solid var(--accent-border)' : '1px solid transparent',
+                        background: active() ? 'var(--bg-surface)' : 'transparent',
+                        color: active() ? 'var(--accent)' : 'var(--fg-muted)',
+                        'font-size': 'var(--fs-2xs)',
+                        'font-weight': active() ? '700' : '500',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  )
+                }}
+              </For>
+            </div>
             <button
               type="button"
               onClick={() => window.dispatchEvent(new CustomEvent('mira:open-palette'))}
@@ -754,9 +874,9 @@ export function MiraGoldLayout(props: {
                 display: 'flex',
                 'align-items': 'center',
                 'justify-content': 'space-between',
-                background: '#090B12',
-                border: '1px solid #1E253A',
-                color: '#A0A9C0',
+                background: 'var(--bg-canvas)',
+                border: '1px solid var(--border)',
+                color: 'var(--fg-muted)',
                 padding: '7px 10px',
                 'border-radius': '8px',
                 'font-size': '11.5px',
@@ -766,21 +886,23 @@ export function MiraGoldLayout(props: {
               <span>Command Palette</span>
               <span class="kbd">⌘K</span>
             </button>
-            <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', padding: '2px 4px', 'font-size': '11px', color: '#7A859E' }}>
+            <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', padding: '2px 4px', 'font-size': '11px', color: 'var(--fg-subtle)' }}>
               <span style={{ display: 'flex', 'align-items': 'center', gap: '6px' }}>
                 <span
                   style={{
                     width: '7px',
                     height: '7px',
                     'border-radius': '50%',
-                    background: props.store.state.connected ? '#34d399' : '#f87171',
+                    background: props.store.state.connected ? 'var(--ok)' : 'var(--danger)',
                   }}
                 />
                 {props.store.state.connected ? 'Gateway online' : 'Reconnecting'}
               </span>
-              <span class="tabular-nums" style={{ 'font-family': 'var(--font-mono)', 'font-size': '10px' }}>
-                {activeAgentsCount() !== null ? `${activeAgentsCount()} agents` : '—'}
-              </span>
+              <Show when={uxMode() !== 'beginner'}>
+                <span class="tabular-nums" style={{ 'font-family': 'var(--font-mono)', 'font-size': '10px' }}>
+                  {activeAgentsCount() !== null ? `${activeAgentsCount()} agents` : '—'}
+                </span>
+              </Show>
             </div>
           </div>
         </aside>
@@ -794,8 +916,8 @@ export function MiraGoldLayout(props: {
           style={{
             height: '54px',
             'flex-shrink': '0',
-            'border-bottom': '1px solid #1A2033',
-            background: '#07090E',
+            'border-bottom': '1px solid var(--border)',
+            background: 'var(--bg-app)',
             display: 'flex',
             'align-items': 'center',
             'justify-content': 'space-between',
@@ -816,9 +938,9 @@ export function MiraGoldLayout(props: {
                 width: '40px',
                 height: '40px',
                 'border-radius': '10px',
-                background: '#0D111E',
-                border: '1px solid #1F273E',
-                color: '#F5D061',
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--border-strong)',
+                color: 'var(--accent)',
                 cursor: 'pointer',
                 'flex-shrink': '0',
               }}
@@ -833,14 +955,14 @@ export function MiraGoldLayout(props: {
               display: 'flex',
               'align-items': 'center',
               gap: '8px',
-              background: '#0D111E',
-              border: '1px solid #1F273E',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-strong)',
               'border-radius': '10px',
               padding: '5px 10px',
               flex: '1',
               'min-width': '0',
               'max-width': isMobileScreen() ? '100%' : '380px',
-              color: '#A0A9C0',
+              color: 'var(--fg-muted)',
               'min-height': '36px',
             }}
           >
@@ -852,14 +974,14 @@ export function MiraGoldLayout(props: {
               id="mira-global-search"
               type="search"
               aria-label="Filter agents, tools, and workspace files"
-              placeholder={isMobileScreen() ? 'Filter agents, tools, files…' : 'Filter agents, tools, files… ( / )'}
+              placeholder={isMobileScreen() ? 'Filter files…' : 'Filter agents, tools, files… ( / )'}
               value={searchQuery()}
               onInput={(e) => setSearchQuery(e.currentTarget.value)}
               style={{
                 background: 'transparent',
                 border: 'none',
                 outline: 'none',
-                color: '#F1F3FA',
+                color: 'var(--fg)',
                 width: '100%',
                 'font-size': '12.5px',
               }}
@@ -879,9 +1001,9 @@ export function MiraGoldLayout(props: {
                 onClick={() => window.dispatchEvent(new CustomEvent('mira:open-connect'))}
                 title="Provider connections & API keys"
                 style={{
-                  background: '#0D111E',
-                  border: '1px solid #1F273E',
-                  color: '#F5D061',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-strong)',
+                  color: 'var(--accent)',
                   padding: '6px 10px',
                   'border-radius': '8px',
                   'font-size': '12px',
@@ -912,9 +1034,9 @@ export function MiraGoldLayout(props: {
                 aria-label="Sync system telemetry"
                 title="Sync live backend data"
                 style={{
-                  background: '#0D111E',
-                  border: '1px solid #1F273E',
-                  color: loadingState() ? '#E5B842' : '#A0A9C0',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-strong)',
+                  color: loadingState() ? 'var(--accent)' : 'var(--fg-muted)',
                   padding: '6px 10px',
                   height: '34px',
                   'border-radius': '8px',
@@ -954,9 +1076,9 @@ export function MiraGoldLayout(props: {
                 aria-label="Open Settings"
                 title="Mira Settings (⌘,)"
                 style={{
-                  background: '#0D111E',
-                  border: '1px solid #1F273E',
-                  color: '#A0A9C0',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-strong)',
+                  color: 'var(--fg-muted)',
                   width: '34px',
                   height: '34px',
                   'border-radius': '8px',
@@ -972,80 +1094,84 @@ export function MiraGoldLayout(props: {
               </button>
             </Show>
 
-            {/* Evolution Proposals Bell */}
-            <button
-              type="button"
-              onClick={() => selectWorkspace('evolution')}
-              aria-label={`View evolution proposals (${pendingProposalsCount()} pending)`}
-              title="Evolution proposals & approvals"
-              style={{
-                position: 'relative',
-                cursor: 'pointer',
-                background: currentWorkspace() === 'evolution' ? 'rgba(229, 184, 66, 0.16)' : '#0D111E',
-                border: currentWorkspace() === 'evolution' ? '1px solid rgba(229, 184, 66, 0.45)' : '1px solid #1F273E',
-                color: '#E5B842',
-                width: isMobileScreen() ? '38px' : '34px',
-                height: isMobileScreen() ? '38px' : '34px',
-                'border-radius': '8px',
-                display: 'grid',
-                'place-items': 'center',
-                'flex-shrink': '0',
-              }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
-                <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
-              </svg>
-              <Show when={pendingProposalsCount() > 0}>
-                <span
-                  class="tabular-nums"
-                  style={{
-                    position: 'absolute',
-                    top: '-4px',
-                    right: '-4px',
-                    background: '#f87171',
-                    color: '#07090E',
-                    'font-size': '10px',
-                    'font-weight': '800',
-                    'min-width': '16px',
-                    height: '16px',
-                    padding: '0 4px',
-                    'border-radius': '999px',
-                    display: 'grid',
-                    'place-items': 'center',
-                    border: '2px solid #07090E',
-                  }}
-                >
-                  {pendingProposalsCount()}
-                </span>
-              </Show>
-            </button>
+            {/* Evolution Proposals Bell (Expert mode only) */}
+            <Show when={visibleWorkspaces(uxMode()).includes('evolution')}>
+              <button
+                type="button"
+                onClick={() => selectWorkspace('evolution')}
+                aria-label={`View evolution proposals (${pendingProposalsCount()} pending)`}
+                title="Evolution proposals & approvals"
+                style={{
+                  position: 'relative',
+                  cursor: 'pointer',
+                  background: currentWorkspace() === 'evolution' ? 'var(--accent-soft)' : 'var(--bg-surface)',
+                  border: currentWorkspace() === 'evolution' ? '1px solid var(--accent-border)' : '1px solid var(--border-strong)',
+                  color: 'var(--accent)',
+                  width: isMobileScreen() ? '38px' : '34px',
+                  height: isMobileScreen() ? '38px' : '34px',
+                  'border-radius': '8px',
+                  display: 'grid',
+                  'place-items': 'center',
+                  'flex-shrink': '0',
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+                  <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+                </svg>
+                <Show when={pendingProposalsCount() > 0}>
+                  <span
+                    class="tabular-nums"
+                    style={{
+                      position: 'absolute',
+                      top: '-4px',
+                      right: '-4px',
+                      background: 'var(--danger)',
+                      color: 'var(--on-accent)',
+                      'font-size': '10px',
+                      'font-weight': '800',
+                      'min-width': '16px',
+                      height: '16px',
+                      padding: '0 4px',
+                      'border-radius': '999px',
+                      display: 'grid',
+                      'place-items': 'center',
+                      border: '2px solid var(--bg-app)',
+                    }}
+                  >
+                    {pendingProposalsCount()}
+                  </span>
+                </Show>
+              </button>
+            </Show>
 
-            {/* System Overview Drawer Toggle (Desktop & Mobile) */}
-            <button
-              type="button"
-              onClick={() => setIsRightSidebarOpen((v) => !v)}
-              aria-label="Toggle System Overview panel"
-              aria-expanded={isRightSidebarOpen() ? 'true' : 'false'}
-              title="System Overview & Activity"
-              style={{
-                background: isRightSidebarOpen() ? '#E5B842' : '#0D111E',
-                border: '1px solid #1F273E',
-                color: isRightSidebarOpen() ? '#07090E' : '#F5D061',
-                width: isMobileScreen() ? '38px' : '34px',
-                height: isMobileScreen() ? '38px' : '34px',
-                'border-radius': '8px',
-                display: 'grid',
-                'place-items': 'center',
-                cursor: 'pointer',
-                'flex-shrink': '0',
-              }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <rect width="18" height="18" x="3" y="3" rx="2" />
-                <path d="M15 3v18" />
-              </svg>
-            </button>
+            {/* System Overview Drawer Toggle (Expert mode only) */}
+            <Show when={telemetryDrawerEnabled(uxMode())}>
+              <button
+                type="button"
+                onClick={() => setIsRightSidebarOpen((v) => !v)}
+                aria-label="Toggle System Overview panel"
+                aria-expanded={isRightSidebarOpen() ? 'true' : 'false'}
+                title="System Overview & Activity"
+                style={{
+                  background: isRightSidebarOpen() ? 'var(--accent)' : 'var(--bg-surface)',
+                  border: '1px solid var(--border-strong)',
+                  color: isRightSidebarOpen() ? 'var(--on-accent)' : 'var(--accent)',
+                  width: isMobileScreen() ? '38px' : '34px',
+                  height: isMobileScreen() ? '38px' : '34px',
+                  'border-radius': '8px',
+                  display: 'grid',
+                  'place-items': 'center',
+                  cursor: 'pointer',
+                  'flex-shrink': '0',
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect width="18" height="18" x="3" y="3" rx="2" />
+                  <path d="M15 3v18" />
+                </svg>
+              </button>
+            </Show>
 
             {/* Account & Gateway Profile Menu */}
             <div data-slot="profile-menu-root" style={{ position: 'relative', 'flex-shrink': '0' }}>
@@ -1060,9 +1186,9 @@ export function MiraGoldLayout(props: {
                   height: isMobileScreen() ? '38px' : '34px',
                   'border-radius': '50%',
                   overflow: 'hidden',
-                  border: '2px solid #E5B842',
-                  background: 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)',
-                  color: '#07090E',
+                  border: '2px solid var(--accent-strong)',
+                  background: 'var(--grad-brand)',
+                  color: 'var(--on-accent)',
                   'font-weight': '800',
                   'font-size': '13px',
                   display: 'grid',
@@ -1083,10 +1209,10 @@ export function MiraGoldLayout(props: {
                     right: '0',
                     top: 'calc(100% + 8px)',
                     width: '248px',
-                    background: '#0D111E',
-                    border: '1px solid #2B3552',
+                    background: 'var(--bg-surface)',
+                    border: '1px solid var(--border-strong)',
                     'border-radius': '12px',
-                    'box-shadow': '0 16px 40px rgba(0, 0, 0, 0.65)',
+                    'box-shadow': 'var(--shadow-pop)',
                     padding: '8px',
                     display: 'flex',
                     'flex-direction': 'column',
@@ -1094,11 +1220,11 @@ export function MiraGoldLayout(props: {
                     'z-index': '1100',
                   }}
                 >
-                  <div style={{ padding: '8px 10px', 'border-bottom': '1px solid #1E253A', 'margin-bottom': '4px' }}>
-                    <div style={{ 'font-size': '13px', 'font-weight': '700', color: '#F1F3FA' }}>
+                  <div style={{ padding: '8px 10px', 'border-bottom': '1px solid var(--border)', 'margin-bottom': '4px' }}>
+                    <div style={{ 'font-size': '13px', 'font-weight': '700', color: 'var(--fg)' }}>
                       {isMeUnnamed() ? 'User (unnamed)' : meDisplayName()}
                     </div>
-                    <div style={{ 'font-size': '11px', color: '#7A859E', 'font-family': 'var(--font-mono)', overflow: 'hidden', 'text-overflow': 'ellipsis' }}>
+                    <div style={{ 'font-size': '11px', color: 'var(--fg-subtle)', 'font-family': 'var(--font-mono)', overflow: 'hidden', 'text-overflow': 'ellipsis' }}>
                       {serverLabel()}
                     </div>
                   </div>
@@ -1115,7 +1241,7 @@ export function MiraGoldLayout(props: {
                       padding: '8px 10px',
                       'font-size': '12.5px',
                       'border-radius': '8px',
-                      color: isMeUnnamed() ? '#F5D061' : undefined,
+                      color: isMeUnnamed() ? 'var(--accent)' : undefined,
                     }}
                   >
                     <span>My Profile (/me)</span>
@@ -1159,7 +1285,7 @@ export function MiraGoldLayout(props: {
                   >
                     Trace Viewer
                   </button>
-                  <div style={{ height: '1px', background: '#1E253A', margin: '4px 0' }} />
+                  <div style={{ height: '1px', background: 'var(--border)', margin: '4px 0' }} />
                   <button
                     type="button"
                     role="menuitem"
@@ -1169,7 +1295,7 @@ export function MiraGoldLayout(props: {
                       window.dispatchEvent(new CustomEvent('mira:sign-out'))
                     }}
                     class="btn btn-ghost"
-                    style={{ 'justify-content': 'flex-start', padding: '8px 10px', 'font-size': '12.5px', color: '#f87171', 'border-radius': '8px' }}
+                    style={{ 'justify-content': 'flex-start', padding: '8px 10px', 'font-size': '12.5px', color: 'var(--danger)', 'border-radius': '8px' }}
                   >
                     Disconnect Server
                   </button>
@@ -1180,7 +1306,7 @@ export function MiraGoldLayout(props: {
         </header>
 
         {/* WORKSPACE & OPTIONAL RIGHT OVERVIEW DRAWER */}
-        <div style={{ flex: '1', display: 'flex', overflow: 'hidden', background: '#07090E', 'margin-bottom': isMobileScreen() ? '56px' : '0', 'min-height': '0' }}>
+        <div style={{ flex: '1', display: 'flex', overflow: 'hidden', background: 'var(--bg-app)', 'margin-bottom': isMobileScreen() ? '56px' : '0', 'min-height': '0' }}>
           {/* CENTER WORKSPACE */}
           <main
             style={{
@@ -1204,7 +1330,7 @@ export function MiraGoldLayout(props: {
                 <div
                   style={{
                     flex: '1',
-                    background: '#0B0E17',
+                    background: 'var(--bg-canvas)',
                     display: 'flex',
                     'flex-direction': 'column',
                     overflow: 'hidden',
@@ -1220,15 +1346,15 @@ export function MiraGoldLayout(props: {
                       display: 'flex',
                       gap: '4px',
                       padding: '0 12px',
-                      'border-bottom': '1px solid #1A2033',
-                      background: '#090C15',
+                      'border-bottom': '1px solid var(--border)',
+                      background: 'var(--bg-app)',
                       'flex-shrink': '0',
                       'overflow-x': 'auto',
                       'white-space': 'nowrap',
                       'scrollbar-width': 'none',
                     }}
                   >
-                    <For each={workSubTabs}>
+                    <For each={filteredWorkSubTabs()}>
                       {(tab) => {
                         const active = () => activeSubTab() === tab.id
                         return (
@@ -1243,9 +1369,9 @@ export function MiraGoldLayout(props: {
                               gap: '6px',
                               padding: '10px 12px',
                               border: 'none',
-                              'border-bottom': active() ? '2px solid #E5B842' : '2px solid transparent',
+                              'border-bottom': active() ? '2px solid var(--accent)' : '2px solid transparent',
                               background: 'transparent',
-                              color: active() ? '#F5D061' : '#7A859E',
+                              color: active() ? 'var(--accent)' : 'var(--fg-subtle)',
                               'font-size': '12.5px',
                               'font-weight': active() ? '700' : '500',
                               cursor: 'pointer',
@@ -1311,10 +1437,10 @@ export function MiraGoldLayout(props: {
                                   'justify-content': 'space-between',
                                   padding: '8px 12px',
                                   'border-bottom': '1px solid var(--border)',
-                                  background: '#090B12',
+                                  background: 'var(--bg-canvas)',
                                 }}
                               >
-                                <span style={{ 'font-size': '12px', 'font-weight': '700', color: '#F5D061' }}>
+                                <span style={{ 'font-size': '12px', 'font-weight': '700', color: 'var(--accent)' }}>
                                   Sessions
                                 </span>
                                 <button
@@ -1324,7 +1450,7 @@ export function MiraGoldLayout(props: {
                                   style={{
                                     background: 'transparent',
                                     border: 'none',
-                                    color: '#A0A9C0',
+                                    color: 'var(--fg-muted)',
                                     cursor: 'pointer',
                                     width: '32px',
                                     height: '32px',
@@ -1417,10 +1543,10 @@ export function MiraGoldLayout(props: {
                       <div style={{ flex: '1', overflow: 'auto', padding: isMobileScreen() ? '12px' : '20px', display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
                         <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center', 'flex-wrap': 'wrap', gap: '8px' }}>
                           <div>
-                            <div style={{ 'font-size': '16px', 'font-weight': '700', color: '#F1F3FA' }}>
+                            <div style={{ 'font-size': '16px', 'font-weight': '700', color: 'var(--fg)' }}>
                               Registered Agents (<span class="tabular-nums">{filteredAgents().length}</span>)
                             </div>
-                            <div style={{ 'font-size': '12px', color: '#7A859E' }}>
+                            <div style={{ 'font-size': '12px', color: 'var(--fg-subtle)' }}>
                               Live backend agent definitions and tool capabilities.
                             </div>
                           </div>
@@ -1434,7 +1560,7 @@ export function MiraGoldLayout(props: {
                         </Show>
 
                         <Show when={initialLoaded() && filteredAgents().length === 0}>
-                          <div class="card" style={{ padding: '24px', 'text-align': 'center', color: '#A0A9C0', 'font-size': '13px' }}>
+                          <div class="card" style={{ padding: '24px', 'text-align': 'center', color: 'var(--fg-muted)', 'font-size': '13px' }}>
                             {searchQuery().trim()
                               ? `No agents match "${searchQuery().trim()}".`
                               : 'No backend agents reported. Click Sync in the header to retry.'}
@@ -1446,8 +1572,8 @@ export function MiraGoldLayout(props: {
                             {(agent) => (
                               <div
                                 style={{
-                                  background: '#101522',
-                                  border: '1px solid #1E253A',
+                                  background: 'var(--bg-surface)',
+                                  border: '1px solid var(--border)',
                                   'border-radius': '10px',
                                   padding: '14px',
                                   display: 'flex',
@@ -1456,23 +1582,23 @@ export function MiraGoldLayout(props: {
                                 }}
                               >
                                 <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', gap: '8px' }}>
-                                  <div style={{ 'font-weight': '700', color: '#F5D061', 'font-size': '14px' }}>
+                                  <div style={{ 'font-weight': '700', color: 'var(--accent)', 'font-size': '14px' }}>
                                     {agent.name}
                                   </div>
                                   <Show when={agent.permissions}>
-                                    <span style={{ 'font-family': 'var(--font-mono)', 'font-size': '10.5px', color: '#A0A9C0', background: '#07090E', border: '1px solid #1E253A', padding: '2px 6px', 'border-radius': '4px' }}>
+                                    <span style={{ 'font-family': 'var(--font-mono)', 'font-size': '10.5px', color: 'var(--fg-muted)', background: 'var(--bg-app)', border: '1px solid var(--border)', padding: '2px 6px', 'border-radius': '4px' }}>
                                       {agent.permissions}
                                     </span>
                                   </Show>
                                 </div>
-                                <div style={{ 'font-size': '12px', color: '#A0A9C0', 'line-height': '1.45' }}>
+                                <div style={{ 'font-size': '12px', color: 'var(--fg-muted)', 'line-height': '1.45' }}>
                                   {agent.description || 'Agent persona configured on server.'}
                                 </div>
                                 <Show when={Array.isArray(agent.tools) && agent.tools.length > 0}>
                                   <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap', 'margin-top': '2px' }}>
                                     <For each={agent.tools}>
                                       {(tool) => (
-                                        <span style={{ background: '#07090E', border: '1px solid #1E253A', color: '#38bdf8', padding: '2px 6px', 'border-radius': '4px', 'font-size': '10.5px', 'font-family': 'var(--font-mono)' }}>
+                                        <span style={{ background: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--accent-strong)', padding: '2px 6px', 'border-radius': '4px', 'font-size': '10.5px', 'font-family': 'var(--font-mono)' }}>
                                           {tool}
                                         </span>
                                       )}
@@ -1491,10 +1617,10 @@ export function MiraGoldLayout(props: {
                       <div style={{ flex: '1', overflow: 'auto', padding: isMobileScreen() ? '12px' : '20px', display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
                         <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center', 'flex-wrap': 'wrap', gap: '8px' }}>
                           <div>
-                            <div style={{ 'font-size': '16px', 'font-weight': '700', color: '#F1F3FA' }}>
+                            <div style={{ 'font-size': '16px', 'font-weight': '700', color: 'var(--fg)' }}>
                               Registered Tools (<span class="tabular-nums">{filteredTools().length}</span>)
                             </div>
-                            <div style={{ 'font-size': '12px', color: '#7A859E' }}>
+                            <div style={{ 'font-size': '12px', color: 'var(--fg-subtle)' }}>
                               Live server capabilities available to agents.
                             </div>
                           </div>
@@ -1502,9 +1628,9 @@ export function MiraGoldLayout(props: {
                             type="button"
                             onClick={() => setShowCheckGuardrailModal(true)}
                             style={{
-                              background: '#161D2F',
-                              border: '1px solid rgba(229, 184, 66, 0.45)',
-                              color: '#F5D061',
+                              background: 'var(--bg-hover)',
+                              border: '1px solid var(--accent-border)',
+                              color: 'var(--accent)',
                               padding: '7px 12px',
                               'border-radius': '8px',
                               'font-size': '12px',
@@ -1518,7 +1644,7 @@ export function MiraGoldLayout(props: {
                         </div>
 
                         <Show when={initialLoaded() && filteredTools().length === 0}>
-                          <div class="card" style={{ padding: '24px', 'text-align': 'center', color: '#A0A9C0', 'font-size': '13px' }}>
+                          <div class="card" style={{ padding: '24px', 'text-align': 'center', color: 'var(--fg-muted)', 'font-size': '13px' }}>
                             {searchQuery().trim()
                               ? `No tools match "${searchQuery().trim()}".`
                               : 'No tools reported by server.'}
@@ -1530,8 +1656,8 @@ export function MiraGoldLayout(props: {
                             {(tool) => (
                               <div
                                 style={{
-                                  background: '#101522',
-                                  border: '1px solid #1E253A',
+                                  background: 'var(--bg-surface)',
+                                  border: '1px solid var(--border)',
                                   'border-radius': '10px',
                                   padding: '13px',
                                   display: 'flex',
@@ -1540,14 +1666,14 @@ export function MiraGoldLayout(props: {
                                 }}
                               >
                                 <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
-                                  <span style={{ 'font-weight': '700', color: '#F5D061', 'font-family': 'var(--font-mono)', 'font-size': '12.5px' }}>
+                                  <span style={{ 'font-weight': '700', color: 'var(--accent)', 'font-family': 'var(--font-mono)', 'font-size': '12.5px' }}>
                                     {tool.name}
                                   </span>
-                                  <span style={{ 'font-size': '10px', color: '#34d399', background: 'rgba(52, 211, 153, 0.1)', padding: '2px 6px', 'border-radius': '4px', 'font-weight': '600' }}>
+                                  <span style={{ 'font-size': '10px', color: 'var(--ok)', background: 'var(--ok-soft)', padding: '2px 6px', 'border-radius': '4px', 'font-weight': '600' }}>
                                     ENABLED
                                   </span>
                                 </div>
-                                <div style={{ 'font-size': '11.5px', color: '#A0A9C0', 'line-height': '1.45' }}>
+                                <div style={{ 'font-size': '11.5px', color: 'var(--fg-muted)', 'line-height': '1.45' }}>
                                   {tool.description || 'Server capability handler.'}
                                 </div>
                               </div>
@@ -1557,64 +1683,23 @@ export function MiraGoldLayout(props: {
                       </div>
                     </Show>
 
-                    {/* 6. FILES */}
+                    {/* 6. FILES (Interactive Tree Explorer, Preview, Git Badges, Chat @Attach, Editor) */}
                     <Show when={activeSubTab() === 'files'}>
-                      <div style={{ flex: '1', overflow: 'auto', padding: isMobileScreen() ? '12px' : '20px', display: 'flex', 'flex-direction': 'column', gap: '14px' }}>
-                        <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center', 'flex-wrap': 'wrap', gap: '8px' }}>
-                          <div>
-                            <div style={{ 'font-size': '16px', 'font-weight': '700', color: '#F1F3FA' }}>
-                              Workspace Files (<span class="tabular-nums">{filteredFiles().length}</span>)
-                            </div>
-                            <div style={{ 'font-size': '12px', color: '#7A859E' }}>
-                              Live files indexed in the active project workspace.
-                            </div>
-                          </div>
-                        </div>
-
-                        <Show when={initialLoaded() && filteredFiles().length === 0}>
-                          <div class="card" style={{ padding: '24px', 'text-align': 'center', color: '#A0A9C0', 'font-size': '13px' }}>
-                            {searchQuery().trim()
-                              ? `No workspace files match "${searchQuery().trim()}".`
-                              : 'No workspace files returned by server.'}
-                          </div>
-                        </Show>
-
-                        <div style={{ display: 'grid', 'grid-template-columns': isMobileScreen() ? '1fr' : 'repeat(auto-fit, minmax(240px, 1fr))', gap: '8px' }}>
-                          <For each={filteredFiles().slice(0, 80)}>
-                            {(file) => (
-                              <div
-                                style={{
-                                  background: '#101522',
-                                  border: '1px solid #1E253A',
-                                  padding: '10px 12px',
-                                  'border-radius': '8px',
-                                  display: 'flex',
-                                  'justify-content': 'space-between',
-                                  'align-items': 'center',
-                                  gap: '8px',
-                                }}
-                              >
-                                <span
-                                  title={file.path}
-                                  style={{
-                                    color: '#F5D061',
-                                    'font-weight': '500',
-                                    'font-size': '12px',
-                                    'font-family': 'var(--font-mono)',
-                                    overflow: 'hidden',
-                                    'text-overflow': 'ellipsis',
-                                    'white-space': 'nowrap',
-                                  }}
-                                >
-                                  {file.path}
-                                </span>
-                                <span class="tabular-nums" style={{ 'font-size': '10.5px', color: '#7A859E', 'font-family': 'var(--font-mono)', 'flex-shrink': '0' }}>
-                                  {(file.size / 1024).toFixed(1)} KB
-                                </span>
-                              </div>
-                            )}
-                          </For>
-                        </div>
+                      <div style={{ flex: '1', overflow: 'hidden', display: 'flex', 'flex-direction': 'column', 'min-height': '0' }}>
+                        <WorkspaceExplorer
+                          cwd={activeWorkspaceCwd()}
+                          sessionId={props.store.state.currentId ?? undefined}
+                          globalSearch={searchQuery()}
+                          isMobile={isMobileScreen()}
+                          onAttachToChat={(path) => {
+                            const cur = props.store.input()
+                            const prefix = cur && !/\s$/.test(cur) ? ' ' : ''
+                            props.store.setInput(`${cur}${prefix}@${path} `)
+                            selectWorkspace('work', 'chat')
+                            toast.info(`Attached @${path} to Chat`)
+                          }}
+                          onOpenChanges={() => selectWorkspace('changes')}
+                        />
                       </div>
                     </Show>
                   </div>
@@ -1623,8 +1708,8 @@ export function MiraGoldLayout(props: {
             />
           </main>
 
-          {/* 3. ON-DEMAND RIGHT SIDEBAR (SYSTEM OVERVIEW) */}
-          <Show when={isRightSidebarOpen()}>
+          {/* 3. ON-DEMAND RIGHT SIDEBAR (SYSTEM OVERVIEW - EXPERT MODE) */}
+          <Show when={telemetryDrawerEnabled(uxMode()) && isRightSidebarOpen()}>
             <Show when={isMobileScreen()}>
               <div
                 role="presentation"
@@ -1647,18 +1732,18 @@ export function MiraGoldLayout(props: {
                 bottom: isMobileScreen() ? '56px' : '0',
                 'z-index': isMobileScreen() ? '900' : '1',
                 'flex-shrink': '0',
-                'border-left': '1px solid #1A2033',
-                background: '#090B12',
+                'border-left': '1px solid var(--border)',
+                background: 'var(--bg-canvas)',
                 display: 'flex',
                 'flex-direction': 'column',
                 padding: '14px',
                 gap: '12px',
                 overflow: 'auto',
-                'box-shadow': isMobileScreen() ? '-8px 0 24px rgba(0,0,0,0.6)' : 'none',
+                'box-shadow': isMobileScreen() ? 'var(--shadow-pop)' : 'none',
               }}
             >
               <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
-                <span style={{ 'font-weight': '700', 'font-size': '13px', color: '#F1F3FA' }}>System Overview</span>
+                <span style={{ 'font-weight': '700', 'font-size': '13px', color: 'var(--fg)' }}>System Overview</span>
                 <button
                   type="button"
                   onClick={() => setIsRightSidebarOpen(false)}
@@ -1666,7 +1751,7 @@ export function MiraGoldLayout(props: {
                   style={{
                     background: 'transparent',
                     border: 'none',
-                    color: '#7A859E',
+                    color: 'var(--fg-subtle)',
                     cursor: 'pointer',
                     width: '28px',
                     height: '28px',
@@ -1682,8 +1767,8 @@ export function MiraGoldLayout(props: {
               {/* CARD 1: HEALTH & GATEWAY */}
               <div
                 style={{
-                  background: '#0D111E',
-                  border: '1px solid #1E253A',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border)',
                   'border-radius': '12px',
                   padding: '14px',
                   display: 'flex',
@@ -1692,7 +1777,7 @@ export function MiraGoldLayout(props: {
                 }}
               >
                 <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
-                  <span style={{ 'font-weight': '700', 'font-size': '12px', color: '#A0A9C0', 'text-transform': 'uppercase', 'letter-spacing': '0.04em' }}>
+                  <span style={{ 'font-weight': '700', 'font-size': '12px', color: 'var(--fg-muted)', 'text-transform': 'uppercase', 'letter-spacing': '0.04em' }}>
                     Runtime Health
                   </span>
                   <span
@@ -1700,12 +1785,12 @@ export function MiraGoldLayout(props: {
                       display: 'flex',
                       'align-items': 'center',
                       gap: '5px',
-                      color: systemHealthPct() !== null ? '#34d399' : '#7A859E',
+                      color: systemHealthPct() !== null ? 'var(--ok)' : 'var(--fg-subtle)',
                       'font-size': '11px',
                       'font-weight': '600',
                     }}
                   >
-                    <span style={{ width: '6px', height: '6px', 'border-radius': '50%', background: systemHealthPct() !== null ? '#34d399' : '#7A859E' }} />
+                    <span style={{ width: '6px', height: '6px', 'border-radius': '50%', background: systemHealthPct() !== null ? 'var(--ok)' : 'var(--fg-subtle)' }} />
                     {systemHealthPct() !== null ? 'Live' : 'Pending'}
                   </span>
                 </div>
@@ -1713,12 +1798,12 @@ export function MiraGoldLayout(props: {
                 <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', gap: '10px' }}>
                   <div style={{ position: 'relative', width: '78px', height: '78px', display: 'grid', 'place-items': 'center', 'flex-shrink': '0' }}>
                     <svg width="78" height="78" viewBox="0 0 82 82" style={{ transform: 'rotate(-90deg)' }}>
-                      <circle cx="41" cy="41" r="32" stroke="#161D2F" stroke-width="7" fill="none" />
+                      <circle cx="41" cy="41" r="32" stroke="var(--bg-hover)" stroke-width="7" fill="none" />
                       <circle
                         cx="41"
                         cy="41"
                         r="32"
-                        stroke={systemHealthPct() !== null ? (systemHealthPct()! >= 80 ? '#34d399' : '#fbbf24') : '#2B3552'}
+                        stroke={systemHealthPct() !== null ? (systemHealthPct()! >= 80 ? 'var(--ok)' : 'var(--warn)') : 'var(--border-strong)'}
                         stroke-width="7"
                         fill="none"
                         stroke-dasharray="201.06"
@@ -1727,29 +1812,29 @@ export function MiraGoldLayout(props: {
                       />
                     </svg>
                     <div style={{ position: 'absolute', 'text-align': 'center' }}>
-                      <div class="tabular-nums" style={{ 'font-size': '12.5px', 'font-weight': '800', color: '#F1F3FA', 'line-height': '1.1' }}>
+                      <div class="tabular-nums" style={{ 'font-size': '12.5px', 'font-weight': '800', color: 'var(--fg)', 'line-height': '1.1' }}>
                         {systemHealthPct() !== null ? `${systemHealthPct()}%` : 'Unknown'}
                       </div>
-                      <div style={{ 'font-size': '9.5px', color: '#7A859E' }}>Health</div>
+                      <div style={{ 'font-size': '9.5px', color: 'var(--fg-subtle)' }}>Health</div>
                     </div>
                   </div>
 
                   <div class="tabular-nums" style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', 'font-size': '11.5px', flex: '1' }}>
                     <div style={{ display: 'flex', 'justify-content': 'space-between' }}>
-                      <span style={{ color: '#7A859E' }}>Latency</span>
-                      <span style={{ 'font-weight': '700', color: '#F1F3FA', 'font-family': 'var(--font-mono)' }}>
+                      <span style={{ color: 'var(--fg-subtle)' }}>Latency</span>
+                      <span style={{ 'font-weight': '700', color: 'var(--fg)', 'font-family': 'var(--font-mono)' }}>
                         {responseTimeMs() !== null ? `${responseTimeMs()}ms` : latencySec() !== null ? `${latencySec()}s` : '—'}
                       </span>
                     </div>
                     <div style={{ display: 'flex', 'justify-content': 'space-between' }}>
-                      <span style={{ color: '#7A859E' }}>Memory</span>
-                      <span style={{ 'font-weight': '700', color: '#F1F3FA', 'font-family': 'var(--font-mono)' }}>
+                      <span style={{ color: 'var(--fg-subtle)' }}>Memory</span>
+                      <span style={{ 'font-weight': '700', color: 'var(--fg)', 'font-family': 'var(--font-mono)' }}>
                         {memoryUsageGb() !== null ? `${memoryUsageGb()} GB` : '—'}
                       </span>
                     </div>
                     <div style={{ display: 'flex', 'justify-content': 'space-between' }}>
-                      <span style={{ color: '#7A859E' }}>Requests</span>
-                      <span style={{ 'font-weight': '700', color: '#F1F3FA', 'font-family': 'var(--font-mono)' }}>
+                      <span style={{ color: 'var(--fg-subtle)' }}>Requests</span>
+                      <span style={{ 'font-weight': '700', color: 'var(--fg)', 'font-family': 'var(--font-mono)' }}>
                         {gatewayHealth()?.gateway?.requests ?? '—'}
                       </span>
                     </div>
@@ -1760,8 +1845,8 @@ export function MiraGoldLayout(props: {
               {/* CARD 2: ACTIVE AGENTS */}
               <div
                 style={{
-                  background: '#0D111E',
-                  border: '1px solid #1E253A',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border)',
                   'border-radius': '12px',
                   padding: '14px',
                   display: 'flex',
@@ -1770,7 +1855,7 @@ export function MiraGoldLayout(props: {
                 }}
               >
                 <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
-                  <span style={{ 'font-weight': '700', 'font-size': '12.5px', color: '#F1F3FA' }}>
+                  <span style={{ 'font-weight': '700', 'font-size': '12.5px', color: 'var(--fg)' }}>
                     Agents (<span class="tabular-nums">{activeAgentsCount() !== null ? activeAgentsCount() : '—'}</span>)
                   </span>
                   <button
@@ -1781,7 +1866,7 @@ export function MiraGoldLayout(props: {
                       border: 'none',
                       padding: '0',
                       'font-size': '11px',
-                      color: '#F5D061',
+                      color: 'var(--accent)',
                       cursor: 'pointer',
                       'font-weight': '600',
                     }}
@@ -1793,7 +1878,7 @@ export function MiraGoldLayout(props: {
                 <Show
                   when={realAgents().length > 0}
                   fallback={
-                    <div style={{ 'font-size': '11.5px', color: '#7A859E', padding: '4px 0' }}>
+                    <div style={{ 'font-size': '11.5px', color: 'var(--fg-subtle)', padding: '4px 0' }}>
                       No active backend agents loaded.
                     </div>
                   }
@@ -1804,13 +1889,13 @@ export function MiraGoldLayout(props: {
                         <div
                           style={{
                             padding: '6px 8px',
-                            background: '#090C16',
+                            background: 'var(--bg-canvas)',
                             'border-radius': '8px',
-                            border: '1px solid #182035',
+                            border: '1px solid var(--border)',
                           }}
                         >
-                          <div style={{ 'font-size': '12px', 'font-weight': '600', color: '#F5D061' }}>{agent.name}</div>
-                          <div style={{ 'font-size': '10.5px', color: '#7A859E', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>
+                          <div style={{ 'font-size': '12px', 'font-weight': '600', color: 'var(--accent)' }}>{agent.name}</div>
+                          <div style={{ 'font-size': '10.5px', color: 'var(--fg-subtle)', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>
                             {agent.description || 'Configured persona'}
                           </div>
                         </div>
@@ -1823,8 +1908,8 @@ export function MiraGoldLayout(props: {
               {/* CARD 3: RECENT ACTIVITY (100% Real Data) */}
               <div
                 style={{
-                  background: '#0D111E',
-                  border: '1px solid #1E253A',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border)',
                   'border-radius': '12px',
                   padding: '14px',
                   display: 'flex',
@@ -1833,7 +1918,7 @@ export function MiraGoldLayout(props: {
                 }}
               >
                 <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between' }}>
-                  <span style={{ 'font-weight': '700', 'font-size': '12.5px', color: '#F1F3FA' }}>Recent Activity</span>
+                  <span style={{ 'font-weight': '700', 'font-size': '12.5px', color: 'var(--fg)' }}>Recent Activity</span>
                   <button
                     type="button"
                     onClick={() => selectWorkspace('evolution')}
@@ -1842,7 +1927,7 @@ export function MiraGoldLayout(props: {
                       border: 'none',
                       padding: '0',
                       'font-size': '11px',
-                      color: '#F5D061',
+                      color: 'var(--accent)',
                       cursor: 'pointer',
                       'font-weight': '600',
                     }}
@@ -1854,7 +1939,7 @@ export function MiraGoldLayout(props: {
                 <Show
                   when={recentActivityItems().length > 0}
                   fallback={
-                    <div style={{ 'font-size': '11.5px', color: '#7A859E', padding: '4px 0' }}>
+                    <div style={{ 'font-size': '11.5px', color: 'var(--fg-subtle)', padding: '4px 0' }}>
                       No recent audit, proposal, or session events recorded yet.
                     </div>
                   }
@@ -1869,15 +1954,15 @@ export function MiraGoldLayout(props: {
                                 width: '7px',
                                 height: '7px',
                                 'border-radius': '50%',
-                                background: item.kind === 'ok' ? '#34d399' : item.kind === 'warn' ? '#fbbf24' : '#E5B842',
+                                background: item.kind === 'ok' ? 'var(--ok)' : item.kind === 'warn' ? 'var(--warn)' : 'var(--accent)',
                                 'flex-shrink': '0',
                               }}
                             />
-                            <span style={{ color: '#F1F3FA', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>
+                            <span style={{ color: 'var(--fg)', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>
                               {item.label}
                             </span>
                           </div>
-                          <span class="tabular-nums" style={{ color: '#7A859E', 'flex-shrink': '0', 'font-family': 'var(--font-mono)', 'font-size': '10px' }}>
+                          <span class="tabular-nums" style={{ color: 'var(--fg-subtle)', 'flex-shrink': '0', 'font-family': 'var(--font-mono)', 'font-size': '10px' }}>
                             {item.time ? new Date(item.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
                           </span>
                         </div>
@@ -1900,9 +1985,8 @@ export function MiraGoldLayout(props: {
               left: '0',
               right: '0',
               height: '56px',
-              background: 'rgba(9, 11, 18, 0.96)',
-              'backdrop-filter': 'blur(10px)',
-              'border-top': '1px solid #1A2033',
+              background: 'var(--bg-canvas)',
+              'border-top': '1px solid var(--border)',
               display: 'flex',
               'align-items': 'center',
               'justify-content': 'space-around',
@@ -1910,7 +1994,7 @@ export function MiraGoldLayout(props: {
               padding: '0 4px',
             }}
           >
-            <For each={mobileBottomNavItems}>
+            <For each={filteredMobileBottomNavItems()}>
               {(item) => {
                 const active = () => item.id === 'menu' ? isMobileMenuOpen() : currentWorkspace() === item.id
                 return (
@@ -1931,7 +2015,7 @@ export function MiraGoldLayout(props: {
                       'justify-content': 'center',
                       background: 'transparent',
                       border: 'none',
-                      color: active() ? '#F5D061' : '#7A859E',
+                      color: active() ? 'var(--accent)' : 'var(--fg-subtle)',
                       'font-size': '10.5px',
                       'font-weight': active() ? '700' : '500',
                       cursor: 'pointer',
@@ -1960,7 +2044,8 @@ export function MiraGoldLayout(props: {
           style={{
             position: 'fixed',
             inset: '0',
-            background: 'rgba(7, 9, 14, 0.85)',
+            background: 'rgba(0, 0, 0, 0.72)',
+            'backdrop-filter': 'blur(4px)',
             display: 'grid',
             'place-items': 'center',
             'z-index': '1000',
@@ -1971,12 +2056,13 @@ export function MiraGoldLayout(props: {
             role="presentation"
             onClick={(e) => e.stopPropagation()}
             style={{
-              background: '#0D111E',
-              border: '1px solid rgba(229, 184, 66, 0.45)',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--accent-border)',
               'border-radius': '14px',
               padding: isMobileScreen() ? '16px' : '22px',
               width: 'min(460px, calc(100vw - 32px))',
               'max-height': '90dvh',
+              'box-shadow': 'var(--shadow-pop)',
               display: 'flex',
               'flex-direction': 'column',
               gap: '14px',
@@ -1984,7 +2070,7 @@ export function MiraGoldLayout(props: {
             }}
           >
             <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}>
-              <div id="guardrail-modal-title" style={{ 'font-size': '15px', 'font-weight': '800', color: '#F5D061' }}>
+              <div id="guardrail-modal-title" style={{ 'font-size': '15px', 'font-weight': '800', color: 'var(--accent)' }}>
                 Test Tool Guardrail
               </div>
               <button
@@ -1994,7 +2080,7 @@ export function MiraGoldLayout(props: {
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  color: '#A0A9C0',
+                  color: 'var(--fg-muted)',
                   'font-size': '18px',
                   cursor: 'pointer',
                   'min-height': '36px',
@@ -2007,7 +2093,7 @@ export function MiraGoldLayout(props: {
               </button>
             </div>
             <div>
-              <label for="guardrail-tool-input" style={{ 'font-size': '11px', 'font-weight': '700', color: '#A0A9C0' }}>
+              <label for="guardrail-tool-input" style={{ 'font-size': '11px', 'font-weight': '700', color: 'var(--fg-muted)' }}>
                 Tool Name
               </label>
               <input
@@ -2018,9 +2104,9 @@ export function MiraGoldLayout(props: {
                 placeholder="bash, edit, read, etc."
                 style={{
                   width: '100%',
-                  background: '#07090E',
-                  border: '1px solid #1E253A',
-                  color: '#F1F3FA',
+                  background: 'var(--bg-app)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--fg)',
                   padding: '9px 10px',
                   'border-radius': '8px',
                   'margin-top': '6px',
@@ -2030,7 +2116,7 @@ export function MiraGoldLayout(props: {
               />
             </div>
             <Show when={guardrailResult()}>
-              <div style={{ background: '#07090E', border: '1px solid #1E253A', padding: '10px 12px', 'border-radius': '8px', 'font-size': '12px', color: '#34d399', 'font-family': 'var(--font-mono)' }}>
+              <div style={{ background: 'var(--bg-app)', border: '1px solid var(--border)', padding: '10px 12px', 'border-radius': '8px', 'font-size': '12px', color: 'var(--ok)', 'font-family': 'var(--font-mono)' }}>
                 {guardrailResult()}
               </div>
             </Show>
@@ -2040,8 +2126,8 @@ export function MiraGoldLayout(props: {
                 onClick={() => setShowCheckGuardrailModal(false)}
                 style={{
                   background: 'transparent',
-                  border: '1px solid #1E253A',
-                  color: '#A0A9C0',
+                  border: '1px solid var(--border)',
+                  color: 'var(--fg-muted)',
                   padding: '8px 14px',
                   'border-radius': '8px',
                   'font-weight': '600',
@@ -2055,8 +2141,8 @@ export function MiraGoldLayout(props: {
                 type="button"
                 onClick={handleTestGuardrail}
                 style={{
-                  background: 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)',
-                  color: '#07090E',
+                  background: 'var(--grad-brand)',
+                  color: 'var(--on-accent)',
                   border: 'none',
                   padding: '8px 16px',
                   'border-radius': '8px',

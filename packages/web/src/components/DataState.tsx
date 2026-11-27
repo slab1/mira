@@ -1,19 +1,9 @@
-// @ts-nocheck
 /**
  * Shared OperationalState type + DataState component.
  *
  * Every operational value in Mira Web must have an explicit state.
  * The UI must visually distinguish these states — never silently
  * transform "unavailable" into "0" or "demo" into "live".
- *
- * States:
- *   LIVE       — real data from the backend
- *   LOADING    — fetch in progress
- *   STALE      — data is older than threshold
- *   EMPTY      — no data available (valid empty state)
- *   ERROR      — fetch failed
- *   UNAVAILABLE — backend/feature not available
- *   DEMO       — synthetic/demo data (must be visually distinct)
  */
 
 import { Show, type JSX } from 'solid-js'
@@ -21,13 +11,13 @@ import { Show, type JSX } from 'solid-js'
 export type OperationalState = 'live' | 'loading' | 'stale' | 'empty' | 'error' | 'unavailable' | 'demo'
 
 export const OPERATIONAL_STATE_META: Record<OperationalState, { label: string; color: string; icon: string }> = {
-  live: { label: 'LIVE', color: 'var(--fg-success)', icon: '●' },
+  live: { label: 'LIVE', color: 'var(--ok)', icon: '●' },
   loading: { label: 'LOADING', color: 'var(--fg-muted)', icon: '◌' },
-  stale: { label: 'STALE', color: 'var(--fg-warning)', icon: '◐' },
+  stale: { label: 'STALE', color: 'var(--warn)', icon: '◐' },
   empty: { label: 'EMPTY', color: 'var(--fg-subtle)', icon: '○' },
-  error: { label: 'ERROR', color: 'var(--fg-danger)', icon: '✕' },
+  error: { label: 'ERROR', color: 'var(--danger)', icon: '✕' },
   unavailable: { label: 'UNAVAILABLE', color: 'var(--fg-faint)', icon: '⊘' },
-  demo: { label: 'DEMO', color: 'var(--fg-accent)', icon: '◈' },
+  demo: { label: 'DEMO', color: 'var(--accent)', icon: '◈' },
 }
 
 export function DataStateBadge(props: { state: OperationalState }) {
@@ -84,7 +74,7 @@ export function OperationalValue(props: {
   return (
     <div style={{ display: 'flex', 'align-items': 'baseline', gap: '6px' }}>
       <Show when={props.state === 'live' || props.state === 'stale'}>
-        <span style={{ 'font-size': 'var(--fs-xl)', 'font-weight': '700' }}>
+        <span style={{ 'font-size': 'var(--fs-lg)', 'font-weight': '700', 'font-variant-numeric': 'tabular-nums' }}>
           {props.value ?? '—'}
           <Show when={props.unit}>
             <span style={{ 'font-size': 'var(--fs-sm)', 'font-weight': '400', color: 'var(--fg-subtle)' }}> {props.unit}</span>

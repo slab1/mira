@@ -1042,7 +1042,22 @@ export default function MissionsPage(props: {
                   </div>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '8px', 'align-items': 'center' }}>
+              <div style={{ display: 'flex', gap: '10px', 'align-items': 'center' }}>
+                <span
+                  style={{
+                    'font-family': 'var(--font-mono)',
+                    'font-size': 'var(--fs-2xs)',
+                    'font-weight': '600',
+                    color: props.store.state.connected ? 'var(--ok)' : 'var(--warn)',
+                  }}
+                  title={
+                    props.store.state.connected
+                      ? 'Live — receiving BusEvent updates'
+                      : 'Bus stream down — falling back to polling'
+                  }
+                >
+                  {props.store.state.connected ? 'Live' : 'Polling'}
+                </span>
                 <button
                   type="button"
                   class="btn btn-ghost"
@@ -1059,24 +1074,6 @@ export default function MissionsPage(props: {
                 >
                   ↻ Refresh
                 </button>
-                <span
-                  class={`pill ${props.store.state.connected ? 'pill-ok' : 'pill-warn'}`}
-                  style={{ 'font-family': 'var(--font-mono)', 'font-size': 'var(--fs-2xs)' }}
-                  title={
-                    props.store.state.connected
-                      ? 'Live — receiving BusEvent updates'
-                      : 'Bus stream down — falling back to polling'
-                  }
-                >
-                  <span
-                    class={`dot ${props.store.state.connected ? 'dot-pulse' : ''}`}
-                    style={{
-                      background: props.store.state.connected ? 'var(--ok)' : 'var(--warn)',
-                    }}
-                    aria-hidden="true"
-                  />
-                  {props.store.state.connected ? 'live' : 'polling'}
-                </span>
               </div>
             </div>
             <Show when={listError()}>

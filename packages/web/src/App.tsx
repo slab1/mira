@@ -153,8 +153,8 @@ function AuthGate(props: { onReady: () => void }) {
         height: '100dvh',
         width: '100vw',
         padding: '16px',
-        background: '#07090E',
-        color: '#FFFFFF',
+        background: 'var(--bg-app)',
+        color: 'var(--fg)',
       }}
     >
       <form
@@ -162,10 +162,10 @@ function AuthGate(props: { onReady: () => void }) {
         style={{
           width: 'min(380px, calc(100vw - 32px))',
           padding: '24px',
-          border: '1px solid rgba(229, 184, 66, 0.25)',
+          border: '1px solid var(--accent-border)',
           'border-radius': '16px',
-          background: '#0F1424',
-          'box-shadow': '0 12px 36px rgba(0,0,0,0.6)',
+          background: 'var(--bg-canvas)',
+          'box-shadow': 'var(--shadow-pop)',
           display: 'flex',
           'flex-direction': 'column',
           gap: '12px',
@@ -177,8 +177,8 @@ function AuthGate(props: { onReady: () => void }) {
               width: '36px',
               height: '36px',
               'border-radius': '10px',
-              background: 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)',
-              color: '#07090E',
+              background: 'var(--grad-brand)',
+              color: 'var(--on-accent)',
               'font-weight': '900',
               display: 'flex',
               'align-items': 'center',
@@ -193,7 +193,7 @@ function AuthGate(props: { onReady: () => void }) {
               'font-size': '20px',
               'font-weight': '700',
               'letter-spacing': '-0.02em',
-              color: '#F5D061',
+              color: 'var(--accent)',
             }}
           >
             Mira
@@ -202,8 +202,8 @@ function AuthGate(props: { onReady: () => void }) {
             style={{
               padding: '2px 8px',
               'border-radius': '12px',
-              background: 'rgba(229, 184, 66, 0.15)',
-              color: '#E5B842',
+              background: 'var(--accent-soft)',
+              color: 'var(--accent)',
               'font-size': '11px',
               'font-weight': '600',
             }}
@@ -214,12 +214,12 @@ function AuthGate(props: { onReady: () => void }) {
 
         <div>
           <div
-            style={{ 'font-size': '14px', 'font-weight': '600', 'margin-bottom': '4px', color: '#F3F4F6' }}
+            style={{ 'font-size': '14px', 'font-weight': '600', 'margin-bottom': '4px', color: 'var(--fg)' }}
           >
             Connect to your server
           </div>
           <div
-            style={{ 'font-size': '12px', color: '#9CA3AF', 'line-height': '1.55' }}
+            style={{ 'font-size': '12px', color: 'var(--fg-muted)', 'line-height': '1.55' }}
           >
             Server URL = mira server address; Access token = MIRA_TOKEN from ~/.mira/mira.env.
           </div>
@@ -227,7 +227,7 @@ function AuthGate(props: { onReady: () => void }) {
 
         <label
           for="mira-api-url"
-          style={{ 'font-size': '11px', 'font-weight': '600', color: '#D1D5DB' }}
+          style={{ 'font-size': '11px', 'font-weight': '600', color: 'var(--fg-muted)' }}
         >
           Server URL
         </label>
@@ -241,9 +241,9 @@ function AuthGate(props: { onReady: () => void }) {
           spellcheck={false}
           onInput={(e) => setApiUrlValue(e.currentTarget.value)}
           style={{
-            background: '#161C2E',
-            border: '1px solid rgba(229, 184, 66, 0.2)',
-            color: '#FFFFFF',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-strong)',
+            color: 'var(--fg)',
             padding: '8px 12px',
             'border-radius': '8px',
           }}
@@ -251,7 +251,7 @@ function AuthGate(props: { onReady: () => void }) {
 
         <label
           for="mira-token"
-          style={{ 'font-size': '11px', 'font-weight': '600', color: '#D1D5DB' }}
+          style={{ 'font-size': '11px', 'font-weight': '600', color: 'var(--fg-muted)' }}
         >
           Access token
         </label>
@@ -265,9 +265,9 @@ function AuthGate(props: { onReady: () => void }) {
           spellcheck={false}
           onInput={(e) => setValue(e.currentTarget.value)}
           style={{
-            background: '#161C2E',
-            border: '1px solid rgba(229, 184, 66, 0.2)',
-            color: '#FFFFFF',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-strong)',
+            color: 'var(--fg)',
             padding: '8px 12px',
             'border-radius': '8px',
           }}
@@ -277,7 +277,7 @@ function AuthGate(props: { onReady: () => void }) {
           <div
             id="auth-error"
             role="alert"
-            style={{ 'font-size': '12px', color: '#EF4444' }}
+            style={{ 'font-size': '12px', color: 'var(--danger)' }}
           >
             ⚠ {error()}
           </div>
@@ -291,8 +291,8 @@ function AuthGate(props: { onReady: () => void }) {
             'font-size': '14px',
             'font-weight': '600',
             'margin-top': '4px',
-            background: 'linear-gradient(135deg, #F5D061 0%, #D4AF37 100%)',
-            color: '#07090E',
+            background: 'var(--grad-brand)',
+            color: 'var(--on-accent)',
             border: 'none',
             'border-radius': '8px',
             cursor: checking() ? 'wait' : 'pointer',

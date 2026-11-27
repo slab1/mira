@@ -1,7 +1,5 @@
-// @ts-nocheck
-import './m3-expressive.css';
-import { createSignal, For, Show } from 'solid-js';
-import type { JSX } from 'solid-js';
+import './m3-expressive.css'
+import { For, Show, type JSX } from 'solid-js'
 
 export type NavItem = {
   id: string;
@@ -33,12 +31,13 @@ export function NavigationRail(props: {
               <span style={{ 'font-size': '12px', 'font-weight': '500' }}>{item.label}</span>
               <Show when={item.badge}>
                 <span style={{
-                  'background': 'var(--m3-primary-40)',
-                  'color': 'white',
+                  background: 'var(--m3-primary-40)',
+                  color: 'var(--m3-on-primary)',
                   'border-radius': '10px',
-                  'padding': '2px 6px',
+                  padding: '2px 6px',
                   'font-size': '10px',
-                  'font-weight': '600'
+                  'font-weight': '600',
+                  'font-variant-numeric': 'tabular-nums',
                 }}>
                   {item.badge}
                 </span>

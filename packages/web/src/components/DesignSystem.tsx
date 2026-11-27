@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * DesignSystem — shared primitives for Mira Web.
  *
@@ -99,7 +98,14 @@ export function MetricCard(props: {
       <div style={{ 'font-size': 'var(--fs-xs)', color: 'var(--fg-muted)', 'text-transform': 'uppercase', 'letter-spacing': '0.04em' }}>
         {props.label}
       </div>
-      <div style={{ 'font-size': 'var(--fs-lg)', 'font-weight': '700', color: valueColor }}>
+      <div
+        style={{
+          'font-size': 'var(--fs-lg)',
+          'font-weight': '700',
+          color: valueColor,
+          'font-variant-numeric': 'tabular-nums',
+        }}
+      >
         {props.value}
       </div>
       <Show when={props.sub}>
@@ -121,41 +127,20 @@ const TONE_COLOR: Record<StatusTone, string> = {
   muted: 'var(--fg-muted)',
 }
 
-const TONE_BG: Record<StatusTone, string> = {
-  success: 'var(--ok-soft)',
-  warning: 'var(--warn-soft)',
-  error: 'var(--danger-soft)',
-  info: 'var(--accent-soft)',
-  muted: 'var(--bg-active)',
-}
-
-const TONE_BORDER: Record<StatusTone, string> = {
-  success: 'var(--ok-border)',
-  warning: 'var(--warn-border)',
-  error: 'var(--danger-border)',
-  info: 'var(--accent-border)',
-  muted: 'var(--border-strong)',
-}
-
 export function StatusBadge(props: {
   label: string
   tone?: StatusTone
 }) {
-  const tone = props.tone ?? 'muted'
+  const tone = () => props.tone ?? 'muted'
   return (
     <span
       style={{
         display: 'inline-flex',
         'align-items': 'center',
-        gap: '4px',
-        padding: '2px 8px',
-        'border-radius': 'var(--r-full)',
-        'font-size': 'var(--fs-2xs)',
+        gap: '5px',
+        'font-size': 'var(--fs-xs)',
         'font-weight': '600',
-        'letter-spacing': '0.04em',
-        color: TONE_COLOR[tone],
-        background: TONE_BG[tone],
-        'border': `1px solid ${TONE_BORDER[tone]}`,
+        color: TONE_COLOR[tone()],
         'white-space': 'nowrap',
       }}
     >
@@ -179,7 +164,7 @@ export function StatusRow(props: {
   return (
     <div style={{ display: 'flex', 'justify-content': 'space-between', 'padding': '6px 0', 'border-bottom': '1px solid var(--border)' }}>
       <span style={{ 'font-size': 'var(--fs-sm)' }}>{props.label}</span>
-      <span style={{ 'font-size': 'var(--fs-sm)', color: valueColor }}>{props.value}</span>
+      <span style={{ 'font-size': 'var(--fs-sm)', color: valueColor, 'font-variant-numeric': 'tabular-nums' }}>{props.value}</span>
     </div>
   )
 }

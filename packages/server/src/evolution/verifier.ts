@@ -28,6 +28,11 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { JsonValue } from '../types/index.js'
 import type { Experiment } from './experiment.js'
+import {
+  detectRewardHacking,
+  evaluateGeneralization,
+  type GeneralizationReport,
+} from './generalization.js'
 
 /**
  * Resolve the REAL TypeScript compiler.
@@ -57,6 +62,7 @@ export interface VerificationResult {
   regression: boolean
   security: { passed: boolean; issues: string[] }
   static: { passed: boolean; issues: string[] }
+  generalization?: GeneralizationReport
   details: JsonValue
   timestamp: number
 }
@@ -165,6 +171,15 @@ export async function verify(
     securityPassed = false
   }
 
+  // 2b. Anti-reward-hacking static scan (AIDE² integrity gate)
+  const hackingCheck = detectRewardHacking(experiment.patch)
+  if (hackingCheck.blocked) {
+    for (const f of hackingCheck.findings) {
+      securityIssues.push(`reward-hacking blocked [${f.category}]: ${f.detail}`)
+    }
+    securityPassed = false
+  }
+
   // 3. Regression — heuristic: sandbox patch must not be empty, must have risk computed
   let regression = false
   if (!experiment.patch || experiment.patch.trim().length < 10) {
@@ -184,6 +199,15 @@ export async function verify(
   // expression allowed a typecheck failure through whenever risk < 0.9.
   const verified = securityPassed && !regression && staticPassed
 
+  const generalization = evaluateGeneralization({
+    proposalId: experiment.proposalId,
+    patch: experiment.patch,
+    targetFile: experiment.targetFile,
+    verificationPassed: verified,
+    staticPassed,
+    securityPassed,
+  })
+
   const details: JsonValue = {
     experimentId: experiment.proposalId,
     simulationId: experiment.simulationId,
@@ -192,6 +216,12 @@ export async function verify(
     patchChars: experiment.patch.length,
     static: { passed: staticPassed, issues },
     security: { passed: securityPassed, issues: securityIssues },
+    generalization: {
+      passed: generalization.passed,
+      heldOutScore: generalization.heldOutScore,
+      rewardHackingScore: generalization.rewardHackingScore,
+      findingsCount: generalization.hackingFindings.length,
+    },
     regression,
     benchmark,
     independent:
@@ -204,6 +234,7 @@ export async function verify(
     regression,
     security: { passed: securityPassed, issues: securityIssues },
     static: { passed: staticPassed, issues },
+    generalization,
     details,
     timestamp: Date.now(),
   }

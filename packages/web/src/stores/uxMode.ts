@@ -1,24 +1,17 @@
-// @ts-nocheck
 /**
- * UX Mode store — Beginner / Professional / Expert interface tiers
- * (master findings P2.4).
+ * UX Mode store — Standard / Pro / Expert progressive interface presets.
  *
- * The audit found every advanced surface (Evolution, Dashboard, engines,
- * shadow/canary) exposed unconditionally, overwhelming new users. Modes gate
- * workspace visibility; persisted per-browser like theme (mira_ux_mode).
- *
- *   beginner     → work, changes                          (chat + diffs)
- *   professional → + missions, intelligence, system      (daily driver)
- *   expert       → everything                            (full visibility)
- *
- * The current workspace is guarded in App.tsx: switching modes while on a
- * now-hidden workspace redirects to 'work'.
+ * Keeps internal engineering and governance surfaces hidden in Standard mode
+ * so end users get a calm Chat + Files + Changes experience, while developers
+ * and operators can unlock Missions, Intelligence, System, Evolution, and
+ * Analytics telemetry with one click. Persisted under `mira_ux_mode`.
  */
 
 import { createSignal } from 'solid-js'
 import type { WorkspaceId } from '../components/TopNav'
 
 export type UXMode = 'beginner' | 'professional' | 'expert'
+export type WorkSubTabKey = 'chat' | 'brio' | 'terminal' | 'agents' | 'tools' | 'files'
 
 const UX_MODE_KEY = 'mira_ux_mode'
 
@@ -28,13 +21,19 @@ const MODE_WORKSPACES: Record<UXMode, WorkspaceId[]> = {
   expert: ['work', 'missions', 'intelligence', 'changes', 'system', 'evolution', 'dashboard'],
 }
 
+const MODE_WORK_SUBTABS: Record<UXMode, WorkSubTabKey[]> = {
+  beginner: ['chat', 'files'],
+  professional: ['chat', 'terminal', 'agents', 'tools', 'files'],
+  expert: ['chat', 'brio', 'terminal', 'agents', 'tools', 'files'],
+}
+
 export const UX_MODES: Array<{ id: UXMode; label: string; hint: string }> = [
-  { id: 'beginner', label: 'Beginner', hint: 'Chat & changes only — simple by default' },
-  { id: 'professional', label: 'Pro', hint: 'Missions, memory, system config' },
+  { id: 'beginner', label: 'Standard', hint: 'Chat, workspace files, and changes — clean by default' },
+  { id: 'professional', label: 'Pro', hint: 'Adds missions, intelligence, terminal, agents, tools, and system config' },
   {
     id: 'expert',
     label: 'Expert',
-    hint: 'Full system visibility: evolution, dashboard, governance',
+    hint: 'Full operator visibility: evolution, Brio scoring, analytics, and system telemetry',
   },
 ]
 
@@ -71,4 +70,14 @@ export function visibleWorkspaces(m: UXMode = mode()): WorkspaceId[] {
 /** Whether a workspace is reachable in the given (or current) mode. */
 export function workspaceVisible(ws: WorkspaceId, m: UXMode = mode()): boolean {
   return MODE_WORKSPACES[m].includes(ws)
+}
+
+/** Sub-tabs under Work visible in the given (or current) mode. */
+export function visibleWorkSubTabs(m: UXMode = mode()): WorkSubTabKey[] {
+  return MODE_WORK_SUBTABS[m]
+}
+
+/** Whether the System Overview telemetry drawer should be exposed. */
+export function telemetryDrawerEnabled(m: UXMode = mode()): boolean {
+  return m === 'expert'
 }

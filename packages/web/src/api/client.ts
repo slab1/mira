@@ -261,6 +261,96 @@ export type PatchProposal = {
   canaryConfig?: CanaryConfig
 }
 
+export type GenerationStatus =
+  | 'candidate'
+  | 'verifying'
+  | 'promoted_pending_approval'
+  | 'promoted'
+  | 'rejected'
+  | 'pruned'
+
+export type GenerationNodeDTO = {
+  id: string
+  parentId: string | null
+  depth: number
+  proposalId: string | null
+  strategyArm: string
+  title: string
+  targetFile: string | null
+  patch: string
+  patchHash: string
+  summary: string
+  status: GenerationStatus
+  isActiveBase: boolean
+  trainScore: number
+  heldOutScore: number
+  generalizationGap: number
+  rewardHackingScore: number
+  hackingFindings: Array<{
+    id: string
+    category: string
+    severity: string
+    penalty: number
+    detail: string
+  }>
+  suiteBreakdown: Array<{
+    domain: string
+    score: number
+    passed: boolean
+    reason: string
+  }>
+  contextTokensUsed: number
+  approvedBy: string | null
+  rejectedReason: string | null
+  createdAt: number
+  updatedAt: number
+  promotedAt: number | null
+}
+
+export type BanditArmDTO = {
+  armId: string
+  label: string
+  description: string
+  pulls: number
+  successes: number
+  totalReward: number
+  meanReward: number
+  lastUcbScore: number
+  avgHeldOutDelta: number
+  hackingBlockedCount: number
+  updatedAt: number
+}
+
+export type BoundedContextStatsDTO = {
+  budgetTokens: number
+  usedTokens: number
+  utilizationPct: number
+  retainedCount: number
+  compactedCount: number
+  truncatedCount: number
+  prunedDeadEnds: number
+  compactedDigest: string
+}
+
+export type LineageResponseDTO = {
+  ok: boolean
+  activeBase: GenerationNodeDTO
+  generations: GenerationNodeDTO[]
+  banditArms: BanditArmDTO[]
+  contextStats: BoundedContextStatsDTO
+  summary: {
+    totalGenerations: number
+    maxDepth: number
+    pendingApprovalCount: number
+    promotedCount: number
+    rejectedCount: number
+    hackingBlockedCount: number
+    activeBaseId: string
+    activeBaseDepth: number
+    activeBaseHeldOutScore: number
+  }
+}
+
 // ── Settings types ─────────────────────────────────────────────────
 export type ThemeChoice = 'light' | 'dark' | 'system'
 
@@ -1650,6 +1740,74 @@ export const api = {
       if (!Array.isArray(files)) return []
       return files.map((f) => (typeof f === 'string' ? f : f.path))
     }),
+  getWorkspaceTreePage: (opts?: {
+    cwd?: string
+    cursor?: string | null
+    limit?: number
+    includeDirs?: boolean
+  }) => {
+    const params = new URLSearchParams()
+    if (opts?.cwd) params.set('cwd', opts.cwd)
+    if (opts?.cursor) params.set('cursor', opts.cursor)
+    if (opts?.limit) params.set('limit', String(opts.limit))
+    if (opts?.includeDirs !== false) params.set('includeDirs', 'true')
+    const qs = params.toString()
+    return req<{
+      files: Array<{ path: string; isDir: boolean; size: number; mtime: number }>
+      truncated: boolean
+      cwd: string
+      nextCursor: string | null
+    }>(qs ? `/workspace/tree?${qs}` : '/workspace/tree')
+  },
+  readWorkspaceFile: (path: string, cwd?: string) => {
+    const params = new URLSearchParams({ path })
+    if (cwd) params.set('cwd', cwd)
+    return req<{
+      ok: boolean
+      path: string
+      cwd: string
+      size: number
+      mtime: number
+      binary: boolean
+      tooLarge: boolean
+      content: string | null
+      lines: number
+    }>(`/workspace/file?${params.toString()}`)
+  },
+  writeWorkspaceFile: (body: {
+    path: string
+    content: string
+    cwd?: string
+    sessionId?: string
+    createOnly?: boolean
+  }) =>
+    req<{
+      ok: boolean
+      path: string
+      cwd: string
+      size: number
+      mtime: number
+      created: boolean
+      snapshotId: string | null
+    }>('/workspace/file', {
+      method: body.createOnly ? 'POST' : 'PUT',
+      body: JSON.stringify({
+        path: body.path,
+        content: body.content,
+        ...(body.cwd ? { cwd: body.cwd } : {}),
+        ...(body.sessionId ? { sessionId: body.sessionId } : {}),
+      }),
+    }),
+  getWorkspaceGitStatus: (cwd?: string) => {
+    const params = new URLSearchParams()
+    if (cwd) params.set('cwd', cwd)
+    const qs = params.toString()
+    return req<{
+      isGitRepo: boolean
+      branch: string | null
+      files: Record<string, string>
+    }>(qs ? `/workspace/git-status?${qs}` : '/workspace/git-status')
+  },
   getPermission: (cwd?: string) =>
     req<PermissionMatrix>(cwd ? `/permission?cwd=${encodeURIComponent(cwd)}` : '/permission'),
 
@@ -1915,6 +2073,39 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ reason }),
     }),
+
+  // ── AIDE² Recursive Lineage & Bandit Search ───────────────────
+  getEvolutionLineage: (status?: string) =>
+    req<LineageResponseDTO>(
+      status ? `/evolution/lineage?status=${encodeURIComponent(status)}` : '/evolution/lineage',
+    ),
+
+  runBanditSearchStep: (opts?: { k?: number; budgetTokens?: number; strategyArm?: string }) =>
+    req<LineageResponseDTO & { stepResult: { stepId: string; bestCandidateId: string | null } }>(
+      '/evolution/search/step',
+      {
+        method: 'POST',
+        body: JSON.stringify(opts ?? {}),
+      },
+    ),
+
+  promoteGeneration: (id: string, expectedHash?: string) =>
+    req<{ ok: boolean; generation: GenerationNodeDTO; activeBase: GenerationNodeDTO }>(
+      `/evolution/generations/${encodeURIComponent(id)}/promote`,
+      {
+        method: 'POST',
+        body: JSON.stringify(expectedHash ? { expectedHash } : {}),
+      },
+    ),
+
+  rejectGeneration: (id: string, reason?: string) =>
+    req<{ ok: boolean; generation: GenerationNodeDTO; activeBase: GenerationNodeDTO }>(
+      `/evolution/generations/${encodeURIComponent(id)}/reject`,
+      {
+        method: 'POST',
+        body: JSON.stringify(reason ? { reason } : {}),
+      },
+    ),
 
   // ── Online Deep Research ───────────────────────────────────────────
   researchStatus: () =>
