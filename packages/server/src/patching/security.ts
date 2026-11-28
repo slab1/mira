@@ -26,6 +26,9 @@ export type SecurityKind =
   | 'sql-injection'
   | 'insecure-transport'
   | 'weak-cryptography'
+  | 'control-plane-tamper'
+  | 'test-weakening'
+  | 'dependency-risk'
 
 export interface SecurityIssue extends Record<string, JsonValue> {
   id: string
@@ -38,6 +41,7 @@ export interface SecurityIssue extends Record<string, JsonValue> {
 }
 
 import type { JsonValue } from '../types/index.js'
+import { detectControlPlaneTampering } from '../evolution/control-plane.js'
 
 /** Narrow untyped tool args to a string-keyed record (JsonValue-tolerant). */
 function argStr(args: JsonValue, key: string): string | undefined {
@@ -342,6 +346,26 @@ export class SecurityScanner {
       issues.push(...this.scanText(input.text))
       issues.push(...this.scanCode(input.text))
     }
+    if (input.text || input.route) {
+      const tamperFindings = detectControlPlaneTampering(
+        input.text ?? '',
+        input.route ? [input.route] : undefined,
+      )
+      for (const finding of tamperFindings) {
+        const isTestWeakening = finding.startsWith('test weakening:')
+        issues.push(
+          this.issue(
+            isTestWeakening ? 'test-weakening' : 'control-plane-tamper',
+            isTestWeakening ? 'high' : 'critical',
+            finding,
+            (input.route ?? input.text ?? '').slice(0, 200),
+            isTestWeakening
+              ? 'Keep test assertions intact and assert real behavior'
+              : 'Protected control-plane files require maintainer authorization and CI/CODEOWNERS review',
+          ),
+        )
+      }
+    }
     if (input.fileContent) {
       issues.push(...this.scanText(input.fileContent))
       issues.push(...this.scanFileContent(input.fileContent))
@@ -547,6 +571,12 @@ export class SecurityScanner {
       suggestions.push('Re-enable TLS verification; pin a CA if pinning is required')
     if (byKind.has('permission-bypass'))
       suggestions.push('Enforce authorization server-side; remove disabled-check shortcuts')
+    if (byKind.has('control-plane-tamper'))
+      suggestions.push(
+        'Do not modify protected control-plane files or bypass security/approval/rollback controls in autonomous patches',
+      )
+    if (byKind.has('test-weakening'))
+      suggestions.push('Restore full test assertions and remove skipped/tautological tests')
     return suggestions
   }
 

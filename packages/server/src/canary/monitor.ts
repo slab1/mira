@@ -55,12 +55,20 @@ export class CanaryMonitor {
   private statuses = new Map<string, CanaryHealth>()
   private timers = new Map<string, ReturnType<typeof setInterval>>()
   private errorCounts = new Map<string, number>()
+  private sampleCounts = new Map<string, number>()
+  private onHealthUpdate?: (canaryId: string, health: CanaryHealth, metrics: CanaryMetrics) => void
   private unsub?: () => void
 
-  constructor(opts: { bus?: Bus; metrics?: MetricsCollector; gatewayRegistry?: unknown }) {
+  constructor(opts: {
+    bus?: Bus
+    metrics?: MetricsCollector
+    gatewayRegistry?: unknown
+    onHealthUpdate?: (canaryId: string, health: CanaryHealth, metrics: CanaryMetrics) => void
+  }) {
     this.bus = opts.bus as Bus | undefined
     this.metrics = opts.metrics as MetricsCollector | undefined
     this.gatewayRegistry = opts.gatewayRegistry as CanaryMonitor['gatewayRegistry']
+    this.onHealthUpdate = opts.onHealthUpdate
     // Subscribe to Bus for error signals (server.error, gateway.fallback, evolution.*) to track errors per canary
     try {
       if (this.bus) {
@@ -87,6 +95,7 @@ export class CanaryMonitor {
     this.history.set(canaryId, [{ ...baseline }])
     this.statuses.set(canaryId, 'healthy')
     this.errorCounts.set(canaryId, 0)
+    this.sampleCounts.set(canaryId, 0)
     // poll every minute (60000ms) per spec: Bus + metrics + gateway stats
     this.startPolling(canaryId, 60_000)
   }
@@ -105,9 +114,13 @@ export class CanaryMonitor {
     // cap history to 1000 per canary
     if (list.length > 1000) list.shift()
     this.history.set(canaryId, list)
+    this.sampleCounts.set(canaryId, (this.sampleCounts.get(canaryId) ?? 0) + 1)
 
     const health = this.checkGates(base, metrics)
     this.statuses.set(canaryId, health)
+    try {
+      this.onHealthUpdate?.(canaryId, health, metrics)
+    } catch {}
   }
 
   /** Poll Bus + metrics + gateway stats and synthesize a CanaryMetrics sample */
@@ -190,6 +203,10 @@ export class CanaryMonitor {
 
   getHealth(canaryId: string): CanaryHealth {
     return this.statuses.get(canaryId) ?? 'healthy'
+  }
+
+  getSampleCount(canaryId: string): number {
+    return this.sampleCounts.get(canaryId) ?? 0
   }
 
   /** +20%/-0.5pp gates + circuit breaker → healthy|degraded|failed */
@@ -283,12 +300,14 @@ export class CanaryMonitor {
       this.baselines.delete(canaryId)
       this.statuses.delete(canaryId)
       this.errorCounts.delete(canaryId)
+      this.sampleCounts.delete(canaryId)
     } else {
       for (const id of [...this.timers.keys()]) this.stopPolling(id)
       this.history.clear()
       this.baselines.clear()
       this.statuses.clear()
       this.errorCounts.clear()
+      this.sampleCounts.clear()
     }
   }
 

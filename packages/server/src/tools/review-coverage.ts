@@ -4,6 +4,7 @@ import {
   generateReviewCoverageManifest,
   listReviewManifests,
   updateReviewManifest,
+  validateReviewPatch,
   ReviewSectionIdSchema,
   ReviewDispositionSchema,
   ReviewFindingSchema,
@@ -18,6 +19,7 @@ const schema = z.object({
   disposition: ReviewDispositionSchema.optional(),
   reason: z.string().optional(),
   evidenceRefs: z.array(z.string()).optional(),
+  testCommand: z.string().optional(),
   finding: ReviewFindingSchema.optional(),
 })
 
@@ -55,29 +57,40 @@ export const reviewCoverageTool = {
     if (!id) throw new Error('No review coverage manifest found; call action: "generate" first.')
 
     if (args.action === 'mark_section' && args.sectionId && args.disposition) {
-      const updated = await updateReviewManifest(ctx.db, id, {
+      const patch = {
         section: {
           id: args.sectionId,
           disposition: args.disposition,
           reason: args.reason,
           evidenceRefs: args.evidenceRefs,
+          testCommand: args.testCommand,
         },
-      })
+      }
+      const err = validateReviewPatch(patch)
+      if (err) throw new Error(err)
+      const updated = await updateReviewManifest(ctx.db, id, patch)
       return updated as unknown as JsonValue
     }
     if (args.action === 'mark_item' && args.itemId && args.disposition) {
-      const updated = await updateReviewManifest(ctx.db, id, {
+      const patch = {
         item: {
           id: args.itemId,
           disposition: args.disposition,
           reason: args.reason,
           evidenceRefs: args.evidenceRefs,
+          testCommand: args.testCommand,
         },
-      })
+      }
+      const err = validateReviewPatch(patch)
+      if (err) throw new Error(err)
+      const updated = await updateReviewManifest(ctx.db, id, patch)
       return updated as unknown as JsonValue
     }
     if (args.action === 'record_finding' && args.finding) {
-      const updated = await updateReviewManifest(ctx.db, id, { finding: args.finding })
+      const patch = { finding: args.finding }
+      const err = validateReviewPatch(patch)
+      if (err) throw new Error(err)
+      const updated = await updateReviewManifest(ctx.db, id, patch)
       return updated as unknown as JsonValue
     }
     throw new Error(`Invalid parameters for review_coverage action=${args.action}`)

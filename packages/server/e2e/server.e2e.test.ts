@@ -6,12 +6,16 @@
  * → bus events → SQLite persistence → export/fork.
  */
 import { describe, test, beforeAll, afterAll, expect } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const PORT = 4788
 const BASE = `http://localhost:${PORT}`
 const TOKEN = 'test-e2e-token'
 const AUTH = { Authorization: `Bearer ${TOKEN}` }
 let serverProc: ReturnType<typeof Bun.spawn> | null = null
+let e2eTempDir = ''
 
 async function waitForHealth(timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs
@@ -26,8 +30,9 @@ async function waitForHealth(timeoutMs = 60_000) {
 }
 
 beforeAll(async () => {
-  const { resolveBunBinary, safeTempFile } = await import('../../shared/src/utils/paths.js')
+  const { resolveBunBinary } = await import('../../shared/src/utils/paths.js')
   const BUN_BIN = resolveBunBinary()
+  e2eTempDir = mkdtempSync(join(tmpdir(), 'mira-server-e2e-'))
   const {
     MIRA_TOKEN: _mt,
     MIRA_API_KEYS: _mak,
@@ -37,8 +42,11 @@ beforeAll(async () => {
     cwd: import.meta.dir + '/..',
     env: {
       ...cleanEnv,
+      HOME: e2eTempDir,
+      XDG_CONFIG_HOME: e2eTempDir,
+      MIRA_DIR: join(e2eTempDir, '.mira'),
       PORT: String(PORT),
-      MIRA_DB: safeTempFile('mira-e2e-test.db'),
+      MIRA_DB: join(e2eTempDir, 'mira-e2e-test.db'),
       MIRA_TOKEN: TOKEN,
       // Isolate from ~/.mira/mira.env — otherwise provisionFirstRunToken
       // overwrites MIRA_TOKEN with the host file and every Bearer 401s.
@@ -50,8 +58,16 @@ beforeAll(async () => {
   await waitForHealth()
 }, 90_000) // server boot here is slow (~14s in sandbox); exceed bun's 5s default hook timeout
 
-afterAll(() => {
-  serverProc?.kill()
+afterAll(async () => {
+  try {
+    serverProc?.kill()
+    if (serverProc) await Promise.race([serverProc.exited, Bun.sleep(2000)])
+  } catch {}
+  if (e2eTempDir) {
+    try {
+      rmSync(e2eTempDir, { recursive: true, force: true })
+    } catch {}
+  }
 })
 
 describe('Mira server E2E', () => {
@@ -161,15 +177,16 @@ describe('Mira server E2E', () => {
   })
 
   test('config layered settings + PATCH persistence', async () => {
+    const cwdParam = `cwd=${encodeURIComponent(e2eTempDir)}`
     // GET /config returns the flat merged config (apiKeys redacted); layers at /config/layers
-    const cfgRes = await fetch(`${BASE}/config`, { headers: AUTH })
+    const cfgRes = await fetch(`${BASE}/config?${cwdParam}`, { headers: AUTH })
     expect(cfgRes.status).toBe(200)
     const cfg = (await cfgRes.json()) as {
       model: string
       provider: Record<string, { options: { apiKey: string } }>
     }
     expect(typeof cfg.model).toBe('string')
-    const layersRes = await fetch(`${BASE}/config/layers`, { headers: AUTH })
+    const layersRes = await fetch(`${BASE}/config/layers?${cwdParam}`, { headers: AUTH })
     expect(layersRes.status).toBe(200)
     const layerInfo = (await layersRes.json()) as {
       merged: { model: string }
@@ -188,9 +205,9 @@ describe('Mira server E2E', () => {
     expect(typeof schema.properties).toBe('object')
     expect(schema.properties?.['model']).toBeDefined()
 
-    // PATCH /config (project layer) → round-trips; accepts both { patch } and flat body
+    // PATCH /config (project layer inside temp cwd) → round-trips without mutating repo files
     const testModel = 'openrouter/test-e2e-model'
-    const patched = await fetch(`${BASE}/config`, {
+    const patched = await fetch(`${BASE}/config?${cwdParam}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...AUTH },
       body: JSON.stringify({ patch: { model: testModel }, layer: 'project' }),
@@ -200,13 +217,13 @@ describe('Mira server E2E', () => {
     expect(afterPatch.model).toBe(testModel)
 
     // GET again confirms persistence
-    const cfg2 = (await (await fetch(`${BASE}/config`, { headers: AUTH })).json()) as {
+    const cfg2 = (await (await fetch(`${BASE}/config?${cwdParam}`, { headers: AUTH })).json()) as {
       model: string
     }
     expect(cfg2.model).toBe(testModel)
 
-    // Revert to default to not pollute later runs
-    const revert = await fetch(`${BASE}/config`, {
+    // Revert inside temp cwd
+    const revert = await fetch(`${BASE}/config?${cwdParam}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...AUTH },
       body: JSON.stringify({
@@ -217,7 +234,7 @@ describe('Mira server E2E', () => {
     expect(revert.status).toBe(200)
 
     // Invalid patch → 400
-    const bad = await fetch(`${BASE}/config`, {
+    const bad = await fetch(`${BASE}/config?${cwdParam}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...AUTH },
       body: JSON.stringify({ patch: null }),

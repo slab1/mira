@@ -253,17 +253,35 @@ export class OnlineResearchService {
     return row ? rowToDTO(row) : null
   }
 
-  async listRuns(opts?: { sessionID?: string; ownerID?: string; limit?: number }): Promise<ResearchRunDTO[]> {
+  async listRuns(opts?: {
+    sessionID?: string
+    ownerID?: string
+    orgID?: string | null
+    isAdmin?: boolean
+    includeLegacy?: boolean
+    strictOwnership?: boolean
+    limit?: number
+  }): Promise<ResearchRunDTO[]> {
     const limit = Math.min(opts?.limit ?? 40, 100)
+    if (opts?.strictOwnership && !opts.ownerID) return []
     const rows = await this.deps.db.query.researchRuns.findMany({
       orderBy: desc(this.deps.db.schema.researchRuns.updatedAt),
-      limit: limit * 2,
+      limit: limit * 3,
     })
     return rows
       .filter((r) => {
         if (opts?.sessionID && r.sessionID !== opts.sessionID && r.branchSessionID !== opts.sessionID)
           return false
-        if (opts?.ownerID && r.ownerID && r.ownerID !== opts.ownerID) return false
+        if (opts?.strictOwnership || opts?.ownerID !== undefined) {
+          if (!opts.ownerID) return false
+          if (!r.ownerID) {
+            return Boolean(opts.isAdmin && opts.includeLegacy)
+          }
+          if (r.ownerID === opts.ownerID) {
+            return !r.orgID || !opts.orgID || r.orgID === opts.orgID
+          }
+          return Boolean(r.orgID && opts.orgID && r.orgID === opts.orgID)
+        }
         return true
       })
       .slice(0, limit)

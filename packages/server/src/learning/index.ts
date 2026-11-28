@@ -328,6 +328,11 @@ export function createLearningSystem(deps: LearningSystemDeps = {}): LearningSys
 export function mountLearningRoutes(
   app: Hono<{ Variables: { requestId: string } }>,
   system: LearningSystem,
+  auth?: {
+    resolveOwner?: (token: string) => string | undefined
+    resolveRole?: (token: string) => import('../auth/roles.js').Role
+    requireAuth?: boolean
+  },
 ): void {
   // Governance proposal routes (/evolution/proposals*) — wired to the
   // GovernanceGate created in createLearningSystem(). Idempotent: no-ops if
@@ -346,6 +351,9 @@ export function mountLearningRoutes(
     rollbackManager: new RollbackManager({ db: system.db, bus: system.bus }),
     resourceLimits,
     ledger,
+    resolveOwner: auth?.resolveOwner,
+    resolveRole: auth?.resolveRole,
+    requireAuth: auth?.requireAuth,
   })
 
   // Workspace items — persistent workspace awareness (issues, decisions, roadmap, tech-debt).

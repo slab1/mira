@@ -302,19 +302,17 @@ function restoreRow(row: SnapshotRow, workspace: string): void {
   if (!path) throw new Error('snapshot path is outside the canonical session workspace')
   const content: string | null = row.content ?? null
   if (row.content === null) {
-    // File was created by the agent — remove it
-    if (path) {
-      try {
-        unlinkSync(path)
-      } catch {}
+    // File was created by the agent — remove it (ignore only if already absent)
+    try {
+      unlinkSync(path)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+        throw err
+      }
     }
   } else {
-    if (path) {
-      try {
-        mkdirSync(dirname(path), { recursive: true })
-        writeFileSync(path, content ?? '', 'utf-8')
-      } catch {}
-    }
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, content ?? '', 'utf-8')
   }
 }
 

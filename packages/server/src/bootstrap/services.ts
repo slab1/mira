@@ -1,6 +1,6 @@
 /**
  * Service Initialization
- * Initialize all core services: Bus, Permissions, Guardrails, Gateway, etc.
+ * Initialize all core services aligned with bootstrap/main.ts
  */
 
 import { Bus } from '../bus/index.js'
@@ -9,8 +9,14 @@ import { GatewayRouter, createRoutingGateway } from '../gateway/router.js'
 import { ToolRegistry } from '../tools/registry.js'
 import { PermissionManager } from '../permission/index.js'
 import { MCPManager } from '../mcp/index.js'
-import { GuardrailsManager, parseEnforceEnv, isProductionEnvironment, warnIfEnforcementOffInProduction } from '../guardrails/index.js'
-import { createLearningSystem } from '../learning/index.js'
+import {
+  GuardrailsManager,
+  parseEnforceEnv,
+  isProductionEnvironment,
+  warnIfEnforcementOffInProduction,
+} from '../guardrails/index.js'
+import { createLearningSystem, type LearningSystem } from '../learning/index.js'
+import { SessionPrompt } from '../session/prompt.js'
 import { createRepoGraph } from '../repo/graph.js'
 import { createSemanticGraph } from '../repo/semantic.js'
 import { codeGraphFor } from '../codegraph/index.js'
@@ -20,6 +26,24 @@ import { ShadowMira } from '../shadow/shadow.js'
 import { CoordinationHub, createSqliteCoordinationStore } from '../agents/coordination.js'
 import { ImprovementLedger } from '../evolution/ledger.js'
 import { EvolutionObserver } from '../evolution/observer.js'
+import { EvolutionMemory } from '../memory-evolution/evolution-memory.js'
+import { OnlineResearchService } from '../research/online-research.js'
+import { EngineRegistry } from '../engines/registry.js'
+import { AgentEngine } from '../engines/agent.js'
+import { MemoryEngine } from '../engines/memory.js'
+import { RetrievalEngine } from '../engines/retrieval.js'
+import { PlanningEngine } from '../engines/planning.js'
+import { EvaluationEngine } from '../engines/evaluation.js'
+import { LearningEngine } from '../engines/learning.js'
+import { ToolEngine } from '../engines/tool.js'
+import { SecurityEngine } from '../engines/security.js'
+import { ModelEngine } from '../engines/model.js'
+import { EvolutionEngine } from '../engines/evolution.js'
+import { ShadowEngine } from '../engines/shadow.js'
+import { LedgerEngine } from '../engines/ledger.js'
+import { ResearchEngine } from '../engines/research.js'
+import { PatchEngine } from '../engines/patch.js'
+import { SelfHealingEngine } from '../engines/self-healing.js'
 import type { MiraDB } from '../storage/db.js'
 import type { MiraConfig } from '../types/index.js'
 import { log } from '../util/logger.js'
@@ -31,99 +55,228 @@ export interface Services {
   registry: SubgatewayRegistry
   router: GatewayRouter
   gateway: ReturnType<typeof createRoutingGateway>
-  learning: ReturnType<typeof createLearningSystem>
+  learning: LearningSystem
   repoGraph: ReturnType<typeof createRepoGraph>
   semanticGraph: ReturnType<typeof createSemanticGraph>
   codeGraph: ReturnType<typeof codeGraphFor>
   tools: ToolRegistry
   mcp: MCPManager
-  prompt: any // SessionPrompt
+  prompt: SessionPrompt
   latencyTracker: LatencyTracker
+  engineRegistry: EngineRegistry
   canary: CanaryManager
   shadow: ShadowMira | null
   coordination: CoordinationHub
   ledger: ImprovementLedger
   observer: EvolutionObserver
+  onlineResearch: OnlineResearchService
+  evolutionMemory: EvolutionMemory
 }
 
 /**
- * Initialize all core services
+ * Initialize all core services consistently with main.ts
  */
 export async function initializeServices(config: MiraConfig, db: MiraDB): Promise<Services> {
   log(`initializing services...`)
 
-  // Bus - Event bus for communication
   const bus = new Bus()
-  log(`bus initialized`)
+  const permissions = new PermissionManager(config.permission)
+  const guardrails = new GuardrailsManager(undefined, config, db)
+  const enforce = parseEnforceEnv() ?? config.guardrails?.enforce ?? isProductionEnvironment()
+  warnIfEnforcementOffInProduction(enforce)
 
-  // Permissions
-  const permissions = new PermissionManager((config.permission as any) ?? {})
-  log(`permissions initialized`)
+  const registry = new SubgatewayRegistry(config)
+  const router = new GatewayRouter(registry, config)
+  const gateway = createRoutingGateway(registry, router)
 
-  // Guardrails
-  const guardrails = new GuardrailsManager((config.guardrails as any) ?? {}, bus as any)
-  const enforce = parseEnforceEnv()
-  if (isProductionEnvironment() && !enforce) {
-    warnIfEnforcementOffInProduction(true as any)
-  }
-  log(`guardrails initialized (enforce=${enforce})`)
-
-  // Subgateway Registry
-  const registry = new SubgatewayRegistry(config as any, bus as any)
-  log(`subgateway registry initialized`)
-
-  // Gateway Router
-  const router = new GatewayRouter(config as any, registry as any)
-  log(`gateway router initialized`)
-
-  // Routing Gateway
-  const gateway = createRoutingGateway(config as any, router as any) as any
-  log(`routing gateway initialized`)
-
-  // Learning System
-  const learning = createLearningSystem(db as any) as any
-  log(`learning system initialized`)
-
-  // Graphs
-  const repoGraph = createRepoGraph({ rootDir: process.cwd() } as any)
-  const semanticGraph = createSemanticGraph({ rootDir: process.cwd() } as any)
-  const codeGraph = codeGraphFor(db as any)
-  log(`graphs initialized`)
-
-  // Tool Registry
-  const tools = new ToolRegistry(bus as any)
-  await tools.registerAll()
-  log(`tool registry initialized`)
-
-  // MCP Manager
-  const mcp = new MCPManager({ bus, tools, config } as any)
-  await mcp.connectAll()
-  log(`MCP manager initialized`)
-
-  // Latency Tracker
   const latencyTracker = new LatencyTracker()
-  log(`latency tracker initialized`)
+  const learning = createLearningSystem({
+    db,
+    bus,
+    gateway,
+    measurementTracker: () => latencyTracker,
+  })
+  await learning.knowledge.load()
 
-  // Canary Manager
-  const canary = new CanaryManager({ db, bus } as any)
-  log(`canary manager initialized`)
+  const repoGraph = createRepoGraph({ db, rootDir: process.cwd() })
+  const semanticGraph = createSemanticGraph({ db, rootDir: process.cwd() })
+  const codeGraph = codeGraphFor(db)
 
-  // Coordination Hub
-  const coordinationStore = createSqliteCoordinationStore(db as any)
-  const coordination = new CoordinationHub(coordinationStore as any)
-  log(`coordination hub initialized`)
+  const tools = new ToolRegistry({ db, bus, permissions, gateway, guardrails })
+  await tools.registerAll()
 
-  // Shadow Mira (optional)
-  let shadow: ShadowMira | null = null
-  if (config.features?.shadowMira) {
-    shadow = new ShadowMira({ registry, bus } as any)
-    log(`shadow mira initialized`)
+  const mcp = new MCPManager({ bus, tools, config: config.mcp })
+  await mcp.connectAll()
+
+  const prompt = new SessionPrompt({
+    db,
+    bus,
+    gateway,
+    registry,
+    router,
+    tools,
+    permissions,
+    knowledge: learning.knowledge,
+    usage: learning.usage as any,
+  })
+  tools.setSubagentRunner((opts) =>
+    prompt.runSubagent({
+      prompt: opts.prompt,
+      parentID: opts.parentID,
+      agent: opts.agent,
+      model: opts.model,
+      title: opts.title,
+      cwd: opts.cwd,
+      signal: opts.signal,
+      onSessionCreated: opts.onSessionCreated,
+    }),
+  )
+  tools.setDefaultCtx({ db, bus, forkRunner: (opts) => prompt.forkSession(opts) })
+
+  const ledger = new ImprovementLedger(db, bus)
+  const observer = new EvolutionObserver({
+    bus,
+    registry: registry as unknown as { hasKey: (k: string) => boolean },
+  })
+
+  const hasKeyCheck = (k: string): boolean => {
+    try {
+      const cfg = (
+        config as unknown as {
+          provider?: Record<string, { options?: { apiKey?: string | string[] } }>
+        }
+      ).provider?.[k]
+      if (!cfg?.options?.apiKey) return false
+      const vals = Array.isArray(cfg.options.apiKey) ? cfg.options.apiKey : [cfg.options.apiKey]
+      return vals.some((v) => {
+        const expanded = String(v).replace(
+          /\{env:([^}]+)\}/g,
+          (_: string, name: string) => process.env[name] ?? '',
+        )
+        return !!expanded.trim()
+      })
+    } catch {
+      return false
+    }
   }
 
-  // Evolution
-  const ledger = new ImprovementLedger(db as any, bus as any)
-  const observer = new EvolutionObserver({ bus, ledger } as any)
-  log(`evolution system initialized`)
+  const engineRegistry = new EngineRegistry()
+  engineRegistry.register(new AgentEngine())
+  engineRegistry.register(new MemoryEngine())
+  engineRegistry.register(new RetrievalEngine())
+  engineRegistry.register(new PlanningEngine())
+  engineRegistry.register(new EvaluationEngine())
+  engineRegistry.register(
+    new LearningEngine({
+      schedulerStatus: () => {
+        try {
+          return learning.scheduler.status()
+        } catch {
+          return null
+        }
+      },
+    }),
+  )
+  engineRegistry.register(
+    new ToolEngine({
+      count: () => {
+        try {
+          return tools.count()
+        } catch {
+          return 0
+        }
+      },
+      hasKey: hasKeyCheck,
+    }),
+  )
+  engineRegistry.register(new SecurityEngine())
+  engineRegistry.register(
+    new ModelEngine({
+      providerKeys: () => Object.keys(config.provider ?? {}),
+      hasKey: hasKeyCheck,
+      healthSnapshot: () => {
+        try {
+          return (
+            registry as unknown as {
+              healthSnapshot: () => {
+                lanes: Record<string, unknown>
+                providers: Record<string, unknown>
+              }
+            }
+          ).healthSnapshot()
+        } catch {
+          return { lanes: {}, providers: {} }
+        }
+      },
+      primary: 'nvidia',
+      fallback: 'colibri',
+    }),
+  )
+  engineRegistry.register(
+    new EvolutionEngine({
+      proposalCount: async () => {
+        try {
+          return (await learning.governance?.list())?.length ?? 0
+        } catch {
+          return 0
+        }
+      },
+    }),
+  )
+  engineRegistry.register(new ShadowEngine())
+  engineRegistry.register(
+    new LedgerEngine({
+      entryCount: async () => {
+        try {
+          return (await ledger.list(100))?.length ?? 0
+        } catch {
+          return 0
+        }
+      },
+    }),
+  )
+  engineRegistry.register(new ResearchEngine())
+  engineRegistry.register(new PatchEngine())
+  engineRegistry.register(new SelfHealingEngine())
+
+  let shadow: ShadowMira | null = null
+  if (config.features?.shadowMira !== false) {
+    shadow = new ShadowMira({
+      registry: engineRegistry,
+      bus,
+      gatewayRegistry: registry as unknown as { healthSnapshot: () => unknown },
+    })
+  }
+
+  let coordination: CoordinationHub
+  try {
+    coordination = new CoordinationHub({
+      store: createSqliteCoordinationStore(db),
+      strictPersistence: true,
+    })
+  } catch (coordErr) {
+    if (process.env.NODE_ENV === 'production') throw coordErr
+    coordination = new CoordinationHub()
+  }
+
+  const canary = new CanaryManager({
+    registry: engineRegistry,
+    bus,
+    ledger,
+    gatewayRegistry: registry as unknown as never,
+    shadow: shadow ?? undefined,
+  })
+
+  const onlineResearch = new OnlineResearchService({
+    db,
+    bus,
+    knowledge: learning.knowledge,
+    gateway,
+  })
+
+  const evolutionMemory = new EvolutionMemory(db, bus)
+
+  log(`services initialized`)
 
   return {
     bus,
@@ -138,12 +291,15 @@ export async function initializeServices(config: MiraConfig, db: MiraDB): Promis
     codeGraph,
     tools,
     mcp,
-    prompt: null,
+    prompt,
     latencyTracker,
+    engineRegistry,
     canary,
     shadow,
     coordination,
     ledger,
     observer,
+    onlineResearch,
+    evolutionMemory,
   }
 }

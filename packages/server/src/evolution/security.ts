@@ -20,6 +20,7 @@
 
 import type { Bus } from "../bus/index.js"
 import type { JsonValue } from "../types/index.js"
+import { detectControlPlaneTampering } from "./control-plane.js"
 
 export interface SecurityResult {
   passed: boolean
@@ -54,7 +55,7 @@ export class SecurityValidator {
   private bus?: Bus
   constructor(opts?: { bus?: Bus }) { this.bus = opts?.bus }
 
-  validate(patch: string): SecurityResult {
+  validate(patch: string, changedFiles?: string[]): SecurityResult {
     const findings: string[] = []
     const text = String(patch ?? "")
 
@@ -66,15 +67,22 @@ export class SecurityValidator {
     for (const { re, msg } of PERMISSION_PATTERNS) {
       if (re.test(text)) findings.push(msg)
     }
+    // protected control-plane & test/assertion weakening checks
+    for (const hit of detectControlPlaneTampering(text, changedFiles)) {
+      findings.push(hit)
+    }
     // static checks — treat external web content as untrusted (§10)
     if (text.length > 5000) findings.push("static: patch >5k chars — large blast radius, needs review")
     if (/eval\s*\(|Function\s*\(|child_process|execSync/i.test(text)) findings.push("static: patch uses eval/child_process — code injection risk")
-    // no secrets = pass, but permission escalation always fail
+    // fail closed on secrets, permission escalation, code injection, control-plane tampering, or test weakening
     const hasSecret = findings.some((f) => /secret|MIRA_TOKEN|API_KEY|private key|mira\.env|password/i.test(f))
     const hasEscalation = findings.some((f) => /permission escalation/i.test(f))
     const hasInjection = findings.some((f) => /eval|injection/i.test(f))
+    const hasControlPlaneTamper = findings.some((f) =>
+      /protected control-plane|test weakening/i.test(f),
+    )
 
-    const passed = !hasSecret && !hasEscalation && !hasInjection
+    const passed = !hasSecret && !hasEscalation && !hasInjection && !hasControlPlaneTamper
 
     if (findings.length > 0) {
       try {

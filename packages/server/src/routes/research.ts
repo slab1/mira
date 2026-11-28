@@ -33,6 +33,8 @@ const promoteSchema = z.object({
   title: z.string().optional(),
 })
 
+import type { Role } from '../auth/roles.js'
+
 export function mountResearchRoutes(
   app: Hono<{ Variables: { requestId: string } }>,
   deps: {
@@ -40,21 +42,72 @@ export function mountResearchRoutes(
     resolveOwner?: (t: string) => string | undefined
     bearerOf?: (header?: string) => string
     orgOfOwner?: (owner: string) => string | undefined
+    resolveRole?: (t: string) => Role
+    requireAuth?: boolean
   },
 ) {
-  const callerOwner = (c: Context) =>
-    deps.resolveOwner && deps.bearerOf
-      ? deps.resolveOwner(deps.bearerOf(c.req.header('Authorization')))
-      : undefined
+  const bearerFrom = (c: Context) => {
+    const h = c.req.header('Authorization')
+    if (deps.bearerOf) return deps.bearerOf(h)
+    return h?.startsWith('Bearer ') ? h.slice(7).trim() : ''
+  }
 
-  const canAccessRun = (c: Context, run: ResearchRunDTO | null): run is ResearchRunDTO => {
-    if (!run) return false
+  const callerOwner = (c: Context) => {
+    if (!deps.resolveOwner) return undefined
+    return deps.resolveOwner(bearerFrom(c))
+  }
+
+  const callerRole = (c: Context): Role | undefined => {
+    if (!deps.resolveRole) return undefined
+    const tok = bearerFrom(c)
+    if (!tok) return undefined
+    return deps.resolveRole(tok)
+  }
+
+  const authRequired = () =>
+    Boolean(deps.requireAuth || deps.resolveOwner || process.env.NODE_ENV === 'production')
+
+  const requireAuthenticated = (
+    c: Context,
+  ): { ok: true; ownerID: string | undefined; orgID: string | undefined; role: Role | undefined } | { ok: false; res: Response } => {
     const ownerID = callerOwner(c)
-    if (ownerID && run.ownerID && run.ownerID !== ownerID) return false
-    return true
+    if (authRequired() && !ownerID) {
+      return { ok: false, res: c.json({ error: 'Authentication required' }, 401) }
+    }
+    const orgID = ownerID && deps.orgOfOwner ? deps.orgOfOwner(ownerID) : undefined
+    const role = ownerID ? callerRole(c) : undefined
+    return { ok: true, ownerID, orgID, role }
+  }
+
+  const requireWritableRole = (c: Context, role: Role | undefined): Response | null => {
+    if (role === 'viewer') {
+      return c.json({ error: 'forbidden: viewer role is read-only' }, 403)
+    }
+    return null
+  }
+
+  const canAccessRun = (
+    ownerID: string | undefined,
+    orgID: string | undefined,
+    role: Role | undefined,
+    run: ResearchRunDTO | null,
+  ): run is ResearchRunDTO => {
+    if (!run) return false
+    if (authRequired() && !ownerID) return false
+    if (!run.ownerID) {
+      // Quarantine legacy ownerless records: never exposed silently to non-admin callers.
+      return role === 'admin'
+    }
+    if (!ownerID) return !authRequired()
+    if (run.ownerID === ownerID) {
+      return !run.orgID || !orgID || run.orgID === orgID
+    }
+    return Boolean(run.orgID && orgID && run.orgID === orgID)
   }
 
   app.get('/research/status', (c: Context) => {
+    const auth = requireAuthenticated(c)
+    if (!auth.ok) return auth.res
     const geminiConfigured = Boolean(resolveResearchGeminiKey())
     const firecrawlConfigured = Boolean(process.env.FIRECRAWL_API_KEY)
     const tavilyConfigured = Boolean(process.env.TAVILY_API_KEY)
@@ -73,27 +126,40 @@ export function mountResearchRoutes(
   })
 
   app.get('/research/runs', async (c: Context) => {
+    const auth = requireAuthenticated(c)
+    if (!auth.ok) return auth.res
     const sessionID = c.req.query('sessionId') ?? c.req.query('sessionID') ?? undefined
-    const ownerID = callerOwner(c)
-    const runs = await deps.service.listRuns({ sessionID, ownerID })
+    const includeLegacy = c.req.query('includeLegacy') === '1'
+    const runs = await deps.service.listRuns({
+      sessionID,
+      ownerID: auth.ownerID,
+      orgID: auth.orgID ?? null,
+      isAdmin: auth.role === 'admin',
+      includeLegacy,
+      strictOwnership: authRequired(),
+    })
     return c.json({ ok: true, runs })
   })
 
   app.get('/research/runs/:id', async (c: Context) => {
+    const auth = requireAuthenticated(c)
+    if (!auth.ok) return auth.res
     const id = c.req.param('id') ?? ''
     if (!id) return c.json({ error: 'Missing run ID' }, 400)
     const run = await deps.service.getRun(id)
-    if (!canAccessRun(c, run)) {
+    if (!canAccessRun(auth.ownerID, auth.orgID, auth.role, run)) {
       return c.json({ error: 'Research run not found' }, 404)
     }
     return c.json({ ok: true, run })
   })
 
   app.get('/research/runs/:id/stream', async (c: Context) => {
+    const auth = requireAuthenticated(c)
+    if (!auth.ok) return auth.res
     const id = c.req.param('id') ?? ''
     if (!id) return c.json({ error: 'Missing run ID' }, 400)
     const run = await deps.service.getRun(id)
-    if (!canAccessRun(c, run)) {
+    if (!canAccessRun(auth.ownerID, auth.orgID, auth.role, run)) {
       return c.json({ error: 'Research run not found' }, 404)
     }
 
@@ -132,12 +198,16 @@ export function mountResearchRoutes(
   })
 
   app.post('/research/runs', async (c: Context) => {
+    const auth = requireAuthenticated(c)
+    if (!auth.ok) return auth.res
+    const roleErr = requireWritableRole(c, auth.role)
+    if (roleErr) return roleErr
     const parsed = startSchema.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) {
       return c.json({ error: 'Invalid research request', issues: parsed.error.issues }, 400)
     }
-    const ownerID = callerOwner(c) ?? null
-    const orgID = ownerID && deps.orgOfOwner ? (deps.orgOfOwner(ownerID) ?? null) : null
+    const ownerID = auth.ownerID ?? null
+    const orgID = auth.orgID ?? null
     try {
       const run = await deps.service.startRun({
         ...parsed.data,
@@ -151,10 +221,14 @@ export function mountResearchRoutes(
   })
 
   app.post('/research/runs/:id/approve', async (c: Context) => {
+    const auth = requireAuthenticated(c)
+    if (!auth.ok) return auth.res
+    const roleErr = requireWritableRole(c, auth.role)
+    if (roleErr) return roleErr
     const id = c.req.param('id') ?? ''
     if (!id) return c.json({ error: 'Missing run ID' }, 400)
     const existing = await deps.service.getRun(id)
-    if (!canAccessRun(c, existing)) {
+    if (!canAccessRun(auth.ownerID, auth.orgID, auth.role, existing)) {
       return c.json({ error: 'Research run not found' }, 404)
     }
     const parsed = approveSchema.safeParse(await c.req.json().catch(() => ({})))
@@ -172,10 +246,14 @@ export function mountResearchRoutes(
   })
 
   app.post('/research/runs/:id/cancel', async (c: Context) => {
+    const auth = requireAuthenticated(c)
+    if (!auth.ok) return auth.res
+    const roleErr = requireWritableRole(c, auth.role)
+    if (roleErr) return roleErr
     const id = c.req.param('id') ?? ''
     if (!id) return c.json({ error: 'Missing run ID' }, 400)
     const existing = await deps.service.getRun(id)
-    if (!canAccessRun(c, existing)) {
+    if (!canAccessRun(auth.ownerID, auth.orgID, auth.role, existing)) {
       return c.json({ error: 'Research run not found' }, 404)
     }
     const run = await deps.service.cancelRun(id)
@@ -184,10 +262,14 @@ export function mountResearchRoutes(
   })
 
   app.post('/research/runs/:id/promote-memory', async (c: Context) => {
+    const auth = requireAuthenticated(c)
+    if (!auth.ok) return auth.res
+    const roleErr = requireWritableRole(c, auth.role)
+    if (roleErr) return roleErr
     const id = c.req.param('id') ?? ''
     if (!id) return c.json({ error: 'Missing run ID' }, 400)
     const existing = await deps.service.getRun(id)
-    if (!canAccessRun(c, existing)) {
+    if (!canAccessRun(auth.ownerID, auth.orgID, auth.role, existing)) {
       return c.json({ error: 'Research run not found' }, 404)
     }
     const parsed = promoteSchema.safeParse(await c.req.json().catch(() => ({})))

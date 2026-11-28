@@ -164,21 +164,139 @@ function classifySections(paths: string[]): Record<ReviewSectionId, string[]> {
   return map
 }
 
+export interface ReviewPatchInput {
+  section?: {
+    id: ReviewSectionId
+    disposition: ReviewDisposition
+    reason?: string
+    evidenceRefs?: string[]
+    testCommand?: string
+  }
+  item?: {
+    id: string
+    disposition: ReviewDisposition
+    reason?: string
+    evidenceRefs?: string[]
+    testCommand?: string
+  }
+  finding?: ReviewFinding
+}
+
+function hasNonEmptyRefs(refs?: string[]): boolean {
+  return Array.isArray(refs) && refs.some((r) => typeof r === 'string' && r.trim().length > 0)
+}
+
+export function validateReviewPatch(patch: ReviewPatchInput): string | null {
+  if (patch.section) {
+    const s = patch.section
+    if (s.disposition === 'inspected' && !hasNonEmptyRefs(s.evidenceRefs) && !s.reason?.trim()) {
+      return `Section "${s.id}" marked inspected requires non-empty evidenceRefs or reason`
+    }
+    if (s.disposition === 'tested' && !s.testCommand?.trim() && !hasNonEmptyRefs(s.evidenceRefs)) {
+      return `Section "${s.id}" marked tested requires testCommand or non-empty evidenceRefs`
+    }
+    if (s.disposition === 'not_applicable' && !s.reason?.trim()) {
+      return `Section "${s.id}" marked not_applicable requires a non-empty reason`
+    }
+  }
+  if (patch.item) {
+    const i = patch.item
+    if (i.disposition === 'inspected' && !hasNonEmptyRefs(i.evidenceRefs) && !i.reason?.trim()) {
+      return `Item "${i.id}" marked inspected requires non-empty evidenceRefs or reason`
+    }
+    if (i.disposition === 'tested' && !i.testCommand?.trim() && !hasNonEmptyRefs(i.evidenceRefs)) {
+      return `Item "${i.id}" marked tested requires testCommand or non-empty evidenceRefs`
+    }
+    if (i.disposition === 'not_applicable' && !i.reason?.trim()) {
+      return `Item "${i.id}" marked not_applicable requires a non-empty reason`
+    }
+  }
+  if (patch.finding) {
+    const f = patch.finding
+    if (f.disposition === 'fixed') {
+      const passedWithEvidence =
+        f.testOutcome === 'passed' && (Boolean(f.testCommand?.trim()) || hasNonEmptyRefs(f.testRefs))
+      const notFeasibleWithReason =
+        f.testOutcome === 'not_feasible' && Boolean(f.testNotFeasibleReason?.trim())
+      if (!passedWithEvidence && !notFeasibleWithReason) {
+        return `Finding "${f.title}" marked fixed requires testOutcome="passed" with testCommand/testRefs, or testOutcome="not_feasible" with testNotFeasibleReason`
+      }
+    }
+    if (f.disposition === 'duplicate' && !f.duplicateOf?.trim()) {
+      return `Finding "${f.title}" marked duplicate requires duplicateOf`
+    }
+    if (
+      (f.disposition === 'not_applicable' ||
+        f.disposition === 'deferred' ||
+        f.disposition === 'not_reproducible') &&
+      !f.rationale?.trim()
+    ) {
+      return `Finding "${f.title}" marked ${f.disposition} requires a rationale`
+    }
+  }
+  return null
+}
+
 function recomputeManifestState(manifest: ReviewCoverageManifest): ReviewCoverageManifest {
   const blockers: string[] = []
   for (const s of manifest.sections) {
-    if (s.candidatePaths.length > 0 && (s.disposition === 'pending' || s.disposition === 'unresolved')) {
+    if (s.candidatePaths.length === 0) {
+      if (s.disposition !== 'not_applicable' && !hasNonEmptyRefs(s.evidenceRefs) && !s.reason?.trim()) {
+        blockers.push(`Section "${s.id}" has incomplete disposition "${s.disposition}"`)
+      }
+      continue
+    }
+    if (s.disposition === 'pending' || s.disposition === 'unresolved') {
       blockers.push(`Section "${s.id}" is ${s.disposition} (${s.candidatePaths.length} files)`)
+    } else if (s.disposition === 'inspected' && !hasNonEmptyRefs(s.evidenceRefs) && !s.reason?.trim()) {
+      blockers.push(`Section "${s.id}" marked inspected without evidenceRefs or reason`)
+    } else if (s.disposition === 'tested' && !s.testCommand?.trim() && !hasNonEmptyRefs(s.evidenceRefs)) {
+      blockers.push(`Section "${s.id}" marked tested without testCommand or evidenceRefs`)
+    } else if (s.disposition === 'not_applicable' && !s.reason?.trim()) {
+      blockers.push(`Section "${s.id}" marked not_applicable without reason`)
     }
   }
   for (const item of manifest.items) {
     if (item.disposition === 'pending' || item.disposition === 'unresolved') {
       blockers.push(`Item "${item.path}" (${item.kind}) is ${item.disposition}`)
+    } else if (
+      item.disposition === 'inspected' &&
+      !hasNonEmptyRefs(item.evidenceRefs) &&
+      !item.reason?.trim()
+    ) {
+      blockers.push(`Item "${item.path}" (${item.kind}) marked inspected without evidenceRefs or reason`)
+    } else if (
+      item.disposition === 'tested' &&
+      !item.testCommand?.trim() &&
+      !hasNonEmptyRefs(item.evidenceRefs)
+    ) {
+      blockers.push(`Item "${item.path}" (${item.kind}) marked tested without testCommand or evidenceRefs`)
+    } else if (item.disposition === 'not_applicable' && !item.reason?.trim()) {
+      blockers.push(`Item "${item.path}" (${item.kind}) marked not_applicable without reason`)
     }
   }
   for (const f of manifest.findings) {
     if (f.disposition === 'unresolved') {
       blockers.push(`Finding "${f.title}" is unresolved`)
+    } else if (f.disposition === 'fixed') {
+      const passedWithEvidence =
+        f.testOutcome === 'passed' && (Boolean(f.testCommand?.trim()) || hasNonEmptyRefs(f.testRefs))
+      const notFeasibleWithReason =
+        f.testOutcome === 'not_feasible' && Boolean(f.testNotFeasibleReason?.trim())
+      if (!passedWithEvidence && !notFeasibleWithReason) {
+        blockers.push(
+          `Finding "${f.title}" marked fixed without passed test evidence or testNotFeasibleReason`,
+        )
+      }
+    } else if (f.disposition === 'duplicate' && !f.duplicateOf?.trim()) {
+      blockers.push(`Finding "${f.title}" marked duplicate without duplicateOf target`)
+    } else if (
+      (f.disposition === 'not_applicable' ||
+        f.disposition === 'deferred' ||
+        f.disposition === 'not_reproducible') &&
+      !f.rationale?.trim()
+    ) {
+      blockers.push(`Finding "${f.title}" marked ${f.disposition} without rationale`)
     }
   }
   const hasUnresolved = blockers.length > 0
@@ -394,11 +512,7 @@ export async function getReviewManifestById(
 export async function updateReviewManifest(
   db: MiraDB,
   id: string,
-  patch: {
-    section?: { id: ReviewSectionId; disposition: ReviewDisposition; reason?: string; evidenceRefs?: string[] }
-    item?: { id: string; disposition: ReviewDisposition; reason?: string; evidenceRefs?: string[]; testCommand?: string }
-    finding?: ReviewFinding
-  },
+  patch: ReviewPatchInput,
 ): Promise<ReviewCoverageManifest | null> {
   const current = await getReviewManifestById(db, id)
   if (!current) return null
@@ -413,6 +527,7 @@ export async function updateReviewManifest(
             disposition: patch.section.disposition,
             reason: patch.section.reason ?? s.reason,
             evidenceRefs: patch.section.evidenceRefs ?? s.evidenceRefs,
+            testCommand: patch.section.testCommand ?? s.testCommand,
           }
         : s,
     ),

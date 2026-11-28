@@ -1,0 +1,34 @@
+# Protected Control Plane & Safety-Critical Paths (@slab1 review required)
+# Human maintainer approval via protected main branch + mandatory CI checks.
+
+# Auth, Identity, RBAC & Tenancy
+/packages/server/src/auth/ @slab1
+/packages/server/src/bootstrap/ @slab1
+/packages/server/src/middleware/ @slab1
+/packages/server/src/ws-auth.ts @slab1
+/packages/server/src/token-provisioning.ts @slab1
+/packages/server/src/routes/admin.ts @slab1
+/packages/server/src/routes/orgs.ts @slab1
+/packages/server/src/routes/me.ts @slab1
+/packages/server/src/routes/research.ts @slab1
+/packages/server/src/routes/coordination.ts @slab1
+
+# Policy, Guardrails & Sandbox Containment
+/packages/server/src/policy/ @slab1
+/packages/server/src/guardrails/ @slab1
+/packages/server/src/terminal-security.ts @slab1
+/packages/server/src/sandbox/ @slab1
+/packages/server/src/compliance/ @slab1
+
+# Evolution Governance, Approval, Security, Rollback & Persistence
+/packages/server/src/evolution/ @slab1
+/packages/server/src/patching/ @slab1
+/packages/server/src/canary/ @slab1
+/packages/server/src/shadow/ @slab1
+/packages/server/src/engines/ @slab1
+/packages/server/src/storage/ @slab1
+/packages/server/src/routes/evolution.ts @slab1
+/packages/server/src/routes/shadow.ts @slab1
+
+# External Repository Governance & Workflows
+/.github/ @slab1

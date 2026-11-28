@@ -1,21 +1,9 @@
 /**
  * Production Sandbox Isolation — agent → container → host boundary.
  *
- * Section 4 of docs/LONG_TERM_RISK_AND_SCALABILITY_PLAN.md requires execution
- * profiles, enforced resource limits, secrets kept out of the experiment
- * environment, and failure when the required isolation cannot be provided.
- *
- * Previously this was a single `enabled` boolean defaulting to MIRA_SANDBOX=1:
- *   - no CPU/memory/pid limits on the container
- *   - the host fallback path spawned with inherited process.env, handing every
- *     API key and token to whatever the agent ran
- *   - `opts.cwd` was interpolated straight into `-v ${cwd}:/work:ro` with no
- *     validation
- *   - bash.ts chose host-or-container from that one boolean, so "trusted local"
- *     and "autonomous experiment" were indistinguishable
- *
- * Profiles make the boundary strength explicit. An isolated profile that cannot
- * get a container FAILS — it never degrades to the host.
+ * Enforces explicit execution profiles, verified container runtime security
+ * configuration, least-privilege container flags, environment allowlisting,
+ * and strict fail-closed refusal in production when isolation is unavailable.
  */
 
 import { realpathSync } from 'node:fs'
@@ -56,6 +44,8 @@ export interface ProfilePolicy {
   writableWork: boolean
   /** Strip the parent environment down to an allowlist. */
   scrubEnv: boolean
+  /** Drop all Linux capabilities and enforce no-new-privileges. */
+  dropCapabilities: boolean
   limits: ResourceLimitsSpec
 }
 
@@ -65,6 +55,7 @@ export const EXECUTION_PROFILES: Record<ExecutionProfile, ProfilePolicy> = {
     readOnlyRoot: false,
     writableWork: true,
     scrubEnv: true,
+    dropCapabilities: false,
     limits: { timeoutMs: 120_000 },
   },
   restricted: {
@@ -72,15 +63,15 @@ export const EXECUTION_PROFILES: Record<ExecutionProfile, ProfilePolicy> = {
     readOnlyRoot: false,
     writableWork: true,
     scrubEnv: true,
+    dropCapabilities: false,
     limits: { memory: '2g', cpus: '2', pids: 256, timeoutMs: 120_000 },
   },
   'isolated-experiment': {
     requiresContainer: true,
     readOnlyRoot: true,
-    // §4.7: source read-only for analysis; the experiment writes to the
-    // disposable worktree the caller passes.
     writableWork: false,
     scrubEnv: true,
+    dropCapabilities: true,
     limits: { memory: '4g', cpus: '2', pids: 512, timeoutMs: 300_000 },
   },
   production: {
@@ -88,6 +79,7 @@ export const EXECUTION_PROFILES: Record<ExecutionProfile, ProfilePolicy> = {
     readOnlyRoot: true,
     writableWork: false,
     scrubEnv: true,
+    dropCapabilities: true,
     limits: { memory: '2g', cpus: '1', pids: 128, timeoutMs: 60_000 },
   },
 }
@@ -109,6 +101,15 @@ const ENV_ALLOWLIST = [
   'USER',
 ] as const
 
+export interface RuntimeVerificationResult {
+  ok: boolean
+  rootless?: boolean
+  securityOptions?: string[]
+  reason?: string
+}
+
+export type RuntimeProbe = (runtime: string) => RuntimeVerificationResult
+
 export interface SandboxConfig {
   /** @deprecated use `profile`; kept so MIRA_SANDBOX=1 keeps working. */
   enabled?: boolean
@@ -120,6 +121,14 @@ export interface SandboxConfig {
   limits?: Partial<ResourceLimitsSpec>
   /** Extra env names to allow through (e.g. a proxy for dependency installs). */
   envAllowlist?: string[]
+  /** Container UID:GID (default '65534:65534' nobody). Root ('0', 'root') rejected in production. */
+  user?: string
+  /** Require `@sha256:...` digest pinning on container image. */
+  requireDigestPin?: boolean
+  /** Verify runtime daemon health & security posture before running containers. */
+  verifyRuntime?: boolean
+  /** Optional custom runtime probe (for deterministic tests). */
+  runtimeProbe?: RuntimeProbe
 }
 
 export interface RunOptions {
@@ -128,9 +137,76 @@ export interface RunOptions {
   worktree?: string
 }
 
-type ResolvedConfig = Omit<Required<Omit<SandboxConfig, 'runtime'>>, 'limits'> & {
+type ResolvedConfig = {
+  enabled: boolean
+  profile: ExecutionProfile
+  image: string
   runtime?: string
+  allowFallback: boolean
+  timeoutMs: number
   limits: ResourceLimitsSpec
+  envAllowlist: string[]
+  user: string
+  requireDigestPin: boolean
+  verifyRuntime: boolean
+  runtimeProbe?: RuntimeProbe
+}
+
+function isProductionMode(): boolean {
+  return process.env.NODE_ENV === 'production' || process.env.MIRA_SANDBOX_STRICT === '1'
+}
+
+export function validateContainerImage(image: string, requireDigestPin: boolean, profile: ExecutionProfile): void {
+  const trimmed = image.trim()
+  if (!trimmed || /[\s\0\n\r]/.test(trimmed)) {
+    throw new SandboxError('Container image must be a valid non-empty reference')
+  }
+  if (profile === 'production' && /:latest$/i.test(trimmed)) {
+    throw new SandboxError(`Refusing mutable ":latest" image "${trimmed}" in production profile`)
+  }
+  if (requireDigestPin && !/@sha256:[a-f0-9]{64}$/i.test(trimmed)) {
+    throw new SandboxError(
+      `Container image "${trimmed}" must be pinned by immutable @sha256 digest`,
+    )
+  }
+}
+
+export function defaultRuntimeProbe(runtime: string): RuntimeVerificationResult {
+  try {
+    const res = Bun.spawnSync([runtime, 'info', '--format', '{{json .}}'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 5000,
+    })
+    if (res.exitCode !== 0) {
+      const stderr = res.stderr ? new TextDecoder().decode(res.stderr).trim() : ''
+      return {
+        ok: false,
+        reason: `${runtime} daemon check failed (exit ${res.exitCode})${stderr ? `: ${stderr.slice(0, 200)}` : ''}`,
+      }
+    }
+    const raw = res.stdout ? new TextDecoder().decode(res.stdout).trim() : '{}'
+    const info = JSON.parse(raw) as {
+      SecurityOptions?: string[]
+      Host?: { Security?: { Rootless?: boolean } }
+      Rootless?: boolean
+    }
+    const securityOptions = Array.isArray(info.SecurityOptions) ? info.SecurityOptions : []
+    const rootless =
+      Boolean(info.Host?.Security?.Rootless) ||
+      Boolean(info.Rootless) ||
+      securityOptions.some((opt) => /rootless/i.test(opt))
+    return {
+      ok: true,
+      rootless,
+      securityOptions,
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `failed to inspect container runtime "${runtime}": ${err instanceof Error ? err.message : String(err)}`,
+    }
+  }
 }
 
 export class ContainerSandbox {
@@ -139,30 +215,72 @@ export class ContainerSandbox {
   readonly profile: ExecutionProfile
 
   constructor(config: SandboxConfig = {}) {
+    const prod = isProductionMode()
     const profile = resolveProfile(config)
     this.profile = profile
     this.policy = EXECUTION_PROFILES[profile]
+
+    if ((prod || profile === 'production') && config.allowFallback === true) {
+      throw new SandboxError(
+        `profile "${profile}" refuses allowFallback — host fallback is forbidden in production`,
+      )
+    }
+    if ((prod || profile === 'production') && process.env.MIRA_SANDBOX_ALLOW_FALLBACK === '1') {
+      throw new SandboxError(
+        'MIRA_SANDBOX_ALLOW_FALLBACK=1 is forbidden in production — refusing unsafe host fallback',
+      )
+    }
+
+    const user = (config.user ?? '65534:65534').trim()
+    if (profile === 'production' && /^(0|0:0|root|root:root)$/i.test(user)) {
+      throw new SandboxError(`Refusing root container user "${user}" in production profile`)
+    }
+
+    const image = config.image ?? 'node:22-alpine'
+    const requireDigestPin =
+      config.requireDigestPin ?? process.env.MIRA_SANDBOX_REQUIRE_DIGEST === '1'
+    validateContainerImage(image, requireDigestPin, profile)
+
     this.config = {
       enabled: config.enabled ?? profile !== 'trusted-local',
       profile,
-      image: config.image ?? 'node:22-alpine',
+      image,
       runtime: config.runtime,
-      allowFallback: config.allowFallback ?? process.env.MIRA_SANDBOX_ALLOW_FALLBACK === '1',
+      // Host fallback is only allowed in explicit non-production dev/test calls
+      // for isolated-experiment, never via env var override in production.
+      allowFallback:
+        !prod && profile === 'isolated-experiment' ? config.allowFallback === true : false,
       timeoutMs: config.timeoutMs ?? this.policy.limits.timeoutMs,
       limits: { ...this.policy.limits, ...(config.limits ?? {}) },
       envAllowlist: config.envAllowlist ?? [],
+      user,
+      requireDigestPin,
+      verifyRuntime: config.verifyRuntime ?? (profile === 'production' || prod),
+      runtimeProbe: config.runtimeProbe,
     }
   }
 
   private detectRuntime(): string | null {
-    // An explicitly configured runtime still has to exist. Returning an
-    // uninstalled name made this fall through to Bun.spawn, which fails with a
-    // raw "Executable not found" instead of the SandboxError callers rely on to
-    // distinguish "isolation unavailable" from "the command failed".
     if (this.config.runtime) return Bun.which(this.config.runtime) ? this.config.runtime : null
     if (Bun.which('docker')) return 'docker'
     if (Bun.which('podman')) return 'podman'
     return null
+  }
+
+  /**
+   * Verify the container runtime daemon is responsive and satisfies profile
+   * security requirements (fails closed when misconfigured or unreachable).
+   */
+  verifyRuntimeConfiguration(runtime: string): RuntimeVerificationResult {
+    const probe = this.config.runtimeProbe ?? defaultRuntimeProbe
+    const result = probe(runtime)
+    if (!result.ok) {
+      throw new SandboxError(
+        `profile "${this.profile}" container runtime "${runtime}" failed security/health verification: ` +
+          `${result.reason ?? 'daemon unavailable'}. Refusing to run untrusted work on the host.`,
+      )
+    }
+    return result
   }
 
   /**
@@ -208,42 +326,29 @@ export class ContainerSandbox {
     return flags
   }
 
-  /** Run a command under this sandbox's profile. */
-  async run(cmd: string[], opts: RunOptions): Promise<SandboxResult> {
+  /** Build the hardened docker/podman invocation argument list. */
+  buildContainerArgs(runtime: string, cmd: string[], opts: RunOptions): string[] {
     const cwd = this.safeDir(opts.cwd, 'cwd')
-
-    if (!this.policy.requiresContainer) {
-      // Local profiles run on the host — still with a scrubbed environment and
-      // the profile's timeout, and `isolated: false` says so plainly.
-      return this.exec(cmd, cwd, false)
-    }
-
-    const runtime = this.detectRuntime()
-    if (!runtime) {
-      if (this.config.allowFallback) return this.exec(cmd, cwd, false)
-      throw new SandboxError(
-        `profile "${this.profile}" requires a container runtime but neither docker nor podman was found. ` +
-          'Refusing to run untrusted work on the host.',
-      )
-    }
-
     const mounts: string[] = []
-    // Source is always mounted read-only; experiments write to `worktree`.
     mounts.push('-v', `${cwd}:/work:ro`)
     if (opts.worktree) {
       const wt = this.safeDir(opts.worktree, 'worktree')
       mounts.push('-v', `${wt}:/scratch:rw`)
     }
     if (this.policy.readOnlyRoot) mounts.push('--read-only')
-    mounts.push('--tmpfs', '/tmp:rw,size=256m')
+    mounts.push('--tmpfs', '/tmp:rw,noexec,nosuid,size=256m')
+
+    const securityFlags: string[] = ['--network', 'none', '--user', this.config.user]
+    if (this.policy.dropCapabilities) {
+      securityFlags.push('--cap-drop=ALL', '--security-opt=no-new-privileges:true', '--ipc=none')
+    }
 
     const workdir = opts.worktree ? '/scratch' : '/work'
-    const full = [
+    return [
       runtime,
       'run',
       '--rm',
-      '--network',
-      'none',
+      ...securityFlags,
       ...mounts,
       ...this.limitFlags(),
       '-w',
@@ -251,6 +356,37 @@ export class ContainerSandbox {
       this.config.image,
       ...cmd,
     ]
+  }
+
+  /** Run a command under this sandbox's profile. */
+  async run(cmd: string[], opts: RunOptions): Promise<SandboxResult> {
+    const cwd = this.safeDir(opts.cwd, 'cwd')
+
+    if (!this.policy.requiresContainer) {
+      if (isProductionMode()) {
+        throw new SandboxError(
+          `profile "${this.profile}" is not isolated and cannot execute in production`,
+        )
+      }
+      return this.exec(cmd, cwd, false)
+    }
+
+    const runtime = this.detectRuntime()
+    if (!runtime) {
+      if (this.config.allowFallback && !isProductionMode() && this.profile !== 'production') {
+        return this.exec(cmd, cwd, false)
+      }
+      throw new SandboxError(
+        `profile "${this.profile}" requires a container runtime but neither docker nor podman was found. ` +
+          'Refusing to run untrusted work on the host.',
+      )
+    }
+
+    if (this.config.verifyRuntime) {
+      this.verifyRuntimeConfiguration(runtime)
+    }
+
+    const full = this.buildContainerArgs(runtime, cmd, opts)
     return this.exec(full, cwd, true, runtime)
   }
 
@@ -266,8 +402,6 @@ export class ContainerSandbox {
       stdout: 'pipe',
       stderr: 'pipe',
     })
-    // Read the wall clock from the merged limits, not the top-level timeoutMs —
-    // reading the latter silently ignored a limits.timeoutMs override.
     const timer = setTimeout(() => proc.kill(), this.config.limits.timeoutMs)
     try {
       const [out, err, code] = await Promise.all([
@@ -300,16 +434,35 @@ export class ContainerSandbox {
   }
 }
 
-/** MIRA_SANDBOX_PROFILE wins; MIRA_SANDBOX=1 maps to an isolated experiment. */
+/** MIRA_SANDBOX_PROFILE wins; production fails closed to 'production'. */
 function resolveProfile(config: SandboxConfig): ExecutionProfile {
-  if (config.profile) return config.profile
+  const prod = isProductionMode()
+  if (config.profile) {
+    if (prod && !EXECUTION_PROFILES[config.profile].requiresContainer) {
+      throw new SandboxError(
+        `profile "${config.profile}" does not provide container isolation required in production`,
+      )
+    }
+    return config.profile
+  }
   const env = process.env.MIRA_SANDBOX_PROFILE?.trim()
-  if (env && env in EXECUTION_PROFILES) return env as ExecutionProfile
+  if (env && env in EXECUTION_PROFILES) {
+    const prof = env as ExecutionProfile
+    if (prod && !EXECUTION_PROFILES[prof].requiresContainer) {
+      throw new SandboxError(
+        `MIRA_SANDBOX_PROFILE="${prof}" does not provide container isolation required in production`,
+      )
+    }
+    return prof
+  }
+  if (prod) {
+    if (process.env.MIRA_SANDBOX === '0' || config.enabled === false) {
+      throw new SandboxError('Disabling sandbox isolation (MIRA_SANDBOX=0) is forbidden in production')
+    }
+    return 'production'
+  }
   if (process.env.MIRA_SANDBOX === '1' || config.enabled === true) return 'isolated-experiment'
   if (process.env.MIRA_SANDBOX === '0' || config.enabled === false) return 'trusted-local'
-  // When no container runtime (docker/podman) is available on the host, default to
-  // trusted-local so local development and tool package installations work seamlessly.
-  // When a container runtime is present, default to isolated-experiment.
   if (Bun.which('docker') || Bun.which('podman')) {
     return 'isolated-experiment'
   }

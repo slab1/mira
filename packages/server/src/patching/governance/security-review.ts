@@ -47,7 +47,7 @@ export class SecurityReview {
       outcome: passed ? 'PASSED' : 'FAILED',
       reason: passed
         ? 'security review passed'
-        : `security issues found: ${blocking.map((i) => `${i.severity}/${i.category ?? 'issue'}: ${i.detail}`).join('; ')}`,
+        : `security issues found: ${blocking.map((i) => `${i.severity}/${i.category ?? i.kind ?? 'issue'}: ${i.detail}`).join('; ')}`,
     }
   }
 }

@@ -45,6 +45,8 @@ export interface PromoteOpts {
         candidateVersion: string
         traffic: number
         baseline: import('./monitor.js').CanaryMetrics
+        minSamples?: number
+        executesCandidate?: boolean
       }
     | undefined
   rollbackManager?: RollbackManager
@@ -88,18 +90,25 @@ export class CanaryPromoter {
     const latest = latestArr.slice(-1)[0] ?? baseline
     const health = this.monitor.getStatus(canaryId) ?? this.monitor.checkGates(baseline, latest)
 
-    // Candidate-specific traffic check: require actual candidate traffic samples
-    // A canary with zero candidate traffic or no traffic allocation cannot be verified
+    // Candidate-specific traffic check: require actual candidate execution + real samples
+    if (rec.executesCandidate === false) {
+      return {
+        decision: 'rollback',
+        reason: `rollback: canary does not execute candidate variant for ${canaryId} — real candidate execution required`,
+      }
+    }
     if (rec.traffic <= 0) {
       return {
         decision: 'rollback',
         reason: `rollback: canary traffic is 0% — no candidate traffic routed`,
       }
     }
-    if (latestArr.length === 0) {
+    const minSamples = rec.minSamples ?? 1
+    const sampleCount = this.monitor.getSampleCount(canaryId)
+    if (latestArr.length === 0 || sampleCount < minSamples) {
       return {
         decision: 'rollback',
-        reason: `rollback: no canary traffic samples recorded for ${canaryId} — real candidate execution required`,
+        reason: `rollback: insufficient candidate traffic samples (${sampleCount}/${minSamples}) for ${canaryId} — real candidate execution required`,
       }
     }
 

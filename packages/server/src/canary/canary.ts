@@ -42,6 +42,8 @@ export interface CanaryRecord {
   status: 'running' | 'completed' | 'failed' | 'stopped' | 'promoted' | 'rolledback'
   baseline: CanaryMetrics
   lane: 'canary' | 'default'
+  minSamples?: number
+  executesCandidate?: boolean
 }
 
 function randomId(prefix: string): string {
@@ -69,6 +71,7 @@ export class CanaryManager {
   readonly promoter: CanaryPromoter
   private canaries = new Map<string, CanaryRecord>()
   private timers = new Map<string, ReturnType<typeof setTimeout>>()
+  private autoRollbackInFlight = new Set<string>()
 
   constructor(opts: CanaryManagerOpts) {
     this.registry = opts.registry
@@ -81,6 +84,15 @@ export class CanaryManager {
       bus: this.bus as unknown as Bus,
       metrics: this.metrics as unknown as MetricsCollector,
       gatewayRegistry: this.gatewayRegistry as unknown as { healthSnapshot: () => unknown },
+      onHealthUpdate: (canaryId, health) => {
+        if (health !== 'failed') return
+        const rec = this.canaries.get(canaryId)
+        if (!rec || rec.status !== 'promoted' || this.autoRollbackInFlight.has(canaryId)) return
+        this.autoRollbackInFlight.add(canaryId)
+        void this.rollback(canaryId)
+          .catch((e) => console.warn('[canary] post-promotion auto-rollback failed:', String(e)))
+          .finally(() => this.autoRollbackInFlight.delete(canaryId))
+      },
     })
     this.promoter = new CanaryPromoter({
       registry: this.registry,
@@ -112,7 +124,7 @@ export class CanaryManager {
     candidateId: string,
     trafficPercent = 5,
     durationMs: number = 24 * 60 * 60 * 1000,
-    opts?: { auto?: boolean },
+    opts?: { auto?: boolean; minSamples?: number; executesCandidate?: boolean },
   ): {
     canaryId: string
     candidateVersion: string
@@ -156,6 +168,8 @@ export class CanaryManager {
       status: 'running',
       baseline,
       lane: 'canary',
+      minSamples: opts?.minSamples ?? 1,
+      executesCandidate: opts?.executesCandidate ?? true,
     }
     this.canaries.set(canaryId, record)
 

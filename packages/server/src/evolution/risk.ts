@@ -21,6 +21,7 @@
  */
 
 import type { ImprovementProposal } from "./proposal.js"
+import { detectControlPlaneTampering, isProtectedControlPlanePath } from "./control-plane.js"
 
 export type RiskLevel = "low" | "medium" | "high"
 
@@ -28,6 +29,10 @@ export interface RiskAssessment {
   level: RiskLevel
   score: number // 0..1
   reasons: string[]
+  /** True when the candidate targets or tampers with the Protected Control Plane. */
+  protectedControlPlane?: boolean
+  /** Finer risk tier distinguishing critical control-plane changes from ordinary high risk. */
+  severityTier?: "low" | "medium" | "high" | "critical"
 }
 
 export interface RiskInput extends Partial<ImprovementProposal> {
@@ -52,6 +57,20 @@ export class RiskEngine {
     const patchSize = input.patchSize ?? patch.length
     const permissionScope = String(input.permissionScope ?? affectedEngine)
     const cost = typeof input.cost === "number" ? input.cost : 0
+
+    // Protected control-plane targeting or tampering check
+    const controlPlaneHits = detectControlPlaneTampering(patch, changedFiles)
+    const protectedFiles = changedFiles.filter((f) => isProtectedControlPlanePath(f))
+    const touchesControlPlane = controlPlaneHits.length > 0 || protectedFiles.length > 0
+    if (touchesControlPlane) {
+      score = Math.max(score, 0.9)
+      for (const hit of controlPlaneHits.slice(0, 3)) {
+        reasons.push(hit)
+      }
+      if (controlPlaneHits.length === 0 && protectedFiles.length > 0) {
+        reasons.push(`protected control-plane files: ${protectedFiles.slice(0, 3).join(", ")}`)
+      }
+    }
 
     // changedFiles factor
     if (changedFiles.length > 5) {
@@ -127,13 +146,19 @@ export class RiskEngine {
     if (reasons.length === 0) reasons.push("low blast radius — few files, small patch, low permission scope")
 
     let level: RiskLevel = "low"
-    if (score >= 0.65) level = "high"
+    if (score >= 0.65 || touchesControlPlane) level = "high"
     else if (score >= 0.35) level = "medium"
 
     // ensure high-risk engines with cost/patch already force high if score borderline but contains §18 keywords
     if (HIGH_RISK_ENGINES.has(affectedEngine) && score >= 0.5) level = "high"
 
-    return { level, score, reasons }
+    return {
+      level,
+      score,
+      reasons,
+      ...(touchesControlPlane ? { protectedControlPlane: true } : {}),
+      severityTier: touchesControlPlane ? "critical" : level,
+    }
   }
 }
 

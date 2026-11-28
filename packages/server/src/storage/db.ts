@@ -300,9 +300,38 @@ export async function migrate(db: MiraDB) {
       CREATE INDEX IF NOT EXISTS research_runs_branch_idx ON research_runs(branch_session_id);
       CREATE INDEX IF NOT EXISTS research_runs_status_idx ON research_runs(status);
       CREATE INDEX IF NOT EXISTS research_runs_updated_idx ON research_runs(updated_at);
+
+      CREATE TABLE IF NOT EXISTS coordination_sequences (
+        resource_key TEXT PRIMARY KEY,
+        next_token INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS coordination_leases (
+        resource_kind TEXT NOT NULL,
+        resource_key TEXT NOT NULL,
+        holder_id TEXT NOT NULL,
+        fencing_token INTEGER NOT NULL,
+        task_id TEXT,
+        expires_at INTEGER NOT NULL,
+        acquired_at INTEGER NOT NULL,
+        payload TEXT,
+        PRIMARY KEY (resource_kind, resource_key)
+      );
+      CREATE INDEX IF NOT EXISTS coordination_leases_expires_idx
+        ON coordination_leases(expires_at);
+      CREATE INDEX IF NOT EXISTS coordination_leases_holder_idx
+        ON coordination_leases(holder_id);
+
+      CREATE TABLE IF NOT EXISTS coordination_writes (
+        path TEXT PRIMARY KEY,
+        hash TEXT NOT NULL,
+        holder_id TEXT NOT NULL,
+        fencing_token INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      );
     `)
   } catch (e) {
-    console.warn('[storage] review/research table migration failed:', String(e))
+    console.warn('[storage] review/research/coordination table migration failed:', String(e))
   }
   // P3-1 / Option 1 safe: api_keys hash/prefix for DB-dump protection (hash-only storage)
   // `key` holds hash for new rows; `key_hash` authoritative; legacy rows backfilled on load

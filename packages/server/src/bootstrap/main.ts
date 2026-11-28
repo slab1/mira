@@ -351,9 +351,11 @@ function orgOfOwner(owner: string | null | undefined): string | undefined {
 function resolveOwner(token: string): string | undefined {
   if (!token) return undefined
   if (REQUIRED_TOKEN && tokenEquals(token, REQUIRED_TOKEN)) return 'default'
-  if (tokenEquals(token, 'dev-local-token-not-secret')) return 'default'
-  const devToken = process.env.VITE_MIRA_TOKEN?.trim()
-  if (devToken && tokenEquals(token, devToken)) return 'default'
+  if (process.env.NODE_ENV !== 'production') {
+    if (tokenEquals(token, 'dev-local-token-not-secret')) return 'default'
+    const devToken = process.env.VITE_MIRA_TOKEN?.trim()
+    if (devToken && tokenEquals(token, devToken)) return 'default'
+  }
   const h = hashKey(token)
   // Check if credential is revoked or expired
   const revokedAt = API_KEY_REVOKED_AT.get(h)
@@ -370,11 +372,12 @@ function resolveOwner(token: string): string | undefined {
  *  Expired or revoked credentials return 'operator' (effectively unauthorized via resolveOwner). */
 function resolveRole(token: string): Role {
   if (!token) return 'operator'
-  if (
-    (REQUIRED_TOKEN && tokenEquals(token, REQUIRED_TOKEN)) ||
-    tokenEquals(token, 'dev-local-token-not-secret') ||
-    (process.env.VITE_MIRA_TOKEN && tokenEquals(token, process.env.VITE_MIRA_TOKEN))
-  ) {
+  const devToken = process.env.VITE_MIRA_TOKEN?.trim()
+  const isDevMasterToken =
+    process.env.NODE_ENV !== 'production' &&
+    (tokenEquals(token, 'dev-local-token-not-secret') ||
+      (!!devToken && tokenEquals(token, devToken)))
+  if ((REQUIRED_TOKEN && tokenEquals(token, REQUIRED_TOKEN)) || isDevMasterToken) {
     // Master token role: configurable via MIRA_MASTER_TOKEN_ROLE (default: admin)
     const masterRole = process.env.MIRA_MASTER_TOKEN_ROLE?.toLowerCase()
     if (masterRole === 'viewer' || masterRole === 'operator' || masterRole === 'admin') {
@@ -989,6 +992,8 @@ async function main() {
     resolveOwner,
     bearerOf,
     orgOfOwner,
+    resolveRole,
+    requireAuth: process.env.NODE_ENV === 'production' && process.env.MIRA_STRICT_AUTH !== '0',
   })
   mountReviewRoutes(app, {
     db,
@@ -1068,7 +1073,11 @@ async function main() {
   mountConfigRoutes(app, { bus, gateway })
   mountToolsRoutes(app, { tools, permissions, guardrails, gateway, bus })
   mountVoiceRoutes(app)
-  mountLearningRoutes(app, learning)
+  mountLearningRoutes(app, learning, {
+    resolveOwner,
+    resolveRole,
+    requireAuth: process.env.NODE_ENV === 'production' && process.env.MIRA_STRICT_AUTH !== '0',
+  })
   // Community distribution (P3.4) — install skills/agents/knowledge modules
   mountCommunityRoutes(app, { knowledge: learning.knowledge })
   mountWorkspaceRoutes(app, { db })
@@ -1117,6 +1126,7 @@ async function main() {
       // the approval capability itself — a viewer key must not be able to approve.
       resolveOwner,
       resolveRole,
+      requireAuth: process.env.NODE_ENV === 'production' && process.env.MIRA_STRICT_AUTH !== '0',
       canaryStart: (affectedEngine: string) => canaryStartAfterPromote?.(affectedEngine) ?? null,
       // ShadowMira binds late (Phase 4 block below) — getter defers to request time.
       get shadowMira() {
@@ -1341,11 +1351,20 @@ async function main() {
       // agents cannot both believe they hold a lock after a bounce. Fail-soft.
       let coordinationHub: CoordinationHub
       try {
-        coordinationHub = new CoordinationHub({ store: createSqliteCoordinationStore(db) })
-      } catch {
+        coordinationHub = new CoordinationHub({
+          store: createSqliteCoordinationStore(db),
+          strictPersistence: true,
+        })
+      } catch (coordErr) {
+        if (process.env.NODE_ENV === 'production') throw coordErr
         coordinationHub = new CoordinationHub()
       }
-      mountCoordinationRoutes(app, { hub: coordinationHub })
+      mountCoordinationRoutes(app, {
+        hub: coordinationHub,
+        resolveOwner,
+        resolveRole,
+        requireAuth: process.env.NODE_ENV === 'production' && process.env.MIRA_STRICT_AUTH !== '0',
+      })
       ;(globalThis as unknown as Record<string, unknown>).__miraShadow = shadowMira
       log(
         `shadow ready — isolated shadow env (shadow.db or :memory:), Bus isolated, telemetry ingesting`,

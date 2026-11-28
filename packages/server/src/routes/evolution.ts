@@ -108,6 +108,8 @@ export interface EvolutionRouteDeps {
   systemRollbackCollectors?: SystemRollbackCollectors
   /** Repository root candidates resolve against (default process.cwd()). */
   repoRoot?: string
+  /** Require bearer authentication across mutating evolution endpoints. */
+  requireAuth?: boolean
 }
 
 /** Normalized shadow outcome recorded in ledger evidence + observe response.
@@ -367,7 +369,8 @@ export function mountEvolutionRoutes(
             : {}),
           ...(cfgApprovals?.agingMs !== undefined ? { agingMs: cfgApprovals.agingMs } : {}),
         })
-      } catch {
+      } catch (err) {
+        if (process.env.NODE_ENV === 'production') throw err
         return new ApprovalGate({ bus })
       }
     })()
@@ -382,11 +385,12 @@ export function mountEvolutionRoutes(
   const researchGate = new ResearchGate()
   // §11 durability: persist loop state so a restart cannot bypass the
   // attempt cap (a doom-looping agent must not escape by crashing/restarting).
-  // Fail-soft to the in-memory guard if the DB handle is unavailable.
+  // Fail-soft to the in-memory guard if the DB handle is unavailable outside production.
   const loopGuard = (() => {
     try {
       return new LoopGuard({ store: createSqliteLoopGuardStore(db) })
-    } catch {
+    } catch (err) {
+      if (process.env.NODE_ENV === 'production') throw err
       return new LoopGuard()
     }
   })()
@@ -396,13 +400,14 @@ export function mountEvolutionRoutes(
     complexityTracker.registerProvider(k as keyof ComplexityMetrics, fn)
   }
   // §6 durability: rollback metadata must outlive the process — a rollback
-  // point that vanishes on restart is not a rollback point. Fail-soft.
+  // point that vanishes on restart is not a rollback point.
   const systemRollback = (() => {
     try {
       return new SystemRollbackManager(deps.systemRollbackCollectors ?? {}, {
         store: createSqliteSystemRollbackStore(db),
       })
-    } catch {
+    } catch (err) {
+      if (process.env.NODE_ENV === 'production') throw err
       return new SystemRollbackManager(deps.systemRollbackCollectors ?? {})
     }
   })()
@@ -453,7 +458,7 @@ export function mountEvolutionRoutes(
       ledger: ledger.health(),
       risk: 'RiskEngine wired',
       autonomy: 'AutonomyLevels 0-5 wired',
-      approval: 'ApprovalGate wired (mock human, emits evolution.approval)',
+      approval: 'ApprovalGate wired (authenticated hash-bound operator gate, emits evolution.approval)',
       resources: 'ResourceLimits wired (per-task/per-agent/per-mission/daily)',
       security: 'SecurityValidator wired',
       rollback: 'RollbackManager wired',
@@ -501,6 +506,29 @@ export function mountEvolutionRoutes(
   // ── POST /evolution/observe ──────────────────────────────────────
   // Body: { failure: string, evidence?: JsonValue, sessionID?: string, changedFiles?: string[], patch?: string, permissionScope?: string, cost?: number, research?: { source: string, title?: string, content: string } | Array<same> }
   app.post('/evolution/observe', async (c) => {
+    const authHeaderPre = c.req.header('authorization') ?? ''
+    const bearerTokPre = authHeaderPre.startsWith('Bearer ') ? authHeaderPre.slice(7).trim() : ''
+    const strictAuth = Boolean(deps.requireAuth || process.env.NODE_ENV === 'production')
+    if (strictAuth) {
+      if (!deps.resolveOwner || !bearerTokPre) {
+        return c.json({ error: 'evolution observe requires an authenticated caller' }, 401)
+      }
+      const ownerPre = deps.resolveOwner(bearerTokPre)
+      if (!ownerPre) {
+        return c.json({ error: 'invalid or expired authentication token' }, 401)
+      }
+      if (deps.resolveRole?.(bearerTokPre) === 'viewer') {
+        return c.json({ error: 'forbidden: viewer role cannot submit evolution observations' }, 403)
+      }
+    } else if (bearerTokPre && deps.resolveOwner) {
+      const ownerPre = deps.resolveOwner(bearerTokPre)
+      if (!ownerPre) {
+        return c.json({ error: 'invalid or expired authentication token' }, 401)
+      }
+      if (deps.resolveRole?.(bearerTokPre) === 'viewer') {
+        return c.json({ error: 'forbidden: viewer role cannot submit evolution observations' }, 403)
+      }
+    }
     let body: {
       failure?: unknown
       evidence?: unknown
@@ -603,8 +631,12 @@ export function mountEvolutionRoutes(
     // Authenticated caller or session origin bound immutably to proposal.createdBy
     const authHeader = c.req.header('authorization') ?? ''
     const bearerTok = authHeader.replace(/^Bearer\s+/i, '').trim()
-    const callerIdentity = bearerTok
-      ? (deps.resolveOwner ? deps.resolveOwner(bearerTok) : 'operator')
+    const resolvedOwner = bearerTok && deps.resolveOwner ? deps.resolveOwner(bearerTok) : undefined
+    if (bearerTok && deps.resolveOwner && !resolvedOwner) {
+      return c.json({ error: 'invalid or expired authentication token' }, 401)
+    }
+    const callerIdentity = resolvedOwner
+      ? resolvedOwner
       : sessionID
         ? `session:${sessionID}`
         : 'system'
@@ -756,8 +788,11 @@ export function mountEvolutionRoutes(
       proposal.id, // idempotencyKey = proposal ID
     )
 
-    // Security validation — no secrets / no permission escalation (§8)
-    const securityPre = securityValidator.validate(patch ?? experiment.patch)
+    // Security validation — no secrets / no permission escalation / no control-plane tampering (§8)
+    const securityPre = securityValidator.validate(
+      patch ?? experiment.patch,
+      changedFiles ?? (experiment.virtualDiff ? [experiment.virtualDiff.file] : undefined),
+    )
 
     // Create rollback point before verifier (so we can revert even if verifier fails)
     // Coarse safety point at observe time (patch is raw TEXT here — no id yet).
@@ -1011,6 +1046,8 @@ export function mountEvolutionRoutes(
           validationPassed: evaluation.decision === 'accept',
           rollbackAvailable: !!rollbackPoint,
           riskLevel: risk.level,
+          protectedControlPlane: Boolean(risk.protectedControlPlane),
+          humanAuthorized: Boolean(approval.approved && approval.authoritative),
         },
         DEFAULT_CONFIDENCE_THRESHOLD,
       )
@@ -1402,7 +1439,17 @@ export function mountEvolutionRoutes(
     // unauthenticated caller enumerate which proposal ids are real.
     const entry = ledger.get(id)
     if (!entry) return c.json({ error: 'not found', id }, 404)
-    const result = approvalGate.approve(id, identity)
+    let approveBody: { expectedHash?: unknown } | null = null
+    try {
+      approveBody = (await c.req.json()) as { expectedHash?: unknown }
+    } catch {
+      approveBody = null
+    }
+    const expectedHash =
+      typeof approveBody?.expectedHash === 'string' && approveBody.expectedHash.trim()
+        ? approveBody.expectedHash.trim()
+        : undefined
+    const result = approvalGate.approve(id, identity, expectedHash ? { expectedHash } : undefined)
     // P0 fix: only update ledger verdict when approval is confirmed AND authoritative
     // A denied, non-authoritative, or policy/mock approval must NOT be recorded as verified
     const isAuthoritativeApproval = result.approved === true && result.authoritative !== false
@@ -1423,7 +1470,16 @@ export function mountEvolutionRoutes(
             } as unknown as JsonValue,
           })
         }
-      } catch {}
+      } catch (err) {
+        return c.json(
+          {
+            error: 'approval decision persisted on gate, but failed to record in evolution ledger',
+            id,
+            detail: String(err).slice(0, 300),
+          },
+          500,
+        )
+      }
     }
     return c.json({
       ok: true,
@@ -1572,7 +1628,16 @@ export function mountEvolutionRoutes(
           denier: result.approver ?? identity.owner,
         } as unknown as JsonValue,
       })
-    } catch {}
+    } catch (err) {
+      return c.json(
+        {
+          error: 'denial decision recorded on gate, but failed to update evolution ledger',
+          id,
+          detail: String(err).slice(0, 300),
+        },
+        500,
+      )
+    }
     return c.json({
       ok: true,
       id,
@@ -1585,6 +1650,24 @@ export function mountEvolutionRoutes(
 
   // ── POST /evolution/rollback/:id ─────────────────────────────────
   app.post('/evolution/rollback/:id', async (c) => {
+    const authHeader = c.req.header('authorization') ?? ''
+    const bearerTok = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : ''
+    const strictAuth = Boolean(deps.requireAuth || process.env.NODE_ENV === 'production')
+    if (strictAuth) {
+      if (!deps.resolveOwner || !bearerTok || !deps.resolveOwner(bearerTok)) {
+        return c.json({ error: 'rollback requires an authenticated caller' }, 401)
+      }
+      if (deps.resolveRole?.(bearerTok) === 'viewer') {
+        return c.json({ error: 'forbidden: viewer role cannot trigger rollback' }, 403)
+      }
+    } else if (bearerTok && deps.resolveOwner) {
+      if (!deps.resolveOwner(bearerTok)) {
+        return c.json({ error: 'invalid or expired authentication token' }, 401)
+      }
+      if (deps.resolveRole?.(bearerTok) === 'viewer') {
+        return c.json({ error: 'forbidden: viewer role cannot trigger rollback' }, 403)
+      }
+    }
     const id = c.req.param('id')
     const entry = ledger.get(id)
     if (!entry) return c.json({ error: 'not found', id }, 404)
@@ -1605,16 +1688,20 @@ export function mountEvolutionRoutes(
     const verify = !isTest
     const result = await rollbackManager.rollback(id, { verify })
     const after = ledger.get(id)
-    return c.json({
-      ok: result.success,
-      id,
-      rolledBack: true,
-      verdict: after?.verdict ?? 'rolledback',
-      restoredFiles: result.restoredFiles,
-      failedFiles: result.failedFiles,
-      configRestored: result.configRestored,
-      verification: result.verification,
-    })
+    return c.json(
+      {
+        ok: result.success,
+        id,
+        rolledBack: result.success,
+        escalated: result.escalated ?? !result.success,
+        verdict: after?.verdict ?? (result.success ? 'rolledback' : entry.verdict),
+        restoredFiles: result.restoredFiles,
+        failedFiles: result.failedFiles,
+        configRestored: result.configRestored,
+        verification: result.verification,
+      },
+      result.success ? 200 : 500,
+    )
   })
 
   // ── GET /evolution/rollback/:id/metadata — §6 system rollback metadata ──
@@ -1787,6 +1874,9 @@ export function mountEvolutionRoutes(
       canaryStart: deps.canaryStart,
       resourceLimits,
       ledger,
+      resolveOwner: deps.resolveOwner,
+      resolveRole: deps.resolveRole,
+      requireAuth: deps.requireAuth,
     })
 }
 
@@ -1811,14 +1901,37 @@ export function mountEvolutionProposalRoutes(
     resourceLimits?: ResourceLimits
     /** Ledger for reading budget reservation evidence */
     ledger?: ImprovementLedger
+    resolveOwner?: (token: string) => string | undefined
+    resolveRole?: (token: string) => Role
+    requireAuth?: boolean
   },
 ): void {
   if (proposalRoutesMounted.has(app)) return
   proposalRoutesMounted.add(app)
   const governance = deps.governance
 
+  const enforceProposalAuth = (
+    c: { req: { header: (name: string) => string | undefined }; json: (body: unknown, status?: number) => Response },
+    mutating: boolean,
+  ): Response | null => {
+    const enforce = Boolean(deps.requireAuth || deps.resolveOwner || process.env.NODE_ENV === 'production')
+    if (!enforce) return null
+    const authHeader = c.req.header('authorization') ?? ''
+    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : ''
+    const owner = bearer && deps.resolveOwner ? deps.resolveOwner(bearer) : undefined
+    if (!owner) {
+      return c.json({ error: 'Authentication required' }, 401)
+    }
+    if (mutating && deps.resolveRole?.(bearer) === 'viewer') {
+      return c.json({ error: 'forbidden: viewer role is read-only' }, 403)
+    }
+    return null
+  }
+
   // ── GET /evolution/proposals?state=<s> ───────────────────────────
   app.get('/evolution/proposals', async (c) => {
+    const authErr = enforceProposalAuth(c, false)
+    if (authErr) return authErr
     const state = c.req.query('state')
     if (state !== undefined && state !== '' && !isProposalState(state)) {
       return c.json({ error: `invalid state: ${state.slice(0, 40)}` }, 400)
@@ -1832,6 +1945,8 @@ export function mountEvolutionProposalRoutes(
   // ── POST /evolution/proposals/:id/advance ────────────────────────
   // Runs exactly one pipeline stage (benchmark → security → canary).
   app.post('/evolution/proposals/:id/advance', async (c) => {
+    const authErr = enforceProposalAuth(c, true)
+    if (authErr) return authErr
     const id = c.req.param('id')
     const proposal = await governance.advance(id)
     if (!proposal) return c.json({ error: 'not found', id }, 404)
@@ -1840,6 +1955,8 @@ export function mountEvolutionProposalRoutes(
 
   // ── POST /evolution/proposals/:id/promote ────────────────────────
   app.post('/evolution/proposals/:id/promote', async (c) => {
+    const authErr = enforceProposalAuth(c, true)
+    if (authErr) return authErr
     const id = c.req.param('id')
     const exists = await governance.get(id)
     if (!exists) return c.json({ error: 'not found', id }, 404)
@@ -1887,6 +2004,8 @@ export function mountEvolutionProposalRoutes(
 
   // ── POST /evolution/proposals/:id/rollback  body: { reason } ─────
   app.post('/evolution/proposals/:id/rollback', async (c) => {
+    const authErr = enforceProposalAuth(c, true)
+    if (authErr) return authErr
     const id = c.req.param('id')
     let body: { reason?: unknown } | null = null
     try {

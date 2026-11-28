@@ -28,15 +28,58 @@ export interface RollbackRecord {
   proposalId: string;
   reason: string;
   at: number;
+  failed?: boolean;
+  escalated?: boolean;
+  error?: string;
 }
 
 export class RollbackManager {
   private history: RollbackRecord[] = [];
 
-  constructor(private deps: { bus?: Bus } = {}) {}
+  constructor(
+    private deps: {
+      bus?: Bus;
+      executor?: (proposalId: string, reason: string) => Promise<{ ok: boolean; error?: string }>;
+    } = {},
+  ) {}
 
   async rollback(proposalId: string, reason: string): Promise<RollbackRecord> {
-    const record: RollbackRecord = { proposalId, reason, at: Date.now() };
+    const at = Date.now();
+    if (this.deps.executor) {
+      let execRes: { ok: boolean; error?: string };
+      try {
+        execRes = await this.deps.executor(proposalId, reason);
+      } catch (err) {
+        execRes = { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+      if (!execRes.ok) {
+        const errMsg = execRes.error || 'governance rollback executor failed';
+        const failedRecord: RollbackRecord = {
+          proposalId,
+          reason,
+          at,
+          failed: true,
+          escalated: true,
+          error: errMsg,
+        };
+        this.history.push(failedRecord);
+        this.deps.bus?.publish({
+          type: 'learning.updated',
+          payload: {
+            kind: 'governance.rollback_failed',
+            proposalId,
+            reason,
+            error: errMsg,
+            escalated: true,
+            at,
+          },
+          timestamp: at,
+        });
+        throw new Error(`Governance rollback failed for ${proposalId}: ${errMsg}`);
+      }
+    }
+
+    const record: RollbackRecord = { proposalId, reason, at };
     this.history.push(record);
 
     this.deps.bus?.publish({

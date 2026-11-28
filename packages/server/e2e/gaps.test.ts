@@ -3,12 +3,16 @@
  * Covers the fixes for server serving the 3 clients.
  */
 import { describe, test, beforeAll, afterAll, expect } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const PORT = 4789
 const BASE = `http://localhost:${PORT}`
 const TOKEN = 'test-gaps-token'
 const AUTH = { Authorization: `Bearer ${TOKEN}` }
 let proc: ReturnType<typeof Bun.spawn> | null = null
+let gapsTempDir = ''
 
 async function waitForHealth(timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs
@@ -23,8 +27,9 @@ async function waitForHealth(timeoutMs = 60_000) {
 }
 
 beforeAll(async () => {
-  const { resolveBunBinary, safeTempFile } = await import('../../shared/src/utils/paths.js')
+  const { resolveBunBinary } = await import('../../shared/src/utils/paths.js')
   const BUN_BIN = resolveBunBinary()
+  gapsTempDir = mkdtempSync(join(tmpdir(), 'mira-gaps-e2e-'))
   const {
     MIRA_TOKEN: _mt,
     MIRA_API_KEYS: _mak,
@@ -34,8 +39,11 @@ beforeAll(async () => {
     cwd: import.meta.dir + '/..',
     env: {
       ...cleanEnv,
+      HOME: gapsTempDir,
+      XDG_CONFIG_HOME: gapsTempDir,
+      MIRA_DIR: join(gapsTempDir, '.mira'),
       PORT: String(PORT),
-      MIRA_DB: safeTempFile('mira-gaps-e2e.db'),
+      MIRA_DB: join(gapsTempDir, 'mira-gaps-e2e.db'),
       CORS_ORIGINS: 'https://slab1.github.io,https://mira.example.com',
       MIRA_TERMINAL_ENABLED: '1',
       MIRA_TERMINAL_SANDBOX: '0',
@@ -50,7 +58,17 @@ beforeAll(async () => {
   await waitForHealth()
 }, 90_000) // server boot here is slow (~14s in sandbox); exceed bun's 5s default hook timeout
 
-afterAll(() => proc?.kill())
+afterAll(async () => {
+  try {
+    proc?.kill()
+    if (proc) await Promise.race([proc.exited, Bun.sleep(2000)])
+  } catch {}
+  if (gapsTempDir) {
+    try {
+      rmSync(gapsTempDir, { recursive: true, force: true })
+    } catch {}
+  }
+})
 
 /**
  * This suite runs a real server for its whole duration inside a large test
@@ -188,7 +206,7 @@ describe('gaps: CORS for 3 clients', () => {
       headers: { Origin: 'vscode-webview://123', ...AUTH },
     })
     await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('timeout')), 3000)
+      const t = setTimeout(() => reject(new Error('timeout')), 10_000)
       ws.onopen = () => {
         try {
           ws.send(JSON.stringify({ type: 'auth', token: TOKEN }))
@@ -250,7 +268,7 @@ describe('gaps: WebSocket authentication', () => {
 
   function connected(ws: WebSocket): Promise<void> {
     return new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('ws open timeout')), 5000)
+      const t = setTimeout(() => reject(new Error('ws open timeout')), 10_000)
       ws.addEventListener('open', () => {
         clearTimeout(t)
         resolve()

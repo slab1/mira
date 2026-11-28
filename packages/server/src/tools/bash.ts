@@ -50,12 +50,18 @@ export const bashTool = {
     const BASH_TIMEOUT_MAX_MS = 120_000
     const effectiveTimeout = Math.min(timeout, BASH_TIMEOUT_MAX_MS)
 
-    // Sandboxed path — MIRA_SANDBOX=1: run inside a container with the session
-    // cwd mounted at /work. SandboxError (e.g. no container runtime) fails
-    // closed: the error is returned to the agent, never a silent host run.
-    if (sandbox.status().enabled || requiresContainer()) {
+    // In production, always enforce a container sandbox dynamically even if
+    // NODE_ENV=production was applied after module load.
+    const effectiveSandbox =
+      process.env.NODE_ENV === 'production' && !requiresContainer()
+        ? createSandbox({ profile: 'production' })
+        : sandbox
+
+    // Sandboxed path — run inside a container with the session cwd mounted.
+    // SandboxError (e.g. no container runtime) fails closed: never silent host run.
+    if (effectiveSandbox.status().enabled || effectiveSandbox.status().requiresContainer) {
       try {
-        const result = await sandbox.run(['bash', '-c', command], { cwd })
+        const result = await effectiveSandbox.run(['bash', '-c', command], { cwd })
         return {
           stdout: result.out,
           stderr: '',
@@ -73,8 +79,18 @@ export const bashTool = {
       }
     }
 
+    // Host fallback only permitted outside production; still strip sensitive secrets.
+    const scrubbedEnv: Record<string, string> = {}
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v === undefined) continue
+      if (/^(MIRA_TOKEN|MIRA_APPROVAL_SIGNING_KEY)$/i.test(k)) continue
+      if (/(API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)/i.test(k)) continue
+      scrubbedEnv[k] = v
+    }
+
     const proc = Bun.spawn(['bash', '-c', command], {
       cwd,
+      env: scrubbedEnv,
       stdout: 'pipe',
       stderr: 'pipe',
       timeout: effectiveTimeout,

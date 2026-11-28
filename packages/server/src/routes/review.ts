@@ -6,6 +6,7 @@ import {
   getReviewManifestById,
   listReviewManifests,
   updateReviewManifest,
+  validateReviewPatch,
   ReviewDispositionSchema,
   ReviewFindingSchema,
   ReviewSectionIdSchema,
@@ -24,6 +25,7 @@ const patchSchema = z.object({
       disposition: ReviewDispositionSchema,
       reason: z.string().optional(),
       evidenceRefs: z.array(z.string()).optional(),
+      testCommand: z.string().optional(),
     })
     .optional(),
   item: z
@@ -91,6 +93,10 @@ export function mountReviewRoutes(
     const parsed = patchSchema.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) {
       return c.json({ error: 'Invalid patch payload', issues: parsed.error.issues }, 400)
+    }
+    const validationErr = validateReviewPatch(parsed.data)
+    if (validationErr) {
+      return c.json({ error: validationErr }, 400)
     }
     const updated = await updateReviewManifest(deps.db, id, parsed.data)
     return c.json({ ok: true, manifest: updated })

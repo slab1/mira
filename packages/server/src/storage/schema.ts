@@ -4,7 +4,7 @@
  * Pragmatism: SQLite over Postgres, Drizzle over Prisma (Mira pattern)
  * Postgres+pgvector is for memory/knowledge-graph (separate DB in prod)
  */
-import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core'
+import { sqliteTable, text, integer, real, index, primaryKey } from 'drizzle-orm/sqlite-core'
 import { relations } from 'drizzle-orm'
 import type { JsonValue } from '../types/index.js'
 // Task Verification States (docs/VERIFICATION_STATES_DESIGN.md §2.2) — type-only,
@@ -405,6 +405,38 @@ export const orgMembers = sqliteTable(
   (t) => [index('org_members_org_idx').on(t.orgID)],
 )
 
+export const coordinationSequences = sqliteTable('coordination_sequences', {
+  resourceKey: text('resource_key').primaryKey(),
+  nextToken: integer('next_token').notNull().default(0),
+})
+
+export const coordinationLeases = sqliteTable(
+  'coordination_leases',
+  {
+    resourceKind: text('resource_kind', { enum: ['claim', 'lock'] }).notNull(),
+    resourceKey: text('resource_key').notNull(),
+    holderID: text('holder_id').notNull(),
+    fencingToken: integer('fencing_token').notNull(),
+    taskID: text('task_id'),
+    expiresAt: integer('expires_at').notNull(),
+    acquiredAt: integer('acquired_at').notNull(),
+    payload: text('payload'),
+  },
+  (t) => [
+    primaryKey({ columns: [t.resourceKind, t.resourceKey] }),
+    index('coordination_leases_expires_idx').on(t.expiresAt),
+    index('coordination_leases_holder_idx').on(t.holderID),
+  ],
+)
+
+export const coordinationWrites = sqliteTable('coordination_writes', {
+  path: text('path').primaryKey(),
+  hash: text('hash').notNull(),
+  holderID: text('holder_id').notNull(),
+  fencingToken: integer('fencing_token').notNull().default(0),
+  updatedAt: integer('updated_at').notNull(),
+})
+
 export const schema = {
   sessions,
   messages,
@@ -421,6 +453,9 @@ export const schema = {
   orgMembers,
   reviewCoverageManifests,
   researchRuns,
+  coordinationSequences,
+  coordinationLeases,
+  coordinationWrites,
   sessionsRelations,
   messagesRelations,
   partsRelations,

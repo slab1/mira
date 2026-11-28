@@ -18,6 +18,12 @@ import type { Patch } from '../patcher.js'
 import type { VerifyResult } from '../verifier.js'
 import type { MiraDB } from '../../storage/db.js'
 import type { Bus } from '../../bus/index.js'
+import { artifactHash } from '../../evolution/artifact-hash.js'
+import {
+  GeneralizationGate,
+  detectRewardHacking,
+  evaluateGeneralization,
+} from '../../evolution/generalization.js'
 
 // ── Stage seams (structural — plain object stubs are assignable) ────
 
@@ -63,6 +69,7 @@ export interface GovernanceGateDeps {
    * the proposal's exact artifact here.
    */
   onProposalCreated?: (proposal: PatchProposal) => void
+  generalization?: GeneralizationGate
 }
 
 /**
@@ -94,6 +101,7 @@ export class GovernanceGate implements GovernanceGateLike {
   private rollbackManager: RollbackStage
   private regression: RegressionDetector
   private readonly measurements: MeasurementSource
+  private generalizationGate: GeneralizationGate
   private onStagePass?: GovernanceGateDeps['onStagePass']
   private approvalCheck?: GovernanceGateDeps['approvalCheck']
   private onProposalCreated?: GovernanceGateDeps['onProposalCreated']
@@ -109,6 +117,7 @@ export class GovernanceGate implements GovernanceGateLike {
     this.rollbackManager = deps.rollback ?? new RollbackManager({ bus: deps.bus })
     this.regression = new RegressionDetector()
     this.measurements = deps.measurements ?? new UnavailableMeasurementSource()
+    this.generalizationGate = deps.generalization ?? new GeneralizationGate()
     this.onStagePass = deps.onStagePass
     this.approvalCheck = deps.approvalCheck
     this.onProposalCreated = deps.onProposalCreated
@@ -120,6 +129,7 @@ export class GovernanceGate implements GovernanceGateLike {
 
   async createProposal(patch: Patch, verifyResult: VerifyResult): Promise<PatchProposal> {
     const id = `proposal_${patch.id}_${Date.now()}`
+    const hash = artifactHash({ targetFile: patch.targetFile, change: patch.change })
     const proposal: PatchProposal = {
       id,
       patchId: patch.id,
@@ -131,7 +141,7 @@ export class GovernanceGate implements GovernanceGateLike {
       severity: String(patch.severity ?? 'medium'),
       score: patch.score ?? 0,
       state: 'PROPOSED',
-      metadata: { verifyResult },
+      metadata: { verifyResult, artifactHash: hash },
       createdAt: Date.now(),
       updatedAt: Date.now(),
     }
@@ -169,6 +179,42 @@ export class GovernanceGate implements GovernanceGateLike {
     if (!proposal) return null
 
     const from = proposal.state
+    if (
+      (from === 'PROPOSED' ||
+        from === 'BENCHMARK_PENDING' ||
+        from === 'BENCHMARK_PASSED' ||
+        from === 'SECURITY_PENDING' ||
+        from === 'SECURITY_PASSED' ||
+        from === 'CANARY_PENDING') &&
+      proposal.metadata.artifactHash &&
+      proposal.metadata.artifactHash !==
+        artifactHash({ targetFile: proposal.targetFile, change: proposal.change })
+    ) {
+      proposal.state = 'REJECTED'
+      proposal.updatedAt = Date.now()
+      await this.store.update(proposalId, {
+        ...proposal,
+        state: 'REJECTED',
+        updatedAt: proposal.updatedAt,
+      })
+      this.bus?.publish({
+        type: 'learning.updated',
+        payload: {
+          kind: 'governance.transition',
+          proposalId: proposal.id,
+          stage: 'integrity',
+          from,
+          to: 'REJECTED',
+          passed: false,
+          outcome: 'FAILED',
+          advanced: true,
+          reason: 'artifact_hash_mismatch',
+        },
+        timestamp: proposal.updatedAt,
+      })
+      return proposal
+    }
+
     let stage: 'benchmark' | 'security' | 'canary'
     let next: ProposalState
     let outcome: GovernanceOutcome
@@ -191,19 +237,52 @@ export class GovernanceGate implements GovernanceGateLike {
     } else if (from === 'BENCHMARK_PASSED' || from === 'SECURITY_PENDING') {
       stage = 'security'
       const result = await this.security.review(proposal.change, proposal.targetFile)
-      proposal.metadata = { ...proposal.metadata, security: { ...result, at: Date.now() } }
-      outcome = outcomeOf(result)
-      passed = outcome === 'PASSED'
-      reason = result.reason
-      next = passed ? 'SECURITY_PASSED' : outcome === 'FAILED' ? 'REJECTED' : from
+      const hackScan = detectRewardHacking(proposal.change)
+      if (outcomeOf(result) === 'PASSED' && hackScan.blocked) {
+        const hackReason = `Security/anti-reward-hacking blocked: ${hackScan.findings.map((f) => f.category).join(', ')}`
+        proposal.metadata = {
+          ...proposal.metadata,
+          security: { passed: false, reason: hackReason, at: Date.now() },
+        }
+        outcome = 'FAILED'
+        passed = false
+        reason = hackReason
+        next = 'REJECTED'
+      } else {
+        proposal.metadata = { ...proposal.metadata, security: { ...result, at: Date.now() } }
+        outcome = outcomeOf(result)
+        passed = outcome === 'PASSED'
+        reason = result.reason
+        next = passed ? 'SECURITY_PASSED' : outcome === 'FAILED' ? 'REJECTED' : from
+      }
     } else if (from === 'SECURITY_PASSED' || from === 'CANARY_PENDING') {
       stage = 'canary'
       const result = await this.canary.start(proposal.id, proposal.canaryConfig)
-      proposal.metadata = { ...proposal.metadata, canary: result }
       outcome = outcomeOf(result)
-      passed = outcome === 'PASSED'
-      reason = result.reason
-      next = passed ? 'CANARY_PASSED' : outcome === 'FAILED' ? 'REJECTED' : from
+      if (outcome === 'PASSED') {
+        const gen = this.generalizationGate.evaluate({
+          proposalId: proposal.id,
+          patch: proposal.change,
+          targetFile: proposal.targetFile,
+          verificationPassed: proposal.metadata.verifyResult?.verified,
+        })
+        proposal.metadata = { ...proposal.metadata, canary: result, generalization: gen }
+        if (!gen.passed) {
+          outcome = 'FAILED'
+          passed = false
+          reason = gen.reason
+          next = 'REJECTED'
+        } else {
+          passed = true
+          reason = result.reason
+          next = 'CANARY_PASSED'
+        }
+      } else {
+        proposal.metadata = { ...proposal.metadata, canary: result }
+        passed = false
+        reason = result.reason
+        next = outcome === 'FAILED' ? 'REJECTED' : from
+      }
     } else {
       // CANARY_PASSED (awaiting promote), *_FAILED, PROMOTED, REJECTED and
       // ROLLED_BACK: no next stage — leave the proposal untouched.
@@ -321,25 +400,24 @@ export class GovernanceGate implements GovernanceGateLike {
       return { applied: false, reason: `invalid_state:${proposal.state}` }
     }
 
+    // 1b) Artifact integrity guard — block promotion if targetFile/change mutated post-creation.
+    if (
+      proposal.metadata.artifactHash &&
+      proposal.metadata.artifactHash !==
+        artifactHash({ targetFile: proposal.targetFile, change: proposal.change })
+    ) {
+      return { applied: false, reason: 'artifact_hash_mismatch' }
+    }
+
+    // 1c) Initial verification check — fail closed if verifier rejected candidate.
+    if (proposal.metadata.verifyResult?.verified === false) {
+      return { applied: false, reason: 'verification_failed' }
+    }
+
     // 2) Stage re-validation. A row can reach CANARY_PASSED via a legacy
     //    writer, an older build whose stages fail-opened, or a direct store
     //    write — so the state alone is not proof that the stages measured
     //    anything. Re-check every recorded outcome before the metrics gate.
-    //
-    //    WHAT THIS DOES AND DOES NOT BUY YOU — established by execution:
-    //    this check cannot detect FORGERY. The evidence it validates is stored
-    //    in the same row it trusts, so a hand-forged `passed: true` is
-    //    indistinguishable from a genuine one — both produce outcomeOf ===
-    //    'PASSED'. What it does catch is a row whose stages never ran or ran
-    //    with a missing/ambiguous outcome (older builds, partial writes).
-    //
-    //    Do not read this as tamper protection. That would require evidence
-    //    the gate cannot forge — signed stage receipts, or an append-only
-    //    evidence store — which is a separate piece of work. Until then the
-    //    real protections are: the stage runners themselves are fail-closed,
-    //    the regression/metrics gate needs a comparable baseline/candidate
-    //    pair, and promotion executes through the promoter rather than
-    //    mutating state directly.
     const recorded: Array<[string, { passed: boolean; outcome?: GovernanceOutcome } | undefined]> =
       [
         ['benchmark', proposal.metadata.benchmark],
@@ -352,6 +430,33 @@ export class GovernanceGate implements GovernanceGateLike {
       if (stageOutcome !== 'PASSED') {
         return { applied: false, reason: `stage_not_passed:${name}:${stageOutcome}` }
       }
+    }
+
+    // 2b) Canary candidate-execution & traffic-floor check when reported by runner.
+    const canaryMetrics = proposal.metadata.canary?.metrics
+    if (canaryMetrics?.executesCandidate === false) {
+      return { applied: false, reason: 'canary_not_executed' }
+    }
+    const minSamples = proposal.canaryConfig?.minSamples ?? 1
+    if (typeof canaryMetrics?.count === 'number' && canaryMetrics.count < minSamples) {
+      return { applied: false, reason: 'canary_insufficient_traffic' }
+    }
+
+    // 2c) Held-out generalization & anti-reward-hacking check before promotion.
+    if (proposal.metadata.generalization && !proposal.metadata.generalization.passed) {
+      return {
+        applied: false,
+        reason: `generalization_failed:${proposal.metadata.generalization.reason}`,
+      }
+    }
+    const genCheck = evaluateGeneralization({
+      proposalId: proposal.id,
+      patch: proposal.change,
+      targetFile: proposal.targetFile,
+      verificationPassed: proposal.metadata.verifyResult?.verified,
+    })
+    if (!genCheck.passed) {
+      return { applied: false, reason: `generalization_failed:${genCheck.reason}` }
     }
 
     // 3) Regression gate — explicit override, else metrics derived from metadata.
@@ -467,6 +572,29 @@ export class GovernanceGate implements GovernanceGateLike {
       },
       timestamp: Date.now(),
     })
+  }
+
+  /**
+   * Post-promotion regression monitoring hook: if live metrics after PROMOTED
+   * regress beyond tolerances, automatically invoke rollback().
+   */
+  async monitorPostPromotion(
+    proposalId: string,
+    baseline: Record<string, MetricPoint>,
+    candidate: Record<string, MetricPoint>,
+    tolerances?: Parameters<RegressionDetector['detect']>[0]['tolerances'],
+  ): Promise<{ rolledBack: boolean; reason?: string; regression?: RegressionResult }> {
+    const proposal = await this.store.get(proposalId)
+    if (!proposal || proposal.state !== 'PROMOTED') {
+      return { rolledBack: false, reason: 'not_promoted' }
+    }
+    const rr = this.checkRegression(baseline, candidate, tolerances)
+    if (rr.passed) {
+      return { rolledBack: false, regression: rr }
+    }
+    const reason = `post_promotion_regression: ${rr.findings.map((f) => `${f.axis}/${f.metric} +${(f.deltaPct * 100).toFixed(1)}%`).join(', ')}`
+    await this.rollback(proposalId, reason)
+    return { rolledBack: true, reason, regression: rr }
   }
 
   async list(state?: ProposalState): Promise<PatchProposal[]> {

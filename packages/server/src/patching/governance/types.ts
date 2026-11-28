@@ -157,6 +157,8 @@ export interface PatchProposal {
   state: ProposalState
   metadata: {
     verifyResult: import('../verifier.js').VerifyResult
+    artifactHash?: string
+    generalization?: import('../../evolution/generalization.js').GeneralizationReport
     benchmark?: BenchmarkResult
     security?: SecurityReviewRecord
     canary?: CanaryResult

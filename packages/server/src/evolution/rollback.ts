@@ -20,6 +20,7 @@
  */
 
 import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs'
+import { dirname, normalize } from 'node:path'
 import type { Bus } from '../bus/index.js'
 import type { JsonValue } from '../types/index.js'
 import type { MiraDB } from '../storage/db.js'
@@ -27,6 +28,8 @@ import type { ImprovementLedger } from './ledger.js'
 import { EVOLUTION_SNAPSHOT_SESSION } from '../patching/applier.js'
 import { createHash } from 'node:crypto'
 import { loadConfig } from '../config/store.js'
+import { safeWorkspacePath } from '../storage/snapshot-paths.js'
+import type { LoopGuard } from './loop-guard.js'
 
 export interface RollbackPoint {
   version: string // ledgerId + timestamp
@@ -43,6 +46,7 @@ export interface RollbackResult {
   restoredFiles: number
   failedFiles: Array<{ path: string; error: string }>
   configRestored: boolean
+  escalated?: boolean
   verification: {
     buildPassed: boolean
     healthPassed: boolean
@@ -55,12 +59,22 @@ export class RollbackManager {
   private db?: MiraDB
   private bus?: Bus
   private ledger?: ImprovementLedger
+  private loopGuard?: LoopGuard
+  private workspaceRoot?: string
   private points = new Map<string, RollbackPoint>() // ledgerId → point
 
-  constructor(opts?: { db?: MiraDB; bus?: Bus; ledger?: ImprovementLedger }) {
+  constructor(opts?: {
+    db?: MiraDB
+    bus?: Bus
+    ledger?: ImprovementLedger
+    loopGuard?: LoopGuard
+    workspaceRoot?: string
+  }) {
     this.db = opts?.db
     this.bus = opts?.bus
     this.ledger = opts?.ledger
+    this.loopGuard = opts?.loopGuard
+    this.workspaceRoot = opts?.workspaceRoot
     this.ensureTable()
   }
 
@@ -170,19 +184,23 @@ export class RollbackManager {
     let configRestored = false
 
     if (!point) {
-      // still attempt ledger-level rollback even without point: mark entry as rolledback
+      // still attempt ledger-level rollback even without point: mark entry as rolledback,
+      // and escalate loudly because no verified rollback point exists.
       this.markLedgerRolledBack(ledgerId)
+      const escalationErrors = ['no rollback point found']
+      this.emitEscalation(ledgerId, undefined, [], escalationErrors)
       return {
         success: false,
         ledgerId,
         restoredFiles: 0,
         failedFiles: [],
         configRestored: false,
+        escalated: true,
         verification: {
           buildPassed: false,
           healthPassed: false,
           regressionPassed: false,
-          errors: ['no rollback point found'],
+          errors: escalationErrors,
         },
       }
     }
@@ -195,19 +213,34 @@ export class RollbackManager {
           const row = sqlite
             .prepare(`SELECT path, content FROM file_snapshots WHERE id = ?`)
             .get(snapId) as { path: string; content: string | null } | undefined
-          if (!row) continue
+          if (!row) {
+            const msg = `missing rollback snapshot artifact: ${snapId}`
+            failedFiles.push({ path: snapId, error: msg })
+            errors.push(msg)
+            continue
+          }
+          const validatedPath = this.validateSnapshotPath(row.path)
+          if (!validatedPath) {
+            const msg = `unsafe or out-of-workspace snapshot path: ${row.path}`
+            failedFiles.push({ path: row.path, error: msg })
+            errors.push(msg)
+            continue
+          }
           if (row.content === null) {
             try {
-              unlinkSync(row.path)
+              unlinkSync(validatedPath)
               restoredFiles++
             } catch (e) {
-              failedFiles.push({ path: row.path, error: String(e) })
+              if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') {
+                restoredFiles++
+              } else {
+                failedFiles.push({ path: row.path, error: String(e) })
+              }
             }
           } else {
             try {
-              const dir = row.path.split('/').slice(0, -1).join('/') || '.'
-              mkdirSync(dir, { recursive: true })
-              writeFileSync(row.path, row.content, 'utf-8')
+              mkdirSync(dirname(validatedPath), { recursive: true })
+              writeFileSync(validatedPath, row.content, 'utf-8')
               restoredFiles++
             } catch (e) {
               failedFiles.push({ path: row.path, error: String(e) })
@@ -217,6 +250,10 @@ export class RollbackManager {
           errors.push(`snapshot ${snapId}: ${String(e)}`)
         }
       }
+    } else if (!sqlite && point.snapshotIds.length > 0) {
+      const msg = 'rollback database unavailable to resolve snapshot artifacts'
+      failedFiles.push({ path: point.snapshotIds[0]!, error: msg })
+      errors.push(msg)
     }
 
     // DB rollback: ledger entry is authoritative — we mark verdict as rolledback
@@ -258,6 +295,10 @@ export class RollbackManager {
     } catch {}
 
     const success = failedFiles.length === 0 && errors.length === 0 && verification.buildPassed
+    const escalated = !success
+    if (escalated) {
+      this.emitEscalation(ledgerId, point.version, failedFiles, [...errors, ...verification.errors])
+    }
 
     try {
       this.bus?.publish({
@@ -267,6 +308,7 @@ export class RollbackManager {
           ledgerId,
           version: point.version,
           success,
+          escalated,
           restoredFiles,
           failedFiles,
           configRestored,
@@ -283,8 +325,45 @@ export class RollbackManager {
       restoredFiles,
       failedFiles,
       configRestored,
+      escalated,
       verification,
     }
+  }
+
+  private validateSnapshotPath(rawPath: string): string | null {
+    if (!rawPath || rawPath.includes('\0')) return null
+    const segments = rawPath.split(/[/\\]/)
+    if (segments.includes('..')) return null
+    if (this.workspaceRoot) {
+      return safeWorkspacePath(rawPath, this.workspaceRoot)
+    }
+    return normalize(rawPath)
+  }
+
+  private emitEscalation(
+    ledgerId: string,
+    version: string | undefined,
+    failedFiles: Array<{ path: string; error: string }>,
+    errors: string[],
+  ): void {
+    try {
+      this.loopGuard?.check('rollback_failed', { ledgerId, failedFiles, errors })
+    } catch {}
+    try {
+      const now = Date.now()
+      this.bus?.publish({
+        type: 'evolution.loop_escalated' as unknown as import('../types/index.js').BusEventType,
+        payload: {
+          source: 'rollback',
+          ledgerId,
+          version: version ?? null,
+          failedFiles,
+          errors,
+          timestamp: now,
+        } as unknown as JsonValue,
+        timestamp: now,
+      } as unknown as import('../types/index.js').BusEvent)
+    } catch {}
   }
 
   /**

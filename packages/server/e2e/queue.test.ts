@@ -1,15 +1,20 @@
 /** E2E: queue-while-streaming — messages queue during a turn, drain as chained turns */
 import { describe, test, beforeAll, afterAll, expect } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const PORT = 4790
 const BASE = `http://localhost:${PORT}`
 const TOKEN = 'test-queue-token'
 const AUTH = { Authorization: `Bearer ${TOKEN}` }
 let serverProc: ReturnType<typeof Bun.spawn> | null = null
+let queueTempDir = ''
 
 beforeAll(async () => {
-  const { resolveBunBinary, safeTempFile } = await import('../../shared/src/utils/paths.js')
+  const { resolveBunBinary } = await import('../../shared/src/utils/paths.js')
   const BUN_BIN = resolveBunBinary()
+  queueTempDir = mkdtempSync(join(tmpdir(), 'mira-queue-e2e-'))
   const {
     MIRA_TOKEN: _mt,
     MIRA_API_KEYS: _mak,
@@ -25,8 +30,11 @@ beforeAll(async () => {
     cwd: import.meta.dir + '/..',
     env: {
       ...cleanEnv,
+      HOME: queueTempDir,
+      XDG_CONFIG_HOME: queueTempDir,
+      MIRA_DIR: join(queueTempDir, '.mira'),
       PORT: String(PORT),
-      MIRA_DB: safeTempFile('mira-e2e-queue.db'),
+      MIRA_DB: join(queueTempDir, 'mira-e2e-queue.db'),
       MIRA_TOKEN: TOKEN,
       // Isolate from ~/.mira/mira.env so TOKEN is the actual required bearer.
       MIRA_NO_AUTOPROVISION: '1',
@@ -34,15 +42,27 @@ beforeAll(async () => {
     stdout: 'pipe',
     stderr: 'pipe',
   })
-  const deadline = Date.now() + 30_000
+  const deadline = Date.now() + 60_000
   while (Date.now() < deadline) {
     try {
-      if ((await fetch(`${BASE}/healthz`)).ok) break
+      if ((await fetch(`${BASE}/healthz`)).ok) return
     } catch {}
     await Bun.sleep(250)
   }
-}, 45_000) // server boot here is slow (~14s in sandbox); exceed bun's 5s default hook timeout
-afterAll(() => serverProc?.kill())
+  throw new Error('queue e2e server never became healthy')
+}, 90_000)
+
+afterAll(async () => {
+  try {
+    serverProc?.kill()
+    if (serverProc) await Promise.race([serverProc.exited, Bun.sleep(2000)])
+  } catch {}
+  if (queueTempDir) {
+    try {
+      rmSync(queueTempDir, { recursive: true, force: true })
+    } catch {}
+  }
+})
 
 describe('message queue', () => {
   test('queue → list → clear roundtrip + chained turn drains', async () => {

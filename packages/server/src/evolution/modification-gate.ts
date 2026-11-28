@@ -25,6 +25,10 @@ export interface ModificationGateInput {
   rollbackAvailable: boolean
   /** Optional risk level for audit context (does not relax the gate) */
   riskLevel?: string
+  /** Whether candidate targets a Protected Control Plane module */
+  protectedControlPlane?: boolean
+  /** Explicit human maintainer authorization when modifying control-plane targets */
+  humanAuthorized?: boolean
 }
 
 export interface ModificationGateResult {
@@ -35,13 +39,15 @@ export interface ModificationGateResult {
     validation: boolean
     rollback: boolean
   }
+  controlPlaneAllowed?: boolean
   confidence: number
   threshold: number
 }
 
 /**
- * Evaluate the unified gate. All three checks must pass.
- * Confidence below threshold, failed validation, or missing rollback → deny.
+ * Evaluate the unified gate. All checks must pass.
+ * Confidence below threshold, failed validation, missing rollback, or
+ * unauthorized protected control-plane modification → deny.
  */
 export function checkSelfModificationGate(
   input: ModificationGateInput,
@@ -69,10 +75,18 @@ export function checkSelfModificationGate(
     reasons.push('no rollback point available — cannot safely revert')
   }
 
+  const controlPlaneOk = !input.protectedControlPlane || input.humanAuthorized === true
+  if (!controlPlaneOk) {
+    reasons.push(
+      'protected control-plane target requires explicit maintainer authorization (blocked from autonomous self-modification)',
+    )
+  }
+
   return {
-    allowed: confidenceOk && validationOk && rollbackOk,
+    allowed: confidenceOk && validationOk && rollbackOk && controlPlaneOk,
     reasons,
     checks: { confidence: confidenceOk, validation: validationOk, rollback: rollbackOk },
+    ...(input.protectedControlPlane !== undefined ? { controlPlaneAllowed: controlPlaneOk } : {}),
     confidence: input.confidence,
     threshold,
   }

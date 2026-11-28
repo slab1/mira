@@ -354,6 +354,13 @@ export class ApprovalGate {
    *  must be made against current evidence, not evidence the operator last saw
    *  months ago. 0/undefined disables expiry. */
   private maxRequestAgeMs: number
+  /** Decision TTL (default 7 days; 0 disables). Authoritative receipts older
+   *  than this must be re-approved against current context. */
+  private maxApprovalAgeMs: number
+  /** Require cryptographic receipt signatures when approving/authorizing artifacts. */
+  private requireSignature: boolean
+  /** Throw on persistence failures instead of falling back to memory only. */
+  private strictPersistence: boolean
   /** Aging dedupe: id → last emission bucket, so a pending item notifies once
    *  per aging window, not on every queue read. */
   private agingEmitted = new Map<string, number>()
@@ -418,6 +425,21 @@ export class ApprovalGate {
      * 24h; 0 disables.
      */
     maxRequestAgeMs?: number
+    /**
+     * Decided approvals older than this are refused on authorizesArtifact().
+     * Default 7 days (or MIRA_APPROVAL_TTL_MS); 0 disables.
+     */
+    maxApprovalAgeMs?: number
+    /**
+     * Require MIRA_APPROVAL_SIGNING_KEY to sign and verify artifact approvals.
+     * Default: true in production unless MIRA_ALLOW_UNSIGNED_APPROVALS=1.
+     */
+    requireSignature?: boolean
+    /**
+     * Fail loudly instead of silently ignoring durable store errors.
+     * Default: true in production.
+     */
+    strictPersistence?: boolean
   }) {
     this.bus = opts?.bus
     this.rootDir = opts?.rootDir
@@ -438,6 +460,20 @@ export class ApprovalGate {
     this.agingMs = opts?.agingMs ?? 3_600_000
     this.minApproverRole = opts?.minApproverRole ?? 'operator'
     this.maxRequestAgeMs = opts?.maxRequestAgeMs ?? 24 * 3_600_000
+    this.maxApprovalAgeMs =
+      opts?.maxApprovalAgeMs ??
+      (() => {
+        const raw = process.env.MIRA_APPROVAL_TTL_MS
+        if (raw !== undefined && raw !== '') {
+          const parsed = Number(raw)
+          if (Number.isFinite(parsed) && parsed >= 0) return parsed
+        }
+        return 7 * 24 * 3_600_000
+      })()
+    this.requireSignature =
+      opts?.requireSignature ??
+      (process.env.NODE_ENV === 'production' && process.env.MIRA_ALLOW_UNSIGNED_APPROVALS !== '1')
+    this.strictPersistence = opts?.strictPersistence ?? process.env.NODE_ENV === 'production'
     this.refreshPolicy()
     if (opts?.store) {
       this.store = opts.store
@@ -447,7 +483,7 @@ export class ApprovalGate {
           this.decided.set(id, result)
           // Re-index the artifact binding so approvals recorded before a
           // restart still authorize the same bytes afterwards.
-          if (result.artifactHash && result.approver) {
+          if (result.approved && result.authoritative && result.artifactHash && result.approver) {
             this.approvedArtifacts.set(result.artifactHash, {
               id,
               approver: result.approver,
@@ -456,7 +492,9 @@ export class ApprovalGate {
             })
           }
         }
-      } catch {}
+      } catch (err) {
+        if (this.strictPersistence) throw err
+      }
     }
   }
 
@@ -485,7 +523,12 @@ export class ApprovalGate {
     this.pending.set(proposal.id, req)
     try {
       this.store?.savePending(req)
-    } catch {}
+    } catch (err) {
+      if (this.strictPersistence) {
+        this.pending.delete(proposal.id)
+        throw err
+      }
+    }
     this.emit(proposal, level, risk, 'pending', undefined)
     return req
   }
@@ -702,11 +745,31 @@ export class ApprovalGate {
         reason: `no authoritative human approval for this exact change (artifact ${h}) — an operator must approve it via POST /evolution/approve/:id`,
       }
     }
-    // With signing enabled, a decision only counts if its receipt verifies
-    // against the key. This is what stops someone who can write the database
-    // from minting an approval: the signature needs a key the store does not
-    // contain. Unsigned or altered decisions are refused with an actionable
-    // reason rather than silently accepted.
+    const decided = this.decided.get(hit.id)
+    if (decided && (!decided.approved || !decided.authoritative || (decided.artifactHash && decided.artifactHash !== h))) {
+      return {
+        ok: false,
+        reason: `approval for ${hit.id} is no longer valid for artifact ${h} — re-approve the current artifact`,
+      }
+    }
+    if (this.maxApprovalAgeMs > 0) {
+      const decidedAt = hit.decidedAt ?? 0
+      if (!decidedAt || Date.now() - decidedAt > this.maxApprovalAgeMs) {
+        return {
+          ok: false,
+          reason: `approval for ${hit.id} expired (TTL ${Math.round(this.maxApprovalAgeMs / 3_600_000)}h) — re-approve the current artifact`,
+        }
+      }
+    }
+    // With signing enabled or required, a decision only counts if its receipt
+    // verifies against the key. This stops someone who can write the database
+    // from minting an approval.
+    if (this.requireSignature && !this.receiptsSigned()) {
+      return {
+        ok: false,
+        reason: `approval signing is required in production (${SIGNING_KEY_ENV} is not set) — refusing unsigned approval for ${hit.id}`,
+      }
+    }
     if (this.receiptsSigned()) {
       if (!hit.signature) {
         return {
@@ -735,6 +798,39 @@ export class ApprovalGate {
     return { ok: true, approver: hit.approver }
   }
 
+  /**
+   * Invalidate any pending or approved state for a proposal (e.g. when a
+   * candidate diff or target file mutates after review/approval).
+   */
+  invalidateProposal(id: string, reason = 'candidate mutated after approval'): boolean {
+    let changed = false
+    if (this.pending.delete(id)) changed = true
+    const prior = this.decided.get(id)
+    if (prior) {
+      this.decided.set(id, {
+        ...prior,
+        approved: false,
+        authoritative: false,
+        reason: `invalidated: ${reason}`,
+      })
+      changed = true
+    }
+    for (const [hash, entry] of this.approvedArtifacts.entries()) {
+      if (entry.id === id) {
+        this.approvedArtifacts.delete(hash)
+        changed = true
+      }
+    }
+    try {
+      this.store?.deletePending(id)
+      const invalidated = this.decided.get(id)
+      if (invalidated) this.store?.saveDecided(id, invalidated)
+    } catch (err) {
+      if (this.strictPersistence) throw err
+    }
+    return changed
+  }
+
   /** Record an authoritative approval against the artifact it authorized. */
   private indexApprovedArtifact(req: ApprovalRequest, result: ApprovalResult): void {
     if (!req.artifactHash || !result.approver) return
@@ -746,15 +842,35 @@ export class ApprovalGate {
     })
   }
 
-  approve(id: string, identity: ApproverIdentity): ApprovalResult {
+  approve(
+    id: string,
+    identity: ApproverIdentity,
+    opts?: { expectedHash?: string },
+  ): ApprovalResult {
     const prior = this.decided.get(id)
-    if (prior) return { ...prior, reason: `${prior.reason ?? 'decided'} (recorded decision)` }
+    if (prior) {
+      if (opts?.expectedHash && prior.artifactHash && prior.artifactHash !== opts.expectedHash) {
+        return {
+          approved: false,
+          reason: `approval refused: expected artifact hash ${opts.expectedHash} does not match recorded decision hash ${prior.artifactHash}`,
+        }
+      }
+      return { ...prior, reason: `${prior.reason ?? 'decided'} (recorded decision)` }
+    }
 
     const req = this.pending.get(id)
     if (!req) {
       return {
         approved: false,
         reason: `no pending approval request for ${id} — nothing to approve`,
+      }
+    }
+
+    if (opts?.expectedHash && req.artifactHash && req.artifactHash !== opts.expectedHash) {
+      return {
+        approved: false,
+        pending: true,
+        reason: `approval refused: expected artifact hash ${opts.expectedHash} does not match pending request hash ${req.artifactHash} — re-raise proposal`,
       }
     }
 
@@ -786,11 +902,19 @@ export class ApprovalGate {
 
     const approver = identity.owner
     const author = proposalAuthor(req.proposal)
-    if (author && approver === author) {
+    if (author && approver.trim().toLowerCase() === author.trim().toLowerCase()) {
       return {
         approved: false,
         pending: true,
         reason: `approval rejected: "${approver}" authored this proposal and may not approve it`,
+      }
+    }
+    // Fail-closed if signing is required (e.g. production) and signing key is missing.
+    if (this.requireSignature && req.artifactHash && !this.receiptsSigned()) {
+      return {
+        approved: false,
+        pending: true,
+        reason: `approval rejected: cryptographic approval signing is required (${SIGNING_KEY_ENV} is not configured)`,
       }
     }
     // The operator is the approval authority: when designated operators are
@@ -824,7 +948,12 @@ export class ApprovalGate {
       if (collected.size < required) {
         try {
           this.store?.savePending(req)
-        } catch {}
+        } catch (err) {
+          if (this.strictPersistence) {
+            req.approvers = [...collected].filter((x) => x !== approver)
+            throw err
+          }
+        }
         return {
           approved: false,
           pending: true,
@@ -832,6 +961,39 @@ export class ApprovalGate {
           requiredApprovals: required,
           reason: `two-person rule: ${collected.size} of ${required} operator approvals recorded — waiting for ${required - collected.size} more`,
         }
+      }
+    }
+
+    const result: ApprovalResult = {
+      approved: true,
+      approver,
+      authoritative: true,
+      approverKind: 'human-operator',
+      ...(required > 1 ? { approvers: [...collected], requiredApprovals: required } : {}),
+      ...(req.artifactHash ? { artifactHash: req.artifactHash } : {}),
+      decidedAt: Date.now(),
+      reason:
+        required > 1
+          ? 'approved by human operators (two-person rule)'
+          : 'approved by human operator',
+    }
+    // Sign the receipt when MIRA_APPROVAL_SIGNING_KEY is configured. The
+    // signature is computed before persisting so the stored decision is the
+    // signed one — a receipt can never be added later by whoever can write the
+    // database.
+    const signed = this.buildReceipt(id, result)
+    if (signed) result.signature = signed.signature
+
+    // Persist before mutating in-memory indices when strictPersistence is enabled.
+    try {
+      if (this.store?.commitDecision) this.store.commitDecision(id, result)
+      else {
+        this.store?.deletePending(id)
+        this.store?.saveDecided(id, result)
+      }
+    } catch (err) {
+      if (this.strictPersistence) {
+        throw err
       }
     }
 
@@ -856,39 +1018,10 @@ export class ApprovalGate {
         this.rootDir,
       )
     } catch {}
-    const result: ApprovalResult = {
-      approved: true,
-      approver,
-      authoritative: true,
-      approverKind: 'human-operator',
-      ...(required > 1 ? { approvers: [...collected], requiredApprovals: required } : {}),
-      ...(req.artifactHash ? { artifactHash: req.artifactHash } : {}),
-      decidedAt: Date.now(),
-      reason:
-        required > 1
-          ? 'approved by human operators (two-person rule)'
-          : 'approved by human operator',
-    }
-    // Sign the receipt when MIRA_APPROVAL_SIGNING_KEY is configured. The
-    // signature is computed before persisting so the stored decision is the
-    // signed one — a receipt can never be added later by whoever can write the
-    // database.
-    const signed = this.buildReceipt(id, result)
-    if (signed) result.signature = signed.signature
     this.decided.set(id, result)
     // Bind the decision to the bytes it authorized so the promotion path can
     // verify it is shipping exactly what was approved.
     this.indexApprovedArtifact(req, result)
-    // Durable transition: record the decision and clear the pending request
-    // atomically, so a crash between the two writes cannot strand the case in
-    // neither queue (a silently lost approval).
-    try {
-      if (this.store?.commitDecision) this.store.commitDecision(id, result)
-      else {
-        this.store?.deletePending(id)
-        this.store?.saveDecided(id, result)
-      }
-    } catch {}
     return result
   }
 
@@ -946,15 +1079,16 @@ export class ApprovalGate {
       approverKind: 'human-operator',
       reason: 'denied by human operator',
     }
-    this.decided.set(id, result)
-    // Same atomic transition as approve() — see the comment there.
     try {
       if (this.store?.commitDecision) this.store.commitDecision(id, result)
       else {
         this.store?.deletePending(id)
         this.store?.saveDecided(id, result)
       }
-    } catch {}
+    } catch (err) {
+      if (this.strictPersistence) throw err
+    }
+    this.decided.set(id, result)
     return result
   }
 
